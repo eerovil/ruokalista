@@ -1,5 +1,5 @@
 import baseWorker from "./index";
-import { listIngredientChoices, saveCorrectedDraft, structureRecipe, validateCorrectedDraft, type IntakeDraft } from "./intake";
+import { listIngredientChoices, saveCorrectedDraft, structureRecipe, validateCorrectedDraft } from "./intake";
 
 interface Env {
   DB: D1Database;
@@ -110,7 +110,7 @@ async function handleSave(request: Request, env: Env, member: MemberRow): Promis
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/intake" || url.pathname === "/api/intake/structure" || (url.pathname === "/api/recipes" && request.method === "POST")) {
       const member = await resolveDevMember(env);
@@ -119,6 +119,6 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/intake/structure") return handleStructure(request, env, member);
       if (request.method === "POST" && url.pathname === "/api/recipes") return handleSave(request, env, member);
     }
-    return baseWorker.fetch(request, env, ctx);
+    return baseWorker.fetch(request, env);
   }
 } satisfies ExportedHandler<Env>;
