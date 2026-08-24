@@ -1,9 +1,37 @@
 # ruokalista
 
-A recipe store. Nothing is implemented yet. The stack is decided — a Cloudflare
-Worker in TypeScript over D1 — along with everything else expensive to reverse;
-see the wayfinder map (issue #1) for the decisions and `docs/spec.md` for the
-v1 build spec.
+A recipe store: a Cloudflare Worker in TypeScript over D1. The wayfinder map
+(issue #1) holds the decisions that were expensive to reverse, and `docs/spec.md`
+is the v1 build spec — the schema, the screens and the intake flow, end to end.
+
+v1 is being built in thin vertical slices, one PR per working thing. An earlier
+attempt built it all in one 36-commit PR (#13, closed unmerged); it drifted from
+the spec and grew three stacked fetch handlers, and none of it was reviewable.
+Hence the slices, and hence the rule below.
+
+## Running it
+
+There is no node on this host. Every npm and wrangler command goes through a
+container:
+
+    ./scripts/node.sh npm install
+    ./scripts/node.sh npm run typecheck
+    ./scripts/node.sh npm run migrate:local
+    ./scripts/node.sh npm run dev
+
+The dev server answers on `http://127.0.0.1:8787`. Use the IP, not `localhost` —
+podman's port mapping here is IPv4-only and `localhost` resolves to `::1` first.
+
+`wrangler.jsonc` carries a placeholder `database_id`. Local dev does not need it;
+the first remote deploy does — create the database with `wrangler d1 create
+ruokalista` and paste the UUID in.
+
+## One fetch handler
+
+`src/index.ts` is the only `fetch` handler and `src/router.ts` is the only place
+a request is matched. There is one `Env` (`src/env.ts`), bound once and passed
+down; nothing copies or rewrites it, and nothing smuggles identity through it.
+This is the shape the closed attempt got wrong, so it is written down.
 
 ## Agent skills
 
