@@ -84,3 +84,50 @@ export async function loadWeek(
 
   return result.results;
 }
+
+export async function addMealEntry(
+  db: D1Database,
+  householdId: number,
+  memberId: number,
+  date: string,
+  slot: "lunch" | "dinner",
+  recipeId: number,
+  portions: number
+): Promise<boolean> {
+  const recipe = await db.prepare(`
+    SELECT id FROM recipe WHERE id = ? AND household_id = ?
+  `).bind(recipeId, householdId).first<{ id: number }>();
+  if (!recipe) return false;
+
+  await db.prepare(`
+    INSERT INTO meal_entry (household_id, date, slot, recipe_id, portions, created_by)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(householdId, date, slot, recipeId, portions, memberId).run();
+  return true;
+}
+
+export async function updateMealEntryPortions(
+  db: D1Database,
+  householdId: number,
+  mealEntryId: number,
+  portions: number
+): Promise<boolean> {
+  const result = await db.prepare(`
+    UPDATE meal_entry
+    SET portions = ?
+    WHERE id = ? AND household_id = ?
+  `).bind(portions, mealEntryId, householdId).run();
+  return result.meta.changes > 0;
+}
+
+export async function deleteMealEntry(
+  db: D1Database,
+  householdId: number,
+  mealEntryId: number
+): Promise<boolean> {
+  const result = await db.prepare(`
+    DELETE FROM meal_entry
+    WHERE id = ? AND household_id = ?
+  `).bind(mealEntryId, householdId).run();
+  return result.meta.changes > 0;
+}
