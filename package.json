@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
-    "db:migrate:local": "wrangler d1 migrations apply ruokalista --local"
+    "db:migrate:local": "wrangler d1 migrations apply ruokalista --local",
+    "db:seed:local": "wrangler d1 execute ruokalista --local --file=dev/seed.sql",
+    "db:smoke:local": "wrangler d1 execute ruokalista --local --command=\"SELECT COUNT(*) AS tables FROM sqlite_master WHERE type = 'table' AND name IN ('household','member','recipe','meal_entry');\""
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260824.0",
