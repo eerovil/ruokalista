@@ -37,9 +37,20 @@ That script is a developer tool, not a route. The Worker has no way to sign
 anyone in without Google, on purpose — a shipped auth bypass is one of the things
 that went wrong in #13.
 
-`wrangler.jsonc` carries a placeholder `database_id`. Local dev does not need it;
-the first remote deploy does — create the database with `wrangler d1 create
-ruokalista` and paste the UUID in.
+The local D1 database is keyed by the `database_id` in `wrangler.jsonc`. Change
+that id and local dev silently points at a different, empty database — the
+symptom is `no such table: member`. Re-run `migrate:local` and `seed:local`.
+
+## Cloudflare
+
+Live at https://ruokalista.eerovil.workers.dev, D1 database `ruokalista`
+(`f81fabeb-…`), `SESSION_SECRET` set as a Worker secret.
+
+`scripts/cloudflare-setup.sh` does the whole setup in one command and is safe to
+re-run. It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; the token is
+handed over one command at a time and may be single-use, which is why the script
+does everything in one run and keeps going after a failed step instead of
+abandoning the rest.
 
 ## One fetch handler
 
@@ -50,7 +61,14 @@ This is the shape the closed attempt got wrong, so it is written down.
 
 Every route that touches household data is wrapped in `requireMember`
 (`src/auth.ts`), and every query below it takes the member's `household_id` as a
-parameter. There is no other way in.
+parameter. There is no other way in. Another household's record is a 404, not a
+403 — whether it exists is not this household's business.
+
+## HTML
+
+`src/html.ts` holds the one shell and the `html` tagged template, which escapes
+every interpolated value. `raw()` is the only way past that escaping, so it is
+also the only thing to check when reviewing for injection.
 
 ## Agent skills
 
