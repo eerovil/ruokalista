@@ -32,6 +32,27 @@ export async function findMemberById(
   return row === null ? null : toMember(row);
 }
 
+/**
+ * Matched on Google's stable account id, never on email — an email can be
+ * reassigned, and the spec is explicit that it is shown but never used to match.
+ *
+ * No row means no entry. There is no signup path anywhere in the app, so this
+ * returning null is the wall a stranger hits, not a reason to create anything.
+ */
+export async function findMemberByGoogleSub(
+  db: D1Database,
+  googleSub: string,
+): Promise<Member | null> {
+  const row = await db
+    .prepare(
+      "SELECT id, household_id, display_name, email FROM member WHERE google_sub = ?",
+    )
+    .bind(googleSub)
+    .first<MemberRow>();
+
+  return row === null ? null : toMember(row);
+}
+
 function toMember(row: MemberRow): Member {
   return {
     id: row.id,

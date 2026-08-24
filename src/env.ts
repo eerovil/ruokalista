@@ -11,4 +11,12 @@ export interface Env {
    * because an unconfigured deployment must refuse requests rather than crash.
    */
   SESSION_SECRET?: string;
+
+  /**
+   * Google OAuth, set as Worker secrets. Optional in the type because a
+   * deployment without them must say sign-in is not configured rather than
+   * crash — and must not let anyone in.
+   */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
 }

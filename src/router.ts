@@ -1,4 +1,4 @@
-import type { Env } from "./env";
+import type { Env } from "./env.ts";
 
 /**
  * The one router. Every request the Worker answers is matched here and nowhere

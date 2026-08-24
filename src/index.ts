@@ -1,13 +1,19 @@
-import { requireMember } from "./auth";
-import type { Env } from "./env";
-import { listIngredients } from "./ingredients";
+import { requireMember, requireMemberScreen } from "./auth.ts";
+import type { Env } from "./env.ts";
+import { listIngredients } from "./ingredients.ts";
 import {
   apiListRecipes,
   apiShowRecipe,
   recipeListScreen,
   recipeScreen,
-} from "./recipes";
-import { Router, type RouteContext } from "./router";
+} from "./recipes.ts";
+import { Router, type RouteContext } from "./router.ts";
+import {
+  completeSignIn,
+  signInScreen,
+  signOut,
+  startSignIn,
+} from "./signin.ts";
 
 /**
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
@@ -21,8 +27,12 @@ const router = new Router()
   // The week screen takes over "/" once it exists; until then the recipe list
   // is the only way in.
   .get("/", () => new Response(null, { status: 302, headers: { Location: "/recipes" } }))
-  .get("/recipes", requireMember(recipeListScreen))
-  .get("/recipes/:id", requireMember(recipeScreen))
+  .get("/signin", signInScreen)
+  .get("/auth/google", startSignIn)
+  .get("/auth/google/callback", completeSignIn)
+  .post("/auth/signout", signOut)
+  .get("/recipes", requireMemberScreen(recipeListScreen))
+  .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
   .get("/api/ingredients", requireMember(listIngredients));

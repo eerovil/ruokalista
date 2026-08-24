@@ -2,3 +2,9 @@
 # Any long random string will do locally:
 #   openssl rand -base64 32
 SESSION_SECRET="replace-me-with-a-long-random-string"
+
+# From Google Cloud Console → APIs & Services → Credentials → OAuth client ID
+# (Web application). Authorised redirect URI must be exactly
+# <origin>/auth/google/callback
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
