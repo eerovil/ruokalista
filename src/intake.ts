@@ -142,10 +142,10 @@ async function callAnthropic(env: StructureEnv, systemPrompt: string, sourceRout
     body: JSON.stringify({ model, max_tokens: 5000, system: systemPrompt, messages: [{ role: "user", content }] })
   });
   if (!response.ok) throw new Error(`Mallipalvelu palautti virheen ${response.status}.`);
-  const payload = await response.json();
-  const text = extractTextResponse(payload);
-  if (!text) throw new Error("Mallipalvelu ei palauttanut tekstiä.");
   try {
+    const payload = await response.json();
+    const text = extractTextResponse(payload);
+    if (!text) throw new Error("Mallipalvelu ei palauttanut tekstiä.");
     return validateDraft(JSON.parse(text));
   } catch (error) {
     throw new DraftShapeError(error instanceof Error ? error.message : "Mallin vastaus ei kelvannut.");
@@ -276,8 +276,13 @@ export async function saveCorrectedDraft(
       await db.batch(statements);
     } catch (error) {
       // The recipe row is already committed, so drop it rather than leave a
-      // recipe with no steps and no ingredient lines.
-      await db.prepare(`DELETE FROM recipe WHERE id = ? AND household_id = ?`).bind(recipeInsert.id, householdId).run();
+      // recipe with no steps and no ingredient lines. A failure here must not
+      // replace the error that actually caused the save to fail.
+      try {
+        await db.prepare(`DELETE FROM recipe WHERE id = ? AND household_id = ?`).bind(recipeInsert.id, householdId).run();
+      } catch {
+        // keep the original error
+      }
       throw error;
     }
   }
