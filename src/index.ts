@@ -1,4 +1,15 @@
-import { addDays, buildWeek, isoDate, loadWeek, mondayOf, parseIsoDate, type MealEntryRow } from "./week";
+import {
+  addDays,
+  addMealEntry,
+  buildWeek,
+  deleteMealEntry,
+  isoDate,
+  loadWeek,
+  mondayOf,
+  parseIsoDate,
+  updateMealEntryPortions,
+  type MealEntryRow
+} from "./week";
 import { formatIngredientLine, getRecipe, listRecipes } from "./recipes";
 
 interface Env {
@@ -20,6 +31,10 @@ function html(body: string, status = 200): Response {
       "cache-control": "no-store"
     }
   });
+}
+
+function redirect(location: string): Response {
+  return new Response(null, { status: 303, headers: { location } });
 }
 
 function escapeHtml(value: string): string {
@@ -52,13 +67,16 @@ function shell(title: string, body: string): string {
     .week-nav { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .week-nav a, .button { text-decoration: none; padding: .65rem .8rem; border: 1px solid #d3d3cc; border-radius: .65rem; background: white; }
     .week-nav a:last-child { text-align: right; }
-    .week-nav strong { text-align: center; font-size: .9rem; }
     .day, .card, .notice { background: white; border: 1px solid #deded7; border-radius: .8rem; margin: .75rem 0; overflow: hidden; }
     .day h2 { margin: 0; padding: .8rem 1rem; font-size: 1rem; background: #efefe9; }
     .slot { display: grid; grid-template-columns: 5rem 1fr; gap: .7rem; padding: .8rem 1rem; border-top: 1px solid #ecece6; }
     .slot-name { font-size: .85rem; font-weight: 700; color: #555; padding-top: .15rem; }
-    .meal { display: flex; justify-content: space-between; gap: 1rem; }
-    .meal + .meal { margin-top: .45rem; }
+    .meal { display: grid; grid-template-columns: 1fr auto; gap: .4rem .7rem; align-items: center; }
+    .meal + .meal { margin-top: .7rem; padding-top: .7rem; border-top: 1px solid #ecece6; }
+    .meal-actions { grid-column: 1 / -1; display: flex; gap: .4rem; align-items: center; }
+    .meal-actions form { display: flex; gap: .35rem; align-items: center; margin: 0; }
+    .meal-actions input[type="number"] { width: 5rem; padding: .45rem .5rem; }
+    .meal-actions button { padding: .45rem .6rem; }
     .portions { white-space: nowrap; color: #666; }
     .empty { color: #888; text-decoration: none; display: block; min-height: 1.5rem; }
     .notice, .card { padding: 1rem; }
@@ -67,7 +85,8 @@ function shell(title: string, body: string): string {
     .recipe-list li:first-child { border-top: 0; }
     .recipe-list a { font-weight: 650; }
     .meta { color: #666; font-size: .86rem; margin-top: .2rem; }
-    .search { display: flex; gap: .5rem; margin: .7rem 0 1rem; }
+    .search, .stack-form { display: flex; gap: .5rem; margin: .7rem 0 1rem; }
+    .stack-form { flex-direction: column; align-items: stretch; }
     input[type="search"], input[type="number"] { min-width: 0; width: 100%; padding: .7rem .8rem; border: 1px solid #c9c9c2; border-radius: .6rem; background: white; font: inherit; }
     button { padding: .7rem .9rem; border: 1px solid #c9c9c2; border-radius: .6rem; background: #efefe9; font: inherit; cursor: pointer; }
     .ingredients { list-style: none; padding: 0; }
@@ -95,16 +114,31 @@ function appHeader(member: MemberRow): string {
     </nav>`;
 }
 
+function weekHref(date: string): string {
+  const parsed = parseIsoDate(date);
+  return parsed ? `/?week=${isoDate(mondayOf(parsed))}` : "/";
+}
+
 function renderMeals(entries: MealEntryRow[], date: string, slot: "lunch" | "dinner"): string {
-  if (entries.length === 0) {
-    return `<a class="empty" href="/recipes/pick?date=${date}&slot=${slot}">+ Lisää ruoka</a>`;
-  }
+  const addLink = `<a class="empty" href="/recipes/pick?date=${date}&slot=${slot}">+ Lisää ruoka</a>`;
+  if (entries.length === 0) return addLink;
 
   return entries.map((entry) => `
     <div class="meal">
       <a href="/recipes/${entry.recipe_id}">${escapeHtml(entry.recipe_title)}</a>
       <span class="portions">${entry.portions} ann.</span>
-    </div>`).join("");
+      <div class="meal-actions">
+        <form method="post" action="/meal-entries/${entry.id}/portions">
+          <input type="hidden" name="return_to" value="${weekHref(entry.date)}">
+          <input type="number" name="portions" min="1" step="1" required value="${entry.portions}" aria-label="Annosmäärä">
+          <button type="submit">Päivitä</button>
+        </form>
+        <form method="post" action="/meal-entries/${entry.id}/delete">
+          <input type="hidden" name="return_to" value="${weekHref(entry.date)}">
+          <button type="submit">Poista</button>
+        </form>
+      </div>
+    </div>`).join("") + `<div style="margin-top:.65rem">${addLink}</div>`;
 }
 
 async function resolveDevMember(env: Env): Promise<MemberRow | null> {
@@ -174,6 +208,68 @@ async function renderRecipeList(request: Request, env: Env, member: MemberRow): 
   `));
 }
 
+async function renderRecipePicker(request: Request, env: Env, member: MemberRow): Promise<Response> {
+  const url = new URL(request.url);
+  const dateValue = url.searchParams.get("date");
+  const date = parseIsoDate(dateValue);
+  const slot = url.searchParams.get("slot");
+  if (!date || (slot !== "lunch" && slot !== "dinner")) {
+    return html(shell("Virhe", `${appHeader(member)}<div class="notice">Päivä tai ateria-aika puuttuu.</div>`), 400);
+  }
+
+  const dateText = isoDate(date);
+  const search = url.searchParams.get("q") ?? "";
+  const selectedRecipeId = Number(url.searchParams.get("recipe"));
+  const selected = Number.isInteger(selectedRecipeId) && selectedRecipeId > 0
+    ? await getRecipe(env.DB, member.household_id, selectedRecipeId)
+    : null;
+
+  if (selected) {
+    const defaultPortions = selected.recipe.yield_portions;
+    return html(shell("Lisää ruoka", `
+      ${appHeader(member)}
+      <p><a href="/recipes/pick?date=${dateText}&slot=${slot}">← Valitse toinen resepti</a></p>
+      <h2>${escapeHtml(selected.recipe.title)}</h2>
+      <section class="card">
+        <form class="stack-form" method="post" action="/meal-entries">
+          <input type="hidden" name="date" value="${dateText}">
+          <input type="hidden" name="slot" value="${slot}">
+          <input type="hidden" name="recipe_id" value="${selected.recipe.id}">
+          <label>Annosmäärä
+            <input type="number" name="portions" min="1" step="1" required ${defaultPortions === null ? "" : `value="${defaultPortions}"`}>
+          </label>
+          ${defaultPortions === null ? `<p class="muted">Reseptillä ei ole annosmäärää. Syötä määrä ennen lisäämistä.</p>` : ""}
+          <button type="submit">Lisää ${slot === "lunch" ? "lounaalle" : "päivälliselle"}</button>
+        </form>
+      </section>
+    `));
+  }
+
+  const recipes = await listRecipes(env.DB, member.household_id, search);
+  const querySuffix = `date=${dateText}&slot=${slot}`;
+  const rows = recipes.length === 0
+    ? `<p class="muted">${search ? "Hakua vastaavia reseptejä ei löytynyt." : "Reseptejä ei ole vielä."}</p>`
+    : `<ul class="recipe-list">${recipes.map((recipe) => `
+        <li>
+          <a href="/recipes/pick?${querySuffix}&recipe=${recipe.id}">${escapeHtml(recipe.title)}</a>
+          <div class="meta">${recipe.yield_portions === null ? "Annosmäärä ei tiedossa" : `${recipe.yield_portions} annosta`}</div>
+        </li>`).join("")}</ul>`;
+
+  return html(shell("Valitse resepti", `
+    ${appHeader(member)}
+    <p><a href="${weekHref(dateText)}">← Takaisin viikkoon</a></p>
+    <h2>Valitse resepti</h2>
+    <p class="meta">${date.getUTCDate()}.${date.getUTCMonth() + 1}.${date.getUTCFullYear()} · ${slot === "lunch" ? "lounas" : "päivällinen"}</p>
+    <form class="search" method="get" action="/recipes/pick">
+      <input type="hidden" name="date" value="${dateText}">
+      <input type="hidden" name="slot" value="${slot}">
+      <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Hae nimellä" aria-label="Hae reseptejä">
+      <button type="submit">Hae</button>
+    </form>
+    <section class="card">${rows}</section>
+  `));
+}
+
 async function renderRecipeDetail(env: Env, member: MemberRow, recipeId: number): Promise<Response> {
   const detail = await getRecipe(env.DB, member.household_id, recipeId);
   if (!detail) return html(shell("404", `${appHeader(member)}<h2>Reseptiä ei löytynyt</h2>`), 404);
@@ -210,6 +306,46 @@ async function renderRecipeDetail(env: Env, member: MemberRow, recipeId: number)
   `));
 }
 
+async function handleAddMealEntry(request: Request, env: Env, member: MemberRow): Promise<Response> {
+  const form = await request.formData();
+  const dateText = String(form.get("date") ?? "");
+  const date = parseIsoDate(dateText);
+  const slot = String(form.get("slot") ?? "");
+  const recipeId = Number(form.get("recipe_id"));
+  const portions = Number(form.get("portions"));
+
+  if (!date || (slot !== "lunch" && slot !== "dinner") || !Number.isInteger(recipeId) || recipeId <= 0 || !Number.isInteger(portions) || portions <= 0) {
+    return html(shell("Virhe", `${appHeader(member)}<div class="notice">Aterian tiedot eivät kelpaa.</div>`), 400);
+  }
+
+  const added = await addMealEntry(env.DB, member.household_id, member.id, isoDate(date), slot, recipeId, portions);
+  if (!added) return html(shell("404", `${appHeader(member)}<div class="notice">Reseptiä ei löytynyt.</div>`), 404);
+  return redirect(weekHref(isoDate(date)));
+}
+
+function safeReturnTo(value: FormDataEntryValue | null): string {
+  const text = typeof value === "string" ? value : "";
+  return /^\/\?week=\d{4}-\d{2}-\d{2}$/.test(text) ? text : "/";
+}
+
+async function handleUpdatePortions(request: Request, env: Env, member: MemberRow, mealEntryId: number): Promise<Response> {
+  const form = await request.formData();
+  const portions = Number(form.get("portions"));
+  if (!Number.isInteger(portions) || portions <= 0) {
+    return html(shell("Virhe", `${appHeader(member)}<div class="notice">Annosmäärän pitää olla positiivinen kokonaisluku.</div>`), 400);
+  }
+  const updated = await updateMealEntryPortions(env.DB, member.household_id, mealEntryId, portions);
+  if (!updated) return html(shell("404", `${appHeader(member)}<div class="notice">Ateriaa ei löytynyt.</div>`), 404);
+  return redirect(safeReturnTo(form.get("return_to")));
+}
+
+async function handleDeleteMealEntry(request: Request, env: Env, member: MemberRow, mealEntryId: number): Promise<Response> {
+  const form = await request.formData();
+  const deleted = await deleteMealEntry(env.DB, member.household_id, mealEntryId);
+  if (!deleted) return html(shell("404", `${appHeader(member)}<div class="notice">Ateriaa ei löytynyt.</div>`), 404);
+  return redirect(safeReturnTo(form.get("return_to")));
+}
+
 function unauthorized(): Response {
   return html(shell("Kirjaudu", `
     <h1>Ruokalista</h1>
@@ -240,18 +376,27 @@ export default {
       return renderRecipeList(request, env, member);
     }
 
+    if (request.method === "GET" && url.pathname === "/recipes/pick") {
+      return renderRecipePicker(request, env, member);
+    }
+
     const recipeMatch = request.method === "GET" ? url.pathname.match(/^\/recipes\/(\d+)$/) : null;
     if (recipeMatch) {
       return renderRecipeDetail(env, member, Number(recipeMatch[1]));
     }
 
-    if (request.method === "GET" && url.pathname === "/recipes/pick") {
-      return html(shell("Valitse resepti", `
-        ${appHeader(member)}
-        <h2>Valitse resepti</h2>
-        <p class="muted">Reseptivalitsin rakennetaan seuraavaksi.</p>
-        <p><a href="/">← Takaisin viikkoon</a></p>
-      `));
+    if (request.method === "POST" && url.pathname === "/meal-entries") {
+      return handleAddMealEntry(request, env, member);
+    }
+
+    const portionsMatch = request.method === "POST" ? url.pathname.match(/^\/meal-entries\/(\d+)\/portions$/) : null;
+    if (portionsMatch) {
+      return handleUpdatePortions(request, env, member, Number(portionsMatch[1]));
+    }
+
+    const deleteMatch = request.method === "POST" ? url.pathname.match(/^\/meal-entries\/(\d+)\/delete$/) : null;
+    if (deleteMatch) {
+      return handleDeleteMealEntry(request, env, member, Number(deleteMatch[1]));
     }
 
     return html(shell("404", `${appHeader(member)}<h2>404</h2><p>Sivua ei löytynyt.</p>`), 404);
