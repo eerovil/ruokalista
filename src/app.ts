@@ -1,4 +1,5 @@
 import baseWorker from "./index";
+import { authConfigured, clearSessionCookie, finishGoogleAuth, readSessionMember, startGoogleAuth, type AuthMember } from "./auth";
 import { listIngredientChoices, saveCorrectedDraft, structureRecipe, validateCorrectedDraft } from "./intake";
 
 interface Env {
@@ -6,18 +7,21 @@ interface Env {
   DEV_MEMBER_ID?: string;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  SESSION_SECRET?: string;
 }
 
-interface MemberRow {
-  id: number;
-  household_id: number;
-  display_name: string;
-}
+type MemberRow = AuthMember;
 
 async function resolveDevMember(env: Env): Promise<MemberRow | null> {
   if (!env.DEV_MEMBER_ID || !/^\d+$/.test(env.DEV_MEMBER_ID)) return null;
   return env.DB.prepare(`SELECT id, household_id, display_name FROM member WHERE id = ?`)
     .bind(Number(env.DEV_MEMBER_ID)).first<MemberRow>();
+}
+
+async function resolveMember(request: Request, env: Env): Promise<MemberRow | null> {
+  return await readSessionMember(request, env) ?? await resolveDevMember(env);
 }
 
 function escapeHtml(value: string): string {
@@ -28,14 +32,21 @@ function jsonScript(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
+function signInPage(env: Env): Response {
+  const action = authConfigured(env)
+    ? `<a class="button" href="/auth/google">Kirjaudu Googlella</a>`
+    : `<p>Google-kirjautumisen asetuksia ei ole vielä määritetty.</p>`;
+  return new Response(`<!doctype html><html lang="fi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kirjaudu · Ruokalista</title><style>:root{font-family:system-ui,sans-serif;background:#f6f6f2;color:#1d1d1f}main{width:min(32rem,100%);margin:auto;padding:2rem 1rem}.card{background:white;border:1px solid #deded7;border-radius:.8rem;padding:1.2rem}.button{display:inline-block;padding:.7rem 1rem;border:1px solid #c9c9c2;border-radius:.6rem;background:#efefe9;color:inherit;text-decoration:none}</style></head><body><main><h1>Ruokalista</h1><div class="card"><p>Kirjaudu kotitalouden Google-tilillä.</p>${action}</div></main></body></html>`, { status: 401, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
 function intakePage(member: MemberRow, ingredients: Array<{ id: number; name: string }>): Response {
   const page = `<!doctype html>
 <html lang="fi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Lisää resepti · Ruokalista</title>
 <style>
-:root{font-family:system-ui,sans-serif;color:#1d1d1f;background:#f6f6f2}*{box-sizing:border-box}body{margin:0}main{width:min(48rem,100%);margin:auto;padding:1rem}a{color:inherit}.nav{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1rem}.card,.line,.step{background:white;border:1px solid #deded7;border-radius:.8rem;padding:1rem;margin:.75rem 0}.stack{display:flex;flex-direction:column;gap:.65rem}textarea,input,select,button{font:inherit}textarea,input,select{width:100%;padding:.65rem;border:1px solid #c9c9c2;border-radius:.55rem;background:white}textarea{min-height:10rem}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}.row-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.55rem}button{padding:.6rem .8rem;border:1px solid #c9c9c2;border-radius:.55rem;background:#efefe9}.primary{font-weight:700}.muted{color:#666}.notice{padding:.8rem;border-radius:.6rem;background:#fff4ce}.hidden{display:none}@media(max-width:34rem){.grid{grid-template-columns:1fr}}
+:root{font-family:system-ui,sans-serif;color:#1d1d1f;background:#f6f6f2}*{box-sizing:border-box}body{margin:0}main{width:min(48rem,100%);margin:auto;padding:1rem}a{color:inherit}.nav{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1rem}.card,.line,.step{background:white;border:1px solid #deded7;border-radius:.8rem;padding:1rem;margin:.75rem 0}.stack{display:flex;flex-direction:column;gap:.65rem}textarea,input,select,button{font:inherit}textarea,input,select{width:100%;padding:.65rem;border:1px solid #c9c9c2;border-radius:.55rem;background:white}textarea{min-height:10rem}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}.row-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.55rem}button{padding:.6rem .8rem;border:1px solid #c9c9c2;border-radius:.55rem;background:#efefe9}.primary{font-weight:700}.muted{color:#666}.hidden{display:none}@media(max-width:34rem){.grid{grid-template-columns:1fr}}
 </style></head><body><main>
-<h1>Ruokalista</h1><div class="nav"><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/ingredients">Ainekset</a><a href="/settings">Asetukset</a></div>
+<h1>Ruokalista</h1><div class="nav"><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a><a href="/ingredients">Ainekset</a><a href="/settings">Asetukset</a><form method="post" action="/auth/signout" style="margin:0"><button type="submit">Kirjaudu ulos</button></form></div>
 <h2>Lisää resepti</h2><p class="muted">Kirjautuneena: ${escapeHtml(member.display_name)}</p>
 <section class="card" id="source-card"><div class="stack">
 <label>Liitä reseptin teksti<textarea id="source-text" placeholder="Liitä resepti tähän"></textarea></label>
@@ -112,13 +123,22 @@ async function handleSave(request: Request, env: Env, member: MemberRow): Promis
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/auth/google") return startGoogleAuth(request, env);
+    if (request.method === "GET" && url.pathname === "/auth/google/callback") return finishGoogleAuth(request, env);
+    if (request.method === "POST" && url.pathname === "/auth/signout") {
+      return new Response(null, { status: 303, headers: { location: "/", "set-cookie": clearSessionCookie() } });
+    }
+
+    const member = await resolveMember(request, env);
+    if (!member) return signInPage(env);
+
     if (url.pathname === "/intake" || url.pathname === "/api/intake/structure" || (url.pathname === "/api/recipes" && request.method === "POST")) {
-      const member = await resolveDevMember(env);
-      if (!member) return Response.json({ error: "Kirjautuminen vaaditaan." }, { status: 401 });
       if (request.method === "GET" && url.pathname === "/intake") return intakePage(member, await listIngredientChoices(env.DB, member.household_id));
       if (request.method === "POST" && url.pathname === "/api/intake/structure") return handleStructure(request, env, member);
       if (request.method === "POST" && url.pathname === "/api/recipes") return handleSave(request, env, member);
     }
-    return baseWorker.fetch(request, env);
+
+    const delegatedEnv: Env = { ...env, DEV_MEMBER_ID: String(member.id) };
+    return baseWorker.fetch(request, delegatedEnv);
   }
 } satisfies ExportedHandler<Env>;
