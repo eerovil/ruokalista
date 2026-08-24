@@ -51,23 +51,52 @@ grep -q "$database_id" wrangler.jsonc \
   || { echo "failed to write database_id into wrangler.jsonc" >&2; exit 1; }
 echo "    database_id written"
 
-echo "==> 3/5  remote migrations"
-wrangler d1 migrations apply "$DATABASE_NAME" --remote
+# From here on a failing step must not abandon the ones after it: the token may
+# be good for a single run, so the script gets as far as it can and reports what
+# did not happen, rather than stopping at the first stumble.
+set +e
+failures=""
+note_failure() { failures="${failures}  - $1"$'\n'; }
 
-echo "==> 4/5  SESSION_SECRET"
+echo "==> 3/5  remote migrations"
+wrangler d1 migrations apply "$DATABASE_NAME" --remote \
+  || note_failure "remote migrations"
+
+# Deploy comes before the secret because `wrangler secret put` needs the Worker
+# to exist; on a first run it does not until this deploy creates it. The Worker
+# is briefly live without SESSION_SECRET, which is the 503 path, not an open one.
+echo "==> 4/5  deploy"
+deploy_log=$(mktemp)
+wrangler deploy 2>&1 | tee "$deploy_log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || note_failure "deploy"
+
+echo "==> 5/5  SESSION_SECRET"
 if [ "$ROTATE_SESSION_SECRET" = "1" ] \
    || ! wrangler secret list 2>/dev/null | grep -q SESSION_SECRET; then
   # Generated here and never printed. Rotating it signs every member out, which
   # is the only revocation the app has.
-  openssl rand -base64 32 | tr -d '\n' | wrangler secret put SESSION_SECRET
-  echo "    set"
+  openssl rand -base64 32 | tr -d '\n' | wrangler secret put SESSION_SECRET \
+    && echo "    set" \
+    || note_failure "SESSION_SECRET"
 else
   echo "    already set (ROTATE_SESSION_SECRET=1 to replace it)"
 fi
 
-echo "==> 5/5  deploy"
-wrangler deploy
+url=$(sed 's/\x1b\[[0-9;]*m//g' "$deploy_log" \
+       | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
+rm -f "$deploy_log"
 
 echo
-echo "Done. The Worker is live; only /health is reachable until Google sign-in"
-echo "exists, and the remote database has no household or member rows yet."
+if [ -n "$url" ]; then
+  echo "Live at $url"
+  echo "  /health   -> $(curl -s -o /dev/null -w '%{http_code}' "$url/health")"
+  echo "  protected -> $(curl -s -o /dev/null -w '%{http_code}' "$url/api/ingredients")"
+fi
+
+if [ -n "$failures" ]; then
+  printf 'Did not complete:\n%s' "$failures"
+  exit 1
+fi
+
+echo "Done. Only /health is reachable until Google sign-in exists, and the"
+echo "remote database has no household or member rows yet."
