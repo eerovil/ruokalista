@@ -1,8 +1,8 @@
-import { problem } from "./auth";
-import { html, page, type Raw } from "./html";
-import type { Member } from "./members";
-import { formatMeasurement, type Measurement } from "./quantities";
-import type { RouteContext } from "./router";
+import { problem } from "./auth.ts";
+import { html, page, type Raw } from "./html.ts";
+import type { Member } from "./members.ts";
+import { formatMeasurement, type Measurement } from "./quantities.ts";
+import type { RouteContext } from "./router.ts";
 
 /**
  * Reading the recipe store: the list and one recipe. Both the screens and the

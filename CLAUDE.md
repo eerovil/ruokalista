@@ -64,6 +64,30 @@ Every route that touches household data is wrapped in `requireMember`
 parameter. There is no other way in. Another household's record is a 404, not a
 403 — whether it exists is not this household's business.
 
+## Sign-in
+
+Google is the gate and there is no signup path. A Google account with no `member`
+row is shown the wall and nothing is created.
+
+Which means member rows are a bootstrap problem: a member is matched on Google's
+`sub`, and the only way to learn somebody's `sub` is for them to try to sign in.
+So the wall shows the person their own `sub`, for the household to insert by
+hand:
+
+    INSERT INTO member (household_id, google_sub, display_name, email)
+    VALUES (1, '<sub from the wall>', 'Nimi', 'nimi@example.com');
+
+The Google client id and secret are Worker secrets. Without them the app says
+sign-in is not configured and lets nobody in. The redirect URI is derived from
+the request's origin, so every origin used has to be registered in Google Cloud
+Console — the live one and `http://127.0.0.1:8787` for local work.
+
+## Checks
+
+`npm run check` runs `dev/*.ts` under node's own test runner — no test framework
+as a dependency. `dev/` is outside the Worker's tsconfig on purpose: node's
+globals clash with the Workers ones.
+
 ## HTML
 
 `src/html.ts` holds the one shell and the `html` tagged template, which escapes

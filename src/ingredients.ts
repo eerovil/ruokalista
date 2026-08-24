@@ -1,5 +1,5 @@
-import type { RouteContext } from "./router";
-import type { Member } from "./members";
+import type { RouteContext } from "./router.ts";
+import type { Member } from "./members.ts";
 
 /**
  * An ingredient is a shared record for one foodstuff, referred to by every line

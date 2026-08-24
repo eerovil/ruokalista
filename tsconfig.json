@@ -8,9 +8,14 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
+    // Imports carry the .ts extension so node can run this source directly,
+    // which is what lets dev/ checks import it with no build step.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
+  // dev/ is deliberately outside this: those files run on node, and node's
+  // globals clash with the Workers ones. `npm run check` executes them instead.
   "include": ["src/**/*.ts"]
 }
