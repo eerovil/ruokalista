@@ -1,12 +1,18 @@
+import { requireMember } from "./auth";
 import type { Env } from "./env";
+import { listIngredients } from "./ingredients";
 import { Router, type RouteContext } from "./router";
 
 /**
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
  * this file. Screens and API routes get added to the table below as they land.
+ *
+ * Everything except /health goes through requireMember.
  */
 
-const router = new Router().get("/health", health);
+const router = new Router()
+  .get("/health", health)
+  .get("/api/ingredients", requireMember(listIngredients));
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {

@@ -6,6 +6,7 @@
     "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
     "typecheck": "tsc --noEmit",
     "migrate:local": "wrangler d1 migrations apply ruokalista --local",
+    "seed:local": "wrangler d1 execute ruokalista --local --file dev/seed.sql",
     "migrate:remote": "wrangler d1 migrations apply ruokalista --remote",
     "deploy": "wrangler deploy"
   },

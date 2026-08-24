@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored) for local development.
+# Any long random string will do locally:
+#   openssl rand -base64 32
+SESSION_SECRET="replace-me-with-a-long-random-string"
