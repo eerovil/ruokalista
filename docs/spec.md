@@ -250,9 +250,10 @@ v1, so the list exists partly so the household can see the drift early.
 ## The intake flow, end to end
 
 One import is roughly 2,900 input and 1,400 output tokens against Claude
-Sonnet 5, about $0.018, and a photographed page about 1.5× that (#9, #11). A
-300-recipe lifetime cookbook is a few euros, so this flow is optimised entirely
-for the quality of the draft and the ease of correcting it.
+Sonnet 5 — about $0.03 at standard pricing — and a photographed page about 1.5×
+that (#9, #11). A 300-recipe lifetime cookbook is under ten dollars, so this
+flow is optimised entirely for the quality of the draft and the ease of
+correcting it. Figures are worked through under What it costs to run.
 
 **1. The member gives the app a source.**
 
@@ -372,6 +373,65 @@ signed-in member's household.
 | `POST` | `/api/intake/structure` | Run the model, stream the draft |
 | `GET` | `/api/ingredients` | The shared list with usage counts |
 | `PATCH` | `/api/ingredients/:id` | Rename |
+
+## What it costs to run
+
+Three bills: Cloudflare Workers, D1, and the Anthropic API. Prices checked
+2026-08-24 against each vendor's own pricing page.
+
+**Workers and D1 are free at this size, and it is not close.**
+
+| | Free plan allows | A household uses |
+| --- | --- | --- |
+| Worker requests | 100,000 / day | a few hundred |
+| Worker CPU | 10 ms per invocation | see the note below |
+| D1 rows read | 5,000,000 / day | a few thousand |
+| D1 rows written | 100,000 / day | tens |
+| D1 storage | 5 GB | a few MB — 300 recipes of text |
+
+**The 10 ms CPU limit does not threaten the streaming import**, which is the one
+place you would expect it to. Cloudflare bills *CPU* time, not wall-clock
+duration, and time spent waiting on the model's response is not CPU — the
+Worker is idle while bytes arrive. A 60-second import burns milliseconds of CPU.
+Duration is explicitly not charged and not limited on either plan.
+
+**The Workers Paid plan costs $5/month and buys one thing worth having.** Not
+capacity — D1's Time Travel goes from **7 days of restore history to 30**.
+Decision #7 called Time Travel "the first real answer to backups", and it was
+reasoning from the 7-day figure. Time Travel itself costs nothing on either
+plan. Once the nightly git export (#12) exists, the 30 days matter less; until
+then, $5/month is the cheapest thing in this document that reduces real risk.
+
+**The Anthropic API is the only bill that scales with use**, and it is a
+build-the-cookbook cost rather than a running one. At Sonnet 5's standard
+$3 / $15 per million tokens:
+
+| | Tokens | Cost |
+| --- | --- | --- |
+| One pasted import | ~2,900 in, ~1,400 out | **$0.030** |
+| One photographed page | ~1.5× | **$0.045** |
+| Building a 300-recipe cookbook | | **~$8.90** |
+| Two imports a week, thereafter | | **~$0.25 / month** |
+
+**Decision #11's figures are about to go stale, and this is the one thing here
+that needs a decision.** #11 costed a 300-recipe cookbook at $5.34, which is
+Sonnet 5's *introductory* rate of $2 / $10 per million tokens. That rate ends
+**2026-08-31 — seven days from now**. After it, the same cookbook costs about
+$8.90. Nothing about #11's reasoning changes: quality was the deciding axis and
+a factor-of-1.7 move on a sub-ten-dollar lifetime total does not touch that. But
+the number written on the ticket will be wrong, and anyone importing in bulk is
+better off doing it this week.
+
+**Prompt caching does not help**, confirming #9. A cache write costs 1.25× the
+base rate (5-minute retention) or 2× (1-hour), and a read costs about 0.1×. It
+pays off from the second request inside the retention window. At a few imports a
+week the window has always expired, so every import would pay the write premium
+and never collect a read. Do not add `cache_control` to the import prompt.
+
+**All together, for a household already past the initial import:** $0/month, or
+$5/month with the paid plan, plus well under a euro of model usage. The cost of
+this app is not its running cost — it is the afternoon spent photographing the
+cookbook.
 
 ## What v1 is done when
 
