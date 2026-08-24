@@ -23,23 +23,22 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 wrangler() { ./scripts/node.sh npx wrangler "$@"; }
 
-# wrangler prints a banner before its JSON, so pick the uuid out by shape rather
-# than by parsing the whole document.
-uuid_from() {
-  grep -oE '"uuid"[[:space:]]*:[[:space:]]*"[0-9a-fA-F-]{36}"' \
-    | grep -oiE '[0-9a-f-]{36}' \
-    | head -1
+# Looked up through `d1 list`, which reads no config. `d1 info <name>` resolves
+# the name through wrangler.jsonc's binding, so before the real id is written
+# there it asks Cloudflare about the placeholder and gets a 7404.
+lookup_database_id() {
+  wrangler d1 list --json 2>/dev/null \
+    | ./scripts/node.sh node scripts/pick-d1-id.mjs "$DATABASE_NAME"
 }
 
 echo "==> 1/5  database"
-if info=$(wrangler d1 info "$DATABASE_NAME" --json 2>/dev/null) \
-   && database_id=$(printf '%s' "$info" | uuid_from) \
-   && [ -n "$database_id" ]; then
+database_id=$(lookup_database_id | tr -d '\r\n')
+if [ -n "$database_id" ]; then
   echo "    $DATABASE_NAME exists: $database_id"
 else
   echo "    creating $DATABASE_NAME"
   wrangler d1 create "$DATABASE_NAME" >/dev/null
-  database_id=$(wrangler d1 info "$DATABASE_NAME" --json 2>/dev/null | uuid_from)
+  database_id=$(lookup_database_id | tr -d '\r\n')
   [ -n "$database_id" ] || { echo "could not read the new database id" >&2; exit 1; }
   echo "    created: $database_id"
 fi
