@@ -17,10 +17,25 @@ container:
     ./scripts/node.sh npm install
     ./scripts/node.sh npm run typecheck
     ./scripts/node.sh npm run migrate:local
-    ./scripts/node.sh npm run dev
+    ./scripts/node.sh npm run seed:local
+    ./scripts/node.sh --serve npm run dev
+
+`--serve` publishes port 8787 and belongs only to the dev server. Without it no
+port is published, which is what lets you run a one-off command while the dev
+server is up — publishing an already-bound port kills the container.
 
 The dev server answers on `http://127.0.0.1:8787`. Use the IP, not `localhost` —
 podman's port mapping here is IPv4-only and `localhost` resolves to `::1` first.
+
+Copy `.dev.vars.example` to `.dev.vars` for a local `SESSION_SECRET`. To call a
+protected route before Google sign-in exists, mint a cookie for a seeded member:
+
+    curl -H "Cookie: $(./scripts/node.sh node scripts/mint-cookie.mjs 1)" \
+      http://127.0.0.1:8787/api/ingredients
+
+That script is a developer tool, not a route. The Worker has no way to sign
+anyone in without Google, on purpose — a shipped auth bypass is one of the things
+that went wrong in #13.
 
 `wrangler.jsonc` carries a placeholder `database_id`. Local dev does not need it;
 the first remote deploy does — create the database with `wrangler d1 create
@@ -32,6 +47,10 @@ ruokalista` and paste the UUID in.
 a request is matched. There is one `Env` (`src/env.ts`), bound once and passed
 down; nothing copies or rewrites it, and nothing smuggles identity through it.
 This is the shape the closed attempt got wrong, so it is written down.
+
+Every route that touches household data is wrapped in `requireMember`
+(`src/auth.ts`), and every query below it takes the member's `household_id` as a
+parameter. There is no other way in.
 
 ## Agent skills
 
