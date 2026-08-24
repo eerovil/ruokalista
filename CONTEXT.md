@@ -5,12 +5,21 @@ to be placed on those days.
 
 ## Language
 
-### The menu
+### Who uses it
 
 **Household**:
-The small group of trusted people this app serves. It is a single implicit
-group, never a record: the app has no notion of the individual people in it.
-_Avoid_: Family, team, tenant, user
+A group of people who plan meals together, and the owner of everything they
+create — every record belongs to exactly one. More than one can exist, but
+nothing in the app creates them.
+_Avoid_: Family, team, tenant, account
+
+**Member**:
+One person in a household, known by the Google account they sign in with.
+Everything they create is attributed to them, and every member of a household
+may do everything.
+_Avoid_: User, person, owner, role
+
+### The menu
 
 **Recipe**:
 Instructions for making one dish, held in the recipe store so it can be placed
