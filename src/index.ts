@@ -11,6 +11,8 @@ import {
   type MealEntryRow
 } from "./week";
 import { formatIngredientLine, getRecipe, listRecipes } from "./recipes";
+import { listIngredients, renameIngredient } from "./ingredients";
+import { getHouseholdDefaultPortions, updateHouseholdDefaultPortions } from "./settings";
 
 interface Env {
   DB: D1Database;
@@ -63,7 +65,7 @@ function shell(title: string, body: string): string {
     h1 { margin: .5rem 0 1rem; font-size: 1.8rem; }
     h2 { font-size: 1.15rem; }
     .muted { color: #666; }
-    .top-nav { display: flex; gap: .8rem; margin: -.25rem 0 1rem; font-size: .95rem; }
+    .top-nav { display: flex; gap: .8rem; margin: -.25rem 0 1rem; font-size: .95rem; flex-wrap: wrap; }
     .week-nav { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .week-nav a, .button { text-decoration: none; padding: .65rem .8rem; border: 1px solid #d3d3cc; border-radius: .65rem; background: white; }
     .week-nav a:last-child { text-align: right; }
@@ -87,10 +89,13 @@ function shell(title: string, body: string): string {
     .meta { color: #666; font-size: .86rem; margin-top: .2rem; }
     .search, .stack-form { display: flex; gap: .5rem; margin: .7rem 0 1rem; }
     .stack-form { flex-direction: column; align-items: stretch; }
-    input[type="search"], input[type="number"] { min-width: 0; width: 100%; padding: .7rem .8rem; border: 1px solid #c9c9c2; border-radius: .6rem; background: white; font: inherit; }
+    input[type="search"], input[type="number"], input[type="text"] { min-width: 0; width: 100%; padding: .7rem .8rem; border: 1px solid #c9c9c2; border-radius: .6rem; background: white; font: inherit; }
     button { padding: .7rem .9rem; border: 1px solid #c9c9c2; border-radius: .6rem; background: #efefe9; font: inherit; cursor: pointer; }
     .ingredients { list-style: none; padding: 0; }
     .ingredients li { margin: .55rem 0; }
+    .ingredient-row { display: grid; grid-template-columns: 1fr auto; gap: .4rem .7rem; align-items: center; padding: .7rem 0; border-top: 1px solid #ecece6; }
+    .ingredient-row:first-child { border-top: 0; }
+    .ingredient-row form { grid-column: 1 / -1; display: flex; gap: .45rem; }
     details { color: #666; font-size: .85rem; margin-top: .15rem; }
     .steps li { margin: .6rem 0; padding-left: .25rem; }
     pre.source { white-space: pre-wrap; overflow-wrap: anywhere; background: #f1f1ec; padding: .8rem; border-radius: .6rem; font: inherit; font-size: .9rem; }
@@ -111,6 +116,8 @@ function appHeader(member: MemberRow): string {
     <nav class="top-nav">
       <a href="/">Viikko</a>
       <a href="/recipes">Reseptit</a>
+      <a href="/ingredients">Ainekset</a>
+      <a href="/settings">Asetukset</a>
     </nav>`;
 }
 
@@ -225,7 +232,8 @@ async function renderRecipePicker(request: Request, env: Env, member: MemberRow)
     : null;
 
   if (selected) {
-    const defaultPortions = selected.recipe.yield_portions;
+    const householdDefault = await getHouseholdDefaultPortions(env.DB, member.household_id);
+    const defaultPortions = selected.recipe.yield_portions ?? householdDefault;
     return html(shell("Lisää ruoka", `
       ${appHeader(member)}
       <p><a href="/recipes/pick?date=${dateText}&slot=${slot}">← Valitse toinen resepti</a></p>
@@ -236,9 +244,9 @@ async function renderRecipePicker(request: Request, env: Env, member: MemberRow)
           <input type="hidden" name="slot" value="${slot}">
           <input type="hidden" name="recipe_id" value="${selected.recipe.id}">
           <label>Annosmäärä
-            <input type="number" name="portions" min="1" step="1" required ${defaultPortions === null ? "" : `value="${defaultPortions}"`}>
+            <input type="number" name="portions" min="1" step="1" required value="${defaultPortions}">
           </label>
-          ${defaultPortions === null ? `<p class="muted">Reseptillä ei ole annosmäärää. Syötä määrä ennen lisäämistä.</p>` : ""}
+          ${selected.recipe.yield_portions === null ? `<p class="muted">Reseptillä ei ole annosmäärää, joten käytetään kotitalouden oletusta (${householdDefault}).</p>` : ""}
           <button type="submit">Lisää ${slot === "lunch" ? "lounaalle" : "päivälliselle"}</button>
         </form>
       </section>
@@ -306,6 +314,43 @@ async function renderRecipeDetail(env: Env, member: MemberRow, recipeId: number)
   `));
 }
 
+async function renderIngredients(env: Env, member: MemberRow): Promise<Response> {
+  const ingredients = await listIngredients(env.DB, member.household_id);
+  const rows = ingredients.length === 0
+    ? `<p class="muted">Aineksia ei ole vielä.</p>`
+    : ingredients.map((ingredient) => `
+      <div class="ingredient-row">
+        <strong>${escapeHtml(ingredient.name)}</strong>
+        <span class="meta">${ingredient.recipe_count} reseptissä</span>
+        <form method="post" action="/ingredients/${ingredient.id}/rename">
+          <input type="text" name="name" value="${escapeHtml(ingredient.name)}" required aria-label="Aineksen nimi">
+          <button type="submit">Nimeä uudelleen</button>
+        </form>
+      </div>`).join("");
+
+  return html(shell("Ainekset", `
+    ${appHeader(member)}
+    <h2>Ainekset</h2>
+    <section class="card">${rows}</section>
+  `));
+}
+
+async function renderSettings(env: Env, member: MemberRow): Promise<Response> {
+  const defaultPortions = await getHouseholdDefaultPortions(env.DB, member.household_id);
+  return html(shell("Asetukset", `
+    ${appHeader(member)}
+    <h2>Asetukset</h2>
+    <section class="card">
+      <form class="stack-form" method="post" action="/settings/default-portions">
+        <label>Oletusannosmäärä resepteille, joilla ei ole omaa annosmäärää
+          <input type="number" name="portions" min="1" step="1" required value="${defaultPortions}">
+        </label>
+        <button type="submit">Tallenna</button>
+      </form>
+    </section>
+  `));
+}
+
 async function handleAddMealEntry(request: Request, env: Env, member: MemberRow): Promise<Response> {
   const form = await request.formData();
   const dateText = String(form.get("date") ?? "");
@@ -346,6 +391,27 @@ async function handleDeleteMealEntry(request: Request, env: Env, member: MemberR
   return redirect(safeReturnTo(form.get("return_to")));
 }
 
+async function handleRenameIngredient(request: Request, env: Env, member: MemberRow, ingredientId: number): Promise<Response> {
+  const form = await request.formData();
+  const name = String(form.get("name") ?? "");
+  const result = await renameIngredient(env.DB, member.household_id, ingredientId, name);
+  if (result === "updated") return redirect("/ingredients");
+  if (result === "duplicate") {
+    return html(shell("Virhe", `${appHeader(member)}<div class="notice">Samanniminen aines on jo olemassa.</div><p><a href="/ingredients">← Takaisin aineksiin</a></p>`), 409);
+  }
+  return html(shell("Virhe", `${appHeader(member)}<div class="notice">Ainesta ei löytynyt tai nimi oli tyhjä.</div>`), 400);
+}
+
+async function handleUpdateDefaultPortions(request: Request, env: Env, member: MemberRow): Promise<Response> {
+  const form = await request.formData();
+  const portions = Number(form.get("portions"));
+  const updated = await updateHouseholdDefaultPortions(env.DB, member.household_id, portions);
+  if (!updated) {
+    return html(shell("Virhe", `${appHeader(member)}<div class="notice">Oletusannosmäärän pitää olla positiivinen kokonaisluku.</div>`), 400);
+  }
+  return redirect("/settings");
+}
+
 function unauthorized(): Response {
   return html(shell("Kirjaudu", `
     <h1>Ruokalista</h1>
@@ -380,6 +446,14 @@ export default {
       return renderRecipePicker(request, env, member);
     }
 
+    if (request.method === "GET" && url.pathname === "/ingredients") {
+      return renderIngredients(env, member);
+    }
+
+    if (request.method === "GET" && url.pathname === "/settings") {
+      return renderSettings(env, member);
+    }
+
     const recipeMatch = request.method === "GET" ? url.pathname.match(/^\/recipes\/(\d+)$/) : null;
     if (recipeMatch) {
       return renderRecipeDetail(env, member, Number(recipeMatch[1]));
@@ -397,6 +471,15 @@ export default {
     const deleteMatch = request.method === "POST" ? url.pathname.match(/^\/meal-entries\/(\d+)\/delete$/) : null;
     if (deleteMatch) {
       return handleDeleteMealEntry(request, env, member, Number(deleteMatch[1]));
+    }
+
+    const ingredientRenameMatch = request.method === "POST" ? url.pathname.match(/^\/ingredients\/(\d+)\/rename$/) : null;
+    if (ingredientRenameMatch) {
+      return handleRenameIngredient(request, env, member, Number(ingredientRenameMatch[1]));
+    }
+
+    if (request.method === "POST" && url.pathname === "/settings/default-portions") {
+      return handleUpdateDefaultPortions(request, env, member);
     }
 
     return html(shell("404", `${appHeader(member)}<h2>404</h2><p>Sivua ei löytynyt.</p>`), 404);
