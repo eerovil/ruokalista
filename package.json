@@ -11,7 +11,7 @@
     "db:smoke:local": "wrangler d1 execute ruokalista --local --command=\"SELECT COUNT(*) AS tables FROM sqlite_master WHERE type = 'table' AND name IN ('household','member','recipe','meal_entry');\""
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260824.0",
+    "@cloudflare/workers-types": "^5.20260823.1",
     "typescript": "^5.9.2",
     "wrangler": "^4.31.0"
   }
