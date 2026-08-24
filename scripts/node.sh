@@ -36,10 +36,16 @@ case "${1:-}" in
     ;;
 esac
 
-tty_flags=()
-[ -t 0 ] && tty_flags=(-it)
+# -i always, so a piped stdin reaches the command (wrangler secret put reads it).
+run_flags=(-i)
+[ -t 0 ] && run_flags+=(-t)
 
-exec podman run --rm "${tty_flags[@]}" "${port_flags[@]}" \
+# Forwarded by name, never by value, so a token stays out of the command line.
+cloudflare_flags=()
+[ -n "${CLOUDFLARE_API_TOKEN:-}" ] && cloudflare_flags+=(-e CLOUDFLARE_API_TOKEN)
+[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && cloudflare_flags+=(-e CLOUDFLARE_ACCOUNT_ID)
+
+exec podman run --rm "${run_flags[@]}" "${port_flags[@]}" "${cloudflare_flags[@]}" \
   -v "$repo":/app:Z \
   -v "$container_home":/home/dev:Z \
   -w /app \
