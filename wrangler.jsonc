@@ -5,13 +5,11 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
 
-  // Replace database_id with the real UUID from `wrangler d1 create ruokalista`
-  // before the first remote deploy. Local dev does not need it.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "ruokalista",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "f81fabeb-b38f-453d-8966-dfe52c721341",
       "migrations_dir": "migrations"
     }
   ]
