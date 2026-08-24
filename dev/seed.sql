@@ -35,9 +35,19 @@ VALUES
      || char(10) || '½ (500 g) valkokaali' || char(10) || 'hieman sitruunaruohoa',
    'pasted', 1, 1);
 
+-- No yield_portions: the source never said, so the screen has to admit the
+-- recipe cannot be scaled rather than hide it.
+INSERT INTO recipe
+  (id, household_id, title, yield_portions, source_text, source_route, created_by, updated_by)
+VALUES
+  (2, 1, 'Öljykastike', NULL,
+   'Öljykastike' || char(10) || 'öljyä' || char(10) || 'vettä',
+   'photographed', 1, 1);
+
 INSERT INTO recipe_step (recipe_id, position, text) VALUES
   (1, 1, 'Kuullota kaali öljyssä.'),
-  (1, 2, 'Lisää vesi ja hauduta.');
+  (1, 2, 'Lisää vesi ja hauduta.'),
+  (2, 1, 'Sekoita.');
 
 -- One line of each awkward shape the schema exists to hold: a plain amount, a
 -- range, a second measurement in another unit, and no amount at all.
@@ -47,4 +57,6 @@ VALUES
   (1, 1, 0.5, NULL, 'dl',  NULL, NULL, 1, '½ dl öljyä'),
   (1, 2, 1,   1.5,  'l',   NULL, NULL, 2, '1–1 ja ½ l vettä'),
   (1, 3, 0.5, NULL, 'kpl', 500,  'g',  3, '½ (500 g) valkokaali'),
-  (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa');
+  (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa'),
+  (2, 1, NULL, NULL, NULL, NULL, NULL, 1, 'öljyä'),
+  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä');

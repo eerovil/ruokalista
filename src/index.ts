@@ -1,6 +1,12 @@
 import { requireMember } from "./auth";
 import type { Env } from "./env";
 import { listIngredients } from "./ingredients";
+import {
+  apiListRecipes,
+  apiShowRecipe,
+  recipeListScreen,
+  recipeScreen,
+} from "./recipes";
 import { Router, type RouteContext } from "./router";
 
 /**
@@ -12,6 +18,13 @@ import { Router, type RouteContext } from "./router";
 
 const router = new Router()
   .get("/health", health)
+  // The week screen takes over "/" once it exists; until then the recipe list
+  // is the only way in.
+  .get("/", () => new Response(null, { status: 302, headers: { Location: "/recipes" } }))
+  .get("/recipes", requireMember(recipeListScreen))
+  .get("/recipes/:id", requireMember(recipeScreen))
+  .get("/api/recipes", requireMember(apiListRecipes))
+  .get("/api/recipes/:id", requireMember(apiShowRecipe))
   .get("/api/ingredients", requireMember(listIngredients));
 
 export default {
