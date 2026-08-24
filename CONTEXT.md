@@ -5,6 +5,8 @@ to be placed on those days.
 
 ## Language
 
+### The menu
+
 **Household**:
 The small group of trusted people this app serves. It is a single implicit
 group, never a record: the app has no notion of the individual people in it.
@@ -36,3 +38,20 @@ _Avoid_: Mealtime, course, timeslot
 How many servings of that one recipe are wanted in that one slot. A bare count,
 never a list of who is eating.
 _Avoid_: Servings, yield, headcount
+
+### Getting recipes in
+
+**Intake**:
+Getting a recipe into the store. Only two routes exist: pasting text, or
+photographing a printed page. Nothing is ever fetched from a web address.
+_Avoid_: Import, scraping, ingestion
+
+**Source text**:
+The Finnish text a recipe arrived as, kept forever exactly as it came in —
+whether pasted or read off a photograph. What a recipe is re-derived from.
+_Avoid_: Raw text, original, blob, paste
+
+**Structuring**:
+Turning source text into a recipe's title, ingredients and steps. Done by a
+language model, because no parser for Finnish ingredient lines exists.
+_Avoid_: Parsing, extraction, OCR
