@@ -115,6 +115,29 @@ export async function getRecipe(
   };
 }
 
+export async function deleteRecipe(
+  db: D1Database,
+  householdId: number,
+  recipeId: number
+): Promise<"deleted" | "missing" | "in_use"> {
+  const recipe = await db.prepare(`
+    SELECT id FROM recipe WHERE id = ? AND household_id = ?
+  `).bind(recipeId, householdId).first<{ id: number }>();
+  if (!recipe) return "missing";
+
+  const meal = await db.prepare(`
+    SELECT id FROM meal_entry
+    WHERE household_id = ? AND recipe_id = ?
+    LIMIT 1
+  `).bind(householdId, recipeId).first<{ id: number }>();
+  if (meal) return "in_use";
+
+  await db.prepare(`
+    DELETE FROM recipe WHERE id = ? AND household_id = ?
+  `).bind(recipeId, householdId).run();
+  return "deleted";
+}
+
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
