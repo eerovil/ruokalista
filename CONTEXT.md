@@ -55,3 +55,27 @@ _Avoid_: Raw text, original, blob, paste
 Turning source text into a recipe's title, ingredients and steps. Done by a
 language model, because no parser for Finnish ingredient lines exists.
 _Avoid_: Parsing, extraction, OCR
+
+### What a recipe is made of
+
+**Ingredient line**:
+One line of a recipe: how much, in what unit, of which ingredient — plus the
+sentence it was written as. Quantity and unit may be missing, and are never
+guessed.
+_Avoid_: Ingredient (that is the shared record), row, item
+
+**Ingredient**:
+A shared record for one foodstuff, referred to by every line that uses it. No
+new one exists until a human has approved it, which is what keeps "purjo" and
+"purjosipuli" from both existing.
+_Avoid_: Product, foodstuff, item, ingredient name
+
+**Unit**:
+The measure a quantity is written in — dl, rkl, tl, kpl, g. Kept exactly as the
+recipe stated it; nothing is ever converted between units.
+_Avoid_: Measure, uom
+
+**Yield**:
+How many portions a recipe's own ingredient quantities make. Unknown unless the
+source said so, and a recipe of unknown yield cannot be scaled.
+_Avoid_: Servings, portions (that is the count on a meal entry), makes
