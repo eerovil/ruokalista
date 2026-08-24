@@ -123,6 +123,7 @@ async function handleSave(request: Request, env: Env, member: MemberRow): Promis
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/health") return baseWorker.fetch(request, env);
     if (request.method === "GET" && url.pathname === "/auth/google") return startGoogleAuth(request, env);
     if (request.method === "GET" && url.pathname === "/auth/google/callback") return finishGoogleAuth(request, env);
     if (request.method === "POST" && url.pathname === "/auth/signout") {
