@@ -150,6 +150,9 @@ Notes on the choices, since a schema is where a decision quietly gets reversed:
   The limit: the second measurement cannot itself be a range, and there is no
   room for a third. Neither appears in the sample. A line needing either keeps
   the truth in `source_line` as before.
+
+  This shape goes past what #6 locked, so the reasoning is written up in
+  [ADR-0001](adr/0001-an-ingredient-line-holds-more-than-one-measurement.md).
 - **`unit` is free text**, per #6. No unit table, no conversions, no densities.
 - **`ingredient_id` is NOT NULL.** A line cannot exist pointing at an
   unapproved ingredient — that rule is what stops "purjo" and "purjosipuli"

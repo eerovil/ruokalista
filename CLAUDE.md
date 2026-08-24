@@ -20,6 +20,6 @@ The five canonical triage labels, unchanged: `needs-triage`, `needs-info`,
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`. `CONTEXT.md`
-exists and is the glossary to use; `docs/adr/` does not yet, and gets created
-lazily by `/domain-modeling`. See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`. Both exist —
+`CONTEXT.md` is the glossary to use, and the ADRs record decisions that go past
+what the wayfinder map locked. See `docs/agents/domain.md`.
