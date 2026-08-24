@@ -27,3 +27,9 @@ jobs:
 
       - name: Apply local D1 migrations
         run: npm run db:migrate:local
+
+      - name: Seed local D1
+        run: npm run db:seed:local
+
+      - name: Smoke-check local D1
+        run: npm run db:smoke:local
