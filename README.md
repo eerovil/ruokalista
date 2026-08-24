@@ -8,8 +8,10 @@ on days.
 Nothing is built yet. The expensive-to-reverse decisions have been made and are
 recorded on [the wayfinder map](https://github.com/eerovil/ruokalista/issues/1),
 which indexes them and links to the ticket holding each one's full reasoning.
-`CONTEXT.md` is the glossary those decisions produced. Research notes live on
-unmerged `research/*` branches, linked from their tickets.
+`CONTEXT.md` is the glossary those decisions produced, and `docs/spec.md` turns
+them into the v1 build spec — the D1 schema, the screens, and the intake flow.
+Research notes live on unmerged `research/*` branches, linked from their
+tickets.
 
 In short: a Cloudflare Worker in TypeScript over a D1 database. Recipes get in by
 pasting text or photographing a printed page, and a language model turns either

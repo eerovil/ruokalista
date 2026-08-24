@@ -1,6 +1,9 @@
 # ruokalista
 
-A recipe store. Nothing is implemented yet; the stack is an open decision.
+A recipe store. Nothing is implemented yet. The stack is decided — a Cloudflare
+Worker in TypeScript over D1 — along with everything else expensive to reverse;
+see the wayfinder map (issue #1) for the decisions and `docs/spec.md` for the
+v1 build spec.
 
 ## Agent skills
 
@@ -17,6 +20,6 @@ The five canonical triage labels, unchanged: `needs-triage`, `needs-info`,
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`. Neither exists
-yet — they get created lazily by `/domain-modeling`. See
-`docs/agents/domain.md`.
+Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`. `CONTEXT.md`
+exists and is the glossary to use; `docs/adr/` does not yet, and gets created
+lazily by `/domain-modeling`. See `docs/agents/domain.md`.

@@ -70,7 +70,9 @@ _Avoid_: Parsing, extraction, OCR
 **Ingredient line**:
 One line of a recipe: how much, in what unit, of which ingredient — plus the
 sentence it was written as. Quantity and unit may be missing, and are never
-guessed.
+guessed. A quantity may be a range, and a line may state the same amount twice
+in different units ("½ (500 g) valkokaali"); neither of the two is the primary
+one, and nothing is ever converted between them.
 _Avoid_: Ingredient (that is the shared record), row, item
 
 **Ingredient**:
