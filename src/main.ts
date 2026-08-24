@@ -1,5 +1,5 @@
 import app from "./app";
-import { readSessionMember, type AuthMember } from "./auth";
+import { authConfigured, readSessionMember, type AuthMember } from "./auth";
 import { recipeEditorPage } from "./recipe-editor-page";
 import { updateRecipeFromDraft, validateRecipeEdit } from "./recipe-editor";
 import { deleteRecipe } from "./recipes";
@@ -17,6 +17,8 @@ interface Env {
 async function memberFor(request: Request, env: Env): Promise<AuthMember | null> {
   const session = await readSessionMember(request, env);
   if (session) return session;
+  // Local-development bypass only — see resolveDevMember in app.ts.
+  if (authConfigured(env)) return null;
   if (!env.DEV_MEMBER_ID || !/^\d+$/.test(env.DEV_MEMBER_ID)) return null;
   return env.DB.prepare(`SELECT id, household_id, display_name FROM member WHERE id = ?`).bind(Number(env.DEV_MEMBER_ID)).first<AuthMember>();
 }

@@ -116,6 +116,7 @@ function appHeader(member: MemberRow): string {
     <nav class="top-nav">
       <a href="/">Viikko</a>
       <a href="/recipes">Reseptit</a>
+      <a href="/intake">Lisää resepti</a>
       <a href="/ingredients">Ainekset</a>
       <a href="/settings">Asetukset</a>
     </nav>`;
@@ -299,6 +300,7 @@ async function renderRecipeDetail(env: Env, member: MemberRow, recipeId: number)
     <p><a href="/recipes">← Kaikki reseptit</a></p>
     <h2>${escapeHtml(recipe.title)}</h2>
     <p class="meta">${recipe.yield_portions === null ? "Annosmäärä ei tiedossa" : `${recipe.yield_portions} annosta`} · lisäsi ${escapeHtml(recipe.created_by_name)}</p>
+    <p><a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a></p>
     <section class="card">
       <h3>Ainekset</h3>
       ${ingredientHtml}

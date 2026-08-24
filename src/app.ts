@@ -15,6 +15,9 @@ interface Env {
 type MemberRow = AuthMember;
 
 async function resolveDevMember(env: Env): Promise<MemberRow | null> {
+  // Local-development bypass only: once Google sign-in is configured, a stray
+  // DEV_MEMBER_ID must not open the app to anyone with the URL.
+  if (authConfigured(env)) return null;
   if (!env.DEV_MEMBER_ID || !/^\d+$/.test(env.DEV_MEMBER_ID)) return null;
   return env.DB.prepare(`SELECT id, household_id, display_name FROM member WHERE id = ?`)
     .bind(Number(env.DEV_MEMBER_ID)).first<MemberRow>();

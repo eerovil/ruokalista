@@ -78,6 +78,9 @@ function asNullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : NaN;
 }
 
+/** The model returned something we could not read as a draft. Retryable. */
+class DraftShapeError extends Error {}
+
 function validateDraft(value: unknown): IntakeDraft {
   if (!value || typeof value !== "object") throw new Error("Mallin vastaus ei ollut objekti.");
   const raw = value as Record<string, unknown>;
@@ -142,7 +145,11 @@ async function callAnthropic(env: StructureEnv, systemPrompt: string, sourceRout
   const payload = await response.json();
   const text = extractTextResponse(payload);
   if (!text) throw new Error("Mallipalvelu ei palauttanut tekstiä.");
-  return validateDraft(JSON.parse(text));
+  try {
+    return validateDraft(JSON.parse(text));
+  } catch (error) {
+    throw new DraftShapeError(error instanceof Error ? error.message : "Mallin vastaus ei kelvannut.");
+  }
 }
 
 export async function structureRecipe(
@@ -162,7 +169,7 @@ export async function structureRecipe(
       return { draft, model: env.ANTHROPIC_MODEL ?? "claude-sonnet-5" };
     } catch (error) {
       lastError = error;
-      if (!(error instanceof SyntaxError) && !(error instanceof Error && error.message.startsWith("Mallin vastaus"))) throw error;
+      if (!(error instanceof DraftShapeError)) throw error;
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Reseptin jäsentäminen epäonnistui.");
@@ -264,6 +271,15 @@ export async function saveCorrectedDraft(
     INSERT INTO ingredient_line (recipe_id, position, quantity, quantity_max, unit, alt_quantity, alt_unit, ingredient_id, source_line)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(recipeInsert.id, index + 1, line.quantity, line.quantity_max, line.unit, line.alt_quantity, line.alt_unit, ingredientIds[index], line.source_line)));
-  if (statements.length) await db.batch(statements);
+  if (statements.length) {
+    try {
+      await db.batch(statements);
+    } catch (error) {
+      // The recipe row is already committed, so drop it rather than leave a
+      // recipe with no steps and no ingredient lines.
+      await db.prepare(`DELETE FROM recipe WHERE id = ? AND household_id = ?`).bind(recipeInsert.id, householdId).run();
+      throw error;
+    }
+  }
   return recipeInsert.id;
 }

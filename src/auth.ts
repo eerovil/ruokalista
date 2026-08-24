@@ -42,10 +42,24 @@ function cookies(request: Request): Map<string, string> {
   return result;
 }
 
+async function hmacKey(secret: string, usages: KeyUsage[]): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, usages);
+}
+
 async function hmac(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  const signature = await crypto.subtle.sign("HMAC", await hmacKey(secret, ["sign"]), new TextEncoder().encode(message));
   return base64Url(new Uint8Array(signature));
+}
+
+async function hmacMatches(secret: string, message: string, signature: string): Promise<boolean> {
+  let expected: ArrayBuffer;
+  try {
+    expected = fromBase64Url(signature).slice().buffer as ArrayBuffer;
+  } catch {
+    return false;
+  }
+  // crypto.subtle.verify compares in constant time; `===` on the base64 would not.
+  return crypto.subtle.verify("HMAC", await hmacKey(secret, ["verify"]), expected, new TextEncoder().encode(message));
 }
 
 function secureCookie(name: string, value: string, maxAge: number): string {
@@ -65,7 +79,7 @@ export async function readSessionMember(request: Request, env: AuthEnv): Promise
   if (dot < 1) return null;
   const payload = session.slice(0, dot);
   const signature = session.slice(dot + 1);
-  if (await hmac(env.SESSION_SECRET, payload) !== signature) return null;
+  if (!await hmacMatches(env.SESSION_SECRET, payload, signature)) return null;
   let parsed: { member_id?: unknown; exp?: unknown };
   try {
     parsed = JSON.parse(new TextDecoder().decode(fromBase64Url(payload)));
