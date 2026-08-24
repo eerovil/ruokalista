@@ -1,0 +1,16 @@
+{
+  "name": "ruokalista",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply ruokalista --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260824.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.31.0"
+  }
+}
