@@ -14,6 +14,12 @@ import {
   recipeListScreen,
   recipeScreen,
 } from "./recipes.ts";
+import {
+  apiAddMealEntry,
+  apiChangePortions,
+  apiMenu,
+  apiRemoveMealEntry,
+} from "./menu.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
   completeSignIn,
@@ -21,6 +27,13 @@ import {
   signOut,
   startSignIn,
 } from "./signin.ts";
+import {
+  addEntryForm,
+  changePortionsForm,
+  pickerScreen,
+  removeEntryForm,
+  weekScreen,
+} from "./week-screens.ts";
 
 /**
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
@@ -31,9 +44,15 @@ import {
 
 const router = new Router()
   .get("/health", health)
-  // The week screen takes over "/" once it exists; until then the recipe list
-  // is the only way in.
-  .get("/", () => new Response(null, { status: 302, headers: { Location: "/recipes" } }))
+  .get("/", requireMemberScreen(weekScreen))
+  .get("/picker", requireMemberScreen(pickerScreen))
+  .post("/meal-entries", requireMemberScreen(addEntryForm))
+  .post("/meal-entries/:id/portions", requireMemberScreen(changePortionsForm))
+  .post("/meal-entries/:id/delete", requireMemberScreen(removeEntryForm))
+  .get("/api/menu", requireMember(apiMenu))
+  .post("/api/meal-entries", requireMember(apiAddMealEntry))
+  .patch("/api/meal-entries/:id", requireMember(apiChangePortions))
+  .delete("/api/meal-entries/:id", requireMember(apiRemoveMealEntry))
   .get("/signin", signInScreen)
   .get("/auth/google", startSignIn)
   .get("/auth/google/callback", completeSignIn)
