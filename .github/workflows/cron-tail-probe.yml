@@ -1,0 +1,65 @@
+name: Cron tail probe
+
+on:
+  push:
+    branches:
+      - chatgpt/issue-64-cron-tail-probe
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Observe scheduled backup events without redeploying
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          tail_pid=""
+          cleanup() {
+            if [ -n "$tail_pid" ]; then
+              kill "$tail_pid" 2>/dev/null || true
+              wait "$tail_pid" 2>/dev/null || true
+            fi
+            rm -f "$log"
+          }
+          trap cleanup EXIT
+
+          npx wrangler tail ruokalista --format json --search backup >"$log" 2>&1 &
+          tail_pid=$!
+
+          # The Worker is already deployed with */5. Listen across three full
+          # boundaries. This branch-only workflow performs no deployment.
+          for _ in $(seq 1 180); do
+            if grep -q 'backup.scheduled_failed' "$log"; then
+              cat "$log"
+              echo "observed scheduled backup failure"
+              exit 1
+            fi
+            if grep -q 'backup.completed' "$log"; then
+              cat "$log"
+              echo "observed scheduled backup success"
+              exit 0
+            fi
+            if ! kill -0 "$tail_pid" 2>/dev/null; then
+              cat "$log"
+              echo "wrangler tail exited before a scheduled event was observed"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          cat "$log"
+          echo "no scheduled backup event observed within 15 minutes"
+          exit 1
