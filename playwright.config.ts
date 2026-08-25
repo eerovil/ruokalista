@@ -10,10 +10,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
-  // One retry so a rare flake shows up as "flaky" in the report rather than
-  // failing the run outright. It does not hide anything: Playwright reports
-  // retried tests separately from passing ones.
-  retries: 1,
+  // No retries. The one flake this suite had turned out to be two real faults
+  // — a spec with no reseed, and a tamper that sometimes decoded to the same
+  // bytes — and a retry would have kept both hidden. If something starts
+  // failing intermittently, that is the finding, not the noise.
+  retries: 0,
   workers: 1,
   reporter: process.env["CI"] ? [["list"]] : [["html"], ["list"]],
   timeout: 30_000,
