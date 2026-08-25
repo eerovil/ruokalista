@@ -1,7 +1,0 @@
-ruokalista.vilpponen.fi {
-	reverse_proxy https://ruokalista.eerovil.workers.dev {
-		# Keep Cloudflare routing and upstream TLS bound to the workers.dev host.
-		# Caddy still sends the original browser host in X-Forwarded-Host.
-		header_up Host ruokalista.eerovil.workers.dev
-	}
-}
