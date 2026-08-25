@@ -84,13 +84,20 @@ export async function addMealEntry(
 ): Promise<void> {
   if (!isDate(entry.date)) throw new MenuRefused("Kelvoton päivä.");
   if (!isSlot(entry.slot)) throw new MenuRefused("Kelvoton ateria.");
+  if (!Number.isSafeInteger(entry.recipeId) || entry.recipeId <= 0) {
+    throw new MenuRefused("Tuntematon resepti.");
+  }
   if (!Number.isSafeInteger(entry.portions) || entry.portions <= 0) {
     throw new MenuRefused("Annosmäärän pitää olla vähintään yksi.");
   }
 
-  // A recipe from another household is not on this household's menu.
+  // A recipe from another household is not on this household's menu, and a
+  // part is not a dish of its own. Only parent recipes are plannable.
   const recipe = await db
-    .prepare("SELECT id FROM recipe WHERE id = ? AND household_id = ?")
+    .prepare(
+      `SELECT id FROM recipe
+        WHERE id = ? AND household_id = ? AND parent_id IS NULL`,
+    )
     .bind(entry.recipeId, member.householdId)
     .first<{ id: number }>();
   if (recipe === null) throw new MenuRefused("Tuntematon resepti.");

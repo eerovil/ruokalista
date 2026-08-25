@@ -4,15 +4,26 @@ import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
   emptyLine,
+  FormRefused,
+  lineCountForRendering,
   lineRow,
+  lineValuesFromForm,
+  readLineCount,
   readLines,
   readSteps,
   readWhole,
   SPARE_LINES,
+  stepValuesForRendering,
+  type LineFormValues,
+  type StepFormValues,
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
 import { findRecipe, type Recipe } from "./recipes.ts";
-import { replaceRecipe, SaveRefused } from "./recipe-save.ts";
+import {
+  replaceRecipe,
+  SaveRefused,
+  StaleRecipe,
+} from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -23,6 +34,12 @@ import type { RouteContext } from "./router.ts";
  * record of what actually arrived, and a recipe re-imported on a future model
  * needs exactly that text.
  */
+
+interface EditorAttempt {
+  form: FormData;
+  lineCount: number;
+  revision: number;
+}
 
 /** `GET /recipes/:id/edit` */
 export async function editorScreen(
@@ -47,26 +64,43 @@ export async function saveEditForm(
   const form = await request.formData();
 
   try {
-    await replaceRecipe(env.DB, member, recipe.id, {
+    const expectedRevision = readRevision(form.get("revision"));
+    const lineCount = readLineCount(form.get("lineCount"));
+
+    await replaceRecipe(env.DB, member, recipe.id, expectedRevision, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
       // Never taken from the form: it is the record of what arrived.
       sourceText: recipe.sourceText,
-      sourceRoute: recipe.sourceRoute as "pasted" | "photographed",
+      sourceRoute: recipe.sourceRoute,
       structuredBy: null,
       steps: readSteps(form),
-      lines: readLines(form, Number(form.get("lineCount") ?? 0)),
+      lines: readLines(form, lineCount),
     });
   } catch (error) {
-    if (!(error instanceof SaveRefused)) throw error;
+    if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
+      throw error;
+    }
 
+    const latest = await load(env.DB, member, params["id"]);
+    if (latest === null) return notFound();
+
+    const stale = error instanceof StaleRecipe;
     const ingredients = await ingredientsFor(env.DB, member.householdId);
-    const attempted = await load(env.DB, member, params["id"]);
     return page(
-      `Muokkaa: ${recipe.title}`,
+      `Muokkaa: ${latest.title}`,
       html`<p class="refused">${error.message}</p>
-        ${editorForm(attempted ?? recipe, ingredients)}`,
-      400,
+        ${editorForm(latest, ingredients, {
+          form,
+          lineCount: lineCountForRendering(form),
+          // A stale form must deliberately submit against the version now on
+          // screen. Other validation failures keep their original revision, so
+          // they cannot quietly overwrite an edit made in another tab.
+          revision: stale
+            ? latest.revision
+            : revisionForRendering(form, recipe.revision),
+        })}`,
+      stale ? 409 : 400,
     );
   }
 
@@ -77,10 +111,9 @@ export async function saveEditForm(
 }
 
 /**
- * `POST /recipes/:id/delete` — refused while the recipe is on a menu.
- *
- * The schema would refuse it too: foreign keys are on and meal_entry.recipe_id
- * has no cascade, so the delete fails loudly. This says why instead.
+ * `POST /recipes/:id/delete` — refused while the recipe or one of its parts is
+ * on a menu. Children are deleted before their parent in one D1 batch, because
+ * the self-reference deliberately predates an ON DELETE action.
  */
 export async function deleteRecipeForm(
   { env, params }: RouteContext,
@@ -95,18 +128,15 @@ export async function deleteRecipeForm(
       "Ei voi poistaa",
       html`<h1>Ei voi poistaa</h1>
         <p class="refused">
-          ${recipe.title} on ruokalistalla ${onMenu} kertaa. Poista se ensin
-          viikoilta.
+          ${recipe.title} tai sen osa on ruokalistalla ${onMenu} kertaa. Poista
+          se ensin viikoilta.
         </p>
         <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
       409,
     );
   }
 
-  await env.DB.prepare("DELETE FROM recipe WHERE id = ? AND household_id = ?")
-    .bind(recipe.id, member.householdId)
-    .run();
-
+  await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 303, headers: { Location: "/recipes" } });
 }
 
@@ -120,49 +150,83 @@ export async function apiDeleteRecipe(
 
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
   if (onMenu > 0) {
-    return problem(409, "That recipe is on the menu.");
+    return problem(409, "That recipe or one of its parts is on the menu.");
   }
 
-  await env.DB.prepare("DELETE FROM recipe WHERE id = ? AND household_id = ?")
-    .bind(recipe.id, member.householdId)
-    .run();
-
+  await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 204 });
 }
 
 // ---------------------------------------------------------------- rendering
 
-function editorForm(recipe: Recipe, ingredients: IngredientSummary[]): Raw {
-  const rows: DraftLine[] = [
-    ...recipe.lines.map((line) => ({
-      quantity: line.quantity,
-      quantityMax: line.quantityMax,
-      unit: line.unit,
-      altQuantity: line.altQuantity,
-      altUnit: line.altUnit,
-      ingredientId: idOf(line.ingredient, ingredients),
-      ingredientName: line.ingredient,
-      sourceLine: line.sourceLine,
-      // A saved part is a recipe of its own, so a recipe's own lines never
-      // carry one.
-      section: null,
-    })),
-    ...Array.from({ length: SPARE_LINES }, emptyLine),
-  ];
+function editorForm(
+  recipe: Recipe,
+  ingredients: IngredientSummary[],
+  attempted?: EditorAttempt,
+): Raw {
+  const rows: Array<DraftLine | LineFormValues> = attempted
+    ? Array.from({ length: attempted.lineCount }, (_, index) =>
+        lineValuesFromForm(attempted.form, index),
+      )
+    : [
+        ...recipe.lines.map((line) => ({
+          quantity: line.quantity,
+          quantityMax: line.quantityMax,
+          unit: line.unit,
+          altQuantity: line.altQuantity,
+          altUnit: line.altUnit,
+          ingredientId: idOf(line.ingredient, ingredients),
+          ingredientName: line.ingredient,
+          sourceLine: line.sourceLine,
+          // A saved part is a recipe of its own, so a recipe's own lines never
+          // carry one.
+          section: null,
+        } satisfies DraftLine)),
+        ...Array.from({ length: SPARE_LINES }, emptyLine),
+      ];
+
+  const steps: StepFormValues[] = attempted
+    ? stepValuesForRendering(attempted.form)
+    : [
+        ...recipe.steps.map((text, index) => ({
+          index,
+          position: String(index + 1),
+          text,
+          section: "",
+        })),
+        ...Array.from({ length: 2 }, (_, spare) => {
+          const index = recipe.steps.length + spare;
+          return {
+            index,
+            position: String(index + 1),
+            text: "",
+            section: "",
+          };
+        }),
+      ];
+
+  const title = attempted
+    ? String(attempted.form.get("title") ?? "")
+    : recipe.title;
+  const yieldValue = attempted
+    ? String(attempted.form.get("yield") ?? "")
+    : String(recipe.yieldPortions ?? "");
+  const revision = attempted?.revision ?? recipe.revision;
 
   return html`<h1>Muokkaa reseptiä</h1>
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <input type="hidden" name="lineCount" value="${rows.length}" />
+      <input type="hidden" name="revision" value="${revision}" />
 
       <label for="title">Nimi</label>
-      <input id="title" name="title" value="${recipe.title}" required />
+      <input id="title" name="title" value="${title}" required />
 
       <label for="yield">Annoksia</label>
       <input
         id="yield"
         name="yield"
         inputmode="numeric"
-        value="${recipe.yieldPortions ?? ""}"
+        value="${yieldValue}"
         placeholder="Tyhjä, jos teksti ei kerro"
       />
 
@@ -175,33 +239,18 @@ function editorForm(recipe: Recipe, ingredients: IngredientSummary[]): Raw {
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
-        ${recipe.steps.map(
-          (step, index) => html`<li>
+        ${steps.map(
+          (step) => html`<li>
             <input
-              name="step.${index}.position"
+              name="step.${step.index}.position"
               inputmode="numeric"
-              value="${index + 1}"
+              value="${step.position}"
               aria-label="Järjestys"
               class="position"
             />
-            <textarea name="step.${index}" rows="2">${step}</textarea>
-          </li>`,
-        )}
-        ${Array.from(
-          { length: 2 },
-          (_, spare) => html`<li>
-            <input
-              name="step.${recipe.steps.length + spare}.position"
-              inputmode="numeric"
-              value="${recipe.steps.length + spare + 1}"
-              aria-label="Järjestys"
-              class="position"
-            />
-            <textarea
-              name="step.${recipe.steps.length + spare}"
-              rows="2"
-              placeholder="Uusi vaihe"
-            ></textarea>
+            <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
+              >${step.text}</textarea
+            >
           </li>`,
         )}
       </ol>
@@ -244,15 +293,52 @@ async function countOnMenu(
 ): Promise<number> {
   const row = await db
     .prepare(
-      "SELECT count(*) AS n FROM meal_entry WHERE household_id = ? AND recipe_id = ?",
+      `SELECT count(*) AS n
+         FROM meal_entry
+        WHERE household_id = ?
+          AND recipe_id IN (
+            SELECT id FROM recipe
+             WHERE household_id = ? AND (id = ? OR parent_id = ?)
+          )`,
     )
-    .bind(householdId, recipeId)
+    .bind(householdId, householdId, recipeId, recipeId)
     .first<{ n: number }>();
 
   return row?.n ?? 0;
 }
 
+async function deleteRecipeTree(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare("DELETE FROM recipe WHERE parent_id = ? AND household_id = ?")
+      .bind(recipeId, householdId),
+    db
+      .prepare("DELETE FROM recipe WHERE id = ? AND household_id = ?")
+      .bind(recipeId, householdId),
+  ]);
+}
+
 /** The stored line carries the ingredient's name; the picker needs its id. */
 function idOf(name: string, ingredients: IngredientSummary[]): number | null {
   return ingredients.find((i) => i.name === name)?.id ?? null;
+}
+
+function readRevision(value: FormDataEntryValue | null): number {
+  const revision = Number(String(value ?? "").trim());
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw new FormRefused("Reseptin versio on virheellinen. Lataa sivu uudelleen.");
+  }
+  return revision;
+}
+
+function revisionForRendering(form: FormData, fallback: number): number {
+  try {
+    return readRevision(form.get("revision"));
+  } catch {
+    return fallback;
+  }
 }

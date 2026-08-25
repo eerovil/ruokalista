@@ -29,7 +29,9 @@ export interface RecipeLine extends Measurement {
 
 export interface Recipe extends RecipeSummary {
   sourceText: string;
-  sourceRoute: string;
+  sourceRoute: "pasted" | "photographed";
+  /** Optimistic edit version. Incremented whenever this recipe is changed. */
+  revision: number;
   steps: string[];
   lines: RecipeLine[];
   /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
@@ -87,9 +89,9 @@ export async function recipeSummaries(
 }
 
 interface RecipeRow extends SummaryRow {
-  yield_portions: number | null;
   source_text: string;
-  source_route: string;
+  source_route: "pasted" | "photographed";
+  revision: number;
 }
 
 interface LineRow {
@@ -116,6 +118,7 @@ export async function findRecipe(
               recipe.yield_portions,
               recipe.source_text,
               recipe.source_route,
+              recipe.revision,
               recipe.created_at,
               member.display_name AS created_by
          FROM recipe
@@ -130,9 +133,13 @@ export async function findRecipe(
   const batch = await db.batch<never>([
     db
       .prepare(
-        "SELECT text FROM recipe_step WHERE recipe_id = ? ORDER BY position",
+        `SELECT recipe_step.text
+           FROM recipe_step
+           JOIN recipe ON recipe.id = recipe_step.recipe_id
+          WHERE recipe_step.recipe_id = ? AND recipe.household_id = ?
+          ORDER BY recipe_step.position`,
       )
-      .bind(id),
+      .bind(id, householdId),
     db
       .prepare(
         `SELECT ingredient_line.position,
@@ -144,11 +151,13 @@ export async function findRecipe(
                 ingredient_line.source_line,
                 ingredient.name AS ingredient
            FROM ingredient_line
+           JOIN recipe ON recipe.id = ingredient_line.recipe_id
            JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
-          WHERE ingredient_line.recipe_id = ?
+                          AND ingredient.household_id = recipe.household_id
+          WHERE ingredient_line.recipe_id = ? AND recipe.household_id = ?
           ORDER BY ingredient_line.position`,
       )
-      .bind(id),
+      .bind(id, householdId),
   ]);
 
   const steps = (batch[0]?.results ?? []) as { text: string }[];
@@ -164,6 +173,7 @@ export async function findRecipe(
     yieldPortions: row.yield_portions,
     sourceText: row.source_text,
     sourceRoute: row.source_route,
+    revision: row.revision,
     createdAt: row.created_at,
     createdBy: row.created_by,
     parts,
