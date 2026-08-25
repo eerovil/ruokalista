@@ -21,9 +21,8 @@
     ]
   },
 
-  // Temporary #64 Cron Trigger diagnostic. Keep this deployment untouched until
-  // one authentic scheduled invocation is observed, then restore 17 2 * * *.
-  "triggers": { "crons": ["*/5 * * * *"] },
+  // Nightly offsite backup. Cron Triggers use UTC.
+  "triggers": { "crons": ["17 2 * * *"] },
 
   "d1_databases": [
     {
