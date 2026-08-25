@@ -62,3 +62,52 @@ jobs:
           name: playwright-traces
           path: test-results/
           retention-days: 7
+
+  deploy:
+    # Only on main, and only once the tests have passed. A pull request never
+    # reaches this job, so the token is never available to one — which is what
+    # makes it safe to keep in a public repository's secrets.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+
+    # Nothing else in this workflow should be able to see these.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply any new migrations
+        # Before the deploy, not after: a schema ahead of its code is harmless,
+        # code ahead of its schema is a broken app.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 migrations apply ruokalista --remote
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Check what is actually live
+        # The deploy reporting success is not the same as the app answering.
+        run: |
+          set -e
+          health=$(curl -fsS https://ruokalista.eerovil.workers.dev/health)
+          echo "$health"
+          case "$health" in
+            *'"database":"ok"'*) ;;
+            *) echo "live health is not ok"; exit 1 ;;
+          esac
+          signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
+            https://ruokalista.eerovil.workers.dev/recipes)
+          [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
