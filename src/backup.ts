@@ -314,7 +314,8 @@ async function githubRequest(
       const transient = response.status === 429 || response.status >= 500;
       if (!transient || attempt === TRANSIENT_ATTEMPTS - 1) return response;
 
-      const retryAfter = Number(response.headers.get("retry-after"));
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
       const delay = Number.isFinite(retryAfter) && retryAfter >= 0
         ? retryAfter * 1000
         : 100 * 2 ** attempt;
