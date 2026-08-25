@@ -6,10 +6,11 @@ export const PRODUCTION_ORIGIN = `https://${PRODUCTION_HOST}`;
 /**
  * The browser-facing origin for URLs that must be absolute.
  *
- * Production reaches the Worker through Caddy. Caddy has to use the workers.dev
- * hostname upstream so Cloudflare can route and terminate TLS, which means the
- * Worker itself sees workers.dev in request.url. Caddy preserves the browser's
- * host in X-Forwarded-Host and the original scheme in X-Forwarded-Proto.
+ * Production reaches the Worker through nginx on the VPS. nginx has to use the
+ * workers.dev hostname upstream so Cloudflare can route and terminate TLS, which
+ * means the Worker itself sees workers.dev in request.url. nginx preserves the
+ * browser's host in X-Forwarded-Host and the original scheme in
+ * X-Forwarded-Proto.
  *
  * Do not trust arbitrary forwarded hosts. We only accept the one exact proxy
  * shape we deploy: a request received at our known workers.dev origin, forwarded
