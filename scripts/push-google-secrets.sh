@@ -31,7 +31,9 @@ put_secret() {
     return
   fi
 
-  if printf '%s' "$value" | ./scripts/node.sh npx wrangler secret put "$name" >/dev/null 2>&1; then
+  if printf '%s' "$value" \
+     | ./scripts/node.sh --cloudflare npx wrangler secret put "$name" \
+       >/dev/null 2>&1; then
     echo "    $name set (${#value} characters)"
   else
     echo "    $name failed"
@@ -44,7 +46,8 @@ put_secret GOOGLE_CLIENT_ID
 put_secret GOOGLE_CLIENT_SECRET
 
 echo "==> 2/3  deploy"
-./scripts/node.sh npx wrangler deploy || failures="${failures}  - deploy"$'\n'
+./scripts/node.sh --cloudflare npx wrangler deploy \
+  || failures="${failures}  - deploy"$'\n'
 
 echo "==> 3/3  live checks"
 base="https://ruokalista.eerovil.workers.dev"

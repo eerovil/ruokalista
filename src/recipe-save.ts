@@ -48,6 +48,7 @@ export interface RecipeToSave {
 }
 
 export class SaveRefused extends Error {}
+export class StaleRecipe extends SaveRefused {}
 
 /** A line paired with the ingredient it finally resolved to. */
 interface ResolvedLine {
@@ -55,18 +56,30 @@ interface ResolvedLine {
   ingredientId: number;
 }
 
+interface NewIngredient {
+  id: number;
+  name: string;
+}
+
+interface RecipeGuard {
+  recipeId: number;
+  householdId: number;
+  writeToken: string;
+}
+
 export async function saveRecipe(
   db: D1Database,
   member: Member,
   recipe: RecipeToSave,
 ): Promise<number> {
-  const { statements, lines } = await resolveIngredients(db, member, recipe);
+  validateRecipe(recipe);
+  const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
 
   const parts = partNames(recipe);
-  let nextRecipeId = await nextId(db, "recipe");
-  const recipeId = nextRecipeId++;
-
-  statements.push(
+  const reserved = new Set<number>();
+  const recipeId = await unusedId(db, "recipe", reserved);
+  const statements: D1PreparedStatement[] = [
+    ...ingredientStatements(db, member, newIngredients),
     recipeRow(db, member, recipeId, recipe, {
       title: recipe.title.trim(),
       yieldPortions: recipe.yieldPortions,
@@ -74,11 +87,11 @@ export async function saveRecipe(
       position: null,
     }),
     ...childrenOf(db, recipeId, lines, recipe.steps, null),
-  );
+  ];
 
   // Each named part becomes a recipe of its own, hanging off the dish.
-  parts.forEach((name, index) => {
-    const partId = nextRecipeId++;
+  for (const [index, name] of parts.entries()) {
+    const partId = await unusedId(db, "recipe", reserved);
     statements.push(
       recipeRow(db, member, partId, recipe, {
         title: name,
@@ -89,10 +102,9 @@ export async function saveRecipe(
       }),
       ...childrenOf(db, partId, lines, recipe.steps, name),
     );
-  });
+  }
 
   await db.batch(statements);
-
   return recipeId;
 }
 
@@ -100,6 +112,11 @@ export async function saveRecipe(
  * Edit a saved recipe. Its children are replaced wholesale rather than diffed —
  * positions shift when a line moves, and one batch keeps the recipe from ever
  * being half-rewritten.
+ *
+ * The submitted revision is optimistic locking. The update must still own the
+ * same household row at the revision the editor opened. Every statement after
+ * it is guarded by a unique token written by that update, so a deleted or
+ * concurrently edited recipe cannot have another recipe's children replaced.
  *
  * source_text and source_route are not editable and are not touched here. Parts
  * are recipes of their own and are edited on their own screens, so this leaves
@@ -109,31 +126,54 @@ export async function replaceRecipe(
   db: D1Database,
   member: Member,
   recipeId: number,
+  expectedRevision: number,
   recipe: RecipeToSave,
 ): Promise<void> {
-  const { statements, lines } = await resolveIngredients(db, member, recipe);
+  validateRecipe(recipe);
+  if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
+    throw new StaleRecipe("Reseptiä ei enää ole.");
+  }
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new StaleRecipe("Resepti on muuttunut. Lataa uusin versio.");
+  }
 
-  statements.push(
+  const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
+  const writeToken = crypto.randomUUID();
+  const guard: RecipeGuard = {
+    recipeId,
+    householdId: member.householdId,
+    writeToken,
+  };
+
+  const statements: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE recipe
-            SET title = ?, yield_portions = ?,
-                updated_at = datetime('now'), updated_by = ?
-          WHERE id = ? AND household_id = ?`,
+            SET title = ?, yield_portions = ?, revision = revision + 1,
+                edit_token = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
+          WHERE id = ? AND household_id = ? AND revision = ?`,
       )
       .bind(
         recipe.title.trim(),
         recipe.yieldPortions,
+        writeToken,
         member.id,
         recipeId,
         member.householdId,
+        expectedRevision,
       ),
-    db.prepare("DELETE FROM recipe_step WHERE recipe_id = ?").bind(recipeId),
-    db.prepare("DELETE FROM ingredient_line WHERE recipe_id = ?").bind(recipeId),
-    ...childrenOf(db, recipeId, lines, recipe.steps, null),
-  );
+    ...ingredientStatements(db, member, newIngredients, guard),
+    guardedDelete(db, "recipe_step", recipeId, guard),
+    guardedDelete(db, "ingredient_line", recipeId, guard),
+    ...childrenOf(db, recipeId, lines, recipe.steps, null, guard),
+  ];
 
-  await db.batch(statements);
+  const results = await db.batch(statements);
+  if ((results[0]?.meta.changes ?? 0) === 0) {
+    throw new StaleRecipe(
+      "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.",
+    );
+  }
 }
 
 /** The dish's parts, in the order they first appear on the page. */
@@ -165,9 +205,11 @@ function recipeRow(
     .prepare(
       `INSERT INTO recipe
          (id, household_id, title, yield_portions, source_text, source_route,
-          structured_by, structured_at, created_by, updated_by,
-          parent_id, part_position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)`,
+          structured_by, structured_at, created_at, created_by,
+          updated_at, updated_by, parent_id, part_position, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'),
+               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?,
+               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0)`,
     )
     .bind(
       id,
@@ -192,6 +234,7 @@ function childrenOf(
   lines: ResolvedLine[],
   steps: StepToSave[],
   section: string | null,
+  guard?: RecipeGuard,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   const belongs = (name: string | null) => (name?.trim() || null) === section;
@@ -199,64 +242,166 @@ function childrenOf(
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
     .forEach((step, index) => {
-      statements.push(
-        db
-          .prepare(
-            "INSERT INTO recipe_step (recipe_id, position, text) VALUES (?, ?, ?)",
-          )
-          .bind(recipeId, index + 1, step.text.trim()),
-      );
+      if (guard === undefined) {
+        statements.push(
+          db
+            .prepare(
+              "INSERT INTO recipe_step (recipe_id, position, text) VALUES (?, ?, ?)",
+            )
+            .bind(recipeId, index + 1, step.text.trim()),
+        );
+      } else {
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO recipe_step (recipe_id, position, text)
+               SELECT ?, ?, ?
+                WHERE EXISTS (
+                  SELECT 1 FROM recipe
+                   WHERE id = ? AND household_id = ? AND edit_token = ?
+                )`,
+            )
+            .bind(
+              recipeId,
+              index + 1,
+              step.text.trim(),
+              guard.recipeId,
+              guard.householdId,
+              guard.writeToken,
+            ),
+        );
+      }
     });
 
   lines
     .filter((entry) => belongs(entry.line.section))
     .forEach((entry, index) => {
       const line = entry.line;
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO ingredient_line
-               (recipe_id, position, quantity, quantity_max, unit,
-                alt_quantity, alt_unit, ingredient_id, source_line)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .bind(
-            recipeId,
-            index + 1,
-            line.quantity,
-            line.quantityMax,
-            line.unit,
-            line.altQuantity,
-            line.altUnit,
-            entry.ingredientId,
-            line.sourceLine,
-          ),
-      );
+      if (guard === undefined) {
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO ingredient_line
+                 (recipe_id, position, quantity, quantity_max, unit,
+                  alt_quantity, alt_unit, ingredient_id, source_line)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              recipeId,
+              index + 1,
+              line.quantity,
+              line.quantityMax,
+              line.unit,
+              line.altQuantity,
+              line.altUnit,
+              entry.ingredientId,
+              line.sourceLine,
+            ),
+        );
+      } else {
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO ingredient_line
+                 (recipe_id, position, quantity, quantity_max, unit,
+                  alt_quantity, alt_unit, ingredient_id, source_line)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE EXISTS (
+                  SELECT 1 FROM recipe
+                   WHERE id = ? AND household_id = ? AND edit_token = ?
+                )`,
+            )
+            .bind(
+              recipeId,
+              index + 1,
+              line.quantity,
+              line.quantityMax,
+              line.unit,
+              line.altQuantity,
+              line.altUnit,
+              entry.ingredientId,
+              line.sourceLine,
+              guard.recipeId,
+              guard.householdId,
+              guard.writeToken,
+            ),
+        );
+      }
     });
 
   return statements;
 }
 
+function ingredientStatements(
+  db: D1Database,
+  member: Member,
+  ingredients: NewIngredient[],
+  guard?: RecipeGuard,
+): D1PreparedStatement[] {
+  return ingredients.map((ingredient) => {
+    if (guard === undefined) {
+      return db
+        .prepare(
+          `INSERT INTO ingredient (id, household_id, name, created_by)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(ingredient.id, member.householdId, ingredient.name, member.id);
+    }
+
+    return db
+      .prepare(
+        `INSERT INTO ingredient (id, household_id, name, created_by)
+         SELECT ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM recipe
+             WHERE id = ? AND household_id = ? AND edit_token = ?
+          )`,
+      )
+      .bind(
+        ingredient.id,
+        member.householdId,
+        ingredient.name,
+        member.id,
+        guard.recipeId,
+        guard.householdId,
+        guard.writeToken,
+      );
+  });
+}
+
+function guardedDelete(
+  db: D1Database,
+  table: "recipe_step" | "ingredient_line",
+  recipeId: number,
+  guard: RecipeGuard,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `DELETE FROM ${table}
+        WHERE recipe_id = ?
+          AND EXISTS (
+            SELECT 1 FROM recipe
+             WHERE id = ? AND household_id = ? AND edit_token = ?
+          )`,
+    )
+    .bind(
+      recipeId,
+      guard.recipeId,
+      guard.householdId,
+      guard.writeToken,
+    );
+}
+
 /**
- * Validate the lines and work out which ingredient each one means, creating
- * statements for any genuinely new ones. Shared by saving and editing, so the
- * approval gate cannot be enforced in one and skipped in the other.
+ * Validate the lines and work out which ingredient each one means, allocating
+ * collision-checked ids for genuinely new names. Shared by saving and editing,
+ * so the approval gate cannot be enforced in one and skipped in the other.
  */
 async function resolveIngredients(
   db: D1Database,
   member: Member,
   recipe: RecipeToSave,
-): Promise<{ statements: D1PreparedStatement[]; lines: ResolvedLine[] }> {
-  if (recipe.title.trim() === "") {
-    throw new SaveRefused("Reseptillä pitää olla nimi.");
-  }
-  if (recipe.lines.length === 0) {
-    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines.");
-  }
-  if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
-    throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
-  }
-
+): Promise<{ newIngredients: NewIngredient[]; lines: ResolvedLine[] }> {
   const existing = await ingredientsFor(db, member.householdId);
   const byName = new Map(
     existing.map((ingredient) => [
@@ -265,13 +410,9 @@ async function resolveIngredients(
     ]),
   );
   const knownIds = new Set(existing.map((ingredient) => ingredient.id));
+  const reserved = new Set<number>();
 
-  // Ids are allocated up front so the whole save is one batch. Two imports
-  // racing in the same household would collide on the primary key and the batch
-  // would roll back — loud, and correct, for a household of a few people.
-  let nextIngredientId = await nextId(db, "ingredient");
-
-  const newIngredients: { id: number; name: string }[] = [];
+  const newIngredients: NewIngredient[] = [];
   const lines: ResolvedLine[] = [];
 
   for (const line of recipe.lines) {
@@ -289,15 +430,17 @@ async function resolveIngredients(
 
       // Approving a name the household already has is a match, not a duplicate.
       // This is the drift the gate exists to prevent, caught one step later.
-      const already = byName.get(name.toLocaleLowerCase("fi"));
+      const key = name.toLocaleLowerCase("fi");
+      const already = byName.get(key);
       if (already !== undefined) {
         lines.push({ line, ingredientId: already });
         continue;
       }
 
-      const id = nextIngredientId++;
+      const id = await unusedId(db, "ingredient", reserved);
       newIngredients.push({ id, name });
-      byName.set(name.toLocaleLowerCase("fi"), id);
+      byName.set(key, id);
+      knownIds.add(id);
       lines.push({ line, ingredientId: id });
       continue;
     }
@@ -305,22 +448,74 @@ async function resolveIngredients(
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
   }
 
-  const statements = newIngredients.map((ingredient) =>
-    db
-      .prepare(
-        `INSERT INTO ingredient (id, household_id, name, created_by)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .bind(ingredient.id, member.householdId, ingredient.name, member.id),
-  );
-
-  return { statements, lines };
+  return { newIngredients, lines };
 }
 
-async function nextId(db: D1Database, table: string): Promise<number> {
-  const row = await db
-    .prepare(`SELECT coalesce(max(id), 0) + 1 AS next FROM ${table}`)
-    .first<{ next: number }>();
+function validateRecipe(recipe: RecipeToSave): void {
+  if (recipe.title.trim() === "") {
+    throw new SaveRefused("Reseptillä pitää olla nimi.");
+  }
+  if (
+    recipe.yieldPortions !== null &&
+    (!Number.isSafeInteger(recipe.yieldPortions) || recipe.yieldPortions <= 0)
+  ) {
+    throw new SaveRefused("Annosmäärän pitää olla positiivinen kokonaisluku.");
+  }
+  if (recipe.lines.length === 0) {
+    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines.");
+  }
+  if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
+    throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
+  }
 
-  return row?.next ?? 1;
+  for (const line of recipe.lines) {
+    for (const amount of [line.quantity, line.quantityMax, line.altQuantity]) {
+      if (amount !== null && (!Number.isFinite(amount) || amount <= 0)) {
+        throw new SaveRefused("Ainesmäärien pitää olla suurempia kuin nolla.");
+      }
+    }
+    if (line.quantityMax !== null && line.quantity === null) {
+      throw new SaveRefused("Välin yläpää tarvitsee myös alarajan.");
+    }
+    if (
+      line.quantity !== null &&
+      line.quantityMax !== null &&
+      line.quantityMax < line.quantity
+    ) {
+      throw new SaveRefused("Välin yläpää ei voi olla alarajaa pienempi.");
+    }
+    if ((line.altQuantity === null) !== (line.altUnit === null)) {
+      throw new SaveRefused("Toinen mitta tarvitsee sekä määrän että yksikön.");
+    }
+    if (line.altQuantity !== null && line.quantity === null) {
+      throw new SaveRefused("Toinen mitta tarvitsee myös ensimmäisen määrän.");
+    }
+  }
+}
+
+/**
+ * A random, collision-checked 52-bit id. Unlike max(id)+1 it is not reused after
+ * deleting the highest row, which is what makes stale form ids harmless.
+ */
+async function unusedId(
+  db: D1Database,
+  table: "recipe" | "ingredient",
+  reserved: Set<number>,
+): Promise<number> {
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const words = crypto.getRandomValues(new Uint32Array(2));
+    const id = (words[0]! & 0x000fffff) * 0x100000000 + words[1]!;
+    if (!Number.isSafeInteger(id) || id <= 0 || reserved.has(id)) continue;
+
+    const row = await db
+      .prepare(`SELECT 1 AS found FROM ${table} WHERE id = ?`)
+      .bind(id)
+      .first<{ found: number }>();
+    if (row === null) {
+      reserved.add(id);
+      return id;
+    }
+  }
+
+  throw new Error(`Could not allocate an id for ${table}.`);
 }

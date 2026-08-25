@@ -10,19 +10,23 @@ import {
   type DraftLine,
   type IntakeSource,
 } from "./intake.ts";
-import type { Member } from "./members.ts";
 import {
   emptyLine,
+  FormRefused,
+  lineCountForRendering,
   lineRow,
+  lineValuesFromForm,
+  readLineCount,
   readLines,
-  readIngredient,
-  readNumber,
   readSteps,
-  readText,
   readWhole,
   SPARE_LINES,
+  stepValuesForRendering,
+  type LineFormValues,
+  type StepFormValues,
 } from "./line-form.ts";
-import { saveRecipe, SaveRefused, type LineIngredient } from "./recipe-save.ts";
+import type { Member } from "./members.ts";
+import { saveRecipe, SaveRefused } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -131,6 +135,18 @@ const STREAMING_ISLAND = `
 })();
 `;
 
+type SourceRoute = "pasted" | "photographed";
+
+interface CorrectionView {
+  title: string;
+  yieldValue: string;
+  sourceText: string;
+  sourceRoute: SourceRoute;
+  structuredBy: string;
+  rows: Array<DraftLine | LineFormValues>;
+  steps: StepFormValues[];
+}
+
 /** `GET /intake` */
 export function intakeScreen(): Response {
   return page(
@@ -190,7 +206,10 @@ export async function structureScreen(
     return failed(String((error as Error).message ?? error), sourceText);
   }
 
-  return page("Tarkista resepti", correctionForm(draft, ingredients));
+  return page(
+    "Tarkista resepti",
+    correctionForm(draft, ingredients, "pasted"),
+  );
 }
 
 /**
@@ -248,7 +267,8 @@ export async function correctScreen(
 ): Promise<Response> {
   const form = await request.formData();
   const json = String(form.get("draft") ?? "");
-  const route = form.get("route") === "photographed" ? "photographed" : "pasted";
+  const route: SourceRoute =
+    form.get("route") === "photographed" ? "photographed" : "pasted";
   const pasted = String(form.get("sourceText") ?? "");
 
   const source: IntakeSource =
@@ -260,7 +280,10 @@ export async function correctScreen(
 
   try {
     const draft = draftFromJson(json, source, STRUCTURED_BY);
-    return page("Tarkista resepti", correctionForm(draft, ingredients));
+    return page(
+      "Tarkista resepti",
+      correctionForm(draft, ingredients, route),
+    );
   } catch (error) {
     return failed(String((error as Error).message ?? error), pasted);
   }
@@ -274,22 +297,17 @@ export async function saveScreen(
   const form = await request.formData();
   const ingredients = await ingredientsFor(env.DB, member.householdId);
 
-  const sourceText = String(form.get("sourceText") ?? "");
-  const structuredBy = String(form.get("structuredBy") ?? "") || null;
-  const lineCount = Number(form.get("lineCount") ?? 0);
-
-  const lines = readLines(form, lineCount);
-  const steps = readSteps(form);
-
   try {
+    const lineCount = readLineCount(form.get("lineCount"));
+    const sourceRoute = readSourceRoute(form.get("sourceRoute"));
     const recipeId = await saveRecipe(env.DB, member, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
-      sourceText,
-      sourceRoute: "pasted",
-      structuredBy,
-      steps,
-      lines,
+      sourceText: String(form.get("sourceText") ?? ""),
+      sourceRoute,
+      structuredBy: String(form.get("structuredBy") ?? "") || null,
+      steps: readSteps(form),
+      lines: readLines(form, lineCount),
     });
 
     // Straight to the recipe, which is why it was imported.
@@ -298,14 +316,16 @@ export async function saveScreen(
       headers: { Location: `/recipes/${recipeId}` },
     });
   } catch (error) {
-    if (!(error instanceof SaveRefused)) throw error;
+    if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
+      throw error;
+    }
 
-    // Re-render what they had, with the reason, rather than losing the work.
-    const draft = draftFromForm(form, lineCount, sourceText, structuredBy);
+    // Re-render the raw submitted values, not parsed approximations. An invalid
+    // number is precisely the value the member needs to see and correct.
     return page(
       "Tarkista resepti",
       html`<p class="refused">${error.message}</p>
-        ${correctionForm(draft, ingredients)}`,
+        ${correctionFormFromSubmission(form, ingredients)}`,
       400,
     );
   }
@@ -313,60 +333,110 @@ export async function saveScreen(
 
 // ---------------------------------------------------------------- rendering
 
-function correctionForm(draft: Draft, ingredients: IngredientSummary[]): Raw {
+function correctionForm(
+  draft: Draft,
+  ingredients: IngredientSummary[],
+  sourceRoute: SourceRoute,
+): Raw {
   const rows = [
     ...draft.lines,
     ...Array.from({ length: SPARE_LINES }, emptyLine),
   ];
+  const steps = draft.steps.map((step, index) => ({
+    index,
+    position: String(index + 1),
+    text: step.text,
+    section: step.section ?? "",
+  }));
 
+  return renderCorrection(
+    {
+      title: draft.title,
+      yieldValue: String(draft.yieldPortions ?? ""),
+      sourceText: draft.sourceText,
+      sourceRoute,
+      structuredBy: draft.structuredBy,
+      rows,
+      steps,
+    },
+    ingredients,
+  );
+}
+
+function correctionFormFromSubmission(
+  form: FormData,
+  ingredients: IngredientSummary[],
+): Raw {
+  const lineCount = lineCountForRendering(form);
+  return renderCorrection(
+    {
+      title: String(form.get("title") ?? ""),
+      yieldValue: String(form.get("yield") ?? ""),
+      sourceText: String(form.get("sourceText") ?? ""),
+      sourceRoute: sourceRouteForRendering(form),
+      structuredBy: String(form.get("structuredBy") ?? ""),
+      rows: Array.from({ length: lineCount }, (_, index) =>
+        lineValuesFromForm(form, index),
+      ),
+      steps: stepValuesForRendering(form),
+    },
+    ingredients,
+  );
+}
+
+function renderCorrection(
+  view: CorrectionView,
+  ingredients: IngredientSummary[],
+): Raw {
   return html`<h1>Tarkista resepti</h1>
     <form method="post" action="/recipes" class="stacked">
-      <input type="hidden" name="sourceText" value="${draft.sourceText}" />
-      <input type="hidden" name="structuredBy" value="${draft.structuredBy}" />
-      <input type="hidden" name="lineCount" value="${rows.length}" />
+      <input type="hidden" name="sourceText" value="${view.sourceText}" />
+      <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
+      <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
+      <input type="hidden" name="lineCount" value="${view.rows.length}" />
 
       <label for="title">Nimi</label>
-      <input id="title" name="title" value="${draft.title}" required />
+      <input id="title" name="title" value="${view.title}" required />
 
       <label for="yield">Annoksia</label>
       <input
         id="yield"
         name="yield"
         inputmode="numeric"
-        value="${draft.yieldPortions ?? ""}"
+        value="${view.yieldValue}"
         placeholder="Tyhjä, jos teksti ei kerro"
       />
 
       <h2>Ainekset</h2>
       <ol class="edit-lines">
-        ${rows.map((line, index) =>
+        ${view.rows.map((line, index) =>
           lineRow(line, index, ingredients, { sections: true }),
         )}
       </ol>
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
-        ${draft.steps.map(
-          (step, index) => html`<li class="edit-step">
+        ${view.steps.map(
+          (step) => html`<li class="edit-step">
             <div class="amounts">
               <!-- The spec asks for steps to be reorderable here, not only in
                    the editor. A position box does it without JavaScript. -->
               <input
-                name="step.${index}.position"
+                name="step.${step.index}.position"
                 inputmode="numeric"
-                value="${index + 1}"
+                value="${step.position}"
                 aria-label="Järjestys"
                 class="position"
               />
               <input
-                name="step.${index}.section"
-                value="${step.section ?? ""}"
+                name="step.${step.index}.section"
+                value="${step.section}"
                 aria-label="Osa"
                 placeholder="Osa"
                 class="section"
               />
             </div>
-            <textarea name="step.${index}" rows="2">${step.text}</textarea>
+            <textarea name="step.${step.index}" rows="2">${step.text}</textarea>
           </li>`,
         )}
       </ol>
@@ -388,38 +458,13 @@ function failed(message: string, sourceText: string): Response {
   );
 }
 
-/** Rebuild the draft from a refused submission so nothing typed is lost. */
-function draftFromForm(
-  form: FormData,
-  lineCount: number,
-  sourceText: string,
-  structuredBy: string | null,
-): Draft {
-  const lines: DraftLine[] = [];
+function readSourceRoute(value: FormDataEntryValue | null): SourceRoute {
+  if (value === "pasted" || value === "photographed") return value;
+  throw new FormRefused("Reseptin lähteen tyyppi on virheellinen.");
+}
 
-  for (let i = 0; i < lineCount; i++) {
-    if (form.get(`line.${i}.remove`) !== null) continue;
-
-    const ingredient = readIngredient(form, i);
-    lines.push({
-      quantity: readNumber(form.get(`line.${i}.quantity`)),
-      quantityMax: readNumber(form.get(`line.${i}.quantityMax`)),
-      unit: readText(form.get(`line.${i}.unit`)),
-      altQuantity: readNumber(form.get(`line.${i}.altQuantity`)),
-      altUnit: readText(form.get(`line.${i}.altUnit`)),
-      ingredientId: ingredient.kind === "existing" ? ingredient.id : null,
-      ingredientName: String(form.get(`line.${i}.newName`) ?? ""),
-      sourceLine: String(form.get(`line.${i}.source`) ?? ""),
-      section: readText(form.get(`line.${i}.section`)),
-    });
-  }
-
-  return {
-    title: String(form.get("title") ?? ""),
-    yieldPortions: readWhole(form.get("yield")),
-    sourceText,
-    steps: readSteps(form),
-    lines,
-    structuredBy: structuredBy ?? "",
-  };
+function sourceRouteForRendering(form: FormData): SourceRoute {
+  return form.get("sourceRoute") === "photographed"
+    ? "photographed"
+    : "pasted";
 }

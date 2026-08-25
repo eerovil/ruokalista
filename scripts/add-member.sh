@@ -29,9 +29,11 @@ google_sub="${1:?usage: add-member.sh [--local] <google-sub> <display name> [ema
 display_name="${2:?usage: add-member.sh [--local] <google-sub> <display name> [email]}"
 email="${3:-}"
 
+node_options=()
 if [ "$target" = "--remote" ]; then
   : "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN}"
   : "${CLOUDFLARE_ACCOUNT_ID:?set CLOUDFLARE_ACCOUNT_ID}"
+  node_options=(--cloudflare)
 fi
 
 # Doubling single quotes is SQLite's own escaping.
@@ -50,9 +52,10 @@ sql="INSERT INTO household (id, name)
              email        = excluded.email;"
 
 echo "==> adding $display_name to household 1 ($target)"
-./scripts/node.sh npx wrangler d1 execute ruokalista "$target" --command "$sql" >/dev/null
+./scripts/node.sh "${node_options[@]}" npx wrangler d1 execute ruokalista "$target" \
+  --command "$sql" >/dev/null
 
 echo "==> members now"
-./scripts/node.sh npx wrangler d1 execute ruokalista "$target" \
+./scripts/node.sh "${node_options[@]}" npx wrangler d1 execute ruokalista "$target" \
   --command "SELECT id, household_id, display_name, email FROM member ORDER BY id" \
   2>/dev/null | grep -E '"id"|"display_name"|"email"|"household_id"'

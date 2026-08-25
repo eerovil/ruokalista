@@ -24,7 +24,8 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib-cloudflare.sh
 . ./scripts/lib-cloudflare.sh
 
-wrangler() { ./scripts/node.sh npx wrangler "$@"; }
+# Remote Wrangler is the exceptional command that receives the account token.
+wrangler() { ./scripts/node.sh --cloudflare npx wrangler "$@"; }
 
 # Looked up through `d1 list`, which reads no config. `d1 info <name>` resolves
 # the name through wrangler.jsonc's binding, so before the real id is written

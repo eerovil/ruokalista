@@ -13,8 +13,36 @@ import type { LineIngredient, LineToSave, StepToSave } from "./recipe-save.ts";
  * wrong on the other.
  */
 
-/** Blank rows so a line the model missed can be added without any JavaScript. */
+/** Blank rows so a line the model missed can be added without JavaScript. */
 export const SPARE_LINES = 3;
+
+/** Deliberate request limits: hidden counts are untrusted browser input. */
+export const MAX_LINES = 200;
+export const MAX_STEPS = 200;
+
+export class FormRefused extends Error {}
+
+/** Raw values preserve even invalid user input when a form is refused. */
+export interface LineFormValues {
+  position: string;
+  quantity: string;
+  quantityMax: string;
+  unit: string;
+  altQuantity: string;
+  altUnit: string;
+  section: string;
+  ingredientChoice: string;
+  newName: string;
+  sourceLine: string;
+  remove: boolean;
+}
+
+export interface StepFormValues {
+  index: number;
+  position: string;
+  text: string;
+  section: string;
+}
 
 export interface LineRowOptions {
   /** Show a position box, so lines can be reordered without JavaScript. */
@@ -27,12 +55,18 @@ export interface LineRowOptions {
 }
 
 export function lineRow(
-  line: DraftLine,
+  line: DraftLine | LineFormValues,
   index: number,
   ingredients: IngredientSummary[],
   options: LineRowOptions = {},
 ): Raw {
-  const isNew = line.ingredientId === null && line.ingredientName !== "";
+  const values = isLineFormValues(line)
+    ? line
+    : lineValuesFromDraft(line, index);
+  const proposedName = values.newName.trim();
+  const needsAnswer =
+    values.ingredientChoice === "" && proposedName !== "";
+  const isNew = needsAnswer || values.ingredientChoice === "new";
 
   return html`<li class="${isNew ? "line is-new" : "line"}">
     ${isNew ? html`<span class="badge">Uusi aines</span>` : ""}
@@ -42,7 +76,7 @@ export function lineRow(
         ? html`<input
             name="line.${index}.position"
             inputmode="numeric"
-            value="${index + 1}"
+            value="${values.position}"
             aria-label="Järjestys"
             class="position"
           />`
@@ -50,22 +84,20 @@ export function lineRow(
       <input
         name="line.${index}.quantity"
         inputmode="decimal"
-        value="${line.quantity === null ? "" : formatDecimal(line.quantity)}"
+        value="${values.quantity}"
         aria-label="Määrä"
         placeholder="Määrä"
       />
       <input
         name="line.${index}.quantityMax"
         inputmode="decimal"
-        value="${line.quantityMax === null
-          ? ""
-          : formatDecimal(line.quantityMax)}"
+        value="${values.quantityMax}"
         aria-label="Välin yläpää"
         placeholder="–"
       />
       <input
         name="line.${index}.unit"
-        value="${line.unit ?? ""}"
+        value="${values.unit}"
         aria-label="Yksikkö"
         placeholder="Yksikkö"
       />
@@ -75,15 +107,13 @@ export function lineRow(
       <input
         name="line.${index}.altQuantity"
         inputmode="decimal"
-        value="${line.altQuantity === null
-          ? ""
-          : formatDecimal(line.altQuantity)}"
+        value="${values.altQuantity}"
         aria-label="Toinen määrä"
         placeholder="Toinen määrä"
       />
       <input
         name="line.${index}.altUnit"
-        value="${line.altUnit ?? ""}"
+        value="${values.altUnit}"
         aria-label="Toinen yksikkö"
         placeholder="Toinen yksikkö"
       />
@@ -92,7 +122,7 @@ export function lineRow(
     ${options.sections
       ? html`<input
           name="line.${index}.section"
-          value="${line.section ?? ""}"
+          value="${values.section}"
           aria-label="Osa"
           placeholder="Osa (esim. juustokastike)"
           class="section"
@@ -100,40 +130,50 @@ export function lineRow(
       : ""}
 
     <select name="line.${index}.ingredient" aria-label="Aines">
-      <option value="" ${line.ingredientId === null ? "selected" : ""}>
-        ${isNew ? "— vastaa tähän —" : "— valitse aines —"}
+      <option value="" ${values.ingredientChoice === "" ? "selected" : ""}>
+        ${needsAnswer ? "— vastaa tähän —" : "— valitse aines —"}
       </option>
-      ${isNew
-        ? html`<option value="new">
-            Hyväksy uutena: ${line.ingredientName}
-          </option>`
-        : ""}
+      <option value="new" ${values.ingredientChoice === "new" ? "selected" : ""}>
+        ${proposedName === ""
+          ? "Luo uusi aines"
+          : `Hyväksy uutena: ${proposedName}`}
+      </option>
       ${ingredients.map(
         (ingredient) => html`<option
           value="${ingredient.id}"
-          ${line.ingredientId === ingredient.id ? "selected" : ""}
+          ${values.ingredientChoice === String(ingredient.id)
+            ? "selected"
+            : ""}
         >
           ${ingredient.name}
         </option>`,
       )}
     </select>
+
     <input
-      type="hidden"
       name="line.${index}.newName"
-      value="${line.ingredientName}"
+      value="${values.newName}"
+      aria-label="Uuden aineksen nimi"
+      placeholder="Uuden aineksen nimi"
     />
     <input
-      type="hidden"
       name="line.${index}.source"
-      value="${line.sourceLine}"
+      value="${values.sourceLine}"
+      aria-label="Lähderivi"
+      placeholder="Lähderivi"
     />
 
-    ${line.sourceLine === ""
+    ${values.sourceLine === ""
       ? ""
-      : html`<span class="source">${line.sourceLine}</span>`}
+      : html`<span class="source">${values.sourceLine}</span>`}
 
     <label class="remove">
-      <input type="checkbox" name="line.${index}.remove" /> Poista rivi
+      <input
+        type="checkbox"
+        name="line.${index}.remove"
+        ${values.remove ? "checked" : ""}
+      />
+      Poista rivi
     </label>
   </li>`;
 }
@@ -152,44 +192,125 @@ export function emptyLine(): DraftLine {
   };
 }
 
+export function lineValuesFromDraft(
+  line: DraftLine,
+  index: number,
+): LineFormValues {
+  return {
+    position: String(index + 1),
+    quantity: line.quantity === null ? "" : formatDecimal(line.quantity),
+    quantityMax:
+      line.quantityMax === null ? "" : formatDecimal(line.quantityMax),
+    unit: line.unit ?? "",
+    altQuantity:
+      line.altQuantity === null ? "" : formatDecimal(line.altQuantity),
+    altUnit: line.altUnit ?? "",
+    section: line.section ?? "",
+    ingredientChoice:
+      line.ingredientId === null ? "" : String(line.ingredientId),
+    newName: line.ingredientName,
+    sourceLine: line.sourceLine,
+    remove: false,
+  };
+}
+
+export function lineValuesFromForm(
+  form: FormData,
+  index: number,
+): LineFormValues {
+  return {
+    position: field(form, `line.${index}.position`),
+    quantity: field(form, `line.${index}.quantity`),
+    quantityMax: field(form, `line.${index}.quantityMax`),
+    unit: field(form, `line.${index}.unit`),
+    altQuantity: field(form, `line.${index}.altQuantity`),
+    altUnit: field(form, `line.${index}.altUnit`),
+    section: field(form, `line.${index}.section`),
+    ingredientChoice: field(form, `line.${index}.ingredient`),
+    newName: field(form, `line.${index}.newName`),
+    sourceLine: field(form, `line.${index}.source`),
+    remove: form.get(`line.${index}.remove`) !== null,
+  };
+}
+
+export function readLineCount(value: FormDataEntryValue | null): number {
+  const text = String(value ?? "").trim();
+  const count = Number(text);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new FormRefused("Ainesrivien määrä on virheellinen.");
+  }
+  if (count > MAX_LINES) {
+    throw new FormRefused(`Ainesrivejä voi olla enintään ${MAX_LINES}.`);
+  }
+  return count;
+}
+
+/** A safe count for re-rendering even when the submitted hidden count was bad. */
+export function lineCountForRendering(form: FormData): number {
+  try {
+    return readLineCount(form.get("lineCount"));
+  } catch {
+    let highest = -1;
+    for (const key of form.keys()) {
+      const match = /^line\.(\d+)\./.exec(key);
+      if (match === null) continue;
+      const index = Number(match[1]);
+      if (Number.isSafeInteger(index) && index >= 0 && index < MAX_LINES) {
+        highest = Math.max(highest, index);
+      }
+    }
+    return highest + 1;
+  }
+}
+
 /**
  * The submitted lines, in the order the position boxes ask for. A spare row
  * nobody filled in is dropped; an unanswered real one is kept, so the gate can
  * refuse it rather than the parser silently losing it.
  */
 export function readLines(form: FormData, lineCount: number): LineToSave[] {
+  if (!Number.isSafeInteger(lineCount) || lineCount < 0 || lineCount > MAX_LINES) {
+    throw new FormRefused(`Ainesrivejä voi olla enintään ${MAX_LINES}.`);
+  }
+
   const rows: { position: number; line: LineToSave }[] = [];
 
   for (let i = 0; i < lineCount; i++) {
-    if (form.get(`line.${i}.remove`) !== null) continue;
+    const values = lineValuesFromForm(form, i);
+    if (values.remove) continue;
+    if (untouched(values)) continue;
 
-    const ingredient = readIngredient(form, i);
-    const quantity = readNumber(form.get(`line.${i}.quantity`));
-    const unit = readText(form.get(`line.${i}.unit`));
-    const sourceLine = String(form.get(`line.${i}.source`) ?? "").trim();
+    const quantity = positiveNumber(values.quantity, "Määrän");
+    const quantityMax = positiveNumber(values.quantityMax, "Välin yläpään");
+    if (quantityMax !== null && quantity === null) {
+      throw new FormRefused("Välin yläpää tarvitsee myös alarajan.");
+    }
+    if (quantity !== null && quantityMax !== null && quantityMax < quantity) {
+      throw new FormRefused("Välin yläpää ei voi olla alarajaa pienempi.");
+    }
 
-    const untouched =
-      ingredient.kind === "unanswered" &&
-      quantity === null &&
-      unit === null &&
-      sourceLine === "";
-    if (untouched) continue;
-
-    const altQuantity = readNumber(form.get(`line.${i}.altQuantity`));
-    const altUnit = readText(form.get(`line.${i}.altUnit`));
-    const altIsWhole = altQuantity !== null && altUnit !== null;
+    const altQuantity = positiveNumber(values.altQuantity, "Toisen määrän");
+    const altUnit = readText(values.altUnit);
+    if ((altQuantity === null) !== (altUnit === null)) {
+      throw new FormRefused(
+        "Toinen mitta tarvitsee sekä määrän että yksikön.",
+      );
+    }
+    if (altQuantity !== null && quantity === null) {
+      throw new FormRefused("Toinen mitta tarvitsee myös ensimmäisen määrän.");
+    }
 
     rows.push({
-      position: readNumber(form.get(`line.${i}.position`)) ?? i + 1,
+      position: positiveWhole(values.position, i + 1, "Järjestyksen"),
       line: {
         quantity,
-        quantityMax: readNumber(form.get(`line.${i}.quantityMax`)),
-        unit,
-        altQuantity: altIsWhole && quantity !== null ? altQuantity : null,
-        altUnit: altIsWhole && quantity !== null ? altUnit : null,
-        ingredient,
-        sourceLine,
-        section: readText(form.get(`line.${i}.section`)),
+        quantityMax,
+        unit: readText(values.unit),
+        altQuantity,
+        altUnit,
+        ingredient: readIngredient(form, i),
+        sourceLine: values.sourceLine.trim(),
+        section: readText(values.section),
       },
     });
   }
@@ -199,35 +320,89 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
     .map((row) => row.line);
 }
 
-/** The steps, in the order their position boxes ask for. */
-export function readSteps(form: FormData): StepToSave[] {
-  const steps: { position: number; step: StepToSave }[] = [];
+export function stepValuesFromForm(form: FormData): StepFormValues[] {
+  const steps: StepFormValues[] = [];
+  const seen = new Set<number>();
 
   for (const [key, value] of form.entries()) {
     const match = /^step\.(\d+)$/.exec(key);
     if (match === null) continue;
 
     const index = Number(match[1]);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= MAX_STEPS) {
+      throw new FormRefused(`Vaiheita voi olla enintään ${MAX_STEPS}.`);
+    }
+    if (seen.has(index)) continue;
+    seen.add(index);
+
     steps.push({
-      position: readNumber(form.get(`step.${index}.position`)) ?? index + 1,
-      step: {
-        text: String(value),
-        section: readText(form.get(`step.${index}.section`)),
-      },
+      index,
+      position: field(form, `step.${index}.position`),
+      text: String(value),
+      section: field(form, `step.${index}.section`),
     });
   }
 
-  return steps
+  if (steps.length > MAX_STEPS) {
+    throw new FormRefused(`Vaiheita voi olla enintään ${MAX_STEPS}.`);
+  }
+  return steps.sort((a, b) => a.index - b.index);
+}
+
+export function stepValuesForRendering(form: FormData): StepFormValues[] {
+  try {
+    return stepValuesFromForm(form);
+  } catch {
+    const steps: StepFormValues[] = [];
+    const seen = new Set<number>();
+    for (const [key, value] of form.entries()) {
+      const match = /^step\.(\d+)$/.exec(key);
+      if (match === null) continue;
+      const index = Number(match[1]);
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        index >= MAX_STEPS ||
+        seen.has(index)
+      ) {
+        continue;
+      }
+      seen.add(index);
+      steps.push({
+        index,
+        position: field(form, `step.${index}.position`),
+        text: String(value),
+        section: field(form, `step.${index}.section`),
+      });
+    }
+    return steps.sort((a, b) => a.index - b.index);
+  }
+}
+
+/** The steps, in the order their position boxes ask for. */
+export function readSteps(form: FormData): StepToSave[] {
+  return stepValuesFromForm(form)
+    .map((values) => ({
+      position: positiveWhole(
+        values.position,
+        values.index + 1,
+        "Järjestyksen",
+      ),
+      step: {
+        text: values.text,
+        section: readText(values.section),
+      },
+    }))
     .sort((a, b) => a.position - b.position)
     .map((entry) => entry.step)
     .filter((step) => step.text.trim() !== "");
 }
 
 export function readIngredient(form: FormData, index: number): LineIngredient {
-  const choice = String(form.get(`line.${index}.ingredient`) ?? "");
+  const choice = field(form, `line.${index}.ingredient`);
 
   if (choice === "new") {
-    return { kind: "new", name: String(form.get(`line.${index}.newName`) ?? "") };
+    return { kind: "new", name: field(form, `line.${index}.newName`) };
   }
 
   const id = Number(choice);
@@ -236,21 +411,76 @@ export function readIngredient(form: FormData, index: number): LineIngredient {
   return { kind: "unanswered" };
 }
 
-/** Accepts the Finnish decimal comma as well as a point. */
-export function readNumber(value: File | string | null): number | null {
+/** Accepts the Finnish decimal comma as well as a point, and rejects junk. */
+export function readNumber(value: FormDataEntryValue | null): number | null {
   const text = String(value ?? "").trim().replace(",", ".");
   if (text === "") return null;
 
   const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) {
+    throw new FormRefused(`Kelvoton luku: ${String(value ?? "")}.`);
+  }
+  return parsed;
 }
 
-export function readWhole(value: File | string | null): number | null {
+/** A positive whole number, or null when the field was deliberately blank. */
+export function readWhole(value: FormDataEntryValue | null): number | null {
+  const text = String(value ?? "").trim();
+  if (text === "") return null;
+
   const parsed = readNumber(value);
-  return parsed !== null && Number.isSafeInteger(parsed) ? parsed : null;
+  if (parsed === null || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new FormRefused("Annosmäärän pitää olla positiivinen kokonaisluku.");
+  }
+  return parsed;
 }
 
-export function readText(value: File | string | null): string | null {
+export function readText(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
   return text === "" ? null : text;
+}
+
+function positiveNumber(text: string, label: string): number | null {
+  const value = readNumber(text);
+  if (value !== null && value <= 0) {
+    throw new FormRefused(`${label} pitää olla suurempi kuin nolla.`);
+  }
+  return value;
+}
+
+function positiveWhole(
+  text: string,
+  fallback: number,
+  label: string,
+): number {
+  if (text.trim() === "") return fallback;
+  const value = readNumber(text);
+  if (value === null || !Number.isSafeInteger(value) || value <= 0) {
+    throw new FormRefused(`${label} pitää olla positiivinen kokonaisluku.`);
+  }
+  return value;
+}
+
+function untouched(values: LineFormValues): boolean {
+  return (
+    values.ingredientChoice === "" &&
+    values.newName.trim() === "" &&
+    values.quantity.trim() === "" &&
+    values.quantityMax.trim() === "" &&
+    values.unit.trim() === "" &&
+    values.altQuantity.trim() === "" &&
+    values.altUnit.trim() === "" &&
+    values.section.trim() === "" &&
+    values.sourceLine.trim() === ""
+  );
+}
+
+function field(form: FormData, name: string): string {
+  return String(form.get(name) ?? "");
+}
+
+function isLineFormValues(
+  line: DraftLine | LineFormValues,
+): line is LineFormValues {
+  return "ingredientChoice" in line;
 }

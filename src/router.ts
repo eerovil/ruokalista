@@ -91,7 +91,12 @@ function matchSegments(
     const actual = path[i]!;
 
     if (expected.startsWith(":")) {
-      params[expected.slice(1)] = decodeURIComponent(actual);
+      try {
+        params[expected.slice(1)] = decodeURIComponent(actual);
+      } catch {
+        // A malformed escape is a path that does not match, not a Worker crash.
+        return null;
+      }
     } else if (expected !== actual) {
       return null;
     }

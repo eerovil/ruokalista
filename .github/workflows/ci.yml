@@ -5,10 +5,12 @@ on:
   push:
     branches: [main]
 
-# A second push to a branch makes the first run pointless.
+# A newer PR push makes its older check pointless. A main run is different: once
+# it may touch production it must finish, so main pushes queue instead of
+# cancelling a migration between the schema and deploy steps.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -85,8 +87,8 @@ jobs:
       - run: npm ci
 
       - name: Apply any new migrations
-        # Before the deploy, not after: a schema ahead of its code is harmless,
-        # code ahead of its schema is a broken app.
+        # Before the deploy, not after: the migration is backward-compatible,
+        # and main runs cannot now be cancelled before the matching deploy.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

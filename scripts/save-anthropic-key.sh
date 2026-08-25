@@ -32,7 +32,8 @@ echo "==> 1/3  .dev.vars (local development)"
 echo "==> 2/3  Worker secret (deployed)"
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
   if printf '%s' "$value" \
-     | ./scripts/node.sh npx wrangler secret put ANTHROPIC_API_KEY >/dev/null 2>&1; then
+     | ./scripts/node.sh --cloudflare npx wrangler secret put ANTHROPIC_API_KEY \
+       >/dev/null 2>&1; then
     echo "    set"
   else
     echo "    failed"
