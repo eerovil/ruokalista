@@ -119,29 +119,44 @@ async function ingredientList(
   const ingredients = await ingredientsFor(db, member.householdId);
 
   return html`<h1>Ainekset</h1>
+    <p class="empty">
+      Talouden yhteinen sanasto. Kaksi lähes samaa nimeä vierekkäin on merkki
+      siitä, että toinen kannattaa nimetä uudelleen.
+    </p>
     ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
     ${ingredients.length === 0
-      ? html`<p class="empty">Aineksia ei ole vielä yhtään.</p>`
+      ? html`<p class="empty">
+          Aineksia ei ole vielä yhtään. Ne syntyvät reseptejä tuotaessa.
+        </p>`
       : html`<ul class="ingredients">
           ${ingredients.map(
+            // Read first: the row is the name and how much it is used. The
+            // whole row is also the way in to renaming, so the affordance costs
+            // no line of its own — a list of live text boxes read as a form
+            // nobody had finished filling in.
             (ingredient) => html`<li>
-              <form
-                method="post"
-                action="/ingredients/${ingredient.id}/rename"
-                class="inline"
-              >
-                <input
-                  name="name"
-                  value="${ingredient.name}"
-                  aria-label="Aineksen nimi"
-                />
-                <button type="submit">Nimeä</button>
-              </form>
-              <span class="meta"
-                >${ingredient.recipeCount === 0
-                  ? "ei käytössä"
-                  : `${ingredient.recipeCount} reseptissä`}</span
-              >
+              <details class="rename">
+                <summary>
+                  <span class="ingredient-name">${ingredient.name}</span>
+                  <span class="meta"
+                    >${ingredient.recipeCount === 0
+                      ? "ei käytössä"
+                      : `${ingredient.recipeCount} reseptissä`}</span
+                  >
+                </summary>
+                <form
+                  method="post"
+                  action="/ingredients/${ingredient.id}/rename"
+                  class="inline"
+                >
+                  <input
+                    name="name"
+                    value="${ingredient.name}"
+                    aria-label="Aineksen nimi"
+                  />
+                  <button type="submit">Tallenna</button>
+                </form>
+              </details>
             </li>`,
           )}
         </ul>`}`;

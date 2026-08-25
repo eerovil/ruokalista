@@ -27,6 +27,7 @@ import {
 } from "./menu.ts";
 import {
   apiDeleteRecipe,
+  confirmDeleteScreen,
   deleteRecipeForm,
   editorScreen,
   saveEditForm,
@@ -74,6 +75,7 @@ const router = new Router()
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
+  .get("/recipes/:id/delete", requireMemberScreen(confirmDeleteScreen))
   .post("/recipes/:id/delete", requireMemberScreen(deleteRecipeForm))
   .delete("/api/recipes/:id", requireMember(apiDeleteRecipe))
   .get("/ingredients", requireMemberScreen(ingredientsScreen))

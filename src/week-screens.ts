@@ -227,11 +227,20 @@ export async function pickerScreen(
       </form>
 
       ${recipes.length === 0
-        ? html`<p class="empty">
+        ? html`<div class="nothing">
+            <p class="empty">
+              ${query.trim() === ""
+                ? "Reseptejä ei ole vielä yhtään."
+                : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
+            </p>
             ${query.trim() === ""
-              ? "Reseptejä ei ole vielä yhtään."
-              : "Haku ei löytänyt yhtään reseptiä."}
-          </p>`
+              ? html`<p><a class="button" href="/intake">Lisää resepti</a></p>`
+              : html`<p>
+                  <a href="/picker?date=${date}&slot=${slot}"
+                    >Näytä kaikki reseptit</a
+                  >
+                </p>`}
+          </div>`
         : html`<ul class="pick">
             ${recipes.map(
               (recipe) => html`<li>

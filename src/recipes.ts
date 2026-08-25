@@ -262,11 +262,18 @@ export async function recipeListScreen(
         <button type="submit">Hae</button>
       </form>
       ${recipes.length === 0
-        ? html`<p class="empty">
+        ? // An empty state that only states the emptiness leaves the reader to
+          // work out what to do about it. Both of these say the next move.
+          html`<div class="nothing">
+            <p class="empty">
+              ${query.trim() === ""
+                ? "Reseptejä ei ole vielä yhtään."
+                : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
+            </p>
             ${query.trim() === ""
-              ? "Reseptejä ei ole vielä yhtään."
-              : "Haku ei löytänyt yhtään reseptiä."}
-          </p>`
+              ? html`<p><a class="button" href="/intake">Lisää ensimmäinen</a></p>`
+              : html`<p><a href="/recipes">Näytä kaikki reseptit</a></p>`}
+          </div>`
         : html`<ul class="recipes">
             ${recipes.map(
               (recipe) => html`<li>

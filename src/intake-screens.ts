@@ -57,6 +57,39 @@ const STREAMING_ISLAND = `
   var status = document.getElementById('status');
   var LONG_EDGE = 1500;
 
+  // What the household is told while the model works. The draft arrives as
+  // JSON, and showing raw JSON to somebody importing a recipe is showing them
+  // the plumbing — so it is counted instead. The counts only ever rise, which
+  // is the reassurance a spinner cannot give: something is still arriving.
+  // No regular expressions in here: this whole script is a template literal, so
+  // a backslash would be eaten before the browser ever saw it.
+  function stringAfter(text, key) {
+    var at = text.indexOf(key);
+    if (at < 0) return '';
+    var start = text.indexOf('"', at + key.length);
+    if (start < 0) return '';
+    var end = text.indexOf('"', start + 1);
+    // A title containing a quote would come out short. It is a progress label.
+    return end < 0 ? '' : text.slice(start + 1, end);
+  }
+
+  function count(text, key) {
+    return text.split(key).length - 1;
+  }
+
+  function summarise(draft) {
+    var title = stringAfter(draft, '"title"');
+    var lines = count(draft, '"ingredient_name"');
+    var steps = count(draft, '"text"');
+
+    var parts = [];
+    if (title) parts.push(title);
+    if (lines) parts.push(lines === 1 ? '1 aines' : lines + ' ainesta');
+    if (steps) parts.push(steps === 1 ? '1 vaihe' : steps + ' vaihetta');
+
+    return parts.length ? parts.join(' · ') : 'Luetaan reseptiä…';
+  }
+
   function shrink(file) {
     return createImageBitmap(file).then(function (bitmap) {
       var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
@@ -91,9 +124,9 @@ const STREAMING_ISLAND = `
 
     event.preventDefault();
     form.querySelector('button').disabled = true;
-    status.textContent = file ? 'Luetaan kuvaa…' : 'Jäsennetään…';
+    status.textContent = file ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
     progress.hidden = false;
-    progress.textContent = '';
+    progress.textContent = 'Luetaan reseptiä…';
 
     var prepared = file
       ? shrink(file).then(function (b64) { return { image: b64, mediaType: 'image/jpeg' }; })
@@ -109,7 +142,7 @@ const STREAMING_ISLAND = `
           if (!response.ok) {
             return response.text().then(function (t) { throw new Error(t || response.status); });
           }
-          status.textContent = 'Jäsennetään…';
+          status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
           var decoder = new TextDecoder();
           var draft = '';
@@ -117,15 +150,14 @@ const STREAMING_ISLAND = `
             return reader.read().then(function (chunk) {
               if (chunk.done) return draft;
               draft += decoder.decode(chunk.value, { stream: true });
-              progress.textContent = draft;
-              progress.scrollTop = progress.scrollHeight;
+              progress.textContent = summarise(draft);
               return pump();
             });
           })();
         });
       })
       .then(function (draft) {
-        status.textContent = 'Valmis, avataan tarkistus…';
+        status.textContent = 'Valmis — avataan tarkistus.';
         handOver(draft, file ? 'photographed' : 'pasted', text);
       })
       .catch(function (error) {
@@ -172,8 +204,8 @@ export function intakeScreen(): Response {
         <button type="submit">Jäsennä</button>
       </form>
 
-      <p id="status" class="empty" aria-live="polite"></p>
-      <pre id="progress" class="progress" hidden></pre>
+      <p id="status" class="status" aria-live="polite"></p>
+      <p id="progress" class="progress" aria-live="polite" hidden></p>
 
       <script>
         ${raw(STREAMING_ISLAND)}

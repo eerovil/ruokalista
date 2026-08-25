@@ -122,12 +122,24 @@ test("the approval gate applies to the editor too", async ({ page }) => {
   );
 });
 
+test("deleting a dish says what goes with it", async ({ page }) => {
+  // Recipe 3 is a lasagne: two parts, and deleting it takes them too.
+  await page.goto("/recipes/3/delete");
+
+  await expect(page.locator(".plain")).toContainText("Jauhelihakastike");
+  await expect(page.locator(".plain")).toContainText("Juustokastike");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Poistetaanko",
+  );
+});
+
 test("a recipe on the menu cannot be deleted", async ({ page }) => {
   await putOnMenu(page, "2026-11-02", "lunch", "Kaalilaatikko");
 
   await page.goto("/recipes/1/edit");
-  await page.getByRole("button", { name: "Poista resepti" }).click();
+  await page.getByRole("link", { name: "Poista resepti" }).click();
 
+  // Refused at the confirmation, before anything is asked of the reader.
   await expect(page.getByRole("heading", { name: "Ei voi poistaa" })).toBeVisible();
   await expect(page.locator(".refused")).toContainText("ruokalistalla");
 
@@ -135,9 +147,25 @@ test("a recipe on the menu cannot be deleted", async ({ page }) => {
   expect(api.status()).toBe(409);
 });
 
+test("deleting a recipe asks first", async ({ page }) => {
+  await page.goto("/recipes/2/edit");
+  await page.getByRole("link", { name: "Poista resepti" }).click();
+
+  // Nothing is gone yet: this is a question, and it can be walked away from.
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Poistetaanko",
+  );
+  await page.getByRole("link", { name: "Peruuta" }).click();
+  await expect(page).toHaveURL(/\/recipes\/2$/);
+
+  const survived = await page.request.get("/api/recipes/2");
+  expect(survived.status()).toBe(200);
+});
+
 test("a recipe that is on no menu can be deleted", async ({ page }) => {
   await page.goto("/recipes/2/edit");
-  await page.getByRole("button", { name: "Poista resepti" }).click();
+  await page.getByRole("link", { name: "Poista resepti" }).click();
+  await page.getByRole("button", { name: "Poista lopullisesti" }).click();
 
   await expect(page).toHaveURL(/\/recipes$/);
   const response = await page.request.get("/api/recipes/2");
@@ -165,20 +193,23 @@ test.describe("ingredients", () => {
     await page.goto("/ingredients");
 
     const rows = page.locator(".ingredients li");
-    await expect(rows.first().locator("input")).toHaveValue("ananas");
+    await expect(rows.first().locator(".ingredient-name")).toHaveText("ananas");
     await expect(rows.first()).toContainText("ei käytössä");
-    await expect(rows.last().locator("input")).toHaveValue("öljy");
+    await expect(rows.last().locator(".ingredient-name")).toHaveText("öljy");
+
+    // The list reads; it does not sit there looking half-edited.
+    await expect(rows.first().locator("input")).toBeHidden();
   });
 
   test("renaming an ingredient renames it everywhere", async ({ page }) => {
     await page.goto("/ingredients");
-    // The name lives in an input's value, not in the row's text.
-    const row = page.locator('.ingredients li:has(input[value="sitruunaruoho"])');
+    const row = page.locator(".ingredients li", { hasText: "sitruunaruoho" });
+    await row.locator("summary").click();
     await row.locator("input").fill("sitruunaruohoa");
-    await row.getByRole("button", { name: "Nimeä" }).click();
+    await row.getByRole("button", { name: "Tallenna" }).click();
 
     await expect(
-      page.locator('.ingredients li:has(input[value="sitruunaruohoa"])'),
+      page.locator(".ingredients li", { hasText: "sitruunaruohoa" }),
     ).toHaveCount(1);
 
     await page.goto("/recipes/1");
@@ -189,14 +220,15 @@ test.describe("ingredients", () => {
     page,
   }) => {
     await page.goto("/ingredients");
-    const row = page.locator('.ingredients li:has(input[value="ananas"])');
+    const row = page.locator(".ingredients li", { hasText: "ananas" });
+    await row.locator("summary").click();
     await row.locator("input").fill("Vesi");
-    await row.getByRole("button", { name: "Nimeä" }).click();
+    await row.getByRole("button", { name: "Tallenna" }).click();
 
     await expect(page.locator(".refused")).toContainText("on jo olemassa");
     // Both are still there, unmerged.
     await expect(
-      page.locator('.ingredients li:has(input[value="ananas"])'),
+      page.locator(".ingredients li", { hasText: "ananas" }),
     ).toHaveCount(1);
   });
 
