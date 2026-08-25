@@ -15,13 +15,10 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
-
     env:
       WRANGLER_SEND_METRICS: "false"
-
     steps:
       - uses: actions/checkout@v4
       - run: npm ci
@@ -57,7 +54,6 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     environment: production
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -119,10 +115,21 @@ jobs:
           trap cleanup EXIT
 
           printf '%s' "$drill_token" | npx wrangler secret put BACKUP_DRILL_TOKEN >/dev/null
-          curl -fsS --retry 4 --retry-delay 2 \
-            -H "Authorization: Bearer $drill_token" \
-            https://ruokalista.eerovil.workers.dev/__ops/backup-snapshot-64 \
-            -o "$snapshot"
+          status=""
+          for attempt in $(seq 1 15); do
+            status=$(curl -sS -o "$snapshot" -w '%{http_code}' \
+              -H "Authorization: Bearer $drill_token" \
+              https://ruokalista.eerovil.workers.dev/__ops/backup-snapshot-64)
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            if [ "$status" != "404" ]; then
+              echo "snapshot bridge failed: HTTP $status"
+              exit 1
+            fi
+            sleep 2
+          done
+          [ "$status" = "200" ] || { echo "snapshot bridge did not become ready"; exit 1; }
 
           drill_name="ruokalista-restore-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           create_output=$(npx wrangler d1 create "$drill_name" --location weur)
