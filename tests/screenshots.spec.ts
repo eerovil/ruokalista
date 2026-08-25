@@ -92,6 +92,18 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/09-gate-refused.png`, fullPage: true });
   });
 
+  test("the recipe editor", async ({ page }) => {
+    await page.goto("/recipes/1/edit");
+    await expect(page.locator(".line").first()).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/11-editor.png`, fullPage: true });
+  });
+
+  test("the ingredient list", async ({ page }) => {
+    await page.goto("/ingredients");
+    await expect(page.locator(".ingredients li").first()).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/12-ingredients.png`, fullPage: true });
+  });
+
   test("search results", async ({ page }) => {
     await page.goto("/recipes?q=kaali");
     await expect(page.locator(".recipes li")).toHaveCount(1);

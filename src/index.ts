@@ -1,5 +1,10 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
 import type { Env } from "./env.ts";
+import {
+  apiRename,
+  ingredientsScreen,
+  renameForm,
+} from "./ingredient-screens.ts";
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
@@ -20,6 +25,12 @@ import {
   apiMenu,
   apiRemoveMealEntry,
 } from "./menu.ts";
+import {
+  apiDeleteRecipe,
+  deleteRecipeForm,
+  editorScreen,
+  saveEditForm,
+} from "./recipe-editor.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
   completeSignIn,
@@ -59,6 +70,13 @@ const router = new Router()
   .post("/auth/signout", signOut)
   .get("/recipes", requireMemberScreen(recipeListScreen))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
+  .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
+  .post("/recipes/:id", requireMemberScreen(saveEditForm))
+  .post("/recipes/:id/delete", requireMemberScreen(deleteRecipeForm))
+  .delete("/api/recipes/:id", requireMember(apiDeleteRecipe))
+  .get("/ingredients", requireMemberScreen(ingredientsScreen))
+  .post("/ingredients/:id/rename", requireMemberScreen(renameForm))
+  .patch("/api/ingredients/:id", requireMember(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake", requireMemberScreen(structureScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))

@@ -23,6 +23,5 @@ Regenerate after a change that alters a screen:
 | `08-correct.png` | Check and correct, with the new ingredient marked |
 | `09-gate-refused.png` | The approval gate refusing a save |
 | `10-recipes-search.png` | Search results |
-
-The recipe editor and the ingredients screen are not built yet, so they are not
-here.
+| `11-editor.png` | The recipe editor, with source text read-only below |
+| `12-ingredients.png` | The shared ingredient list, with usage counts |

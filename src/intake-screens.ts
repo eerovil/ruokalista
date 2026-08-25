@@ -11,7 +11,17 @@ import {
   type IntakeSource,
 } from "./intake.ts";
 import type { Member } from "./members.ts";
-import { formatDecimal } from "./quantities.ts";
+import {
+  emptyLine,
+  lineRow,
+  readLines,
+  readIngredient,
+  readNumber,
+  readSteps,
+  readText,
+  readWhole,
+  SPARE_LINES,
+} from "./line-form.ts";
 import { saveRecipe, SaveRefused, type LineIngredient } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -23,9 +33,6 @@ import type { RouteContext } from "./router.ts";
  * Nothing is written to D1 until the save, so a failed import leaves no trace
  * and a closed tab loses only the draft. That is why there is no draft table.
  */
-
-/** Blank rows so a line the model missed can be added without any JavaScript. */
-const SPARE_LINES = 3;
 
 /**
  * The one island of client-side work in the app. It streams the draft so bytes
@@ -271,42 +278,8 @@ export async function saveScreen(
   const structuredBy = String(form.get("structuredBy") ?? "") || null;
   const lineCount = Number(form.get("lineCount") ?? 0);
 
-  const lines = [];
-  for (let i = 0; i < lineCount; i++) {
-    if (form.get(`line.${i}.remove`) !== null) continue;
-
-    const ingredient = readIngredient(form, i);
-    const quantity = readNumber(form.get(`line.${i}.quantity`));
-    const unit = readText(form.get(`line.${i}.unit`));
-    const sourceLine = String(form.get(`line.${i}.source`) ?? "").trim();
-
-    // A spare row nobody filled in is not an unanswered line.
-    const untouched =
-      ingredient.kind === "unanswered" &&
-      quantity === null &&
-      unit === null &&
-      sourceLine === "";
-    if (untouched) continue;
-
-    const altQuantity = readNumber(form.get(`line.${i}.altQuantity`));
-    const altUnit = readText(form.get(`line.${i}.altUnit`));
-    const altIsWhole = altQuantity !== null && altUnit !== null;
-
-    lines.push({
-      quantity,
-      quantityMax: readNumber(form.get(`line.${i}.quantityMax`)),
-      unit,
-      altQuantity: altIsWhole && quantity !== null ? altQuantity : null,
-      altUnit: altIsWhole && quantity !== null ? altUnit : null,
-      ingredient,
-      sourceLine,
-    });
-  }
-
-  const steps: string[] = [];
-  for (const [key, value] of form.entries()) {
-    if (key.startsWith("step.")) steps.push(String(value));
-  }
+  const lines = readLines(form, lineCount);
+  const steps = readSteps(form);
 
   try {
     const recipeId = await saveRecipe(env.DB, member, {
@@ -382,98 +355,6 @@ function correctionForm(draft: Draft, ingredients: IngredientSummary[]): Raw {
     </form>`;
 }
 
-function lineRow(
-  line: DraftLine,
-  index: number,
-  ingredients: IngredientSummary[],
-): Raw {
-  const isNew = line.ingredientId === null && line.ingredientName !== "";
-
-  return html`<li class="${isNew ? "line is-new" : "line"}">
-    ${isNew ? html`<span class="badge">Uusi aines</span>` : ""}
-
-    <div class="amounts">
-      <input
-        name="line.${index}.quantity"
-        inputmode="decimal"
-        value="${line.quantity === null ? "" : formatDecimal(line.quantity)}"
-        aria-label="Määrä"
-        placeholder="Määrä"
-      />
-      <input
-        name="line.${index}.quantityMax"
-        inputmode="decimal"
-        value="${line.quantityMax === null
-          ? ""
-          : formatDecimal(line.quantityMax)}"
-        aria-label="Välin yläpää"
-        placeholder="–"
-      />
-      <input
-        name="line.${index}.unit"
-        value="${line.unit ?? ""}"
-        aria-label="Yksikkö"
-        placeholder="Yksikkö"
-      />
-    </div>
-
-    <div class="amounts">
-      <input
-        name="line.${index}.altQuantity"
-        inputmode="decimal"
-        value="${line.altQuantity === null
-          ? ""
-          : formatDecimal(line.altQuantity)}"
-        aria-label="Toinen määrä"
-        placeholder="Toinen määrä"
-      />
-      <input
-        name="line.${index}.altUnit"
-        value="${line.altUnit ?? ""}"
-        aria-label="Toinen yksikkö"
-        placeholder="Toinen yksikkö"
-      />
-    </div>
-
-    <select name="line.${index}.ingredient" aria-label="Aines">
-      <option value="" ${line.ingredientId === null ? "selected" : ""}>
-        ${isNew ? "— vastaa tähän —" : "— valitse aines —"}
-      </option>
-      ${isNew
-        ? html`<option value="new">
-            Hyväksy uutena: ${line.ingredientName}
-          </option>`
-        : ""}
-      ${ingredients.map(
-        (ingredient) => html`<option
-          value="${ingredient.id}"
-          ${line.ingredientId === ingredient.id ? "selected" : ""}
-        >
-          ${ingredient.name}
-        </option>`,
-      )}
-    </select>
-    <input
-      type="hidden"
-      name="line.${index}.newName"
-      value="${line.ingredientName}"
-    />
-    <input
-      type="hidden"
-      name="line.${index}.source"
-      value="${line.sourceLine}"
-    />
-
-    ${line.sourceLine === ""
-      ? ""
-      : html`<span class="source">${line.sourceLine}</span>`}
-
-    <label class="remove">
-      <input type="checkbox" name="line.${index}.remove" /> Poista rivi
-    </label>
-  </li>`;
-}
-
 function failed(message: string, sourceText: string): Response {
   return page(
     "Jäsennys epäonnistui",
@@ -485,53 +366,6 @@ function failed(message: string, sourceText: string): Response {
       </form>`,
     400,
   );
-}
-
-// ----------------------------------------------------------------- parsing
-
-function readIngredient(form: FormData, index: number): LineIngredient {
-  const choice = String(form.get(`line.${index}.ingredient`) ?? "");
-
-  if (choice === "new") {
-    return { kind: "new", name: String(form.get(`line.${index}.newName`) ?? "") };
-  }
-
-  const id = Number(choice);
-  if (Number.isSafeInteger(id) && id > 0) return { kind: "existing", id };
-
-  return { kind: "unanswered" };
-}
-
-/** Accepts the Finnish decimal comma as well as a point. */
-function readNumber(value: File | string | null): number | null {
-  const text = String(value ?? "").trim().replace(",", ".");
-  if (text === "") return null;
-
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function readWhole(value: File | string | null): number | null {
-  const parsed = readNumber(value);
-  return parsed !== null && Number.isSafeInteger(parsed) ? parsed : null;
-}
-
-function readText(value: File | string | null): string | null {
-  const text = String(value ?? "").trim();
-  return text === "" ? null : text;
-}
-
-function emptyLine(): DraftLine {
-  return {
-    quantity: null,
-    quantityMax: null,
-    unit: null,
-    altQuantity: null,
-    altUnit: null,
-    ingredientId: null,
-    ingredientName: "",
-    sourceLine: "",
-  };
 }
 
 /** Rebuild the draft from a refused submission so nothing typed is lost. */
@@ -559,16 +393,11 @@ function draftFromForm(
     });
   }
 
-  const steps: string[] = [];
-  for (const [key, value] of form.entries()) {
-    if (key.startsWith("step.")) steps.push(String(value));
-  }
-
   return {
     title: String(form.get("title") ?? ""),
     yieldPortions: readWhole(form.get("yield")),
     sourceText,
-    steps,
+    steps: readSteps(form),
     lines,
     structuredBy: structuredBy ?? "",
   };

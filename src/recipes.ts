@@ -100,7 +100,7 @@ interface LineRow {
   source_line: string;
 }
 
-async function findRecipe(
+export async function findRecipe(
   db: D1Database,
   householdId: number,
   id: number,
@@ -287,7 +287,9 @@ function recipeBody(recipe: Recipe): Raw {
     </ol>
 
     <h2>Alkuperäinen teksti</h2>
-    <p class="source-text">${recipe.sourceText}</p>`;
+    <p class="source-text">${recipe.sourceText}</p>
+
+    <p><a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a></p>`;
 }
 
 async function loadRequested(
