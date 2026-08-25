@@ -1,0 +1,45 @@
+name: Watchdog acceptance fixture
+
+on: push
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exercise stale fixture
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const staleTitle = "backup stale";
+            const scheduledAt = "2026-08-24T00:00:00.000Z";
+            const now = new Date("2026-08-26T00:00:00.000Z");
+            const maxAgeMs = 36 * 60 * 60 * 1000;
+            const ageMs = now.getTime() - Date.parse(scheduledAt);
+            const problem = ageMs > maxAgeMs
+              ? `latest scheduled backup is ${Math.floor(ageMs / 3600000)}h old (${scheduledAt})`
+              : "";
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const staleIssues = issues.filter(
+              (issue) => !issue.pull_request && issue.title === staleTitle,
+            );
+
+            if (problem && staleIssues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: staleTitle,
+                body: `The independent backup watchdog failed at ${now.toISOString()}.\n\n${problem}`,
+              });
+            }
+
+            core.setFailed(problem || "stale fixture unexpectedly did not become stale");
