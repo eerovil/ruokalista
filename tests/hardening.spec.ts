@@ -126,7 +126,11 @@ test("a photographed import keeps its route when it is saved", async ({ page }) 
     recipe: { sourceRoute: string; sourceText: string };
   };
   expect(body.recipe.sourceRoute).toBe("photographed");
-  expect(body.recipe.sourceText).toBe(DRAFT_FIXTURE.source_text);
+  // HTML form submission canonicalizes line endings to CRLF. The transcription
+  // itself must be unchanged once line endings are compared canonically.
+  expect(body.recipe.sourceText.replace(/\r\n/g, "\n")).toBe(
+    DRAFT_FIXTURE.source_text,
+  );
 });
 
 test("a forged line count is capped before it can consume the Worker", async ({
