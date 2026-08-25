@@ -1,4 +1,5 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
+import { manualBackupSmoke } from "./backup-manual.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
 import type { Env } from "./env.ts";
 import {
@@ -54,11 +55,13 @@ import {
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
  * this file. Screens and API routes get added to the table below as they land.
  *
- * Everything except /health goes through requireMember.
+ * Everything except /health goes through requireMember, apart from the
+ * temporary #64 one-shot backup smoke route removed immediately after proof.
  */
 
 const router = new Router()
   .get("/health", health)
+  .post("/__ops/backup-once-64", manualBackupSmoke)
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/meal-entries", requireMemberScreen(addEntryForm))
@@ -108,9 +111,8 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /**
- * Public, and the only route that is. Answers whether the Worker is up and
- * whether its D1 binding actually reaches a migrated database — the two things
- * worth knowing before anything else is built on top.
+ * Public, and the only permanent public route. Answers whether the Worker is up
+ * and whether its D1 binding actually reaches a migrated database.
  */
 async function health({ env }: RouteContext): Promise<Response> {
   let database: "ok" | "unmigrated" | "unreachable" = "unreachable";
