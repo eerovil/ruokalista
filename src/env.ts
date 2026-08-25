@@ -28,10 +28,4 @@ export interface Env {
    * Contents read/write. The nightly scheduled handler fails loudly without it.
    */
   BACKUP_GITHUB_TOKEN?: string;
-
-  /**
-   * Short-lived #64 acceptance token. It exists only while CI transfers the
-   * private snapshot to the restore runner and is deleted in that same job.
-   */
-  BACKUP_DRILL_TOKEN?: string;
 }

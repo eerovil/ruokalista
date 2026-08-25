@@ -83,69 +83,49 @@ jobs:
           signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
             https://ruokalista.eerovil.workers.dev/recipes)
           [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
-      - name: Run one-shot production backup smoke
-        run: |
-          set -e
-          body=$(mktemp)
-          status=$(curl -sS -o "$body" -w '%{http_code}' -X POST \
-            https://ruokalista.eerovil.workers.dev/__ops/backup-once-64)
-          cat "$body"
-          [ "$status" = "200" ] || { echo "manual backup smoke failed: HTTP $status"; exit 1; }
-          grep -q '"status":"ok"' "$body" || { echo "manual backup smoke did not report ok"; exit 1; }
-      - name: Restore real backup into temporary remote D1
-        if: contains(github.event.head_commit.message, '[backup-restore-drill]')
+      - name: Observe authentic Cron Trigger backup
+        if: contains(github.event.head_commit.message, '[cron-diagnostic]')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          snapshot=$(mktemp)
-          chmod 600 "$snapshot"
-          drill_name=""
-          drill_token=$(openssl rand -hex 32)
-          echo "::add-mask::$drill_token"
-
+          log=$(mktemp)
+          tail_pid=""
           cleanup() {
-            rm -f "$snapshot"
-            if [ -n "$drill_name" ]; then
-              npx wrangler d1 delete "$drill_name" --skip-confirmation || true
+            if [ -n "$tail_pid" ]; then
+              kill "$tail_pid" 2>/dev/null || true
+              wait "$tail_pid" 2>/dev/null || true
             fi
-            printf '{"BACKUP_DRILL_TOKEN":null}\n' | npx wrangler secret bulk >/dev/null || true
+            rm -f "$log"
           }
           trap cleanup EXIT
 
-          printf '%s' "$drill_token" | npx wrangler secret put BACKUP_DRILL_TOKEN >/dev/null
-          status=""
-          for attempt in $(seq 1 15); do
-            status=$(curl -sS -o "$snapshot" -w '%{http_code}' \
-              -H "Authorization: Bearer $drill_token" \
-              https://ruokalista.eerovil.workers.dev/__ops/backup-snapshot-64)
-            if [ "$status" = "200" ]; then
-              break
-            fi
-            if [ "$status" != "404" ]; then
-              echo "snapshot bridge failed: HTTP $status"
+          npx wrangler tail ruokalista --format json --search backup >"$log" 2>&1 &
+          tail_pid=$!
+
+          # Trigger changes can take up to 15 minutes to propagate. With the
+          # temporary */5 schedule, 25 minutes covers propagation plus two
+          # five-minute boundaries without another deploy or secret mutation.
+          for _ in $(seq 1 300); do
+            if grep -q 'backup.scheduled_failed' "$log"; then
+              cat "$log"
+              echo "scheduled backup invocation failed"
               exit 1
             fi
-            sleep 2
+            if grep -q 'backup.completed' "$log"; then
+              cat "$log"
+              echo "observed successful authentic Cron Trigger backup"
+              exit 0
+            fi
+            if ! kill -0 "$tail_pid" 2>/dev/null; then
+              cat "$log"
+              echo "wrangler tail exited before observing the Cron Trigger"
+              exit 1
+            fi
+            sleep 5
           done
-          [ "$status" = "200" ] || { echo "snapshot bridge did not become ready"; exit 1; }
 
-          drill_name="ruokalista-restore-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          create_output=$(npx wrangler d1 create "$drill_name" --location weur)
-          printf '%s\n' "$create_output"
-          drill_id=$(printf '%s\n' "$create_output" | sed -n 's/.*"database_id": "\([^"]*\)".*/\1/p' | head -n 1)
-          printf '%s' "$drill_id" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' || {
-            echo "could not read created D1 database id"
-            exit 1
-          }
-          [ "$drill_id" != "f81fabeb-b38f-453d-8966-dfe52c721341" ] || {
-            echo "refusing production D1 id"
-            exit 1
-          }
-
-          npm run restore:backup -- \
-            --snapshot "$snapshot" \
-            --database "$drill_name" \
-            --database-id "$drill_id" \
-            --remote
+          cat "$log"
+          echo "no authentic Cron Trigger backup observed within 25 minutes"
+          exit 1
