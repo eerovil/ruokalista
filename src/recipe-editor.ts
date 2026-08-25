@@ -143,6 +143,9 @@ function editorForm(recipe: Recipe, ingredients: IngredientSummary[]): Raw {
       ingredientId: idOf(line.ingredient, ingredients),
       ingredientName: line.ingredient,
       sourceLine: line.sourceLine,
+      // A saved part is a recipe of its own, so a recipe's own lines never
+      // carry one.
+      section: null,
     })),
     ...Array.from({ length: SPARE_LINES }, emptyLine),
   ];

@@ -25,7 +25,10 @@ INSERT INTO ingredient (id, household_id, name, created_by) VALUES
   (3, 1, 'valkokaali',     1),
   (4, 1, 'sitruunaruoho',  1),
   (5, 1, 'ananas',         1),  -- used by nothing, so its count must be 0
-  (6, 2, 'naapurin suola', 2);  -- household 2, must never appear for member 1
+  (6, 2, 'naapurin suola', 2),  -- household 2, must never appear for member 1
+  (7, 1, 'jauheliha',      1),
+  (8, 1, 'juusto',         1),
+  (9, 1, 'maito',          1);
 
 INSERT INTO recipe
   (id, household_id, title, yield_portions, source_text, source_route, created_by, updated_by)
@@ -44,10 +47,29 @@ VALUES
    'Öljykastike' || char(10) || 'öljyä' || char(10) || 'vettä',
    'photographed', 1, 1);
 
+-- A dish written in named parts: the lasagne itself, plus one recipe per part.
+-- See docs/adr/0002-a-part-is-a-recipe.md.
+INSERT INTO recipe
+  (id, household_id, title, yield_portions, source_text, source_route,
+   created_by, updated_by, parent_id, part_position)
+VALUES
+  (3, 1, 'Lasagne', 6,
+   'Lasagne' || char(10) || 'Jauhelihakastike' || char(10) || '400 g jauhelihaa'
+     || char(10) || 'Juustokastike' || char(10) || '5 dl maitoa'
+     || char(10) || '2 dl juustoa',
+   'pasted', 1, 1, NULL, NULL),
+  (4, 1, 'Jauhelihakastike', NULL,
+   'Lasagne', 'pasted', 1, 1, 3, 1),
+  (5, 1, 'Juustokastike', NULL,
+   'Lasagne', 'pasted', 1, 1, 3, 2);
+
 INSERT INTO recipe_step (recipe_id, position, text) VALUES
   (1, 1, 'Kuullota kaali öljyssä.'),
   (1, 2, 'Lisää vesi ja hauduta.'),
-  (2, 1, 'Sekoita.');
+  (2, 1, 'Sekoita.'),
+  (3, 1, 'Kokoa vuokaan ja paista 40 minuuttia.'),
+  (4, 1, 'Ruskista jauheliha.'),
+  (5, 1, 'Kuumenna maito ja sulata juusto joukkoon.');
 
 -- One line of each awkward shape the schema exists to hold: a plain amount, a
 -- range, a second measurement in another unit, and no amount at all.
@@ -59,4 +81,7 @@ VALUES
   (1, 3, 0.5, NULL, 'kpl', 500,  'g',  3, '½ (500 g) valkokaali'),
   (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa'),
   (2, 1, NULL, NULL, NULL, NULL, NULL, 1, 'öljyä'),
-  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä');
+  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä'),
+  (4, 1, 400, NULL, 'g',  NULL, NULL, 7, '400 g jauhelihaa'),
+  (5, 1, 5,   NULL, 'dl', NULL, NULL, 9, '5 dl maitoa'),
+  (5, 2, 2,   NULL, 'dl', NULL, NULL, 8, '2 dl juustoa');

@@ -27,11 +27,12 @@ export interface RecipeLine extends Measurement {
 }
 
 export interface Recipe extends RecipeSummary {
-  yieldPortions: number | null;
   sourceText: string;
   sourceRoute: string;
   steps: string[];
   lines: RecipeLine[];
+  /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
+  parts: Recipe[];
 }
 
 // ---------------------------------------------------------------- queries
@@ -59,6 +60,7 @@ export async function recipeSummaries(
          FROM recipe
          JOIN member ON member.id = recipe.created_by
         WHERE recipe.household_id = ?
+          AND recipe.parent_id IS NULL
         ORDER BY recipe.created_at DESC, recipe.id DESC`,
     )
     .bind(householdId)
@@ -104,6 +106,7 @@ export async function findRecipe(
   db: D1Database,
   householdId: number,
   id: number,
+  withParts = true,
 ): Promise<Recipe | null> {
   const row = await db
     .prepare(
@@ -150,6 +153,10 @@ export async function findRecipe(
   const steps = (batch[0]?.results ?? []) as { text: string }[];
   const lines = (batch[1]?.results ?? []) as LineRow[];
 
+  // One level only: a part cannot itself have parts, so this never recurses
+  // more than once. See docs/adr/0002-a-part-is-a-recipe.md.
+  const parts = withParts ? await partsOf(db, householdId, id) : [];
+
   return {
     id: row.id,
     title: row.title,
@@ -158,6 +165,7 @@ export async function findRecipe(
     sourceRoute: row.source_route,
     createdAt: row.created_at,
     createdBy: row.created_by,
+    parts,
     steps: steps.map((step) => step.text),
     lines: lines.map((line) => ({
       position: line.position,
@@ -173,6 +181,29 @@ export async function findRecipe(
 }
 
 // ----------------------------------------------------------------- routes
+
+async function partsOf(
+  db: D1Database,
+  householdId: number,
+  parentId: number,
+): Promise<Recipe[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id FROM recipe
+        WHERE household_id = ? AND parent_id = ?
+        ORDER BY part_position, id`,
+    )
+    .bind(householdId, parentId)
+    .all<{ id: number }>();
+
+  const parts: Recipe[] = [];
+  for (const row of results) {
+    const part = await findRecipe(db, householdId, row.id, false);
+    if (part !== null) parts.push(part);
+  }
+
+  return parts;
+}
 
 /** `GET /api/recipes?q=` */
 export async function apiListRecipes(
@@ -259,6 +290,31 @@ export async function recipeScreen(
   return page(recipe.title, recipeBody(recipe));
 }
 
+/** The ingredients and method of one recipe — a dish, or one of its parts. */
+function body(recipe: Recipe): Raw {
+  return html`${recipe.lines.length === 0
+      ? ""
+      : html`<h3>Ainekset</h3>
+          <ul class="lines">
+            ${recipe.lines.map((line) => {
+              const amount = formatMeasurement(line);
+              return html`<li>
+                ${amount === ""
+                  ? ""
+                  : html`<span class="amount">${amount}</span> `}
+                ${line.ingredient}
+                <span class="source">${line.sourceLine}</span>
+              </li>`;
+            })}
+          </ul>`}
+    ${recipe.steps.length === 0
+      ? ""
+      : html`<h3>Valmistus</h3>
+          <ol>
+            ${recipe.steps.map((step) => html`<li>${step}</li>`)}
+          </ol>`}`;
+}
+
 function recipeBody(recipe: Recipe): Raw {
   return html`<h1>${recipe.title}</h1>
     <p class="yield">
@@ -269,22 +325,13 @@ function recipeBody(recipe: Recipe): Raw {
         : `${recipe.yieldPortions} annosta`}
     </p>
 
-    <h2>Ainekset</h2>
-    <ul class="lines">
-      ${recipe.lines.map((line) => {
-        const amount = formatMeasurement(line);
-        return html`<li>
-          ${amount === "" ? "" : html`<span class="amount">${amount}</span> `}
-          ${line.ingredient}
-          <span class="source">${line.sourceLine}</span>
-        </li>`;
-      })}
-    </ul>
-
-    <h2>Valmistus</h2>
-    <ol>
-      ${recipe.steps.map((step) => html`<li>${step}</li>`)}
-    </ol>
+    ${body(recipe)}
+    ${recipe.parts.map(
+      (part) => html`<section class="part">
+        <h2>${part.title}</h2>
+        ${body(part)}
+      </section>`,
+    )}
 
     <h2>Alkuperäinen teksti</h2>
     <p class="source-text">${recipe.sourceText}</p>

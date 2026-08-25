@@ -339,14 +339,23 @@ function correctionForm(draft: Draft, ingredients: IngredientSummary[]): Raw {
 
       <h2>Ainekset</h2>
       <ol class="edit-lines">
-        ${rows.map((line, index) => lineRow(line, index, ingredients))}
+        ${rows.map((line, index) =>
+          lineRow(line, index, ingredients, { sections: true }),
+        )}
       </ol>
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
         ${draft.steps.map(
-          (step, index) => html`<li>
-            <textarea name="step.${index}" rows="2">${step}</textarea>
+          (step, index) => html`<li class="edit-step">
+            <textarea name="step.${index}" rows="2">${step.text}</textarea>
+            <input
+              name="step.${index}.section"
+              value="${step.section ?? ""}"
+              aria-label="Osa"
+              placeholder="Osa"
+              class="section"
+            />
           </li>`,
         )}
       </ol>
@@ -390,6 +399,7 @@ function draftFromForm(
       ingredientId: ingredient.kind === "existing" ? ingredient.id : null,
       ingredientName: String(form.get(`line.${i}.newName`) ?? ""),
       sourceLine: String(form.get(`line.${i}.source`) ?? ""),
+      section: readText(form.get(`line.${i}.section`)),
     });
   }
 

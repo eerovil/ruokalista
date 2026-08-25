@@ -2,7 +2,7 @@ import { html, type Raw } from "./html.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import { formatDecimal } from "./quantities.ts";
-import type { LineIngredient, LineToSave } from "./recipe-save.ts";
+import type { LineIngredient, LineToSave, StepToSave } from "./recipe-save.ts";
 
 /**
  * One editable ingredient line, shared by the intake correction screen and the
@@ -19,6 +19,11 @@ export const SPARE_LINES = 3;
 export interface LineRowOptions {
   /** Show a position box, so lines can be reordered without JavaScript. */
   reorderable?: boolean;
+  /**
+   * Show the part this line belongs to. Only intake needs it: once saved, a
+   * part is a recipe of its own and is edited on its own screen.
+   */
+  sections?: boolean;
 }
 
 export function lineRow(
@@ -84,6 +89,16 @@ export function lineRow(
       />
     </div>
 
+    ${options.sections
+      ? html`<input
+          name="line.${index}.section"
+          value="${line.section ?? ""}"
+          aria-label="Osa"
+          placeholder="Osa (esim. juustokastike)"
+          class="section"
+        />`
+      : ""}
+
     <select name="line.${index}.ingredient" aria-label="Aines">
       <option value="" ${line.ingredientId === null ? "selected" : ""}>
         ${isNew ? "— vastaa tähän —" : "— valitse aines —"}
@@ -133,6 +148,7 @@ export function emptyLine(): DraftLine {
     ingredientId: null,
     ingredientName: "",
     sourceLine: "",
+    section: null,
   };
 }
 
@@ -173,6 +189,7 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
         altUnit: altIsWhole && quantity !== null ? altUnit : null,
         ingredient,
         sourceLine,
+        section: readText(form.get(`line.${i}.section`)),
       },
     });
   }
@@ -183,23 +200,27 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
 }
 
 /** The steps, in the order their position boxes ask for. */
-export function readSteps(form: FormData): string[] {
-  const steps: { position: number; text: string }[] = [];
+export function readSteps(form: FormData): StepToSave[] {
+  const steps: { position: number; step: StepToSave }[] = [];
 
   for (const [key, value] of form.entries()) {
     const match = /^step\.(\d+)$/.exec(key);
     if (match === null) continue;
 
     const index = Number(match[1]);
-    const position =
-      readNumber(form.get(`step.${index}.position`)) ?? index + 1;
-    steps.push({ position, text: String(value) });
+    steps.push({
+      position: readNumber(form.get(`step.${index}.position`)) ?? index + 1,
+      step: {
+        text: String(value),
+        section: readText(form.get(`step.${index}.section`)),
+      },
+    });
   }
 
   return steps
     .sort((a, b) => a.position - b.position)
-    .map((step) => step.text)
-    .filter((text) => text.trim() !== "");
+    .map((entry) => entry.step)
+    .filter((step) => step.text.trim() !== "");
 }
 
 export function readIngredient(form: FormData, index: number): LineIngredient {

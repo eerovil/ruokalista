@@ -34,13 +34,20 @@ export interface DraftLine {
   ingredientId: number | null;
   ingredientName: string;
   sourceLine: string;
+  /** The named part this belongs to, or null for the dish itself. */
+  section: string | null;
+}
+
+export interface DraftStep {
+  text: string;
+  section: string | null;
 }
 
 export interface Draft {
   title: string;
   yieldPortions: number | null;
   sourceText: string;
-  steps: string[];
+  steps: DraftStep[];
   lines: DraftLine[];
   structuredBy: string;
 }
@@ -71,7 +78,15 @@ const DRAFT_SCHEMA = {
     title: { type: "string" },
     yield_portions: nullable("integer"),
     source_text: { type: "string" },
-    steps: { type: "array", items: { type: "string" } },
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { text: { type: "string" }, section: nullable("string") },
+        required: ["text", "section"],
+        additionalProperties: false,
+      },
+    },
     lines: {
       type: "array",
       items: {
@@ -85,6 +100,7 @@ const DRAFT_SCHEMA = {
           ingredient_id: nullable("integer"),
           ingredient_name: { type: "string" },
           source_line: { type: "string" },
+          section: nullable("string"),
         },
         required: [
           "quantity",
@@ -95,6 +111,7 @@ const DRAFT_SCHEMA = {
           "ingredient_id",
           "ingredient_name",
           "source_line",
+          "section",
         ],
         additionalProperties: false,
       },
@@ -152,6 +169,11 @@ Säännöt, joista ei poiketa:
 - source_text on annettu teksti sellaisenaan.
 - Yhdistä jokainen rivi olemassa olevaan ainekseen sen id:llä kun jokin selvästi
   sopii. Muuten jätä ingredient_id null ja ehdota nimi ingredient_name-kentässä.
+- Jos ruokalaji on kirjoitettu nimettyihin osiin — kuten lasagnen
+  jauhelihakastike ja juustokastike — merkitse jokaisen rivin ja vaiheen
+  section-kenttään sen osan nimi täsmälleen kuten se sivulla lukee. Jos rivi tai
+  vaihe ei kuulu mihinkään osaan, jätä section null. Älä keksi osia: jos
+  sivulla ei ole väliotsikoita, kaikki section-kentät ovat null.
 ${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
@@ -329,9 +351,17 @@ function toDraft(raw: unknown, source: IntakeSource, model: string): Draft {
     title: typeof draft["title"] === "string" ? draft["title"] : "",
     yieldPortions: wholeOrNull(draft["yield_portions"]),
     sourceText: keptSourceText(source, draft["source_text"]),
-    steps: steps.filter((step): step is string => typeof step === "string"),
+    steps: steps.map(toDraftStep).filter((step) => step.text !== ""),
     lines: lines.map(toDraftLine),
     structuredBy: model,
+  };
+}
+
+function toDraftStep(raw: unknown): DraftStep {
+  const step = (raw ?? {}) as Record<string, unknown>;
+  return {
+    text: typeof step["text"] === "string" ? step["text"].trim() : "",
+    section: textOrNull(step["section"]),
   };
 }
 
@@ -357,6 +387,7 @@ function toDraftLine(raw: unknown): DraftLine {
       typeof line["ingredient_name"] === "string" ? line["ingredient_name"] : "",
     sourceLine:
       typeof line["source_line"] === "string" ? line["source_line"] : "",
+    section: textOrNull(line["section"]),
   };
 }
 

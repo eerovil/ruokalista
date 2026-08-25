@@ -101,6 +101,12 @@ const STYLES = `
   form.inline input { width: 3.2rem; padding: .25rem; text-align: center; }
   form.inline button { padding: .25rem .5rem; font-size: .8rem; }
   button.quiet { background: transparent; border: 1px solid var(--edge); opacity: .7; }
+  .section { font-size: .85rem; }
+  .edit-step { flex-direction: column; align-items: stretch; }
+  .part { margin: 1.5rem 0; padding-left: .7rem;
+    border-left: 3px solid var(--edge); }
+  .part h2 { margin-top: 0; font-size: 1.05rem; }
+  h3 { font-size: .85rem; opacity: .6; font-weight: 400; margin: 1rem 0 .3rem; }
   .ingredients li { display: flex; align-items: center; gap: .5rem;
     padding: .4rem 0; border-bottom: 1px solid var(--edge); }
   .ingredients form.inline { flex: 1; }
