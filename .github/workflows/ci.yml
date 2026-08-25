@@ -132,3 +132,42 @@ jobs:
           cat "$body"
           [ "$status" = "200" ] || { echo "manual backup smoke failed: HTTP $status"; exit 1; }
           grep -q '"status":"ok"' "$body" || { echo "manual backup smoke did not report ok"; exit 1; }
+
+      - name: Restore real backup into temporary remote D1
+        # Temporary #64 acceptance drill. It runs only on the explicitly marked
+        # merge commit, keeps the private snapshot in a mode-0600 temp file, and
+        # deletes both the temporary D1 and short-lived Worker bearer token even
+        # when verification fails.
+        if: contains(github.event.head_commit.message, '[backup-restore-drill]')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          snapshot=$(mktemp)
+          chmod 600 "$snapshot"
+          drill_name=""
+          drill_token=$(openssl rand -hex 32)
+          echo "::add-mask::$drill_token"
+
+          cleanup() {
+            rm -f "$snapshot"
+            if [ -n "$drill_name" ]; then
+              npx wrangler d1 delete "$drill_name" --skip-confirmation || true
+            fi
+            printf '{"BACKUP_DRILL_TOKEN":null}\n' | npx wrangler secret bulk >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$drill_token" | npx wrangler secret put BACKUP_DRILL_TOKEN >/dev/null
+          curl -fsS --retry 4 --retry-delay 2 \
+            -H "Authorization: Bearer $drill_token" \
+            https://ruokalista.eerovil.workers.dev/__ops/backup-snapshot-64 \
+            -o "$snapshot"
+
+          drill_name="ruokalista-restore-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          npx wrangler d1 create "$drill_name" --location weur
+          npm run restore:backup -- \
+            --snapshot "$snapshot" \
+            --database "$drill_name" \
+            --remote
