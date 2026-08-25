@@ -7,8 +7,7 @@ import {
   type BackupTableName,
 } from "./backup.ts";
 
-type JsonPrimitive = string | number | boolean | null;
-type BackupRow = Record<string, JsonPrimitive>;
+type BackupRow = BackupSnapshotUnsigned["tables"][BackupTableName][number];
 
 export interface TargetSnapshotData {
   schema: BackupSchemaEntry[];
@@ -319,8 +318,10 @@ function requireReference(
 
 function integerCell(row: BackupRow, column: string, label: string): number {
   const value = row[column];
-  if (!Number.isInteger(value)) throw new Error(`snapshot ${label} must be an integer`);
-  return value as number;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error(`snapshot ${label} must be an integer`);
+  }
+  return value;
 }
 
 function sortSchema(schema: BackupSchemaEntry[]): BackupSchemaEntry[] {
@@ -336,12 +337,15 @@ function quoteIdentifier(value: string): string {
   return `"${value}"`;
 }
 
-function sqlValue(value: JsonPrimitive): string {
+function sqlValue(value: unknown): string {
   if (value === null) return "NULL";
   if (typeof value === "string") return `'${value.replace(/'/g, "''")}'`;
   if (typeof value === "boolean") return value ? "1" : "0";
-  if (!Number.isFinite(value)) throw new Error("snapshot contains a non-finite number");
-  return String(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("snapshot contains a non-finite number");
+    return String(value);
+  }
+  throw new Error("snapshot row contains unsupported nested JSON data");
 }
 
 function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
