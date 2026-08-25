@@ -241,6 +241,16 @@ tap away.
 A recipe with no stated yield cannot be scaled and says so — there is nothing to
 scale *from*.
 
+## Browser compatibility
+
+Issue #65 establishes old-browser support as a standing frontend requirement,
+with older iPads and Safari as important targets. Keep core reading, planning
+and navigation server-rendered and usable without optional browser APIs. Ship
+enhancements through feature detection and compatible syntax, add a modest
+fallback when it preserves an important flow, and let unsupported extras fail
+quietly without taking the page with them. Inline browser scripts are delivered
+without transpilation, so write them for the oldest target they need to serve.
+
 ## Browser tests
 
     ./scripts/playwright.sh npx playwright test

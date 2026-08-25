@@ -197,6 +197,17 @@ const STYLES = `
   }
   .recipe-edit { margin-top: 2rem; font-size: .9rem; }
   .recipe-edit a { color: var(--muted); }
+  .keep-awake {
+    display: flex; align-items: center; gap: .6rem; margin: 1rem 0;
+    color: var(--muted); font-size: .85rem;
+  }
+  .keep-awake[hidden] { display: none; }
+  .keep-awake button { flex: none; min-height: var(--tap-compact); padding: .3rem .6rem; }
+  .keep-awake button[hidden] { display: none; }
+  .keep-awake-video {
+    position: fixed; left: 0; bottom: 0; width: 1px; height: 1px;
+    opacity: .001; pointer-events: none;
+  }
   ol { padding-left: 1.2rem; }
   ol li { margin-bottom: .5rem; }
 

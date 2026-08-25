@@ -80,6 +80,27 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/05-recipe.png`, fullPage: true });
   });
 
+  test("older iPad keep-awake confirmation", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "wakeLock", {
+        configurable: true,
+        value: undefined,
+      });
+      HTMLMediaElement.prototype.play = function () {
+        return Promise.resolve();
+      };
+    });
+    await page.goto("/recipes/1");
+    await page.getByRole("button", { name: "Pidä näyttö hereillä" }).click();
+    await expect(page.locator("#keep-awake-status")).toHaveText(
+      "Näyttö pysyy hereillä.",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/18-keep-awake-fallback.png`,
+      fullPage: true,
+    });
+  });
+
   test("a recipe that cannot be scaled", async ({ page }) => {
     await page.goto("/recipes/2");
     await expect(page.locator(".yield")).toBeVisible();
@@ -88,6 +109,9 @@ test.describe("signed in", () => {
 
   test("intake", async ({ page }) => {
     await page.goto("/intake");
+    await expect(
+      page.getByLabel("…tai ota tai valitse kuva painetusta sivusta"),
+    ).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/07-intake.png`, fullPage: true });
   });
 

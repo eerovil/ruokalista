@@ -16,53 +16,34 @@ jobs:
   check:
     runs-on: ubuntu-latest
 
-    # The same image scripts/playwright.sh uses, pinned to the same version as
-    # the @playwright/test in package.json. It already carries the browsers;
-    # installing them would need root for apt.
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
 
     env:
-      # Nothing here should reach the network. No test calls Anthropic — the
-      # streaming endpoint is stubbed — and wrangler runs in local mode.
       WRANGLER_SEND_METRICS: "false"
 
     steps:
       - uses: actions/checkout@v4
-
       - run: npm ci
-
       - name: Typecheck
         run: npm run typecheck
-
       - name: Checks
         run: npm run check
-
       - name: Local development values
-        # Throwaway values. SESSION_SECRET signs the cookies the browser tests
-        # mint; the Google pair only has to exist, because the sign-in tests
-        # check the redirect that is built from it, never a real handshake.
-        # ANTHROPIC_API_KEY is deliberately absent: if a test ever needs it, it
-        # is calling the model, and that is a test that should not exist.
         run: |
           {
             printf 'SESSION_SECRET="%s"\n' "$(openssl rand -base64 32)"
             printf 'GOOGLE_CLIENT_ID="ci.apps.googleusercontent.com"\n'
             printf 'GOOGLE_CLIENT_SECRET="ci-not-a-real-secret"\n'
           } > .dev.vars
-
       - name: Migrate the local database
         run: npx wrangler d1 migrations apply ruokalista --local
-
       - name: Check backup schema coverage
         run: npm run check:backup-schema
-
       - name: Restore round-trip
         run: npm run check:restore-roundtrip
-
       - name: Browser tests
         run: npx playwright test
-
       - name: Keep the traces from a failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -72,42 +53,29 @@ jobs:
           retention-days: 7
 
   deploy:
-    # Only on main, and only once the tests have passed. A pull request never
-    # reaches this job, so the token is never available to one — which is what
-    # makes it safe to keep in a public repository's secrets.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: check
     runs-on: ubuntu-latest
-
-    # Nothing else in this workflow should be able to see these.
     environment: production
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - run: npm ci
-
       - name: Apply any new migrations
-        # Before the deploy, not after: the migration is backward-compatible,
-        # and main runs cannot now be cancelled before the matching deploy.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply ruokalista --remote
-
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
-
       - name: Check what is actually live
-        # The deploy reporting success is not the same as the app answering.
         run: |
           set -e
           health=$(curl -fsS https://ruokalista.eerovil.workers.dev/health)
@@ -119,11 +87,7 @@ jobs:
           signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
             https://ruokalista.eerovil.workers.dev/recipes)
           [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
-
       - name: Run one-shot production backup smoke
-        # Temporary #64 diagnostic. This calls the deployed Worker directly,
-        # exercising the real D1 binding and Worker BACKUP_GITHUB_TOKEN without
-        # involving Cron Trigger scheduling. Remove after the acceptance proof.
         run: |
           set -e
           body=$(mktemp)
@@ -132,12 +96,7 @@ jobs:
           cat "$body"
           [ "$status" = "200" ] || { echo "manual backup smoke failed: HTTP $status"; exit 1; }
           grep -q '"status":"ok"' "$body" || { echo "manual backup smoke did not report ok"; exit 1; }
-
       - name: Restore real backup into temporary remote D1
-        # Temporary #64 acceptance drill. It runs only on the explicitly marked
-        # merge commit, keeps the private snapshot in a mode-0600 temp file, and
-        # deletes both the temporary D1 and short-lived Worker bearer token even
-        # when verification fails.
         if: contains(github.event.head_commit.message, '[backup-restore-drill]')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -166,8 +125,20 @@ jobs:
             -o "$snapshot"
 
           drill_name="ruokalista-restore-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          npx wrangler d1 create "$drill_name" --location weur
+          create_output=$(npx wrangler d1 create "$drill_name" --location weur)
+          printf '%s\n' "$create_output"
+          drill_id=$(printf '%s\n' "$create_output" | sed -n 's/.*"database_id": "\([^"]*\)".*/\1/p' | head -n 1)
+          printf '%s' "$drill_id" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' || {
+            echo "could not read created D1 database id"
+            exit 1
+          }
+          [ "$drill_id" != "f81fabeb-b38f-453d-8966-dfe52c721341" ] || {
+            echo "refusing production D1 id"
+            exit 1
+          }
+
           npm run restore:backup -- \
             --snapshot "$snapshot" \
             --database "$drill_name" \
+            --database-id "$drill_id" \
             --remote

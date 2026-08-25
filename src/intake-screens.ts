@@ -220,8 +220,8 @@ export function intakeScreen({ url }: RouteContext): Response {
           placeholder="Liitä tähän resepti sellaisenaan."
         ></textarea>
 
-        <label for="photo">…tai kuvaa painettu sivu</label>
-        <input id="photo" name="photo" type="file" accept="image/*" capture="environment" />
+        <label for="photo">…tai ota tai valitse kuva painetusta sivusta</label>
+        <input id="photo" name="photo" type="file" accept="image/*" />
         <p class="empty">
           Kuva pienennetään selaimessa ja luetaan kerran. Sitä ei tallenneta
           minnekään — talteen jää vain sivulta luettu teksti.
