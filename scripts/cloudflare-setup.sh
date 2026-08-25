@@ -18,7 +18,6 @@ set -euo pipefail
 
 DATABASE_NAME="${DATABASE_NAME:-ruokalista}"
 ROTATE_SESSION_SECRET="${ROTATE_SESSION_SECRET:-0}"
-PRODUCTION_ORIGIN="${PRODUCTION_ORIGIN:-https://ruokalista.vilpponen.fi}"
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -71,7 +70,9 @@ wrangler d1 migrations apply "$DATABASE_NAME" --remote \
 # to exist; on a first run it does not until this deploy creates it. The Worker
 # is briefly live without SESSION_SECRET, which is the 503 path, not an open one.
 echo "==> 4/5  deploy"
-wrangler deploy || note_failure "deploy"
+deploy_log=$(mktemp)
+wrangler deploy 2>&1 | tee "$deploy_log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || note_failure "deploy"
 
 echo "==> 5/5  SESSION_SECRET"
 if [ "$ROTATE_SESSION_SECRET" = "1" ] \
@@ -85,10 +86,16 @@ else
   echo "    already set (ROTATE_SESSION_SECRET=1 to replace it)"
 fi
 
+url=$(sed 's/\x1b\[[0-9;]*m//g' "$deploy_log" \
+       | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
+rm -f "$deploy_log"
+
 echo
-echo "Canonical production URL: $PRODUCTION_ORIGIN"
-echo "  /health   -> $(curl -s -o /dev/null -w '%{http_code}' "$PRODUCTION_ORIGIN/health")"
-echo "  protected -> $(curl -s -o /dev/null -w '%{http_code}' "$PRODUCTION_ORIGIN/api/ingredients")"
+if [ -n "$url" ]; then
+  echo "Live at $url"
+  echo "  /health   -> $(curl -s -o /dev/null -w '%{http_code}' "$url/health")"
+  echo "  protected -> $(curl -s -o /dev/null -w '%{http_code}' "$url/api/ingredients")"
+fi
 
 if [ -n "$failures" ]; then
   printf 'Did not complete:\n%s' "$failures"
@@ -97,5 +104,3 @@ fi
 
 echo "Done. Only /health is reachable until Google sign-in exists, and the"
 echo "remote database has no household or member rows yet."
-echo "Register this Google OAuth redirect before enabling sign-in:"
-echo "  $PRODUCTION_ORIGIN/auth/google/callback"
