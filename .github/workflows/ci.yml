@@ -54,6 +54,9 @@ jobs:
       - name: Migrate the local database
         run: npx wrangler d1 migrations apply ruokalista --local
 
+      - name: Check backup schema coverage
+        run: npm run check:backup-schema
+
       - name: Browser tests
         run: npx playwright test
 
