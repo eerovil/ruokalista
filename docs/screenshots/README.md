@@ -25,3 +25,4 @@ Regenerate after a change that alters a screen:
 | `10-recipes-search.png` | Search results |
 | `11-editor.png` | The recipe editor, with source text read-only below |
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
+| `13-dish-in-parts.png` | A lasagne, shown as its two sauces |

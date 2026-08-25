@@ -123,6 +123,20 @@ route needs the island either way: downscaling a photograph is a canvas job.
 as a dependency. `dev/` is outside the Worker's tsconfig on purpose: node's
 globals clash with the Workers ones.
 
+## Parts of a dish
+
+A lasagne is a jauhelihakastike and a juustokastike. Each part is an ordinary
+`recipe` row with `parent_id` set — not a second kind of record. Parts are
+excluded from the recipe list and the picker, so only dishes can be planned.
+
+The model marks parts by writing a name into each line's and step's `section`
+field; `saveRecipe` turns distinct names into child recipes. Nothing carries a
+section once saved, which is why the editor has no part field: a saved part is a
+recipe you edit on its own screen.
+
+See `docs/adr/0002-a-part-is-a-recipe.md`, including what it deliberately does
+not decide — scaling parts with the parent is still open.
+
 ## Browser tests
 
     ./scripts/playwright.sh npx playwright test

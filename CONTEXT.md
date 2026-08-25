@@ -26,6 +26,13 @@ Instructions for making one dish, held in the recipe store so it can be placed
 on a day. The only thing that may appear on a menu.
 _Avoid_: Dish, meal
 
+**Part**:
+A named piece of a dish that has its own ingredients and its own method — a
+lasagne's jauhelihakastike. A part is a recipe with a parent, not a new kind of
+record. It belongs to one dish, is reached only through it, and never appears in
+the recipe list or on a menu by itself.
+_Avoid_: Section, component, sub-recipe, group
+
 **Menu**:
 The set of meal entries falling in a range of dates — most often a week. Not a
 record of its own and not owned by anything; asking for a menu is asking a

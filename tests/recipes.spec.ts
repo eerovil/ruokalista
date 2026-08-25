@@ -15,9 +15,10 @@ test("the list shows the household's recipes, newest first", async ({ page }) =>
   await page.goto("/recipes");
 
   const titles = page.locator(".recipes a");
-  await expect(titles.first()).toContainText("Öljykastike");
-  await expect(titles.nth(1)).toContainText("Kaalilaatikko");
-  await expect(page.locator(".recipes li")).toHaveCount(2);
+  await expect(titles.first()).toContainText("Lasagne");
+  await expect(titles.nth(1)).toContainText("Öljykastike");
+  // Three dishes. The lasagne's two parts are not dishes and are not listed.
+  await expect(page.locator(".recipes li")).toHaveCount(3);
 });
 
 test("search matches regardless of case", async ({ page }) => {
