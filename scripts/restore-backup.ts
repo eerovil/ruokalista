@@ -22,14 +22,17 @@ interface Options {
   database: string;
   remote: boolean;
   persistTo?: string;
+  databaseId?: string;
+  wranglerConfig?: string;
 }
 
 type BackupRow = Record<string, string | number | boolean | null>;
 
+const PRODUCTION_DATABASE_ID = "f81fabeb-b38f-453d-8966-dfe52c721341";
 const PRODUCTION_DATABASE_SELECTORS = new Set([
   "ruokalista",
   "DB",
-  "f81fabeb-b38f-453d-8966-dfe52c721341",
+  PRODUCTION_DATABASE_ID,
 ]);
 
 main().catch((error) => {
@@ -45,51 +48,50 @@ async function main(): Promise<void> {
   // is allowed to write even migrations to the target.
   const snapshot = await parseAndValidateSnapshot(snapshotText);
 
-  if (options.remote && PRODUCTION_DATABASE_SELECTORS.has(options.database)) {
-    throw new Error(`refusing to restore into production database selector '${options.database}'`);
-  }
+  assertSafeRemoteTarget(options);
+  const targetOptions = prepareTargetOptions(options);
 
-  runWrangler([
-    "d1",
-    "migrations",
-    "apply",
-    options.database,
-    ...targetFlags(options),
-  ]);
-
-  const target = readTargetSnapshotData(options);
-  assertCompatibleTarget(snapshot, target);
-
-  const sql = generateRestoreSql(snapshot);
-  const sqlPath = join(tmpdir(), `ruokalista-restore-${crypto.randomUUID()}.sql`);
-  writeFileSync(sqlPath, sql, { encoding: "utf8", mode: 0o600 });
   try {
     runWrangler([
       "d1",
-      "execute",
-      options.database,
-      ...targetFlags(options),
-      "--file",
-      sqlPath,
+      "migrations",
+      "apply",
+      targetOptions.database,
+      ...targetFlags(targetOptions),
     ]);
-  } finally {
+
+    const target = readTargetSnapshotData(targetOptions);
+    assertCompatibleTarget(snapshot, target);
+
+    const sql = generateRestoreSql(snapshot);
+    const sqlPath = join(tmpdir(), `ruokalista-restore-${crypto.randomUUID()}.sql`);
+    writeFileSync(sqlPath, sql, { encoding: "utf8", mode: 0o600 });
     try {
-      unlinkSync(sqlPath);
-    } catch {
-      // Best effort: the file contains private backup data and lives in tmp.
+      runWrangler([
+        "d1",
+        "execute",
+        targetOptions.database,
+        ...targetFlags(targetOptions),
+        "--file",
+        sqlPath,
+      ]);
+    } finally {
+      removePrivateTempFile(sqlPath);
     }
-  }
 
-  const actual = readAllTables(options);
-  assertRestoredRows(snapshot, actual);
-  const foreignKeyProblems = query(options, "PRAGMA foreign_key_check");
-  if (foreignKeyProblems.length !== 0) {
-    throw new Error(`restored database has ${foreignKeyProblems.length} foreign-key violation(s)`);
-  }
+    const actual = readAllTables(targetOptions);
+    assertRestoredRows(snapshot, actual);
+    const foreignKeyProblems = query(targetOptions, "PRAGMA foreign_key_check");
+    if (foreignKeyProblems.length !== 0) {
+      throw new Error(`restored database has ${foreignKeyProblems.length} foreign-key violation(s)`);
+    }
 
-  console.log(
-    `restore verified: sha256=${snapshot.sha256} counts=${canonicalJson(snapshot.row_counts)}`,
-  );
+    console.log(
+      `restore verified: sha256=${snapshot.sha256} counts=${canonicalJson(snapshot.row_counts)}`,
+    );
+  } finally {
+    if (targetOptions.wranglerConfig) removePrivateTempFile(targetOptions.wranglerConfig);
+  }
 }
 
 function parseArgs(args: string[]): Options {
@@ -98,11 +100,13 @@ function parseArgs(args: string[]): Options {
   let remote = false;
   let local = false;
   let persistTo: string | undefined;
+  let databaseId: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--snapshot") snapshot = requiredValue(args, ++index, arg);
     else if (arg === "--database") database = requiredValue(args, ++index, arg);
+    else if (arg === "--database-id") databaseId = requiredValue(args, ++index, arg);
     else if (arg === "--persist-to") persistTo = requiredValue(args, ++index, arg);
     else if (arg === "--remote") remote = true;
     else if (arg === "--local") local = true;
@@ -113,8 +117,16 @@ function parseArgs(args: string[]): Options {
   if (!database) throw new Error("--database is required");
   if (remote === local) throw new Error("choose exactly one of --local or --remote");
   if (remote && persistTo) throw new Error("--persist-to is local-only");
+  if (!remote && databaseId) throw new Error("--database-id is remote-only");
+  if (databaseId && !isUuid(databaseId)) throw new Error("--database-id must be a UUID");
 
-  return { snapshot, database, remote, ...(persistTo ? { persistTo } : {}) };
+  return {
+    snapshot,
+    database,
+    remote,
+    ...(persistTo ? { persistTo } : {}),
+    ...(databaseId ? { databaseId } : {}),
+  };
 }
 
 function requiredValue(args: string[], index: number, flag: string): string {
@@ -123,9 +135,52 @@ function requiredValue(args: string[], index: number, flag: string): string {
   return value;
 }
 
+function assertSafeRemoteTarget(options: Options): void {
+  if (!options.remote) return;
+  if (PRODUCTION_DATABASE_SELECTORS.has(options.database)) {
+    throw new Error(`refusing to restore into production database selector '${options.database}'`);
+  }
+  if (options.databaseId === PRODUCTION_DATABASE_ID) {
+    throw new Error(`refusing to restore into production database id '${options.databaseId}'`);
+  }
+}
+
+function prepareTargetOptions(options: Options): Options {
+  if (!options.remote || !options.databaseId) return options;
+
+  // Freshly-created D1 databases are not in the repository's wrangler.jsonc yet.
+  // Build a private, one-use config that binds only the explicitly supplied
+  // non-production UUID, so the documented restore tool can target it without
+  // ever editing or deploying the production binding.
+  const wranglerConfig = join(
+    process.cwd(),
+    `.wrangler-restore-${crypto.randomUUID()}.json`,
+  );
+  const config = {
+    name: "ruokalista-restore-target",
+    d1_databases: [
+      {
+        binding: "RESTORE_TARGET",
+        database_name: options.database,
+        database_id: options.databaseId,
+        migrations_dir: "migrations",
+      },
+    ],
+  };
+  writeFileSync(wranglerConfig, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+
+  return { ...options, database: "RESTORE_TARGET", wranglerConfig };
+}
+
 function targetFlags(options: Options): string[] {
-  if (options.remote) return ["--remote"];
-  return ["--local", ...(options.persistTo ? ["--persist-to", options.persistTo] : [])];
+  const flags = options.remote
+    ? ["--remote"]
+    : ["--local", ...(options.persistTo ? ["--persist-to", options.persistTo] : [])];
+  if (options.wranglerConfig) flags.push("--config", options.wranglerConfig);
+  return flags;
 }
 
 function readTargetSnapshotData(options: Options): TargetSnapshotData {
@@ -219,6 +274,18 @@ function toSchemaEntry(row: Record<string, unknown>): BackupSchemaEntry {
 function quoteIdentifier(value: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`unsafe identifier: ${value}`);
   return `"${value}"`;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function removePrivateTempFile(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best effort. Files created here contain private target config or backup data.
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
