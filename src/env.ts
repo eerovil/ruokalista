@@ -22,4 +22,10 @@ export interface Env {
 
   /** Structures pasted recipe text. Without it, intake says so and refuses. */
   ANTHROPIC_API_KEY?: string;
+
+  /**
+   * Fine-grained PAT restricted to eerovil/ruokalista-backup with repository
+   * Contents read/write. The nightly scheduled handler fails loudly without it.
+   */
+  BACKUP_GITHUB_TOKEN?: string;
 }
