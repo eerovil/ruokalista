@@ -47,8 +47,42 @@ test("a recipe renders every awkward line shape", async ({ page }) => {
   await expect(lines.nth(3)).toContainText("sitruunaruoho");
   await expect(lines.nth(3)).not.toContainText("0");
 
-  // The source line stays available underneath each one.
-  await expect(lines.nth(1).locator(".source")).toContainText("1–1 ja ½ l vettä");
+  // Evidence is selective. A range and a second measurement round-trip through
+  // the fields intact, so a copy underneath would only be a second thing to
+  // read — but a line the source gave no amount for lost its "hieman", and that
+  // only exists in the source.
+  await expect(lines.nth(0).locator(".source")).toHaveCount(0);
+  await expect(lines.nth(1).locator(".source")).toHaveCount(0);
+  await expect(lines.nth(2).locator(".source")).toHaveCount(0);
+  await expect(lines.nth(3).locator(".source")).toContainText(
+    "hieman sitruunaruohoa",
+  );
+});
+
+test("the original text is one tap away, not in the way", async ({ page }) => {
+  await page.goto("/recipes/1");
+
+  // Present, but closed: at the hob the recipe is the point.
+  const disclosure = page.locator(".source-original");
+  await expect(disclosure).toBeVisible();
+  await expect(page.locator(".source-text")).toBeHidden();
+
+  await disclosure.getByText("Näytä alkuperäinen").click();
+  await expect(page.locator(".source-text")).toContainText("hieman sitruunaruohoa");
+});
+
+test("editing is reachable, but it is not what the screen is for", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  const edit = page.getByRole("link", { name: "Muokkaa reseptiä" });
+  await expect(edit).toBeVisible();
+
+  // Below the cooking, not above it.
+  const method = await page.locator("ol").first().boundingBox();
+  const editBox = await edit.boundingBox();
+  expect(editBox!.y).toBeGreaterThan(method!.y);
 });
 
 test("a recipe with a known yield shows it", async ({ page }) => {

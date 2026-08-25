@@ -45,11 +45,31 @@ test("planned for six from a yield of four, the amounts follow", async ({
   await expect(lines.nth(3)).not.toContainText("0");
 });
 
-test("the original stays readable underneath", async ({ page }) => {
+test("a scaled amount says what the page said", async ({ page }) => {
   await page.goto("/recipes/1?portions=6");
   await expect(page.locator(".lines li").first().locator(".source")).toHaveText(
     "½ dl öljyä",
   );
+});
+
+test("unscaled, the amounts are the page\u2019s and say nothing twice", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+  await expect(page.locator(".lines li").first().locator(".source")).toHaveCount(
+    0,
+  );
+});
+
+test("which amounts you are looking at is obvious from the top", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+  await expect(page.locator(".yield.is-scaled")).toHaveCount(0);
+
+  await page.goto("/recipes/1?portions=6");
+  await expect(page.locator(".yield.is-scaled")).toBeVisible();
+  await expect(page.locator(".yield.is-scaled")).toContainText("6 annokselle");
 });
 
 test("cooking exactly what it yields changes nothing", async ({ page }) => {
