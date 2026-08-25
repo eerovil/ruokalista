@@ -43,17 +43,24 @@ symptom is `no such table: member`. Re-run `migrate:local` and `seed:local`.
 
 ## Cloudflare
 
-Live at https://ruokalista.eerovil.workers.dev, D1 database `ruokalista`
-(`f81fabeb-…`), `SESSION_SECRET` set as a Worker secret.
+The Worker origin is https://ruokalista.eerovil.workers.dev, D1 database
+`ruokalista` (`f81fabeb-…`), with `SESSION_SECRET` set as a Worker secret.
+
+The canonical public URL is https://ruokalista.vilpponen.fi. `vilpponen.fi` keeps
+its authoritative DNS outside Cloudflare: the `ruokalista` A record points to the
+VPS, and Caddy terminates public TLS and reverse-proxies to the `workers.dev`
+origin. Do not add a Cloudflare Worker Custom Domain for it. The exact Caddy,
+DNS and OAuth cutover are in `docs/deployment.md`.
 
 Credentials live in `~/.local/share/ruokalista/cloudflare.env` (mode 600), which
 `scripts/lib-cloudflare.sh` sources into every script that needs them. Not
 `.dev.vars`: that file is loaded into the Worker's own environment during local
 development, which is no place for an account-wide API token.
 
-`scripts/cloudflare-setup.sh` does the whole setup in one command and is safe to
-re-run. `push-google-secrets.sh` pushes the Google credentials and deploys;
-`add-member.sh` inserts a member, which is the only way anybody gets in.
+`scripts/cloudflare-setup.sh` does the whole Worker setup in one command and is
+safe to re-run. `push-google-secrets.sh` pushes the Google credentials and
+deploys; `add-member.sh` inserts a member, which is the only way anybody gets in.
+The VPS/Caddy layer is separate from those Cloudflare scripts.
 
 `SESSION_SECRET` is generated during setup and never stored anywhere, so a
 signed-in session on the live Worker cannot be forged from this host — the live
@@ -85,9 +92,13 @@ hand:
     VALUES (1, '<sub from the wall>', 'Nimi', 'nimi@example.com');
 
 The Google client id and secret are Worker secrets. Without them the app says
-sign-in is not configured and lets nobody in. The redirect URI is derived from
-the request's origin, so every origin used has to be registered in Google Cloud
-Console — the live one and `http://127.0.0.1:8787` for local work.
+sign-in is not configured and lets nobody in. Local requests derive the redirect
+URI from their request origin. Production is different because Caddy must address
+the upstream as `ruokalista.eerovil.workers.dev`; `src/public-origin.ts` accepts
+the forwarded public origin only for that exact upstream plus the exact
+`ruokalista.vilpponen.fi`/HTTPS pair. Arbitrary forwarded hosts are ignored.
+Register both `https://ruokalista.vilpponen.fi/auth/google/callback` and
+`http://127.0.0.1:8787/auth/google/callback` in Google Cloud Console.
 
 ## Intake, and what it costs to test
 
@@ -195,8 +206,8 @@ is calling the model, and that is a test that should not exist.
 then deploys, but only on a push to `main` and only after the tests pass. A pull
 request never reaches that job, so the Cloudflare token is never exposed to one —
 which is what makes keeping it in a public repository's secrets safe. It finishes
-by curling the live site, because a deploy reporting success is not the same as
-the app answering.
+by curling the `workers.dev` Worker origin, because the VPS proxy is a separate
+operational layer and a Cloudflare deploy should not depend on its availability.
 
 Screenshots land in `docs/screenshots/` and are committed as review artifacts —
 nothing compares them, so they cannot fail a build. Regenerate with
