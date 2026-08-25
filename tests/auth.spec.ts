@@ -16,10 +16,11 @@ test("a signed-out API call answers JSON, not a redirect", async ({ request }) =
   expect(await response.json()).toHaveProperty("error");
 });
 
-test("/ sends you to the recipe list", async ({ context, page }) => {
+test("/ is the week, which is the point of the app", async ({ context, page }) => {
   await context.addCookies([sessionCookie(1)]);
   await page.goto("/");
-  await expect(page).toHaveURL(/\/recipes$/);
+  await expect(page.getByRole("heading", { name: "Viikko", exact: true })).toBeVisible();
+  await expect(page.locator(".day")).toHaveCount(7);
 });
 
 test("a cookie that has expired is not entry", async ({ context, page }) => {

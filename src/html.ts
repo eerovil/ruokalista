@@ -87,6 +87,22 @@ const STYLES = `
   }
   .remove { font-size: .8rem; opacity: .65; }
   .remove input { width: auto; }
+  nav.weeks { justify-content: space-between; font-size: .85rem; }
+  .day { margin-bottom: 1.5rem; }
+  .day h2 { margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
+  .day.is-today h2 { font-weight: 700; }
+  .day.is-today { border-left: 3px solid currentColor; padding-left: .6rem; }
+  .slot { padding: .4rem 0 .6rem; border-top: 1px solid var(--edge); }
+  .slot h3 { margin: 0 0 .3rem; font-size: .8rem; opacity: .6; font-weight: 400; }
+  .empty-slot, .add-more { display: inline-block; padding: .3rem 0; font-size: .9rem; opacity: .6; }
+  .entry { display: flex; align-items: center; gap: .4rem; padding: .2rem 0; flex-wrap: wrap; }
+  .entry > a { flex: 1; min-width: 8rem; }
+  form.inline { display: flex; gap: .3rem; align-items: center; margin: 0; }
+  form.inline input { width: 3.2rem; padding: .25rem; text-align: center; }
+  form.inline button { padding: .25rem .5rem; font-size: .8rem; }
+  button.quiet { background: transparent; border: 1px solid var(--edge); opacity: .7; }
+  .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
+  .pick-title { flex: 1; }
   .progress {
     max-height: 14rem; overflow: auto; white-space: pre-wrap; word-break: break-all;
     padding: .6rem; font-size: .75rem; opacity: .7;
@@ -109,7 +125,7 @@ export function page(title: string, body: Raw, status = 200): Response {
 <style>${raw(STYLES)}</style>
 </head>
 <body>
-<nav><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a></nav>
+<nav><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a></nav>
 ${body}
 </body>
 </html>`;

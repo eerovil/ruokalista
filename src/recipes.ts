@@ -16,6 +16,8 @@ export interface RecipeSummary {
   title: string;
   createdAt: string;
   createdBy: string;
+  /** What the picker defaults portions to when the source stated one. */
+  yieldPortions: number | null;
 }
 
 export interface RecipeLine extends Measurement {
@@ -39,9 +41,10 @@ interface SummaryRow {
   title: string;
   created_at: string;
   created_by: string;
+  yield_portions: number | null;
 }
 
-async function recipeSummaries(
+export async function recipeSummaries(
   db: D1Database,
   householdId: number,
   query: string,
@@ -51,6 +54,7 @@ async function recipeSummaries(
       `SELECT recipe.id,
               recipe.title,
               recipe.created_at,
+              recipe.yield_portions,
               member.display_name AS created_by
          FROM recipe
          JOIN member ON member.id = recipe.created_by
@@ -65,6 +69,7 @@ async function recipeSummaries(
     title: row.title,
     createdAt: row.created_at,
     createdBy: row.created_by,
+    yieldPortions: row.yield_portions,
   }));
 
   // Matched here rather than with SQL LIKE: SQLite's case-insensitivity is
