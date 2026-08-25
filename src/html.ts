@@ -243,19 +243,47 @@ const STYLES = `
   .part { margin: 1.5rem 0; padding-left: .7rem;
     border-left: 3px solid var(--edge); }
   .part h2 { margin-top: 0; font-size: 1.05rem; }
-  .ingredients li { display: flex; align-items: center; gap: .5rem;
-    padding: .4rem 0; border-bottom: 1px solid var(--edge); }
-  .ingredients form.inline { flex: 1; }
-  .ingredients form.inline input { width: auto; flex: 1; text-align: left; }
+  .ingredients li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .position { width: 3rem !important; flex: none !important; color: var(--muted); }
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .pick-title { flex: 1; }
+  .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
   .progress {
-    max-height: 14rem; overflow: auto; white-space: pre-wrap; word-break: break-all;
-    padding: .6rem; font-size: .75rem; color: var(--muted);
-    border: 1px solid var(--edge); border-radius: var(--radius);
+    margin: .35rem 0 0; padding: .6rem .8rem;
+    font-size: .85rem; color: var(--muted);
+    background: var(--surface); border-radius: var(--radius);
   }
+  .ingredient-row {
+    display: flex; align-items: baseline; gap: .75rem;
+    min-height: var(--tap-compact);
+  }
+  .ingredient-name { flex: 1; }
+  .rename > summary {
+    display: flex; align-items: baseline; gap: .75rem;
+    min-height: var(--tap); padding: .1rem 0; cursor: pointer;
+    list-style: none;
+  }
+  .rename > summary::-webkit-details-marker { display: none; }
+  .rename[open] > summary .ingredient-name { font-weight: 600; }
+  /* Nothing else says these rows open. A chevron does, without a second line. */
+  .rename > summary::after {
+    content: "›"; color: var(--muted); font-size: 1.1rem; line-height: 1;
+    transition: transform .1s;
+  }
+  .rename[open] > summary::after { transform: rotate(90deg); }
+  .rename form.inline { margin: .4rem 0 .6rem; }
+  .rename form.inline input { width: auto; flex: 1; text-align: left; }
+  button.danger {
+    color: var(--accent-fg); background: var(--warn);
+    border-color: var(--warn); font-weight: 600;
+  }
+  .plain li { padding: .35rem 0; color: var(--muted); }
+  form.confirm { display: block; margin: 1.5rem 0 1rem; }
+  .nothing { padding: 1.5rem 0; text-align: center; }
+  .nothing .empty { margin: 0 0 1rem; }
+  .recipe-delete { margin-top: 2.5rem; font-size: .9rem; }
+  .recipe-delete a { color: var(--warn); }
   .needs-answer {
     display: flex; align-items: center; gap: .5rem;
     padding: .7rem .8rem; margin: 0 0 1rem;

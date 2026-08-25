@@ -128,6 +128,21 @@ flowing, then hands the finished draft to `/intake/correct` — which keeps the
 correction screen server-rendered rather than built in the browser. The camera
 route needs the island either way: downscaling a photograph is a canvas job.
 
+## Finish states
+
+Deleting a recipe is a two-step: `GET /recipes/:id/delete` asks, naming the
+parts that go with it, and only the POST from that screen deletes. The editor
+links to it rather than submitting.
+
+The ingredient list is read-first — each row is the name and how many recipes
+use it, and the row *is* the disclosure that reveals the rename box. A list of
+live text boxes read as a form nobody had finished filling in.
+
+Intake's progress is counted, not dumped: the island reads the streaming JSON
+and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
+that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
+before the browser sees it** — no regular expressions in that script.
+
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework

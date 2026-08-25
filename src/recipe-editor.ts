@@ -128,19 +128,7 @@ export async function deleteRecipeForm(
   if (recipe === null) return notFound();
 
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
-  if (onMenu > 0) {
-    return page(
-      "Ei voi poistaa",
-      html`<h1>Ei voi poistaa</h1>
-        <p class="refused">
-          ${recipe.title} tai sen osa on ruokalistalla ${onMenu} kertaa. Poista
-          se ensin viikoilta.
-        </p>
-        <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
-      "recipes",
-      409,
-    );
-  }
+  if (onMenu > 0) return stillPlanned(recipe, onMenu);
 
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 303, headers: { Location: "/recipes" } });
@@ -264,9 +252,64 @@ function editorForm(
     <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
     <p class="source-text">${recipe.sourceText}</p>
 
-    <form method="post" action="/recipes/${recipe.id}/delete" class="stacked">
-      <button type="submit" class="quiet">Poista resepti</button>
-    </form>`;
+    <!-- A link, not a submit: deleting a recipe is not something a mistyped tap
+         should finish. The confirmation screen is where the button lives. -->
+    <p class="recipe-delete">
+      <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
+    </p>`;
+}
+
+/**
+ * `GET /recipes/:id/delete` — the confirmation.
+ *
+ * Deleting takes the recipe's parts with it and nothing brings them back, so it
+ * asks first, says what goes, and refuses early if the recipe is still planned.
+ */
+export async function confirmDeleteScreen(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await load(env.DB, member, params["id"]);
+  if (recipe === null) return notFound();
+
+  const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
+  if (onMenu > 0) return stillPlanned(recipe, onMenu);
+
+  return page(
+    `Poista: ${recipe.title}`,
+    html`<h1>Poistetaanko ${recipe.title}?</h1>
+      <p>
+        Resepti ja sen ${recipe.parts.length === 0
+          ? "sisältö poistetaan"
+          : `${recipe.parts.length} osaa poistetaan`}
+        lopullisesti. Tätä ei voi peruuttaa.
+      </p>
+      ${recipe.parts.length === 0
+        ? ""
+        : html`<ul class="plain">
+            ${recipe.parts.map((part) => html`<li>${part.title}</li>`)}
+          </ul>`}
+
+      <form method="post" action="/recipes/${recipe.id}/delete" class="confirm">
+        <button type="submit" class="danger">Poista lopullisesti</button>
+      </form>
+      <p><a href="/recipes/${recipe.id}">Peruuta</a></p>`,
+    "recipes",
+  );
+}
+
+function stillPlanned(recipe: Recipe, onMenu: number): Response {
+  return page(
+    "Ei voi poistaa",
+    html`<h1>Ei voi poistaa</h1>
+      <p class="refused">
+        ${recipe.title} tai sen osa on ruokalistalla ${onMenu} kertaa. Poista se
+        ensin viikoilta.
+      </p>
+      <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
+    "recipes",
+    409,
+  );
 }
 
 function notFound(): Response {

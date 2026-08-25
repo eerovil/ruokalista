@@ -171,7 +171,7 @@ test("the picker searches, and can find nothing", async ({ page }) => {
   await expect(page.locator(".pick li")).toHaveCount(1);
 
   await page.goto(`/picker?date=${MONDAY}&slot=lunch&q=pizza`);
-  await expect(page.locator(".empty")).toContainText("Haku ei löytänyt");
+  await expect(page.locator(".nothing")).toContainText("Haku \"pizza\"");
 });
 
 test("a picker with a nonsense day or meal is a 404", async ({ page }) => {

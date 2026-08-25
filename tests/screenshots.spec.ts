@@ -127,6 +127,20 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/11-editor.png`, fullPage: true });
   });
 
+  test("confirming a deletion", async ({ page }) => {
+    await page.goto("/recipes/3/delete");
+    await expect(
+      page.getByRole("button", { name: "Poista lopullisesti" }),
+    ).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/16-confirm-delete.png`, fullPage: true });
+  });
+
+  test("a search that finds nothing", async ({ page }) => {
+    await page.goto("/recipes?q=pizza");
+    await expect(page.locator(".nothing")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
+  });
+
   test("the ingredient list", async ({ page }) => {
     await page.goto("/ingredients");
     await expect(page.locator(".ingredients li").first()).toBeVisible();

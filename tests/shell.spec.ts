@@ -73,6 +73,29 @@ test.describe("signed in", () => {
     await expect(last).toBeInViewport();
   });
 
+  // The shell is only coherent if it is actually on every screen. This walks
+  // the signed-in surface rather than trusting each screen to remember.
+  test("every signed-in screen wears the same shell", async ({ page }) => {
+    const screens = [
+      "/",
+      "/picker?date=2026-10-05&slot=lunch",
+      "/recipes",
+      "/recipes/1",
+      "/recipes/1/edit",
+      "/recipes/1/delete",
+      "/ingredients",
+      "/intake",
+    ];
+
+    for (const path of screens) {
+      await page.goto(path);
+      await expect(page.locator("nav.tabs a")).toHaveCount(4);
+      await expect(page.locator("nav.tabs a[aria-current=page]")).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Tili" })).toBeVisible();
+      await expect(page.locator("body.has-tabs")).toHaveCount(1);
+    }
+  });
+
   test("signing out is reachable from the UI", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Tili" }).click();

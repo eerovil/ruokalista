@@ -30,9 +30,13 @@ test("search matches regardless of case", async ({ page }) => {
   await expect(page.locator(".recipes a")).toContainText("Kaalilaatikko");
 });
 
-test("a search that finds nothing says so", async ({ page }) => {
+test("a search that finds nothing says so, and what to do next", async ({
+  page,
+}) => {
   await page.goto("/recipes?q=pizza");
-  await expect(page.locator(".empty")).toContainText("Haku ei löytänyt");
+  await expect(page.locator(".nothing")).toContainText("pizza");
+  await page.getByRole("link", { name: "Näytä kaikki reseptit" }).click();
+  await expect(page.locator(".recipes li").first()).toBeVisible();
 });
 
 test("a recipe renders every awkward line shape", async ({ page }) => {
