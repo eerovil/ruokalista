@@ -8,9 +8,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
-  // Temporary #64 acceptance-run schedule. Cron Triggers use UTC; after the
-  // real production snapshot + restore drill, restore the normal 02:17 UTC cron.
-  "triggers": { "crons": ["30 14 * * *"] },
+  // Fail deployment if the production backup credential is missing instead of
+  // discovering that only after a Cron Trigger has silently failed.
+  "secrets": { "required": ["BACKUP_GITHUB_TOKEN"] },
+
+  // Temporary #64 acceptance-run retry. Cron Triggers use UTC; after the real
+  // production snapshot + restore drill, restore the normal 02:17 UTC cron.
+  "triggers": { "crons": ["15 15 * * *"] },
 
   "d1_databases": [
     {
