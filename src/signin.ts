@@ -41,6 +41,7 @@ export function signInScreen({ env }: RouteContext): Response {
         <p class="empty">
           Google-kirjautumista ei ole vielä määritetty tähän ympäristöön.
         </p>`,
+      "signed-out",
       503,
     );
   }
@@ -49,6 +50,7 @@ export function signInScreen({ env }: RouteContext): Response {
     "Kirjautuminen",
     html`<h1>Ruokalista</h1>
       <p><a class="button" href="/auth/google">Kirjaudu Google-tilillä</a></p>`,
+    "signed-out",
   );
 }
 
@@ -71,6 +73,7 @@ function notAMemberScreen(sub: string, email: string | null): Response {
         käyttöoikeutta. Talouden jäsen lisää sinut käsin.
       </p>
       <p class="empty">Anna hänelle tämä tunniste: <code>${sub}</code></p>`,
+    "signed-out",
     403,
   );
 }
@@ -81,6 +84,7 @@ function failedScreen(message: string): Response {
     html`<h1>Kirjautuminen epäonnistui</h1>
       <p class="empty">${message}</p>
       <p><a href="/signin">Yritä uudelleen</a></p>`,
+    "signed-out",
     400,
   );
 }

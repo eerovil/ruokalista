@@ -50,7 +50,11 @@ export async function editorScreen(
   if (recipe === null) return notFound();
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
-  return page(`Muokkaa: ${recipe.title}`, editorForm(recipe, ingredients));
+  return page(
+    `Muokkaa: ${recipe.title}`,
+    editorForm(recipe, ingredients),
+    "recipes",
+  );
 }
 
 /** `POST /recipes/:id` — a form cannot send PUT. */
@@ -100,6 +104,7 @@ export async function saveEditForm(
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
         })}`,
+      "recipes",
       stale ? 409 : 400,
     );
   }
@@ -132,6 +137,7 @@ export async function deleteRecipeForm(
           se ensin viikoilta.
         </p>
         <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
+      "recipes",
       409,
     );
   }
@@ -272,6 +278,7 @@ function notFound(): Response {
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>
       <p class="empty">Tätä reseptiä ei ole.</p>`,
+    "recipes",
     404,
   );
 }

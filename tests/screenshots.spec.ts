@@ -9,7 +9,13 @@ import { sessionCookie } from "./support/session";
  * a pull request can be looked at without running anything.
  *
  * These are not golden images — nothing compares them, so a font rendering a
- * pixel differently cannot fail a build. Regenerate with:
+ * pixel differently cannot fail a build.
+ *
+ * The bottom navigation is `position: fixed`, and a full-page screenshot paints
+ * a fixed element where the viewport left it — so on a long page the tabs show
+ * up partway down the picture. That is the screenshot, not the app.
+ *
+ * Regenerate with:
  *
  *   ./scripts/playwright.sh npx playwright test screenshots
  */

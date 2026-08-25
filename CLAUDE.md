@@ -195,6 +195,15 @@ nothing compares them, so they cannot fail a build. Regenerate with
 every interpolated value. `raw()` is the only way past that escaping, so it is
 also the only thing to check when reviewing for injection.
 
+`page()` takes a `Shell` — `week`, `recipes`, `intake`, `ingredients`, or
+`signed-out` — which is the bottom-tab destination the screen belongs to, so an
+inner screen like a recipe still lights up `Reseptit`. `signed-out` renders no
+tabs and no sign-out, because there is nowhere to navigate yet.
+
+Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
+is the first thing to become unreadable on a phone in a bright kitchen. Controls
+are at least `--tap` tall, `--tap-compact` where a row would otherwise blow up.
+
 ## Agent skills
 
 ### Issue tracker

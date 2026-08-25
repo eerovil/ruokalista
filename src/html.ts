@@ -44,101 +44,298 @@ export function escape(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The shared visual foundation. Hierarchy is carried by colour tokens rather
+ * than by opacity — faded text on a phone in a bright kitchen is the first
+ * thing to become unreadable — and every control is at least a thumb tall.
+ */
 const STYLES = `
-  :root { color-scheme: light dark; --edge: color-mix(in srgb, currentColor 15%, transparent); }
+  :root {
+    color-scheme: light dark;
+    --bg: light-dark(#ffffff, #15171c);
+    --fg: light-dark(#16181d, #ecedf1);
+    --muted: light-dark(#5c6270, #a3a9b6);
+    --edge: light-dark(#e1e4ea, #2d313a);
+    --surface: light-dark(#f5f6f8, #1d2027);
+    --accent: light-dark(#1f5d3c, #7fd6a4);
+    --accent-fg: light-dark(#ffffff, #10251a);
+    --warn: light-dark(#8a3312, #f0a98a);
+
+    --tap: 2.75rem;
+    --tap-compact: 2.25rem;
+    --radius: .5rem;
+    --tabs-height: 3.75rem;
+  }
   * { box-sizing: border-box; }
   body {
-    margin: 0 auto; padding: 1rem; max-width: 40rem;
-    font: 1rem/1.5 system-ui, sans-serif;
+    margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font: 1rem/1.55 system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-  h2 { font-size: 1.1rem; margin: 1.5rem 0 .5rem; }
+  main {
+    margin: 0 auto; padding: 1rem;
+    max-width: 40rem;
+  }
+  body.has-tabs main {
+    padding-bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1.5rem);
+  }
+
+  h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.15rem; margin: 1.75rem 0 .5rem; }
+  h3 { font-size: .8rem; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); margin: 1.25rem 0 .35rem; }
   a { color: inherit; }
-  nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; font-size: .9rem; }
   ul { list-style: none; margin: 0; padding: 0; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;
+  }
+
+  /* ---------------------------------------------------------- the shell */
+
+  .topbar {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    margin: 0 auto; padding: .5rem 1rem;
+    max-width: 40rem;
+    background: var(--bg);
+  }
+  .wordmark {
+    font-size: .95rem; font-weight: 600; letter-spacing: .01em;
+    color: var(--muted); text-decoration: none;
+  }
+  .account { position: relative; }
+  .account > summary {
+    display: flex; align-items: center; justify-content: center;
+    width: var(--tap); height: var(--tap); margin-right: -.6rem;
+    list-style: none; cursor: pointer; color: var(--muted); border-radius: 50%;
+  }
+  .account > summary::-webkit-details-marker { display: none; }
+  .account[open] > summary { color: var(--fg); background: var(--surface); }
+  .account-menu {
+    position: absolute; right: 0; top: calc(100% + .25rem); z-index: 3;
+    min-width: 12rem; padding: .5rem;
+    background: var(--bg); border: 1px solid var(--edge);
+    border-radius: var(--radius);
+    box-shadow: 0 .5rem 1.5rem light-dark(rgba(0,0,0,.12), rgba(0,0,0,.5));
+  }
+  .account-menu form { margin: 0; }
+  .account-menu button { width: 100%; }
+
+  .tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
+    display: flex;
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--bg); border-top: 1px solid var(--edge);
+  }
+  .tabs a {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: .15rem; min-height: var(--tabs-height); padding: .4rem .2rem;
+    font-size: .7rem; text-decoration: none; color: var(--muted);
+    border-top: 2px solid transparent;
+  }
+  .tabs a[aria-current] { color: var(--accent); border-top-color: var(--accent); font-weight: 600; }
+  .tabs svg { width: 1.4rem; height: 1.4rem; }
+
+  /* ---------------------------------------------------------- controls */
+
+  button, .button {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+    min-height: var(--tap); padding: .5rem 1rem;
+    font: inherit; color: inherit; text-decoration: none;
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  .button, button.primary {
+    color: var(--accent-fg); background: var(--accent);
+    border-color: var(--accent); font-weight: 600;
+  }
+  button.quiet { background: transparent; color: var(--muted); }
+  input[type=search], textarea, select, input[type=text], input[type=number],
+  input:not([type]) {
+    width: 100%; min-height: var(--tap); padding: .55rem .7rem; font: inherit;
+    background: var(--bg); color: inherit;
+    border: 1px solid var(--edge); border-radius: var(--radius);
+  }
+  input[type=search] { flex: 1; }
+  textarea { resize: vertical; line-height: 1.5; }
+  input[type=file] { font: inherit; }
+
+  form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  form.stacked { display: block; }
+  form.stacked label { display: block; margin: 1rem 0 .3rem; font-size: .9rem;
+    font-weight: 600; }
+  form.inline { display: flex; gap: .3rem; align-items: center; margin: 0; }
+  form.inline input { width: 3.6rem; min-height: var(--tap-compact);
+    padding: .25rem; text-align: center; }
+  form.inline button { min-height: var(--tap-compact); padding: .25rem .6rem;
+    font-size: .85rem; }
+
+  /* ------------------------------------------------------------ screens */
+
   .recipes li { border-bottom: 1px solid var(--edge); }
-  .recipes a { display: block; padding: .75rem 0; text-decoration: none; }
-  .recipes .meta, .yield, .empty { opacity: .65; font-size: .85rem; }
-  .lines li { padding: .4rem 0; border-bottom: 1px solid var(--edge); }
+  .recipes a { display: flex; flex-direction: column; justify-content: center;
+    min-height: var(--tap); padding: .75rem 0; text-decoration: none; }
+  .recipes .meta, .yield, .empty { color: var(--muted); font-size: .85rem; }
+  .lines li { padding: .45rem 0; border-bottom: 1px solid var(--edge); }
   .amount { font-variant-numeric: tabular-nums; }
-  .source { display: block; opacity: .55; font-size: .8rem; }
+  .source { display: block; color: var(--muted); font-size: .8rem; }
+  .source-text { white-space: pre-wrap; color: var(--muted); font-size: .85rem; }
   ol { padding-left: 1.2rem; }
   ol li { margin-bottom: .5rem; }
-  form { display: flex; gap: .5rem; margin-bottom: 1rem; }
-  input[type=search] { flex: 1; padding: .5rem; font: inherit;
-    border: 1px solid var(--edge); border-radius: .3rem; background: transparent; }
-  button { padding: .5rem .8rem; font: inherit; }
-  .source-text { white-space: pre-wrap; opacity: .7; font-size: .85rem; }
 
-  form.stacked { display: block; }
-  form.stacked label { display: block; margin: 1rem 0 .25rem; font-size: .9rem; }
-  textarea, select, input[type=text], input:not([type]) {
-    width: 100%; padding: .5rem; font: inherit; background: transparent;
-    color: inherit; border: 1px solid var(--edge); border-radius: .3rem;
-  }
-  textarea { resize: vertical; }
   .edit-lines, .edit-steps { padding-left: 1.2rem; }
   .line { padding: .75rem 0; border-bottom: 1px solid var(--edge); }
-  .line.is-new { border-left: 3px solid currentColor; padding-left: .6rem; }
+  .line.is-new { border-left: 3px solid var(--accent); padding-left: .6rem; }
   .amounts { display: flex; gap: .4rem; margin-bottom: .4rem; }
   .badge {
-    display: inline-block; margin-bottom: .35rem; padding: .1rem .4rem;
-    font-size: .75rem; border: 1px solid var(--edge); border-radius: .2rem;
+    display: inline-block; margin-bottom: .35rem; padding: .15rem .45rem;
+    font-size: .75rem; color: var(--muted);
+    border: 1px solid var(--edge); border-radius: .25rem;
   }
-  .remove { font-size: .8rem; opacity: .65; }
-  .remove input { width: auto; }
-  nav.weeks { justify-content: space-between; font-size: .85rem; }
+  .remove { display: inline-flex; align-items: center; gap: .35rem;
+    min-height: var(--tap-compact); font-size: .85rem; color: var(--muted); }
+  .remove input { width: auto; min-height: 0; }
+  nav.weeks { display: flex; justify-content: space-between; gap: .5rem;
+    margin-bottom: 1.5rem; font-size: .85rem; }
+  nav.weeks a { display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); text-decoration: none; color: var(--muted); }
   .day { margin-bottom: 1.5rem; }
   .day h2 { margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
   .day.is-today h2 { font-weight: 700; }
-  .day.is-today { border-left: 3px solid currentColor; padding-left: .6rem; }
+  .day.is-today { border-left: 3px solid var(--accent); padding-left: .6rem; }
   .slot { padding: .4rem 0 .6rem; border-top: 1px solid var(--edge); }
-  .slot h3 { margin: 0 0 .3rem; font-size: .8rem; opacity: .6; font-weight: 400; }
-  .empty-slot, .add-more { display: inline-block; padding: .3rem 0; font-size: .9rem; opacity: .6; }
+  .slot h3 { margin: 0 0 .3rem; }
+  .empty-slot, .add-more { display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
   .entry { display: flex; align-items: center; gap: .4rem; padding: .2rem 0; flex-wrap: wrap; }
   .entry > a { flex: 1; min-width: 8rem; }
-  form.inline { display: flex; gap: .3rem; align-items: center; margin: 0; }
-  form.inline input { width: 3.2rem; padding: .25rem; text-align: center; }
-  form.inline button { padding: .25rem .5rem; font-size: .8rem; }
-  button.quiet { background: transparent; border: 1px solid var(--edge); opacity: .7; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
   .part { margin: 1.5rem 0; padding-left: .7rem;
     border-left: 3px solid var(--edge); }
   .part h2 { margin-top: 0; font-size: 1.05rem; }
-  h3 { font-size: .85rem; opacity: .6; font-weight: 400; margin: 1rem 0 .3rem; }
   .ingredients li { display: flex; align-items: center; gap: .5rem;
     padding: .4rem 0; border-bottom: 1px solid var(--edge); }
   .ingredients form.inline { flex: 1; }
   .ingredients form.inline input { width: auto; flex: 1; text-align: left; }
-  .position { width: 2.6rem !important; opacity: .7; }
+  .position { width: 3rem !important; flex: none !important; color: var(--muted); }
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .pick-title { flex: 1; }
   .progress {
     max-height: 14rem; overflow: auto; white-space: pre-wrap; word-break: break-all;
-    padding: .6rem; font-size: .75rem; opacity: .7;
-    border: 1px solid var(--edge); border-radius: .3rem;
+    padding: .6rem; font-size: .75rem; color: var(--muted);
+    border: 1px solid var(--edge); border-radius: var(--radius);
   }
-  input[type=file] { font: inherit; }
   .refused {
-    padding: .6rem .8rem; margin: 0 0 1rem;
-    border: 1px solid currentColor; border-radius: .3rem; font-size: .9rem;
+    padding: .7rem .8rem; margin: 0 0 1rem;
+    color: var(--warn); font-size: .9rem;
+    background: var(--surface); border: 1px solid var(--warn);
+    border-radius: var(--radius);
+  }
+
+  @media (min-width: 48rem) {
+    .tabs { justify-content: center; }
+    .tabs a { flex: 0 1 9rem; }
   }
 `;
 
-export function page(title: string, body: Raw, status = 200): Response {
+/**
+ * Which bottom-tab destination a screen belongs to. `signed-out` is the shell
+ * for a browser with nowhere to navigate yet — no tabs, no sign-out.
+ */
+export type Shell =
+  | "week"
+  | "recipes"
+  | "intake"
+  | "ingredients"
+  | "signed-out";
+
+const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
+  {
+    shell: "week",
+    href: "/",
+    label: "Viikko",
+    icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>`,
+  },
+  {
+    shell: "recipes",
+    href: "/recipes",
+    label: "Reseptit",
+    icon: `<path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v18H5.5A1.5 1.5 0 0 1 4 19.5z"/><path d="M8 8h7M8 12h7"/>`,
+  },
+  {
+    shell: "intake",
+    href: "/intake",
+    label: "Lisää",
+    icon: `<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>`,
+  },
+  {
+    shell: "ingredients",
+    href: "/ingredients",
+    label: "Ainekset",
+    icon: `<path d="M5 9h14l-1.2 10.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z"/><path d="M9 9a3 3 0 0 1 6 0"/>`,
+  },
+];
+
+function icon(paths: string): Raw {
+  return raw(
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`,
+  );
+}
+
+function tabs(current: Shell): Raw {
+  return html`<nav class="tabs" aria-label="Päävalikko">
+  ${TABS.map(
+    (tab) =>
+      html`<a href="${tab.href}"${tab.shell === current
+        ? raw(' aria-current="page"')
+        : ""}>${icon(tab.icon)}<span>${tab.label}</span></a>`,
+  )}
+</nav>`;
+}
+
+/** The account affordance: small, out of the way, and the way out of the app. */
+const ACCOUNT = html`<details class="account">
+  <summary role="button" aria-label="Tili">
+    ${icon(`<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>`)}
+  </summary>
+  <div class="account-menu">
+    <form method="post" action="/auth/signout">
+      <button type="submit" class="quiet">Kirjaudu ulos</button>
+    </form>
+  </div>
+</details>`;
+
+export function page(
+  title: string,
+  body: Raw,
+  shell: Shell,
+  status = 200,
+): Response {
+  const signedIn = shell !== "signed-out";
+
   const document = html`<!doctype html>
 <html lang="fi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${title} · Ruokalista</title>
 <style>${raw(STYLES)}</style>
 </head>
-<body>
-<nav><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a><a href="/ingredients">Ainekset</a></nav>
+<body class="${signedIn ? "has-tabs" : "signed-out"}">
+${signedIn
+    ? html`<header class="topbar">
+  <a class="wordmark" href="/">Ruokalista</a>
+  ${ACCOUNT}
+</header>`
+    : ""}
+<main>
 ${body}
+</main>
+${signedIn ? tabs(shell) : ""}
 </body>
 </html>`;
 

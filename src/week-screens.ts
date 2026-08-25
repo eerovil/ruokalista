@@ -64,6 +64,7 @@ export async function weekScreen(
       </nav>
 
       ${days.map((date) => dayCard(date, entries, date === now))}`,
+    "week",
   );
 }
 
@@ -137,6 +138,7 @@ export async function pickerScreen(
       "Ei löytynyt",
       html`<h1>Ei löytynyt</h1>
         <p class="empty">Tuntematon päivä tai ateria.</p>`,
+      "week",
       404,
     );
   }
@@ -187,6 +189,7 @@ export async function pickerScreen(
           </ul>`}
 
       <p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
+    "week",
   );
 }
 
@@ -262,6 +265,7 @@ function refused(message: string, date: string): Response {
     html`<h1>Ei onnistunut</h1>
       <p class="refused">${message}</p>
       <p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
+    "week",
     400,
   );
 }
