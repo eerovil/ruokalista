@@ -57,6 +57,11 @@ jobs:
       - name: Browser tests
         run: npx playwright test
 
+      - name: Validate deploy configuration
+        # Compile and parse the same Wrangler config main will deploy, without
+        # uploading anything or needing Cloudflare credentials in a PR.
+        run: npx wrangler deploy --dry-run --outdir /tmp/ruokalista-worker
+
       - name: Keep the traces from a failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -75,6 +80,8 @@ jobs:
 
     # Nothing else in this workflow should be able to see these.
     environment: production
+    env:
+      PRODUCTION_ORIGIN: https://ruokalista.vilpponen.fi
 
     steps:
       - uses: actions/checkout@v4
@@ -102,14 +109,17 @@ jobs:
 
       - name: Check what is actually live
         # The deploy reporting success is not the same as the app answering.
+        # A newly attached Custom Domain can take a moment to start answering,
+        # so retry transport failures before declaring the deployment broken.
         run: |
           set -e
-          health=$(curl -fsS https://ruokalista.eerovil.workers.dev/health)
+          health=$(curl --retry 12 --retry-all-errors --retry-delay 5 \
+            -fsS "$PRODUCTION_ORIGIN/health")
           echo "$health"
           case "$health" in
             *'"database":"ok"'*) ;;
             *) echo "live health is not ok"; exit 1 ;;
           esac
-          signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
-            https://ruokalista.eerovil.workers.dev/recipes)
+          signed_out=$(curl --retry 3 --retry-all-errors --retry-delay 2 \
+            -s -o /dev/null -w '%{http_code}' "$PRODUCTION_ORIGIN/recipes")
           [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
