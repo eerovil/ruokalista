@@ -8,6 +8,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Nightly backup. Cron Triggers use UTC; the scheduled timestamp is also the
+  // idempotency key written into snapshot.json and its Git commit message.
+  "triggers": { "crons": ["17 2 * * *"] },
+
   "d1_databases": [
     {
       "binding": "DB",
