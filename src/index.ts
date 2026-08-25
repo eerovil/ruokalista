@@ -1,5 +1,5 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
-import { runNightlyBackup } from "./backup.ts";
+import { scheduledBackup } from "./backup-scheduled.ts";
 import type { Env } from "./env.ts";
 import {
   apiRename,
@@ -103,7 +103,7 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    await runNightlyBackup(env, controller.scheduledTime);
+    await scheduledBackup(controller, env);
   },
 } satisfies ExportedHandler<Env>;
 
