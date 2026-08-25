@@ -69,6 +69,48 @@ test("signing out clears the session", async ({ context, page }) => {
   await expect(page).toHaveURL(/\/signin$/);
 });
 
+test("a development server can sign in without Google", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/signin");
+  await page.getByRole("button", { name: /Kirjaudu: / }).first().click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Viikko", exact: true })).toBeVisible();
+
+  await context.clearCookies();
+});
+
+test("the development sign-in refuses a public host, it does not merely hide", async ({
+  page,
+}) => {
+  // The button is gated on the address, but a gate that only removes a button
+  // is not a gate — the route itself has to say no. This is the check that
+  // would fail if somebody made the shortcut reachable on the deployment.
+  for (const host of ["ruokalista.vilpponen.fi", "ruokalista.eerovil.workers.dev"]) {
+    const response = await page.request.post("/auth/dev-signin", {
+      headers: { Host: host },
+      form: { memberId: "1" },
+      maxRedirects: 0,
+    });
+
+    expect(response.status()).toBe(404);
+    expect(response.headers()["set-cookie"]).toBeUndefined();
+  }
+});
+
+test("the development sign-in creates nobody", async ({ page }) => {
+  // Same rule as Google: a member row that does not exist is not a way in.
+  const response = await page.request.post("/auth/dev-signin", {
+    form: { memberId: "999999" },
+    maxRedirects: 0,
+  });
+
+  expect(response.status()).toBe(400);
+  expect(response.headers()["set-cookie"]).toBeUndefined();
+});
+
 test("starting sign-in hands you to Google with a signed state", async ({
   page,
 }) => {

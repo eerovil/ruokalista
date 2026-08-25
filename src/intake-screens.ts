@@ -29,7 +29,9 @@ import {
 import type { Member } from "./members.ts";
 import { formatMeasurement } from "./quantities.ts";
 import { saveRecipe, SaveRefused } from "./recipe-save.ts";
+import { isLocalOrigin } from "./public-origin.ts";
 import type { RouteContext } from "./router.ts";
+import { SAMPLE_DRAFT } from "./sample-draft.ts";
 
 /**
  * Intake: getting a recipe into the store by pasting text. The correction
@@ -181,8 +183,30 @@ interface CorrectionView {
   steps: StepFormValues[];
 }
 
+/**
+ * The sample draft, offered only by a development server.
+ *
+ * It posts to the same `/intake/correct` the streaming island hands over to, so
+ * walking through it exercises the real review, the real editor and the real
+ * save — nothing is special-cased downstream. What it skips is the one
+ * expensive step.
+ */
+function sampleDraftForm(): Raw {
+  return html`<hr />
+    <form method="post" action="/intake/correct" class="stacked">
+      <input type="hidden" name="draft" value="${JSON.stringify(SAMPLE_DRAFT)}" />
+      <input type="hidden" name="route" value="pasted" />
+      <input type="hidden" name="sourceText" value="${SAMPLE_DRAFT.source_text}" />
+      <button type="submit" class="quiet">Avaa esimerkkiluonnos</button>
+      <p class="empty">
+        Kehityspalvelimen oikotie: vie tarkistusnäkymään kutsumatta mallia.
+        Tätä ei ole julkaistussa sovelluksessa.
+      </p>
+    </form>`;
+}
+
 /** `GET /intake` */
-export function intakeScreen(): Response {
+export function intakeScreen({ url }: RouteContext): Response {
   return page(
     "Lisää resepti",
     html`<h1>Lisää resepti</h1>
@@ -207,6 +231,8 @@ export function intakeScreen(): Response {
 
       <p id="status" class="status" aria-live="polite"></p>
       <p id="progress" class="progress" aria-live="polite" hidden></p>
+
+      ${isLocalOrigin(url) ? sampleDraftForm() : ""}
 
       <script>
         ${raw(STREAMING_ISLAND)}

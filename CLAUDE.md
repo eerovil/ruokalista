@@ -33,9 +33,24 @@ protected route before Google sign-in exists, mint a cookie for a seeded member:
     curl -H "Cookie: $(./scripts/node.sh node scripts/mint-cookie.mjs 1)" \
       http://127.0.0.1:8787/api/ingredients
 
-That script is a developer tool, not a route. The Worker has no way to sign
-anyone in without Google, on purpose — a shipped auth bypass is one of the things
-that went wrong in #13.
+That script is a developer tool, not a route.
+
+A development server also offers **Kehityskirjautuminen** on `/signin`: a button
+per existing member that issues a session directly. This is the one exception to
+"no way in without Google", and it is narrow on purpose, because a shipped auth
+bypass is one of the things that went wrong in #13:
+
+- `POST /auth/dev-signin` **refuses with a 404** unless `isLocalOrigin`
+  (`src/public-origin.ts`) says the browser reached a loopback, private-network
+  or tailnet address. The route says no; it does not merely hide a button.
+- The gate is the address, not a flag — no env var and no `wrangler secret put`
+  can turn it on for the deployment.
+- It **creates nobody.** Only a `member` row that already exists gets a session,
+  which is the same rule Google sign-in follows. There is still no signup path.
+
+`tests/auth.spec.ts` checks that it refuses both production hostnames and sets
+no cookie, and that an unknown member id is refused. Those are the tests that
+fail if somebody widens this.
 
 The local D1 database is keyed by the `database_id` in `wrangler.jsonc`. Change
 that id and local dev silently points at a different, empty database — the
@@ -95,6 +110,21 @@ Console — the live one and `http://127.0.0.1:8787` for local work.
 so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
+
+**To walk the import flow by hand, use the sample draft and spend nothing.**
+A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
+`src/sample-draft.ts` to the same `/intake/correct` the streaming island hands
+over to, so the review, the editor and the save are all the real ones — only
+the model call is skipped. That is the same fixture the browser suite answers
+`/api/intake/structure` from, so there is one draft rather than two that drift.
+
+The button exists only when `isLocalOrigin` (`src/public-origin.ts`) says the
+browser reached a loopback or private-network address. It is not a flag or an
+env var on purpose: a deployed Worker is only ever addressed by a public
+hostname, so nothing you can misconfigure — including `wrangler secret put` —
+turns it on live. `dev/check-local-origin.ts` checks that gate directly,
+because a browser test always runs on 127.0.0.1 and would agree with any
+implementation that just returned true.
 
 **The API key has a small balance, so do not re-run imports casually.** Almost
 everything is testable without spending anything: the correction screen, the
