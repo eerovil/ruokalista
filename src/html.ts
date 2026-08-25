@@ -209,8 +209,20 @@ const STYLES = `
   .slot h3 { margin: 0 0 .3rem; }
   .empty-slot, .add-more { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
-  .entry { display: flex; align-items: center; gap: .4rem; padding: .2rem 0; flex-wrap: wrap; }
-  .entry > a { flex: 1; min-width: 8rem; }
+  .entry > a {
+    display: flex; align-items: baseline; gap: .5rem;
+    min-height: var(--tap); padding: .5rem .6rem;
+    text-decoration: none;
+    background: var(--surface); border-radius: var(--radius);
+  }
+  .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
+  .entry-title { flex: 1; }
+  .entry-portions { color: var(--muted); font-size: .8rem; white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  .entry-when { margin: 0 0 .2rem; text-transform: capitalize; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  .portions-row { display: flex; gap: .5rem; align-items: center; }
+  .portions-row input { width: 5rem; text-align: center; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
   .part { margin: 1.5rem 0; padding-left: .7rem;

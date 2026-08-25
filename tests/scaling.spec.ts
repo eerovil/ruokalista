@@ -97,6 +97,7 @@ test("the week carries the day's portions into the recipe", async ({ page }) => 
   await row.getByRole("button", { name: "Lisää" }).click();
 
   await page.locator(".entry a").first().click();
+  await page.getByRole("link", { name: "Avaa resepti" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1\?portions=6$/);
   await expect(page.locator(".yield")).toContainText("6 annokselle");
@@ -110,11 +111,12 @@ test("re-portioning a day changes what the recipe opens at", async ({ page }) =>
     .getByRole("button", { name: "Lisää" })
     .click();
 
-  const tuesday = page.locator(".day", { hasText: "2.12." });
-  await tuesday.locator(".entry input[name=portions]").fill("2");
-  await tuesday.getByRole("button", { name: "Päivitä" }).click();
+  await page.locator(".day", { hasText: "2.12." }).locator(".entry a").click();
+  await page.locator("input[name=portions]").fill("2");
+  await page.getByRole("button", { name: "Tallenna" }).click();
 
   await page.locator(".day", { hasText: "2.12." }).locator(".entry a").click();
+  await page.getByRole("link", { name: "Avaa resepti" }).click();
   await expect(page).toHaveURL(/portions=2$/);
   // Half of ½ dl is ¼ dl.
   await expect(page.locator(".lines li").first()).toContainText("¼ dl");

@@ -70,23 +70,83 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   const entry = page.locator(".day").first().locator(".entry");
   await expect(entry).toHaveCount(1);
   await expect(entry).toContainText("Kaalilaatikko");
-  await expect(entry.locator("input[name=portions]")).toHaveValue("4");
+  await expect(entry).toContainText("4 annosta");
 
-  // Re-portion it.
-  await entry.locator("input[name=portions]").fill("6");
-  await entry.getByRole("button", { name: "Päivitä" }).click();
-  await expect(
-    page.locator(".day").first().locator(".entry input[name=portions]"),
-  ).toHaveValue("6");
+  // The week itself carries no inputs and no delete buttons — the plan is for
+  // reading. Everything you can do to a meal is one tap away.
+  await expect(entry.locator("input")).toHaveCount(0);
+  await expect(entry.getByRole("button")).toHaveCount(0);
 
-  // And take it off again.
-  await page
-    .locator(".day")
-    .first()
-    .locator(".entry")
-    .getByRole("button", { name: "Poista" })
-    .click();
+  // Re-portion it on the focused surface.
+  await entry.locator("a").click();
+  await expect(page).toHaveURL(/\/meal-entries\/\d+$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Kaalilaatikko",
+  );
+  await expect(page.locator(".entry-when")).toContainText("Lounas");
+
+  await page.locator("input[name=portions]").fill("6");
+  await page.getByRole("button", { name: "Tallenna" }).click();
+
+  // Back to the week that was being looked at, not to today's.
+  await expect(page).toHaveURL(/\/\?week=2026-10-05$/);
+  await expect(page.locator(".day").first().locator(".entry")).toContainText(
+    "6 annosta",
+  );
+
+  // Cooking it opens the recipe at the amounts this meal needs.
+  await page.locator(".day").first().locator(".entry a").click();
+  await page.getByRole("link", { name: "Avaa resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+\?portions=6$/);
+
+  // And take it off again, from the same surface.
+  await page.goBack();
+  await page.getByRole("button", { name: "Poista ruokalistalta" }).click();
+  await expect(page).toHaveURL(/\/\?week=2026-10-05$/);
   await expect(page.locator(".day").first().locator(".entry")).toHaveCount(0);
+});
+
+test("a nonsense meal entry is a 404, not a crash", async ({ page }) => {
+  const response = await page.goto("/meal-entries/999999");
+  expect(response?.status()).toBe(404);
+});
+
+test("another household's meal entry is a 404 on the screen too", async ({
+  page,
+  browser,
+}) => {
+  await addEntry(page, "2026-10-09", "dinner", "Kaalilaatikko");
+  const listed = await page.request.get(
+    "/api/menu?from=2026-10-09&to=2026-10-09",
+  );
+  const { entries } = (await listed.json()) as { entries: { id: number }[] };
+
+  const context = await browser.newContext();
+  await context.addCookies([sessionCookie(2)]);
+  const neighbour = await context.newPage();
+
+  const response = await neighbour.goto(`/meal-entries/${entries[0]!.id}`);
+  expect(response?.status()).toBe(404);
+
+  await context.close();
+});
+
+test("portions that make no sense keep you on the meal, with the reason", async ({
+  page,
+}) => {
+  await addEntry(page, "2026-10-11", "lunch", "Kaalilaatikko");
+  await page.locator(".day").last().locator(".entry a").click();
+
+  await page.locator("input[name=portions]").fill("0");
+  await page.getByRole("button", { name: "Tallenna" }).click();
+
+  await expect(page.locator(".refused")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Kaalilaatikko",
+  );
+  // The refused value itself is handed back, not the stored one — it is
+  // precisely what needs to be seen and corrected.
+  await expect(page.locator("input[name=portions]")).toHaveValue("0");
 });
 
 test("a recipe with no yield falls back to the household default", async ({

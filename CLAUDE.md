@@ -139,8 +139,13 @@ not decide — scaling parts with the parent is still open.
 
 ## Scaling
 
-A recipe opened from a day carries that day's portions: the week links to
-`/recipes/:id?portions=N`. `src/scaling.ts` turns that into a factor, and a
+A recipe opened from a day carries that day's portions. The week itself is for
+reading, so the link is one step further in: a planned meal opens
+`/meal-entries/:id`, and *that* screen links to `/recipes/:id?portions=N` — it
+is also where portions get changed and a meal gets taken off the list. The week
+holds no inputs and no delete buttons on purpose (decision #36).
+
+`src/scaling.ts` turns those portions into a factor, and a
 dish's factor reaches into its parts — a part has no yield of its own because it
 is a piece of the dish.
 

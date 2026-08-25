@@ -13,6 +13,7 @@ import {
   addMealEntry,
   changePortions,
   DEFAULT_PORTIONS,
+  findMealEntry,
   isSlot,
   menuBetween,
   MenuRefused,
@@ -97,31 +98,95 @@ function slotBlock(date: string, slot: Slot, entries: MealEntry[]): Raw {
   </div>`;
 }
 
+/**
+ * A planned meal, as it reads while scanning: the dish and what it is cooked
+ * for. Everything you can *do* to it lives one tap away, on its own screen —
+ * a week of editable inputs and delete buttons reads like an admin form, not
+ * like the household's plan.
+ */
 function entryRow(entry: MealEntry): Raw {
   return html`<li class="entry">
-    <!-- The day's portion count travels with the link, so the recipe opens at
-         the amounts this meal actually needs. -->
-    <a href="/recipes/${entry.recipeId}?portions=${entry.portions}"
-      >${entry.title}</a
-    >
-    <form method="post" action="/meal-entries/${entry.id}/portions" class="inline">
-      <!-- Which week to come back to. Without it you land on today's week,
-           which is not the one you were looking at. -->
-      <input type="hidden" name="week" value="${entry.date}" />
-      <input
-        name="portions"
-        inputmode="numeric"
-        value="${entry.portions}"
-        aria-label="Annoksia"
-        size="2"
-      />
-      <button type="submit">Päivitä</button>
-    </form>
-    <form method="post" action="/meal-entries/${entry.id}/delete" class="inline">
-      <input type="hidden" name="week" value="${entry.date}" />
-      <button type="submit" class="quiet">Poista</button>
-    </form>
+    <a href="/meal-entries/${entry.id}">
+      <span class="entry-title">${entry.title}</span>
+      <span class="entry-portions">${entry.portions} annosta</span>
+    </a>
   </li>`;
+}
+
+/** `GET /meal-entries/:id` — the focused surface for one planned meal. */
+export async function mealEntryScreen(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const entry = await findMealEntry(
+    env.DB,
+    member.householdId,
+    Number(params["id"]),
+  );
+  if (entry === null) return entryNotFound();
+
+  return page(entry.title, entryActions(entry, null), "week");
+}
+
+/**
+ * `portions` is the raw submitted text when a change was refused, not the
+ * stored count — an invalid number is precisely the value that needs to be seen
+ * and corrected.
+ */
+function entryActions(
+  entry: MealEntry,
+  refusal: { message: string; portions: string } | null,
+): Raw {
+  const error = refusal?.message ?? null;
+  const portions = refusal?.portions ?? String(entry.portions);
+
+  return html`<p class="meta entry-when">
+      ${dayName(entry.date)} ${shortDate(entry.date)} ·
+      ${SLOT_NAMES[entry.slot]}
+    </p>
+    <h1>${entry.title}</h1>
+
+    ${error === null ? "" : html`<p class="refused">${error}</p>`}
+
+    <!-- The meal's portion count travels with the link, so the recipe opens at
+         the amounts this meal actually needs. -->
+    <p>
+      <a
+        class="button"
+        href="/recipes/${entry.recipeId}?portions=${entry.portions}"
+        >Avaa resepti</a
+      >
+    </p>
+
+    <form method="post" action="/meal-entries/${entry.id}/portions" class="stacked">
+      <label for="portions">Annoksia</label>
+      <div class="portions-row">
+        <input
+          id="portions"
+          name="portions"
+          inputmode="numeric"
+          value="${portions}"
+        />
+        <button type="submit">Tallenna</button>
+      </div>
+    </form>
+
+    <form method="post" action="/meal-entries/${entry.id}/delete" class="stacked">
+      <button type="submit" class="quiet">Poista ruokalistalta</button>
+    </form>
+
+    <p><a href="/?week=${mondayOf(entry.date)}">Takaisin viikkoon</a></p>`;
+}
+
+function entryNotFound(): Response {
+  return page(
+    "Ei löytynyt",
+    html`<h1>Ei löytynyt</h1>
+      <p class="empty">Tätä ateriaa ei ole ruokalistalla.</p>
+      <p><a href="/">Takaisin viikkoon</a></p>`,
+    "week",
+    404,
+  );
 }
 
 /** `GET /picker?date=&slot=` — reached from a slot. */
@@ -219,36 +284,58 @@ export async function addEntryForm(
   return backToWeek(date);
 }
 
-/** `POST /meal-entries/:id/portions` — a form cannot send PATCH. */
+/**
+ * `POST /meal-entries/:id/portions` — a form cannot send PATCH.
+ *
+ * Which week to come back to is the entry's own, read from the row rather than
+ * carried in a hidden field: the entry is the only thing that knows, and a
+ * hidden field is one more thing a submission can arrive without.
+ */
 export async function changePortionsForm(
   { env, request, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const form = await request.formData();
+  const entry = await findMealEntry(
+    env.DB,
+    member.householdId,
+    Number(params["id"]),
+  );
+  if (entry === null) return entryNotFound();
 
   try {
-    await changePortions(
-      env.DB,
-      member,
-      Number(params["id"]),
-      Number(form.get("portions")),
-    );
+    await changePortions(env.DB, member, entry.id, Number(form.get("portions")));
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
-    return refused(error.message, today());
+    // Back to the surface they were on, with the reason — not a dead end.
+    return page(
+      entry.title,
+      entryActions(entry, {
+        message: error.message,
+        portions: String(form.get("portions") ?? ""),
+      }),
+      "week",
+      400,
+    );
   }
 
-  return backToWeek(String(form.get("week") ?? "") || today());
+  return backToWeek(entry.date);
 }
 
 /** `POST /meal-entries/:id/delete` */
 export async function removeEntryForm(
-  { env, request, params }: RouteContext,
+  { env, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const form = await request.formData();
-  await removeMealEntry(env.DB, member, Number(params["id"]));
-  return backToWeek(String(form.get("week") ?? "") || today());
+  const entry = await findMealEntry(
+    env.DB,
+    member.householdId,
+    Number(params["id"]),
+  );
+  if (entry === null) return entryNotFound();
+
+  await removeMealEntry(env.DB, member, entry.id);
+  return backToWeek(entry.date);
 }
 
 function backToWeek(date: string): Response {
