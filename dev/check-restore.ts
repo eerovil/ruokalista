@@ -28,12 +28,15 @@ test("a valid snapshot passes checksum and relationship validation", async () =>
   const snapshot = await validSnapshot();
   const parsed = await parseAndValidateSnapshot(canonicalJson(snapshot));
   assert.equal(parsed.sha256, snapshot.sha256);
-  assert.equal(parsed.tables.recipe[0]?.source_text, "Lasagne\n400 g jauhelihaa");
+  assert.equal(
+    parsed.tables.recipe.find((row) => row.id === 1)?.source_text,
+    "Lasagne\n400 g jauhelihaa",
+  );
 });
 
 test("a corrupt checksum is rejected", async () => {
   const snapshot = await validSnapshot();
-  snapshot.tables.recipe[0]!.title = "Tampered";
+  snapshot.tables.recipe.find((row) => row.id === 1)!.title = "Tampered";
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(snapshot)),
     /SHA-256 does not match/,
@@ -86,7 +89,7 @@ test("orphan foreign keys are rejected before restore", async () => {
 test("a cyclic recipe parent graph is rejected", async () => {
   const snapshot = await validSnapshot();
   const unsigned = unsignedOf(snapshot);
-  unsigned.tables.recipe[0]!.parent_id = 2;
+  unsigned.tables.recipe.find((row) => row.id === 1)!.parent_id = 2;
   const cyclic = await finalizeSnapshot(unsigned);
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(cyclic)),
@@ -96,6 +99,7 @@ test("a cyclic recipe parent graph is rejected", async () => {
 
 test("restore SQL writes a parent recipe before its part", async () => {
   const snapshot = await validSnapshot();
+  assert.equal(snapshot.tables.recipe[0]?.title, "Kastike");
   const sql = generateRestoreSql(snapshot);
   const parent = sql.indexOf("'Lasagne'");
   const child = sql.indexOf("'Kastike'");
@@ -157,24 +161,6 @@ async function validSnapshot() {
     // Deliberately child first: SQL generation must reorder it safely.
     recipe: [
       {
-        id: 1,
-        household_id: 1,
-        title: "Lasagne",
-        yield_portions: 4,
-        source_text: "Lasagne\n400 g jauhelihaa",
-        source_route: "pasted",
-        structured_by: "fixture",
-        structured_at: "2026-08-25 00:00:00",
-        created_at: "2026-08-25 00:00:00",
-        created_by: 1,
-        updated_at: "2026-08-25 00:00:00",
-        updated_by: 1,
-        parent_id: null,
-        part_position: null,
-        revision: 0,
-        edit_token: null,
-      },
-      {
         id: 2,
         household_id: 1,
         title: "Kastike",
@@ -189,6 +175,24 @@ async function validSnapshot() {
         updated_by: 1,
         parent_id: 1,
         part_position: 1,
+        revision: 0,
+        edit_token: null,
+      },
+      {
+        id: 1,
+        household_id: 1,
+        title: "Lasagne",
+        yield_portions: 4,
+        source_text: "Lasagne\n400 g jauhelihaa",
+        source_route: "pasted",
+        structured_by: "fixture",
+        structured_at: "2026-08-25 00:00:00",
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
+        updated_at: "2026-08-25 00:00:00",
+        updated_by: 1,
+        parent_id: null,
+        part_position: null,
         revision: 0,
         edit_token: null,
       },
