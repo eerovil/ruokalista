@@ -119,3 +119,16 @@ jobs:
           signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
             https://ruokalista.eerovil.workers.dev/recipes)
           [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
+
+      - name: Run one-shot production backup smoke
+        # Temporary #64 diagnostic. This calls the deployed Worker directly,
+        # exercising the real D1 binding and Worker BACKUP_GITHUB_TOKEN without
+        # involving Cron Trigger scheduling. Remove after the acceptance proof.
+        run: |
+          set -e
+          body=$(mktemp)
+          status=$(curl -sS -o "$body" -w '%{http_code}' -X POST \
+            https://ruokalista.eerovil.workers.dev/__ops/backup-once-64)
+          cat "$body"
+          [ "$status" = "200" ] || { echo "manual backup smoke failed: HTTP $status"; exit 1; }
+          grep -q '"status":"ok"' "$body" || { echo "manual backup smoke did not report ok"; exit 1; }
