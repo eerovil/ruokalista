@@ -7,6 +7,8 @@
     "typecheck": "tsc --noEmit",
     "check": "node --experimental-strip-types --test dev/*.ts",
     "check:backup-schema": "node --experimental-strip-types scripts/check-backup-schema.ts",
+    "check:restore-roundtrip": "node --experimental-strip-types scripts/check-restore-roundtrip.ts",
+    "restore:backup": "node --experimental-strip-types scripts/restore-backup.ts",
     "migrate:local": "wrangler d1 migrations apply ruokalista --local",
     "seed:local": "wrangler d1 execute ruokalista --local --file dev/seed.sql",
     "migrate:remote": "wrangler d1 migrations apply ruokalista --remote",
