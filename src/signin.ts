@@ -7,6 +7,7 @@ import {
 } from "./google.ts";
 import { html, page } from "./html.ts";
 import { findMemberByGoogleSub } from "./members.ts";
+import { googleCallbackUrl } from "./public-origin.ts";
 import type { RouteContext } from "./router.ts";
 import { clearSessionCookie, issueSessionCookie } from "./session.ts";
 import { base64UrlEncode, cookieValue, sign, verify } from "./signing.ts";
@@ -23,11 +24,6 @@ const STATE_LIFETIME_SECONDS = 10 * 60;
 function credentials(env: Env): GoogleCredentials | null {
   const { GOOGLE_CLIENT_ID: id, GOOGLE_CLIENT_SECRET: secret } = env;
   return id && secret ? { clientId: id, clientSecret: secret } : null;
-}
-
-/** Google requires an exact match, so it is derived from the request's origin. */
-function redirectUri(url: URL): string {
-  return new URL("/auth/google/callback", url.origin).toString();
 }
 
 // ---------------------------------------------------------------- screens
@@ -92,7 +88,11 @@ function failedScreen(message: string): Response {
 // ----------------------------------------------------------------- routes
 
 /** `GET /auth/google` — hand the browser to Google with a signed state. */
-export async function startSignIn({ env, url }: RouteContext): Promise<Response> {
+export async function startSignIn({
+  env,
+  url,
+  request,
+}: RouteContext): Promise<Response> {
   const google = credentials(env);
   const secret = env.SESSION_SECRET;
   if (google === null || !secret) {
@@ -107,7 +107,11 @@ export async function startSignIn({ env, url }: RouteContext): Promise<Response>
   return new Response(null, {
     status: 302,
     headers: {
-      Location: authorizeUrl(google.clientId, redirectUri(url), state),
+      Location: authorizeUrl(
+        google.clientId,
+        googleCallbackUrl(url, request.headers),
+        state,
+      ),
       "Set-Cookie": [
         `${STATE_COOKIE}=${state}`,
         "Path=/auth",
@@ -152,7 +156,11 @@ export async function completeSignIn({
   const code = url.searchParams.get("code");
   if (code === null) return failedScreen("Google ei palauttanut koodia.");
 
-  const idToken = await exchangeCode(google, redirectUri(url), code);
+  const idToken = await exchangeCode(
+    google,
+    googleCallbackUrl(url, request.headers),
+    code,
+  );
   if (idToken === null) return failedScreen("Google ei myöntänyt tunnistetta.");
 
   const identity = readIdentity(
