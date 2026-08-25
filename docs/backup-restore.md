@@ -5,6 +5,23 @@ Each successful scheduled run replaces `snapshot.json`; git history is the versi
 history. The snapshot contains private household data. Never copy it into this public
 source repository, CI artifacts, issue comments, or logs.
 
+## Independent freshness watchdog
+
+The watchdog deliberately runs outside Cloudflare, but it runs in this **public**
+repository so GitHub-hosted Actions do not require paid private-repository minutes.
+`.github/workflows/backup-freshness.yml` reads only the `scheduled_at` field from the
+private backup repository and opens/closes one public `backup stale` issue here.
+
+The workflow authenticates to `eerovil/ruokalista-backup` with Actions secret
+`BACKUP_REPO_READ_TOKEN`. Use a separate fine-grained PAT restricted to that one
+repository with **Contents: Read-only** (and the required Metadata read). Do not reuse
+or broaden the Worker's write-capable `BACKUP_GITHUB_TOKEN`.
+
+The watchdog must never log, persist, artifact, or issue-comment the snapshot itself.
+For stale/fresh acceptance testing, `workflow_dispatch` fixture timestamps bypass the
+private repository read entirely, so the alert logic can be exercised without editing
+or exposing `snapshot.json`.
+
 ## Pick a backup
 
 Work in a clone of the private backup repository and choose the commit whose snapshot
