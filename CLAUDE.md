@@ -46,11 +46,18 @@ symptom is `no such table: member`. Re-run `migrate:local` and `seed:local`.
 Live at https://ruokalista.eerovil.workers.dev, D1 database `ruokalista`
 (`f81fabeb-…`), `SESSION_SECRET` set as a Worker secret.
 
+Credentials live in `~/.local/share/ruokalista/cloudflare.env` (mode 600), which
+`scripts/lib-cloudflare.sh` sources into every script that needs them. Not
+`.dev.vars`: that file is loaded into the Worker's own environment during local
+development, which is no place for an account-wide API token.
+
 `scripts/cloudflare-setup.sh` does the whole setup in one command and is safe to
-re-run. It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; the token is
-handed over one command at a time and may be single-use, which is why the script
-does everything in one run and keeps going after a failed step instead of
-abandoning the rest.
+re-run. `push-google-secrets.sh` pushes the Google credentials and deploys;
+`add-member.sh` inserts a member, which is the only way anybody gets in.
+
+`SESSION_SECRET` is generated during setup and never stored anywhere, so a
+signed-in session on the live Worker cannot be forged from this host — the live
+signed-in path can only be exercised through a real browser sign-in.
 
 ## One fetch handler
 

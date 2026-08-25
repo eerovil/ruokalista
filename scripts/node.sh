@@ -40,6 +40,9 @@ esac
 run_flags=(-i)
 [ -t 0 ] && run_flags+=(-t)
 
+# shellcheck source=scripts/lib-cloudflare.sh
+. "$repo/scripts/lib-cloudflare.sh"
+
 # Forwarded by name, never by value, so a token stays out of the command line.
 cloudflare_flags=()
 [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && cloudflare_flags+=(-e CLOUDFLARE_API_TOKEN)
