@@ -1,0 +1,268 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  canonicalJson,
+  type BackupSchemaEntry,
+  type BackupSnapshotUnsigned,
+  type BackupTableName,
+} from "../src/backup.ts";
+import {
+  assertCompatibleTarget,
+  finalizeSnapshot,
+  generateRestoreSql,
+  parseAndValidateSnapshot,
+} from "../src/restore.ts";
+
+const TABLES: readonly BackupTableName[] = [
+  "household",
+  "member",
+  "ingredient",
+  "recipe",
+  "recipe_step",
+  "ingredient_line",
+  "meal_entry",
+];
+
+test("a valid snapshot passes checksum and relationship validation", async () => {
+  const snapshot = await validSnapshot();
+  const parsed = await parseAndValidateSnapshot(canonicalJson(snapshot));
+  assert.equal(parsed.sha256, snapshot.sha256);
+  assert.equal(
+    parsed.tables.recipe.find((row) => row.id === 1)?.source_text,
+    "Lasagne\n400 g jauhelihaa",
+  );
+});
+
+test("a corrupt checksum is rejected", async () => {
+  const snapshot = await validSnapshot();
+  snapshot.tables.recipe.find((row) => row.id === 1)!.title = "Tampered";
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(snapshot)),
+    /SHA-256 does not match/,
+  );
+});
+
+test("an unknown backup format is rejected", async () => {
+  const snapshot = await validSnapshot();
+  const raw = { ...snapshot, format_version: 2 };
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(raw)),
+    /unsupported backup format_version: 2/,
+  );
+});
+
+test("missing and unexpected tables are rejected", async () => {
+  const snapshot = await validSnapshot();
+  const tables = { ...snapshot.tables } as Record<string, unknown>;
+  delete tables.meal_entry;
+  const raw = { ...snapshot, tables };
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(raw)),
+    /snapshot tables has missing or unexpected fields/,
+  );
+});
+
+test("duplicate ids are rejected before restore", async () => {
+  const snapshot = await validSnapshot();
+  const unsigned = unsignedOf(snapshot);
+  unsigned.tables.member.push({ ...unsigned.tables.member[0]! });
+  unsigned.row_counts.member += 1;
+  const duplicate = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(duplicate)),
+    /duplicate member id 1/,
+  );
+});
+
+test("orphan foreign keys are rejected before restore", async () => {
+  const snapshot = await validSnapshot();
+  const unsigned = unsignedOf(snapshot);
+  unsigned.tables.meal_entry[0]!.recipe_id = 999;
+  const orphan = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(orphan)),
+    /orphan meal_entry\.recipe_id=999/,
+  );
+});
+
+test("a cyclic recipe parent graph is rejected", async () => {
+  const snapshot = await validSnapshot();
+  const unsigned = unsignedOf(snapshot);
+  unsigned.tables.recipe.find((row) => row.id === 1)!.parent_id = 2;
+  const cyclic = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(cyclic)),
+    /cycle or invalid parent/,
+  );
+});
+
+test("restore SQL writes a parent recipe before its part", async () => {
+  const snapshot = await validSnapshot();
+  assert.equal(snapshot.tables.recipe[0]?.title, "Kastike");
+  const sql = generateRestoreSql(snapshot);
+  const parent = sql.indexOf("'Lasagne'");
+  const child = sql.indexOf("'Kastike'");
+  assert.ok(parent >= 0 && child > parent);
+  assert.match(sql, /BEGIN TRANSACTION;/);
+  assert.match(sql, /COMMIT;/);
+});
+
+test("an incompatible or non-empty migrated target is rejected", async () => {
+  const snapshot = await validSnapshot();
+  const columns = columnsFrom(snapshot);
+  const emptyCounts = Object.fromEntries(TABLES.map((table) => [table, 0])) as Record<BackupTableName, number>;
+
+  const incompatibleSchema = snapshot.schema.map((entry) => ({ ...entry }));
+  incompatibleSchema[0] = { ...incompatibleSchema[0]!, sql: "CREATE TABLE household (id INTEGER PRIMARY KEY)" };
+  assert.throws(
+    () => assertCompatibleTarget(snapshot, {
+      schema: incompatibleSchema,
+      columns,
+      rowCounts: emptyCounts,
+    }),
+    /target schema does not exactly match/,
+  );
+
+  assert.throws(
+    () => assertCompatibleTarget(snapshot, {
+      schema: snapshot.schema,
+      columns,
+      rowCounts: { ...emptyCounts, recipe: 1 },
+    }),
+    /target table recipe is not empty/,
+  );
+});
+
+async function validSnapshot() {
+  const tables = {
+    household: [
+      { id: 1, name: "Koti", created_at: "2026-08-25 00:00:00" },
+    ],
+    member: [
+      {
+        id: 1,
+        household_id: 1,
+        google_sub: "dev-user",
+        display_name: "Eero",
+        email: "eero@example.com",
+        created_at: "2026-08-25 00:00:00",
+      },
+    ],
+    ingredient: [
+      {
+        id: 1,
+        household_id: 1,
+        name: "jauheliha",
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
+      },
+    ],
+    // Deliberately child first: SQL generation must reorder it safely.
+    recipe: [
+      {
+        id: 2,
+        household_id: 1,
+        title: "Kastike",
+        yield_portions: null,
+        source_text: "Lasagne",
+        source_route: "pasted",
+        structured_by: "fixture",
+        structured_at: "2026-08-25 00:00:00",
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
+        updated_at: "2026-08-25 00:00:00",
+        updated_by: 1,
+        parent_id: 1,
+        part_position: 1,
+        revision: 0,
+        edit_token: null,
+      },
+      {
+        id: 1,
+        household_id: 1,
+        title: "Lasagne",
+        yield_portions: 4,
+        source_text: "Lasagne\n400 g jauhelihaa",
+        source_route: "pasted",
+        structured_by: "fixture",
+        structured_at: "2026-08-25 00:00:00",
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
+        updated_at: "2026-08-25 00:00:00",
+        updated_by: 1,
+        parent_id: null,
+        part_position: null,
+        revision: 0,
+        edit_token: null,
+      },
+    ],
+    recipe_step: [
+      { recipe_id: 2, position: 1, text: "Ruskista." },
+    ],
+    ingredient_line: [
+      {
+        id: 1,
+        recipe_id: 2,
+        position: 1,
+        quantity: 400,
+        quantity_max: null,
+        unit: "g",
+        alt_quantity: null,
+        alt_unit: null,
+        ingredient_id: 1,
+        source_line: "400 g jauhelihaa",
+      },
+    ],
+    meal_entry: [
+      {
+        id: 1,
+        household_id: 1,
+        date: "2026-08-25",
+        slot: "dinner",
+        recipe_id: 1,
+        portions: 4,
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
+      },
+    ],
+  } satisfies BackupSnapshotUnsigned["tables"];
+
+  const unsigned: BackupSnapshotUnsigned = {
+    format_version: 1,
+    scheduled_at: "2026-08-25T02:17:00.000Z",
+    captured_at: "2026-08-25T02:17:01.000Z",
+    schema: schemaFixture(),
+    row_counts: Object.fromEntries(
+      TABLES.map((table) => [table, tables[table].length]),
+    ) as Record<BackupTableName, number>,
+    tables,
+  };
+  return finalizeSnapshot(unsigned);
+}
+
+function schemaFixture(): BackupSchemaEntry[] {
+  return TABLES.map((table) => ({
+    type: "table",
+    name: table,
+    tbl_name: table,
+    sql: `CREATE TABLE ${table} (fixture TEXT)`,
+  }));
+}
+
+function unsignedOf(snapshot: Awaited<ReturnType<typeof validSnapshot>>): BackupSnapshotUnsigned {
+  return JSON.parse(canonicalJson({
+    format_version: snapshot.format_version,
+    scheduled_at: snapshot.scheduled_at,
+    captured_at: snapshot.captured_at,
+    schema: snapshot.schema,
+    row_counts: snapshot.row_counts,
+    tables: snapshot.tables,
+  })) as BackupSnapshotUnsigned;
+}
+
+function columnsFrom(snapshot: Awaited<ReturnType<typeof validSnapshot>>): Record<BackupTableName, string[]> {
+  return Object.fromEntries(
+    TABLES.map((table) => [table, Object.keys(snapshot.tables[table][0] ?? {})]),
+  ) as Record<BackupTableName, string[]>;
+}

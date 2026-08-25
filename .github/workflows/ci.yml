@@ -57,6 +57,9 @@ jobs:
       - name: Check backup schema coverage
         run: npm run check:backup-schema
 
+      - name: Restore round-trip
+        run: npm run check:restore-roundtrip
+
       - name: Browser tests
         run: npx playwright test
 
