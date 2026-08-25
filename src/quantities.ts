@@ -44,6 +44,15 @@ export function formatQuantity(value: number): string {
 }
 
 /**
+ * A quantity as something a form can hand back. Fractions read well but cannot
+ * be typed or re-parsed, so an editable field gets a plain decimal — with the
+ * Finnish comma, which readNumber accepts alongside a point.
+ */
+export function formatDecimal(value: number): string {
+  return String(Number(value.toFixed(3))).replace(".", ",");
+}
+
+/**
  * The amount as one string — "½ dl", "1–1½ l", "½ kpl (500 g)" — or empty when
  * the source stated no amount, as about a fifth of lines do.
  */

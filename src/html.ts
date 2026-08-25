@@ -69,6 +69,28 @@ const STYLES = `
     border: 1px solid var(--edge); border-radius: .3rem; background: transparent; }
   button { padding: .5rem .8rem; font: inherit; }
   .source-text { white-space: pre-wrap; opacity: .7; font-size: .85rem; }
+
+  form.stacked { display: block; }
+  form.stacked label { display: block; margin: 1rem 0 .25rem; font-size: .9rem; }
+  textarea, select, input[type=text], input:not([type]) {
+    width: 100%; padding: .5rem; font: inherit; background: transparent;
+    color: inherit; border: 1px solid var(--edge); border-radius: .3rem;
+  }
+  textarea { resize: vertical; }
+  .edit-lines, .edit-steps { padding-left: 1.2rem; }
+  .line { padding: .75rem 0; border-bottom: 1px solid var(--edge); }
+  .line.is-new { border-left: 3px solid currentColor; padding-left: .6rem; }
+  .amounts { display: flex; gap: .4rem; margin-bottom: .4rem; }
+  .badge {
+    display: inline-block; margin-bottom: .35rem; padding: .1rem .4rem;
+    font-size: .75rem; border: 1px solid var(--edge); border-radius: .2rem;
+  }
+  .remove { font-size: .8rem; opacity: .65; }
+  .remove input { width: auto; }
+  .refused {
+    padding: .6rem .8rem; margin: 0 0 1rem;
+    border: 1px solid currentColor; border-radius: .3rem; font-size: .9rem;
+  }
 `;
 
 export function page(title: string, body: Raw, status = 200): Response {
@@ -81,7 +103,7 @@ export function page(title: string, body: Raw, status = 200): Response {
 <style>${raw(STYLES)}</style>
 </head>
 <body>
-<nav><a href="/recipes">Reseptit</a></nav>
+<nav><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a></nav>
 ${body}
 </body>
 </html>`;

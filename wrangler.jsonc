@@ -3,6 +3,9 @@
   "name": "ruokalista",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
+  // The Anthropic SDK reaches for node:path and friends in its credential
+  // chain. Without this the Worker throws at runtime rather than at build.
+  "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
   "d1_databases": [

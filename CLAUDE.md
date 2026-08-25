@@ -89,6 +89,23 @@ sign-in is not configured and lets nobody in. The redirect URI is derived from
 the request's origin, so every origin used has to be registered in Google Cloud
 Console — the live one and `http://127.0.0.1:8787` for local work.
 
+## Intake, and what it costs to test
+
+`src/intake.ts` calls Claude Sonnet 5 (decision #11) with **structured outputs**,
+so the draft is schema-valid by construction rather than parsed and retried. The
+model id and effort are constants, not env overrides — an override was one of the
+things that drifted in #13.
+
+**The API key has a small balance, so do not re-run imports casually.** Almost
+everything is testable without spending anything: the correction screen, the
+approval gate and the save path all take an ordinary form post, so exercise them
+by POSTing to `/recipes` directly with hand-built fields. Only call the real
+model when the model call itself changed — one import is enough to prove it.
+
+`EFFORT` in `src/intake.ts` is the cost dial. `medium` is what has actually been
+tested end to end; lower it if imports feel dear, but re-test the awkward line
+shapes if you do.
+
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework

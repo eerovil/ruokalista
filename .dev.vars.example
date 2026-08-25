@@ -8,3 +8,6 @@ SESSION_SECRET="replace-me-with-a-long-random-string"
 # <origin>/auth/google/callback
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
+
+# Structures pasted recipe text. Without it, intake says so and refuses.
+ANTHROPIC_API_KEY=""
