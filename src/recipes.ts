@@ -307,6 +307,38 @@ export async function recipeScreen(
   return page(recipe.title, recipeBody(recipe, portions), "recipes");
 }
 
+/**
+ * Whether this line's source wording earns a second line under it while
+ * somebody is cooking.
+ *
+ * Repeating every source line turns the screen into a comparison view, and at
+ * the hob fast legibility is worth more than maximum evidence. So the source
+ * appears in exactly the two cases where the structured line is not the whole
+ * truth:
+ *
+ *   - **No stated amount.** The fields have nowhere to put "hieman", "maun
+ *     mukaan" or "tarvittaessa", so the qualifier only exists in the source.
+ *     About a fifth of lines are like this.
+ *   - **A scaled amount.** The number on the screen is no longer the number on
+ *     the page, and the source line is what says so.
+ *
+ * Everything else — ranges, second measurements, plain amounts — round-trips
+ * through the fields intact, so a copy underneath adds nothing to read.
+ */
+function sourceWorthShowing(line: RecipeLine, factor: number | null): boolean {
+  if (line.quantity === null) {
+    // Nothing lost if the source line is just the ingredient again.
+    return line.sourceLine.trim() !== "" &&
+      line.sourceLine.trim().toLocaleLowerCase("fi") !==
+        line.ingredient.trim().toLocaleLowerCase("fi");
+  }
+
+  return (
+    formatMeasurement(scaleMeasurement(line, factor)) !==
+    formatMeasurement(line)
+  );
+}
+
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
 function body(recipe: Recipe, factor: number | null): Raw {
   return html`${recipe.lines.length === 0
@@ -320,7 +352,9 @@ function body(recipe: Recipe, factor: number | null): Raw {
                   ? ""
                   : html`<span class="amount">${amount}</span> `}
                 ${line.ingredient}
-                <span class="source">${line.sourceLine}</span>
+                ${sourceWorthShowing(line, factor)
+                  ? html`<span class="source">${line.sourceLine}</span>`
+                  : ""}
               </li>`;
             })}
           </ul>`}
@@ -336,7 +370,9 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
   const factor = scaleFactor(recipe.yieldPortions, portions);
 
   return html`<h1>${recipe.title}</h1>
-    <p class="yield">
+    <!-- Whether the amounts below are the page's or this meal's is the first
+         thing a cook needs to know, so it sits under the title and says which. -->
+    <p class="${factor === null ? "yield" : "yield is-scaled"}">
       ${recipe.yieldPortions === null
         ? // A recipe with no yield says so where a scale control would be: you
           // cannot scale it, and hiding that would be worse than saying it.
@@ -355,10 +391,15 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
       </section>`,
     )}
 
-    <h2>Alkuperäinen teksti</h2>
-    <p class="source-text">${recipe.sourceText}</p>
+    <!-- Still stored, still one tap away, but not competing with the cooking. -->
+    <details class="source-original">
+      <summary>Näytä alkuperäinen</summary>
+      <p class="source-text">${recipe.sourceText}</p>
+    </details>
 
-    <p><a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a></p>`;
+    <p class="recipe-edit">
+      <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
+    </p>`;
 }
 
 async function loadRequested(

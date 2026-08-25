@@ -152,7 +152,15 @@ is a piece of the dish.
 Amounts round to what a cook can measure rather than to what the arithmetic
 says: 5 dl times 1⅓ reads 6½ dl, not 6,666. Small amounts keep quarters, larger
 ones go to halves and then whole numbers, weights go to the nearest 5 or 10 g.
-The source line underneath always still says what the page said.
+
+The recipe screen is cook-first (decision #37), so a source line is not repeated
+under every ingredient. `sourceWorthShowing` in `src/recipes.ts` surfaces it in
+exactly two cases: a line with **no stated amount**, because "hieman" and "maun
+mukaan" have no field to live in, and a line whose amount **the factor changed**,
+because the number on screen is no longer the number on the page. Ranges and
+second measurements round-trip through the fields intact, so they carry no copy.
+The full source text sits behind `Näytä alkuperäinen`, still stored, still one
+tap away.
 
 A recipe with no stated yield cannot be scaled and says so — there is nothing to
 scale *from*.

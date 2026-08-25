@@ -178,10 +178,25 @@ const STYLES = `
   .recipes a { display: flex; flex-direction: column; justify-content: center;
     min-height: var(--tap); padding: .75rem 0; text-decoration: none; }
   .recipes .meta, .yield, .empty { color: var(--muted); font-size: .85rem; }
-  .lines li { padding: .45rem 0; border-bottom: 1px solid var(--edge); }
-  .amount { font-variant-numeric: tabular-nums; }
-  .source { display: block; color: var(--muted); font-size: .8rem; }
-  .source-text { white-space: pre-wrap; color: var(--muted); font-size: .85rem; }
+  .lines li { padding: .55rem 0; font-size: 1.05rem; border-bottom: 1px solid var(--edge); }
+  .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .source { display: block; margin-top: .1rem; color: var(--muted); font-size: .8rem; }
+  .source-text { white-space: pre-wrap; color: var(--muted); font-size: .85rem;
+    margin: .5rem 0 0; }
+  .source-original { margin: 2rem 0 1rem; }
+  .source-original > summary {
+    display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); cursor: pointer;
+    color: var(--muted); font-size: .9rem;
+  }
+  .yield { margin: 0 0 1rem; }
+  .yield.is-scaled {
+    display: inline-block; padding: .3rem .6rem;
+    color: var(--accent); font-size: .85rem; font-weight: 600;
+    background: var(--surface); border-radius: var(--radius);
+  }
+  .recipe-edit { margin-top: 2rem; font-size: .9rem; }
+  .recipe-edit a { color: var(--muted); }
   ol { padding-left: 1.2rem; }
   ol li { margin-bottom: .5rem; }
 
