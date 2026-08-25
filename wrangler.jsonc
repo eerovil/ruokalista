@@ -21,9 +21,9 @@
     ]
   },
 
-  // Temporary #64 acceptance-run schedule. Cron Triggers use UTC; after the
-  // real production snapshot + restore drill, restore the normal 02:17 UTC cron.
-  "triggers": { "crons": ["30 14 * * *"] },
+  // Temporary #64 scheduled-path proof. Cron Triggers use UTC; after the real
+  // scheduled snapshot + restore drill, restore the normal 02:17 UTC cron.
+  "triggers": { "crons": ["45 15 * * *"] },
 
   "d1_databases": [
     {
