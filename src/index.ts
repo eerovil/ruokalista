@@ -1,4 +1,5 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
+import { backupSnapshotForRestoreDrill } from "./backup-drill.ts";
 import { manualBackupSmoke } from "./backup-manual.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
 import type { Env } from "./env.ts";
@@ -55,13 +56,14 @@ import {
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
  * this file. Screens and API routes get added to the table below as they land.
  *
- * Everything except /health goes through requireMember, apart from the
- * temporary #64 one-shot backup smoke route removed immediately after proof.
+ * Everything except /health goes through requireMember, apart from temporary
+ * #64 operational routes that are removed immediately after acceptance proof.
  */
 
 const router = new Router()
   .get("/health", health)
   .post("/__ops/backup-once-64", manualBackupSmoke)
+  .get("/__ops/backup-snapshot-64", backupSnapshotForRestoreDrill)
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/meal-entries", requireMemberScreen(addEntryForm))
