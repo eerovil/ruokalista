@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
+import { openMore, openSpareLines } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -21,6 +22,7 @@ test("a rejected edit keeps every value the member submitted", async ({ page }) 
   await page.locator("#title").fill("Nimi joka ei saa kadota");
   const first = page.locator(".line").first();
   await first.locator('input[name$=".quantity"]').fill("ei-numero");
+  await openMore(first);
   await first.locator('input[name$=".source"]').fill("oma lähderivi");
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
@@ -36,9 +38,11 @@ test("a rejected edit keeps every value the member submitted", async ({ page }) 
 test("a spare editor row can create a genuinely new ingredient", async ({ page }) => {
   await page.goto("/recipes/1/edit");
 
+  await openSpareLines(page);
   const spare = page.locator(".line").nth(4);
   await spare.locator('input[name$=".quantity"]').fill("1");
   await spare.locator('input[name$=".unit"]').fill("tl");
+  await openMore(spare);
   await spare.getByLabel("Uuden aineksen nimi").fill("sinappi");
   await spare.getByLabel("Lähderivi").fill("1 tl sinappia");
   await spare.getByLabel("Aines").selectOption("new");

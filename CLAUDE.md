@@ -110,6 +110,17 @@ shapes if you do.
 `src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
 AgentDeck and paste the result in, rather than looping real imports.
 
+The correction screen and the editor share `lineRow` in `src/line-form.ts`, and
+it is exception-first (decision #35). A row shows amount, unit and ingredient;
+the range's upper bound, the second measurement, the part, the source line, the
+position and the remove box live under a `Lisätiedot` disclosure. Hidden is not
+dropped — a closed `<details>` still submits its fields — and `hasUncommonValues`
+opens the disclosure for any line that already carries one of those values, so
+nothing real is ever folded out of sight, including on a re-render after a
+refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trailing
+every recipe; `lineRows` decides which rows are spare by reading the values, as
+"everything after the last row anybody put anything in".
+
 Intake has two paths on purpose. Without JavaScript the form posts to `/intake`
 and the model call is a plain request. With it, the island in
 `src/intake-screens.ts` streams from `/api/intake/structure` so bytes never stop
