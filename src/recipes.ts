@@ -1,5 +1,6 @@
 import { problem } from "./auth.ts";
 import { html, page, type Raw } from "./html.ts";
+import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
 import { scaleFactor, scaleMeasurement } from "./scaling.ts";
@@ -403,6 +404,8 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
       <summary>Näytä alkuperäinen</summary>
       <p class="source-text">${recipe.sourceText}</p>
     </details>
+
+    ${keepAwake()}
 
     <p class="recipe-edit">
       <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
