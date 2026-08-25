@@ -2,6 +2,7 @@ import { html, raw, type Raw } from "./html.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import { formatDecimal } from "./quantities.ts";
+import type { RecipePhase } from "./recipe-phase.ts";
 import type { LineIngredient, LineToSave, StepToSave } from "./recipe-save.ts";
 
 /**
@@ -31,6 +32,7 @@ export interface LineFormValues {
   altQuantity: string;
   altUnit: string;
   section: string;
+  phase: string;
   ingredientChoice: string;
   newName: string;
   sourceLine: string;
@@ -44,6 +46,7 @@ export interface StepFormValues {
   position: string;
   text: string;
   section: string;
+  phase: string;
 }
 
 export interface LineRowOptions {
@@ -54,6 +57,8 @@ export interface LineRowOptions {
    * part is a recipe of its own and is edited on its own screen.
    */
   sections?: boolean;
+  /** Show cooking phase for content belonging to a multipart dish itself. */
+  phases?: boolean;
 }
 
 /**
@@ -72,6 +77,7 @@ function hasUncommonValues(values: LineFormValues, index: number): boolean {
     values.altQuantity.trim() !== "" ||
     values.altUnit.trim() !== "" ||
     values.section.trim() !== "" ||
+    values.phase.trim() !== "" ||
     values.remove ||
     // A position that has been moved off its natural place is a decision
     // somebody made, so it shows.
@@ -196,6 +202,9 @@ export function lineRow(
               values.section,
             )
           : ""}
+        ${options.phases && values.section.trim() === ""
+          ? phaseSelect(`line.${index}.phase`, values.phase)
+          : ""}
         ${isNew
           ? ""
           : field(
@@ -292,6 +301,7 @@ export function emptyLine(): DraftLine {
     ingredientName: "",
     sourceLine: "",
     section: null,
+    phase: null,
     note: null,
   };
 }
@@ -310,6 +320,7 @@ export function lineValuesFromDraft(
       line.altQuantity === null ? "" : formatDecimal(line.altQuantity),
     altUnit: line.altUnit ?? "",
     section: line.section ?? "",
+    phase: line.phase ?? "",
     // A name the model proposed is preselected as "create it". Unmatched
     // ingredients are almost always genuinely new, so asking once per line
     // charged for a decision nobody was really making (#53). The names are
@@ -340,6 +351,7 @@ export function lineValuesFromForm(
     altQuantity: formField(form, `line.${index}.altQuantity`),
     altUnit: formField(form, `line.${index}.altUnit`),
     section: formField(form, `line.${index}.section`),
+    phase: formField(form, `line.${index}.phase`),
     ingredientChoice: formField(form, `line.${index}.ingredient`),
     newName: formField(form, `line.${index}.newName`),
     sourceLine: formField(form, `line.${index}.source`),
@@ -426,6 +438,7 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
         ingredient: readIngredient(form, i),
         sourceLine: values.sourceLine.trim(),
         section: readText(values.section),
+        phase: readPhase(values.phase),
       },
     });
   }
@@ -455,6 +468,7 @@ export function stepValuesFromForm(form: FormData): StepFormValues[] {
       position: formField(form, `step.${index}.position`),
       text: String(value),
       section: formField(form, `step.${index}.section`),
+      phase: formField(form, `step.${index}.phase`),
     });
   }
 
@@ -488,6 +502,7 @@ export function stepValuesForRendering(form: FormData): StepFormValues[] {
         position: formField(form, `step.${index}.position`),
         text: String(value),
         section: formField(form, `step.${index}.section`),
+        phase: formField(form, `step.${index}.phase`),
       });
     }
     return steps.sort((a, b) => a.index - b.index);
@@ -506,6 +521,7 @@ export function readSteps(form: FormData): StepToSave[] {
       step: {
         text: values.text,
         section: readText(values.section),
+        phase: readPhase(values.phase),
       },
     }))
     .sort((a, b) => a.position - b.position)
@@ -555,6 +571,31 @@ export function readText(value: FormDataEntryValue | null): string | null {
   return text === "" ? null : text;
 }
 
+export function readPhase(value: FormDataEntryValue | null): RecipePhase {
+  const phase = String(value ?? "").trim();
+  if (phase === "") return null;
+  if (phase === "before_parts" || phase === "after_parts") return phase;
+  throw new FormRefused("Ruoanlaittovaihe on virheellinen.");
+}
+
+/** A semantic choice, phrased as cooking order rather than storage vocabulary. */
+export function phaseSelect(name: string, value: string): Raw {
+  return html`<label>
+    Milloin tämä tehdään?
+    <select name="${name}" aria-label="Milloin tämä tehdään?">
+      <option value="" ${value === "" ? "selected" : ""}>
+        Luokittelematon (näytetään ennen osia)
+      </option>
+      <option value="before_parts" ${value === "before_parts" ? "selected" : ""}>
+        Ennen osien valmistusta
+      </option>
+      <option value="after_parts" ${value === "after_parts" ? "selected" : ""}>
+        Osien valmistuksen jälkeen
+      </option>
+    </select>
+  </label>`;
+}
+
 function positiveNumber(text: string, label: string): number | null {
   const value = readNumber(text);
   if (value !== null && value <= 0) {
@@ -586,6 +627,7 @@ function untouched(values: LineFormValues): boolean {
     values.altQuantity.trim() === "" &&
     values.altUnit.trim() === "" &&
     values.section.trim() === "" &&
+    values.phase.trim() === "" &&
     values.sourceLine.trim() === ""
   );
 }

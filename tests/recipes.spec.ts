@@ -94,6 +94,16 @@ test("a recipe with a known yield shows it", async ({ page }) => {
   await expect(page.locator(".yield")).toContainText("4 annosta");
 });
 
+test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
+  const response = await page.request.get("/api/recipes/1");
+  const body = (await response.json()) as {
+    recipe: { steps: unknown[]; lines: Array<Record<string, unknown>> };
+  };
+
+  expect(body.recipe.steps[0]).toBe("Kuullota kaali öljyssä.");
+  expect(body.recipe.lines[0]).not.toHaveProperty("phase");
+});
+
 test("a recipe with no yield says it cannot be scaled", async ({ page }) => {
   await page.goto("/recipes/2");
   await expect(page.locator(".yield")).toContainText("ei voi skaalata");

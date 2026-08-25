@@ -3,6 +3,7 @@ import { html, page, type Raw } from "./html.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
+import type { RecipePhase } from "./recipe-phase.ts";
 import { scaleFactor, scaleMeasurement } from "./scaling.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -26,6 +27,12 @@ export interface RecipeLine extends Measurement {
   position: number;
   ingredient: string;
   sourceLine: string;
+  phase: RecipePhase;
+}
+
+export interface RecipeStep {
+  text: string;
+  phase: RecipePhase;
 }
 
 export interface Recipe extends RecipeSummary {
@@ -33,7 +40,7 @@ export interface Recipe extends RecipeSummary {
   sourceRoute: "pasted" | "photographed";
   /** Optimistic edit version. Incremented whenever this recipe is changed. */
   revision: number;
-  steps: string[];
+  steps: RecipeStep[];
   lines: RecipeLine[];
   /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
   parts: Recipe[];
@@ -104,6 +111,7 @@ interface LineRow {
   alt_unit: string | null;
   ingredient: string;
   source_line: string;
+  phase: RecipePhase;
 }
 
 export async function findRecipe(
@@ -134,7 +142,7 @@ export async function findRecipe(
   const batch = await db.batch<never>([
     db
       .prepare(
-        `SELECT recipe_step.text
+        `SELECT recipe_step.text, recipe_step.phase
            FROM recipe_step
            JOIN recipe ON recipe.id = recipe_step.recipe_id
           WHERE recipe_step.recipe_id = ? AND recipe.household_id = ?
@@ -150,6 +158,7 @@ export async function findRecipe(
                 ingredient_line.alt_quantity,
                 ingredient_line.alt_unit,
                 ingredient_line.source_line,
+                ingredient_line.phase,
                 ingredient.name AS ingredient
            FROM ingredient_line
            JOIN recipe ON recipe.id = ingredient_line.recipe_id
@@ -161,7 +170,7 @@ export async function findRecipe(
       .bind(id, householdId),
   ]);
 
-  const steps = (batch[0]?.results ?? []) as { text: string }[];
+  const steps = (batch[0]?.results ?? []) as RecipeStep[];
   const lines = (batch[1]?.results ?? []) as LineRow[];
 
   // One level only: a part cannot itself have parts, so this never recurses
@@ -178,7 +187,7 @@ export async function findRecipe(
     createdAt: row.created_at,
     createdBy: row.created_by,
     parts,
-    steps: steps.map((step) => step.text),
+    steps,
     lines: lines.map((line) => ({
       position: line.position,
       quantity: line.quantity,
@@ -188,6 +197,7 @@ export async function findRecipe(
       altUnit: line.alt_unit,
       ingredient: line.ingredient,
       sourceLine: line.source_line,
+      phase: line.phase,
     })),
   };
 }
@@ -238,7 +248,17 @@ export async function apiShowRecipe(
 ): Promise<Response> {
   const recipe = await loadRequested(env.DB, member, params["id"]);
   if (recipe === null) return problem(404, "No such recipe.");
-  return Response.json({ recipe });
+  return Response.json({ recipe: recipeForApi(recipe) });
+}
+
+/** Keep the existing JSON shape; phases are an internal cooking-view concern. */
+function recipeForApi(recipe: Recipe): object {
+  return {
+    ...recipe,
+    steps: recipe.steps.map((step) => step.text),
+    lines: recipe.lines.map(({ phase: _phase, ...line }) => line),
+    parts: recipe.parts.map(recipeForApi),
+  };
 }
 
 /** `GET /recipes` — the recipe list screen. */
@@ -348,12 +368,23 @@ function sourceWorthShowing(line: RecipeLine, factor: number | null): boolean {
 }
 
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
-function body(recipe: Recipe, factor: number | null): Raw {
-  return html`${recipe.lines.length === 0
+function body(
+  recipe: Recipe,
+  factor: number | null,
+  phases?: RecipePhase[],
+): Raw {
+  const lines = phases === undefined
+    ? recipe.lines
+    : recipe.lines.filter((line) => phases.includes(line.phase));
+  const steps = phases === undefined
+    ? recipe.steps
+    : recipe.steps.filter((step) => phases.includes(step.phase));
+
+  return html`${lines.length === 0
       ? ""
       : html`<h3>Ainekset</h3>
           <ul class="lines">
-            ${recipe.lines.map((line) => {
+            ${lines.map((line) => {
               const amount = formatMeasurement(scaleMeasurement(line, factor));
               return html`<li>
                 ${amount === ""
@@ -366,11 +397,11 @@ function body(recipe: Recipe, factor: number | null): Raw {
               </li>`;
             })}
           </ul>`}
-    ${recipe.steps.length === 0
+    ${steps.length === 0
       ? ""
       : html`<h3>Valmistus</h3>
           <ol>
-            ${recipe.steps.map((step) => html`<li>${step}</li>`)}
+            ${steps.map((step) => html`<li>${step.text}</li>`)}
           </ol>`}`;
 }
 
@@ -390,7 +421,9 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
           : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
     </p>
 
-    ${body(recipe, factor)}
+    ${recipe.parts.length === 0
+      ? body(recipe, factor)
+      : body(recipe, factor, [null, "before_parts"])}
     ${recipe.parts.map(
       (part) => html`<section class="part">
         <h2>${part.title}</h2>
@@ -398,6 +431,7 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
         ${body(part, factor)}
       </section>`,
     )}
+    ${recipe.parts.length === 0 ? "" : body(recipe, factor, ["after_parts"])}
 
     <!-- Still stored, still one tap away, but not competing with the cooking. -->
     <details class="source-original">

@@ -8,6 +8,7 @@ import {
   lineCountForRendering,
   lineRows,
   lineValuesFromForm,
+  phaseSelect,
   readLineCount,
   readLines,
   readSteps,
@@ -175,6 +176,7 @@ function editorForm(
           // A saved part is a recipe of its own, so a recipe's own lines never
           // carry one.
           section: null,
+          phase: line.phase,
           // A note is about an import, not about a saved recipe.
           note: null,
         } satisfies DraftLine)),
@@ -184,11 +186,12 @@ function editorForm(
   const steps: StepFormValues[] = attempted
     ? stepValuesForRendering(attempted.form)
     : [
-        ...recipe.steps.map((text, index) => ({
+        ...recipe.steps.map((step, index) => ({
           index,
           position: String(index + 1),
-          text,
+          text: step.text,
           section: "",
+          phase: step.phase ?? "",
         })),
         ...Array.from({ length: 2 }, (_, spare) => {
           const index = recipe.steps.length + spare;
@@ -197,6 +200,7 @@ function editorForm(
             position: String(index + 1),
             text: "",
             section: "",
+            phase: "",
           };
         }),
       ];
@@ -227,12 +231,15 @@ function editorForm(
       />
 
       <h2>Ainekset</h2>
-      ${lineRows(rows, ingredients, { reorderable: true })}
+      ${lineRows(rows, ingredients, {
+        reorderable: true,
+        phases: recipe.parts.length > 0,
+      })}
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
         ${steps.map(
-          (step) => html`<li>
+          (step) => html`<li class="${recipe.parts.length > 0 ? "has-phase" : ""}">
             <input
               name="step.${step.index}.position"
               inputmode="numeric"
@@ -243,6 +250,9 @@ function editorForm(
             <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
               >${step.text}</textarea
             >
+            ${recipe.parts.length > 0
+              ? phaseSelect(`step.${step.index}.phase`, step.phase)
+              : ""}
           </li>`,
         )}
       </ol>

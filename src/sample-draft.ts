@@ -18,28 +18,28 @@ export const SAMPLE_DRAFT = {
   source_text:
     "Uunikaali\n4 annosta\n½ dl öljyä\n1–1 ja ½ l vettä\n½ (500 g) valkokaali\nhieman sitruunaruohoa\n2 rkl hunajaa",
   steps: [
-    { text: "Kuullota kaali öljyssä.", section: null },
-    { text: "Lisää vesi ja hauduta uunissa.", section: null },
+    { text: "Kuullota kaali öljyssä.", section: null, phase: null },
+    { text: "Lisää vesi ja hauduta uunissa.", section: null, phase: null },
   ],
   lines: [
     {
       quantity: 0.5, quantity_max: null, unit: "dl",
       alt_quantity: null, alt_unit: null,
       ingredient_id: 1, ingredient_name: "öljy", source_line: "½ dl öljyä",
-      section: null, note: null,
+      section: null, phase: null, note: null,
     },
     {
       quantity: 1, quantity_max: 1.5, unit: "l",
       alt_quantity: null, alt_unit: null,
       ingredient_id: 2, ingredient_name: "vesi", source_line: "1–1 ja ½ l vettä",
-      section: null, note: null,
+      section: null, phase: null, note: null,
     },
     {
       quantity: 0.5, quantity_max: null, unit: null,
       alt_quantity: 500, alt_unit: "g",
       ingredient_id: 3, ingredient_name: "valkokaali",
       source_line: "½ (500 g) valkokaali",
-      section: null, note: null,
+      section: null, phase: null, note: null,
     },
     {
       quantity: null, quantity_max: null, unit: null,
@@ -47,6 +47,7 @@ export const SAMPLE_DRAFT = {
       ingredient_id: 4, ingredient_name: "sitruunaruoho",
       source_line: "hieman sitruunaruohoa",
       section: null,
+      phase: null,
       // The model saying so itself is what lets the screen be a read view.
       note: "Määrää ei kerrottu, vain \"hieman\".",
     },
@@ -56,7 +57,7 @@ export const SAMPLE_DRAFT = {
       // Unmatched on purpose: this is the line the gate must stop.
       ingredient_id: null, ingredient_name: "hunaja",
       source_line: "2 rkl hunajaa",
-      section: null, note: null,
+      section: null, phase: null, note: null,
     },
   ],
 };

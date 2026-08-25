@@ -17,6 +17,7 @@ import {
   lineRows,
   lineValuesFromDraft,
   lineValuesFromForm,
+  phaseSelect,
   readLineCount,
   readLines,
   readSteps,
@@ -411,6 +412,7 @@ function correctionForm(
     position: String(index + 1),
     text: step.text,
     section: step.section ?? "",
+    phase: step.phase ?? "",
   }));
 
   return renderCorrection(
@@ -465,7 +467,39 @@ function draftReview(
   );
 
   const kept = rows.filter((row) => !row.remove && !isBlank(row));
-  const sections = [...new Set(kept.map((row) => row.section.trim()))];
+  const parentBefore = kept.filter(
+    (row) => row.section.trim() === "" && row.phase !== "after_parts",
+  );
+  const parentAfter = kept.filter(
+    (row) => row.section.trim() === "" && row.phase === "after_parts",
+  );
+  const sections = [
+    ...new Set(kept.map((row) => row.section.trim()).filter((name) => name !== "")),
+  ];
+
+  const reviewSection = (section: string, lines: LineFormValues[], phase?: string) => {
+    const steps = view.steps.filter(
+      (step) =>
+        step.section.trim() === section &&
+        step.text.trim() !== "" &&
+        (phase === undefined
+          ? true
+          : phase === "after_parts"
+            ? step.phase === "after_parts"
+            : step.phase !== "after_parts"),
+    );
+
+    if (lines.length === 0 && steps.length === 0) return html``;
+    return html`<section class="${section === "" ? "" : "part"}">
+      ${section === "" ? "" : html`<h2>${section}</h2>`}
+      ${lines.length === 0
+        ? ""
+        : html`<h3>Ainekset</h3><ul class="lines">${lines.map(reviewLine(ingredients))}</ul>`}
+      ${steps.length === 0
+        ? ""
+        : html`<h3>Valmistus</h3><ol>${steps.map((step) => html`<li>${step.text}</li>`)}</ol>`}
+    </section>`;
+  };
 
   return html`<p class="review-title">${view.title}</p>
     <p class="meta">
@@ -476,28 +510,14 @@ function draftReview(
 
     ${newIngredientsNotice(kept)} ${notesNotice(kept)}
 
-    ${sections.map((section) => {
-      const lines = kept.filter((row) => row.section.trim() === section);
-      const steps = view.steps.filter(
-        (step) => step.section.trim() === section && step.text.trim() !== "",
-      );
-
-      return html`<section class="${section === "" ? "" : "part"}">
-        ${section === "" ? "" : html`<h2>${section}</h2>`}
-        ${lines.length === 0
-          ? ""
-          : html`<h3>Ainekset</h3>
-              <ul class="lines">
-                ${lines.map(reviewLine(ingredients))}
-              </ul>`}
-        ${steps.length === 0
-          ? ""
-          : html`<h3>Valmistus</h3>
-              <ol>
-                ${steps.map((step) => html`<li>${step.text}</li>`)}
-              </ol>`}
-      </section>`;
-    })}`;
+    ${reviewSection("", parentBefore, "before_parts")}
+    ${sections.map((section) =>
+      reviewSection(
+        section,
+        kept.filter((row) => row.section.trim() === section),
+      ),
+    )}
+    ${reviewSection("", parentAfter, "after_parts")}`;
 }
 
 /**
@@ -623,6 +643,10 @@ function renderCorrection(
   view: CorrectionView,
   ingredients: IngredientSummary[],
 ): Raw {
+  const multipart = view.rows.some((row) =>
+    (isLineFormValues(row) ? row.section : row.section ?? "").trim() !== ""
+  ) || view.steps.some((step) => step.section.trim() !== "");
+
   return html`<h1>Tarkista resepti</h1>
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
@@ -652,7 +676,7 @@ function renderCorrection(
       />
 
       <h2>Ainekset</h2>
-      ${lineRows(view.rows, ingredients, { sections: true })}
+      ${lineRows(view.rows, ingredients, { sections: true, phases: multipart })}
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
@@ -677,6 +701,9 @@ function renderCorrection(
               />
             </div>
             <textarea name="step.${step.index}" rows="2">${step.text}</textarea>
+            ${multipart && step.section.trim() === ""
+              ? phaseSelect(`step.${step.index}.phase`, step.phase)
+              : ""}
           </li>`,
         )}
       </ol>

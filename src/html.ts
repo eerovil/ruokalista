@@ -257,6 +257,8 @@ const STYLES = `
   .ingredients li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .position { width: 3rem !important; flex: none !important; color: var(--muted); }
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
+  .edit-steps li.has-phase { flex-wrap: wrap; }
+  .edit-steps li.has-phase > label { flex-basis: 100%; }
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .pick-title { flex: 1; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
