@@ -16,6 +16,7 @@ import {
   parseAndValidateSnapshot,
   type TargetSnapshotData,
 } from "../src/restore.ts";
+import { forD1Import } from "./d1-import-sql.ts";
 
 interface Options {
   snapshot: string;
@@ -63,7 +64,8 @@ async function main(): Promise<void> {
     const target = readTargetSnapshotData(targetOptions);
     assertCompatibleTarget(snapshot, target);
 
-    const sql = generateRestoreSql(snapshot);
+    const generatedSql = generateRestoreSql(snapshot);
+    const sql = options.remote ? forD1Import(generatedSql) : generatedSql;
     const sqlPath = join(tmpdir(), `ruokalista-restore-${crypto.randomUUID()}.sql`);
     writeFileSync(sqlPath, sql, { encoding: "utf8", mode: 0o600 });
     try {
