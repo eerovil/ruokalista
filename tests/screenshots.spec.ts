@@ -50,6 +50,17 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
   });
 
+  test("what you can do to a planned meal", async ({ page }) => {
+    await page.goto("/picker?date=2026-10-13&slot=dinner");
+    await page
+      .locator(".pick li", { hasText: "Kaalilaatikko" })
+      .getByRole("button", { name: "Lisää" })
+      .click();
+    await page.locator(".day .entry a").first().click();
+    await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/15-meal-actions.png`, fullPage: true });
+  });
+
   test("the recipe picker", async ({ page }) => {
     await page.goto("/picker?date=2026-10-06&slot=dinner");
     await expect(page.locator(".pick li").first()).toBeVisible();

@@ -41,6 +41,7 @@ import {
 import {
   addEntryForm,
   changePortionsForm,
+  mealEntryScreen,
   pickerScreen,
   removeEntryForm,
   weekScreen,
@@ -58,6 +59,7 @@ const router = new Router()
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/meal-entries", requireMemberScreen(addEntryForm))
+  .get("/meal-entries/:id", requireMemberScreen(mealEntryScreen))
   .post("/meal-entries/:id/portions", requireMemberScreen(changePortionsForm))
   .post("/meal-entries/:id/delete", requireMemberScreen(removeEntryForm))
   .get("/api/menu", requireMember(apiMenu))

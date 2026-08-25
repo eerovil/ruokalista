@@ -75,6 +75,44 @@ export async function menuBetween(
   }));
 }
 
+/**
+ * One planned meal, or null. Another household's entry is null rather than a
+ * refusal — whether it exists is not this household's business.
+ */
+export async function findMealEntry(
+  db: D1Database,
+  householdId: number,
+  id: number,
+): Promise<MealEntry | null> {
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+
+  const row = await db
+    .prepare(
+      `SELECT meal_entry.id,
+              meal_entry.date,
+              meal_entry.slot,
+              meal_entry.recipe_id,
+              meal_entry.portions,
+              recipe.title
+         FROM meal_entry
+         JOIN recipe ON recipe.id = meal_entry.recipe_id
+        WHERE meal_entry.id = ? AND meal_entry.household_id = ?`,
+    )
+    .bind(id, householdId)
+    .first<EntryRow>();
+
+  if (row === null) return null;
+
+  return {
+    id: row.id,
+    date: row.date,
+    slot: row.slot,
+    recipeId: row.recipe_id,
+    title: row.title,
+    portions: row.portions,
+  };
+}
+
 export class MenuRefused extends Error {}
 
 export async function addMealEntry(
