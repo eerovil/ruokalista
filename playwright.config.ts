@@ -21,10 +21,29 @@ export default defineConfig({
 
   use: {
     baseURL: "http://127.0.0.1:8787",
-    // A phone, because a week gets planned at the kitchen table.
-    ...devices["Pixel 7"],
     trace: "retain-on-failure",
   },
+
+  projects: [
+    {
+      name: "chromium",
+      testIgnore: /keep-awake-legacy\.spec\.ts/,
+      use: {
+        // A phone, because a week gets planned at the kitchen table.
+        ...devices["Pixel 7"],
+      },
+    },
+    {
+      name: "legacy-ipad-fallback",
+      testMatch: /keep-awake-legacy\.spec\.ts/,
+      use: {
+        // The closest reproducible target to pre-iPadOS-16.4 Safari: WebKit
+        // with an iPad profile and the missing API reproduced explicitly.
+        ...devices["iPad (gen 7)"],
+        browserName: "webkit",
+      },
+    },
+  ],
 
   webServer: {
     command: "npx wrangler dev --ip 127.0.0.1 --port 8787",

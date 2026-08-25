@@ -27,3 +27,4 @@ Regenerate after a change that alters a screen:
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | A lasagne, shown as its two sauces |
 | `14-scaled.png` | The same lasagne planned for 8, amounts rounded for a kitchen |
+| `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
