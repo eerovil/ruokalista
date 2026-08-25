@@ -1,4 +1,5 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
+import { scheduledBackup } from "./backup-scheduled.ts";
 import type { Env } from "./env.ts";
 import {
   apiRename,
@@ -95,6 +96,14 @@ const router = new Router()
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return router.handle(request, env);
+  },
+
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    await scheduledBackup(controller, env);
   },
 } satisfies ExportedHandler<Env>;
 
