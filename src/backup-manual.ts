@@ -3,7 +3,9 @@ import type { RouteContext } from "./router.ts";
 
 // Temporary #64 acceptance hook. A fixed timestamp makes repeated calls
 // idempotent, so even an accidental retry cannot create a stream of commits.
-const MANUAL_BACKUP_SCHEDULED_TIME = Date.parse("2026-08-25T14:40:00.000Z");
+// This one is deliberately after migration 0004 so the remote restore drill
+// exercises a snapshot on the current production schema.
+const MANUAL_BACKUP_SCHEDULED_TIME = Date.parse("2026-08-25T17:30:00.000Z");
 
 export async function manualBackupSmoke({ env }: RouteContext): Promise<Response> {
   try {
