@@ -8,6 +8,17 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // The Worker is the origin for the production hostname, so Cloudflare owns
+  // both its DNS record and certificate. Keep workers.dev during the first
+  // cutover as a fallback; it is not the canonical production URL.
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "ruokalista.vilpponen.fi",
+      "custom_domain": true
+    }
+  ],
+
   "d1_databases": [
     {
       "binding": "DB",
