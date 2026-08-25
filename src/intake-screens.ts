@@ -177,6 +177,7 @@ export function intakeScreen(): Response {
       <script>
         ${raw(STREAMING_ISLAND)}
       </script>`,
+    "intake",
   );
 }
 
@@ -209,6 +210,7 @@ export async function structureScreen(
   return page(
     "Tarkista resepti",
     correctionForm(draft, ingredients, "pasted"),
+    "intake",
   );
 }
 
@@ -283,6 +285,7 @@ export async function correctScreen(
     return page(
       "Tarkista resepti",
       correctionForm(draft, ingredients, route),
+      "intake",
     );
   } catch (error) {
     return failed(String((error as Error).message ?? error), pasted);
@@ -326,6 +329,7 @@ export async function saveScreen(
       "Tarkista resepti",
       html`<p class="refused">${error.message}</p>
         ${correctionFormFromSubmission(form, ingredients)}`,
+      "intake",
       400,
     );
   }
@@ -454,6 +458,7 @@ function failed(message: string, sourceText: string): Response {
         <textarea name="sourceText" rows="16">${sourceText}</textarea>
         <button type="submit">Yritä uudelleen</button>
       </form>`,
+    "intake",
     400,
   );
 }

@@ -279,6 +279,7 @@ export async function recipeListScreen(
               </li>`,
             )}
           </ul>`}`,
+    "recipes",
   );
 }
 
@@ -294,6 +295,7 @@ export async function recipeScreen(
       "Ei löytynyt",
       html`<h1>Ei löytynyt</h1>
         <p class="empty">Tätä reseptiä ei ole.</p>`,
+      "recipes",
       404,
     );
   }
@@ -302,7 +304,7 @@ export async function recipeScreen(
   const asked = Number(url.searchParams.get("portions"));
   const portions = Number.isSafeInteger(asked) && asked > 0 ? asked : null;
 
-  return page(recipe.title, recipeBody(recipe, portions));
+  return page(recipe.title, recipeBody(recipe, portions), "recipes");
 }
 
 /** The ingredients and method of one recipe — a dish, or one of its parts. */

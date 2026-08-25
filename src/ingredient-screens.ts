@@ -19,7 +19,7 @@ export async function ingredientsScreen(
   { env }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  return page("Ainekset", await ingredientList(env.DB, member, null));
+  return page("Ainekset", await ingredientList(env.DB, member, null), "ingredients");
 }
 
 /** `POST /ingredients/:id/rename` */
@@ -38,7 +38,12 @@ export async function renameForm(
     );
   } catch (error) {
     if (!(error instanceof RenameRefused)) throw error;
-    return page("Ainekset", await ingredientList(env.DB, member, error.message), 400);
+    return page(
+      "Ainekset",
+      await ingredientList(env.DB, member, error.message),
+      "ingredients",
+      400,
+    );
   }
 
   return new Response(null, {
