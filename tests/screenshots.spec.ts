@@ -115,6 +115,13 @@ test.describe("signed in", () => {
   test("a dish written in parts", async ({ page }) => {
     await page.goto("/recipes/3");
     await expect(page.locator(".part").first()).toBeVisible();
+    const cookingText = await page.locator("main").innerText();
+    expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
+      cookingText.indexOf("Jauhelihakastike"),
+    );
+    expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
+      cookingText.indexOf("Kokoa vuokaan"),
+    );
     await page.screenshot({ path: `${SHOTS}/13-dish-in-parts.png`, fullPage: true });
   });
 

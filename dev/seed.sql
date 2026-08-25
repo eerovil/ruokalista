@@ -28,7 +28,8 @@ INSERT INTO ingredient (id, household_id, name, created_by) VALUES
   (6, 2, 'naapurin suola', 2),  -- household 2, must never appear for member 1
   (7, 1, 'jauheliha',      1),
   (8, 1, 'juusto',         1),
-  (9, 1, 'maito',          1);
+  (9, 1, 'maito',          1),
+  (10, 1, 'lasagnelevy',   1);
 
 INSERT INTO recipe
   (id, household_id, title, yield_portions, source_text, source_route, created_by, updated_by)
@@ -63,25 +64,30 @@ VALUES
   (5, 1, 'Juustokastike', NULL,
    'Lasagne', 'pasted', 1, 1, 3, 2);
 
-INSERT INTO recipe_step (recipe_id, position, text) VALUES
-  (1, 1, 'Kuullota kaali öljyssä.'),
-  (1, 2, 'Lisää vesi ja hauduta.'),
-  (2, 1, 'Sekoita.'),
-  (3, 1, 'Kokoa vuokaan ja paista 40 minuuttia.'),
-  (4, 1, 'Ruskista jauheliha.'),
-  (5, 1, 'Kuumenna maito ja sulata juusto joukkoon.');
+INSERT INTO recipe_step (recipe_id, position, text, phase) VALUES
+  (1, 1, 'Kuullota kaali öljyssä.', NULL),
+  (1, 2, 'Lisää vesi ja hauduta.', NULL),
+  (2, 1, 'Sekoita.', NULL),
+  -- A legacy parent step remains explicitly unclassified and keeps its old
+  -- parent-first position after the phase migration.
+  (3, 1, 'Voitele vuoka.', NULL),
+  (3, 2, 'Lämmitä uuni 200 asteeseen.', 'before_parts'),
+  (3, 3, 'Kokoa vuokaan ja paista 40 minuuttia.', 'after_parts'),
+  (4, 1, 'Ruskista jauheliha.', NULL),
+  (5, 1, 'Kuumenna maito ja sulata juusto joukkoon.', NULL);
 
 -- One line of each awkward shape the schema exists to hold: a plain amount, a
 -- range, a second measurement in another unit, and no amount at all.
 INSERT INTO ingredient_line
-  (recipe_id, position, quantity, quantity_max, unit, alt_quantity, alt_unit, ingredient_id, source_line)
+  (recipe_id, position, quantity, quantity_max, unit, alt_quantity, alt_unit, ingredient_id, source_line, phase)
 VALUES
-  (1, 1, 0.5, NULL, 'dl',  NULL, NULL, 1, '½ dl öljyä'),
-  (1, 2, 1,   1.5,  'l',   NULL, NULL, 2, '1–1 ja ½ l vettä'),
-  (1, 3, 0.5, NULL, 'kpl', 500,  'g',  3, '½ (500 g) valkokaali'),
-  (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa'),
-  (2, 1, NULL, NULL, NULL, NULL, NULL, 1, 'öljyä'),
-  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä'),
-  (4, 1, 400, NULL, 'g',  NULL, NULL, 7, '400 g jauhelihaa'),
-  (5, 1, 5,   NULL, 'dl', NULL, NULL, 9, '5 dl maitoa'),
-  (5, 2, 2,   NULL, 'dl', NULL, NULL, 8, '2 dl juustoa');
+  (1, 1, 0.5, NULL, 'dl',  NULL, NULL, 1, '½ dl öljyä', NULL),
+  (1, 2, 1,   1.5,  'l',   NULL, NULL, 2, '1–1 ja ½ l vettä', NULL),
+  (1, 3, 0.5, NULL, 'kpl', 500,  'g',  3, '½ (500 g) valkokaali', NULL),
+  (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa', NULL),
+  (2, 1, NULL, NULL, NULL, NULL, NULL, 1, 'öljyä', NULL),
+  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä', NULL),
+  (3, 1, 12,  NULL, 'kpl', NULL, NULL, 10, '12 lasagnelevyä', 'after_parts'),
+  (4, 1, 400, NULL, 'g',  NULL, NULL, 7, '400 g jauhelihaa', NULL),
+  (5, 1, 5,   NULL, 'dl', NULL, NULL, 9, '5 dl maitoa', NULL),
+  (5, 2, 2,   NULL, 'dl', NULL, NULL, 8, '2 dl juustoa', NULL);

@@ -1,5 +1,6 @@
 import { ingredientsFor } from "./ingredients.ts";
 import type { Member } from "./members.ts";
+import type { RecipePhase } from "./recipe-phase.ts";
 
 /**
  * Saving a corrected draft, and editing a saved recipe. One D1 batch either
@@ -30,11 +31,13 @@ export interface LineToSave {
   sourceLine: string;
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
+  phase: RecipePhase;
 }
 
 export interface StepToSave {
   text: string;
   section: string | null;
+  phase: RecipePhase;
 }
 
 export interface RecipeToSave {
@@ -238,6 +241,7 @@ function childrenOf(
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   const belongs = (name: string | null) => (name?.trim() || null) === section;
+  const phaseFor = (phase: RecipePhase) => section === null ? phase : null;
 
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
@@ -246,16 +250,16 @@ function childrenOf(
         statements.push(
           db
             .prepare(
-              "INSERT INTO recipe_step (recipe_id, position, text) VALUES (?, ?, ?)",
+              "INSERT INTO recipe_step (recipe_id, position, text, phase) VALUES (?, ?, ?, ?)",
             )
-            .bind(recipeId, index + 1, step.text.trim()),
+            .bind(recipeId, index + 1, step.text.trim(), phaseFor(step.phase)),
         );
       } else {
         statements.push(
           db
             .prepare(
-              `INSERT INTO recipe_step (recipe_id, position, text)
-               SELECT ?, ?, ?
+              `INSERT INTO recipe_step (recipe_id, position, text, phase)
+               SELECT ?, ?, ?, ?
                 WHERE EXISTS (
                   SELECT 1 FROM recipe
                    WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -265,6 +269,7 @@ function childrenOf(
               recipeId,
               index + 1,
               step.text.trim(),
+              phaseFor(step.phase),
               guard.recipeId,
               guard.householdId,
               guard.writeToken,
@@ -283,8 +288,8 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .bind(
               recipeId,
@@ -296,6 +301,7 @@ function childrenOf(
               line.altUnit,
               entry.ingredientId,
               line.sourceLine,
+              phaseFor(line.phase),
             ),
         );
       } else {
@@ -304,8 +310,8 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line)
-               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 WHERE EXISTS (
                   SELECT 1 FROM recipe
                    WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -321,6 +327,7 @@ function childrenOf(
               line.altUnit,
               entry.ingredientId,
               line.sourceLine,
+              phaseFor(line.phase),
               guard.recipeId,
               guard.householdId,
               guard.writeToken,

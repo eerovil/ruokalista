@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import type { Env } from "./env.ts";
 import type { IngredientSummary } from "./ingredients.ts";
+import { recipePhase, type RecipePhase } from "./recipe-phase.ts";
 
 /**
  * Structuring: turning source text into a recipe's title, ingredients and
@@ -36,6 +37,8 @@ export interface DraftLine {
   sourceLine: string;
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
+  /** When parent-level content belongs in a multipart dish's cooking order. */
+  phase: RecipePhase;
   /**
    * The model's own doubt about this line, in one short Finnish sentence, or
    * null when it is sure. Null on nearly every line.
@@ -50,6 +53,7 @@ export interface DraftLine {
 export interface DraftStep {
   text: string;
   section: string | null;
+  phase: RecipePhase;
 }
 
 export interface Draft {
@@ -91,8 +95,17 @@ const DRAFT_SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { text: { type: "string" }, section: nullable("string") },
-        required: ["text", "section"],
+        properties: {
+          text: { type: "string" },
+          section: nullable("string"),
+          phase: {
+            anyOf: [
+              { type: "string", enum: ["before_parts", "after_parts"] },
+              { type: "null" },
+            ],
+          },
+        },
+        required: ["text", "section", "phase"],
         additionalProperties: false,
       },
     },
@@ -110,6 +123,12 @@ const DRAFT_SCHEMA = {
           ingredient_name: { type: "string" },
           source_line: { type: "string" },
           section: nullable("string"),
+          phase: {
+            anyOf: [
+              { type: "string", enum: ["before_parts", "after_parts"] },
+              { type: "null" },
+            ],
+          },
           note: nullable("string"),
         },
         required: [
@@ -122,6 +141,7 @@ const DRAFT_SCHEMA = {
           "ingredient_name",
           "source_line",
           "section",
+          "phase",
           "note",
         ],
         additionalProperties: false,
@@ -185,6 +205,11 @@ Säännöt, joista ei poiketa:
   section-kenttään sen osan nimi täsmälleen kuten se sivulla lukee. Jos rivi tai
   vaihe ei kuulu mihinkään osaan, jätä section null. Älä keksi osia: jos
   sivulla ei ole väliotsikoita, kaikki section-kentät ovat null.
+- Kun reseptissä on nimettyjä osia, luokittele jokainen section null -rivi ja
+  -vaihe ruoanlaittojärjestyksen mukaan. phase on before_parts, kun työ tehdään
+  ennen nimettyjä osia, ja after_parts, kun se on kokoamista, yhdistämistä,
+  paistamista, viimeistelyä tai tarjoilua osien jälkeen. Nimetyn osan sisällön
+  phase on null. Ilman nimettyjä osia kaikkien phase on null.
 - Aseta note vain kun rivistä oikeasti katosi tai arvattiin jotain: jouduit
   päättelemään yksikön, määrä oli sanallinen, rivillä oli vaihtoehto tai
   valmistustapa jota kentät eivät kanna, tai teksti oli epäselvä. Kirjoita
@@ -381,6 +406,7 @@ function toDraftStep(raw: unknown): DraftStep {
   return {
     text: typeof step["text"] === "string" ? step["text"].trim() : "",
     section: textOrNull(step["section"]),
+    phase: recipePhase(step["phase"]),
   };
 }
 
@@ -408,6 +434,7 @@ function toDraftLine(raw: unknown): DraftLine {
     sourceLine:
       typeof line["source_line"] === "string" ? line["source_line"] : "",
     section: textOrNull(line["section"]),
+    phase: recipePhase(line["phase"]),
   };
 }
 

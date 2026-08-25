@@ -35,6 +35,21 @@ test("a dish shows each part with its own ingredients and method", async ({
 
   await expect(parts.nth(0)).toContainText("Ruskista jauheliha.");
   await expect(parts.nth(1)).toContainText("sulata juusto");
+
+  // Parent pre-work, the named parts, and parent assembly read in cooking order.
+  const cookingText = await page.locator("main").innerText();
+  expect(cookingText.indexOf("Voitele vuoka")).toBeLessThan(
+    cookingText.indexOf("Jauhelihakastike"),
+  );
+  expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
+    cookingText.indexOf("Jauhelihakastike"),
+  );
+  expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
+    cookingText.indexOf("12 kpl lasagnelevy"),
+  );
+  expect(cookingText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
+    cookingText.indexOf("Kokoa vuokaan"),
+  );
 });
 
 test("what belongs to the dish itself stays on the dish", async ({ page }) => {
@@ -78,22 +93,39 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
     yield_portions: 6,
     source_text: "Lasagne\nJauhelihakastike\n400 g jauhelihaa\nJuustokastike\n5 dl maitoa",
     steps: [
-      { text: "Ruskista jauheliha.", section: "Jauhelihakastike" },
-      { text: "Kuumenna maito.", section: "Juustokastike" },
-      { text: "Kokoa vuokaan.", section: null },
+      { text: "Lämmitä uuni.", section: null, phase: "before_parts" },
+      { text: "Ruskista jauheliha.", section: "Jauhelihakastike", phase: null },
+      { text: "Kuumenna maito.", section: "Juustokastike", phase: null },
+      { text: "Kokoa vuokaan.", section: null, phase: "after_parts" },
     ],
     lines: [
+      {
+        quantity: 1, quantity_max: null, unit: "rkl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 1, ingredient_name: "öljy",
+        source_line: "1 rkl öljyä vuokaan", section: null,
+        phase: "before_parts", note: null,
+      },
       {
         quantity: 400, quantity_max: null, unit: "g",
         alt_quantity: null, alt_unit: null,
         ingredient_id: 7, ingredient_name: "jauheliha",
         source_line: "400 g jauhelihaa", section: "Jauhelihakastike",
+        phase: null, note: null,
       },
       {
         quantity: 5, quantity_max: null, unit: "dl",
         alt_quantity: null, alt_unit: null,
         ingredient_id: 9, ingredient_name: "maito",
         source_line: "5 dl maitoa", section: "Juustokastike",
+        phase: null, note: null,
+      },
+      {
+        quantity: 12, quantity_max: null, unit: "kpl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 10, ingredient_name: "lasagnelevy",
+        source_line: "12 lasagnelevyä", section: null,
+        phase: "after_parts", note: null,
       },
     ],
   };
@@ -106,8 +138,8 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
 
   // The correction screen shows which part the model put each line in.
   const sections = page.locator(".line input[name$=section]");
-  await expect(sections.nth(0)).toHaveValue("Jauhelihakastike");
-  await expect(sections.nth(1)).toHaveValue("Juustokastike");
+  await expect(sections.nth(1)).toHaveValue("Jauhelihakastike");
+  await expect(sections.nth(2)).toHaveValue("Juustokastike");
 
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
@@ -121,6 +153,14 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
   await expect(page.locator("body")).toContainText("Kokoa vuokaan.");
   await expect(parts.nth(0)).not.toContainText("Kokoa vuokaan.");
 
+  const importedText = await page.locator("main").innerText();
+  expect(importedText.indexOf("Lämmitä uuni.")).toBeLessThan(
+    importedText.indexOf("Jauhelihakastike"),
+  );
+  expect(importedText.indexOf("Juustokastike")).toBeLessThan(
+    importedText.indexOf("12 kpl lasagnelevy"),
+  );
+
   // And the dish is listed while its parts are not.
   await page.goto("/recipes");
   await expect(page.locator(".recipes")).toContainText("Lasagne");
@@ -133,6 +173,7 @@ test("correcting a part name before saving moves the lines", async ({ page }) =>
       ...line,
       ingredient_id: index === 4 ? 1 : line.ingredient_id,
       section: index < 2 ? "Kastike" : null,
+      phase: null,
     })),
   });
 
@@ -153,6 +194,33 @@ test("correcting a part name before saving moves the lines", async ({ page }) =>
   await expect(page.locator(".part h2")).toHaveText("Öljykastike");
   await expect(page.locator(".part")).toContainText("öljy");
   await expect(page.locator(".part")).toContainText("vesi");
+});
+
+test("the editor preserves and can change parent cooking phases", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3/edit");
+
+  const linePhase = page.locator('select[name="line.0.phase"]');
+  await expect(linePhase).toHaveValue("after_parts");
+  await linePhase.selectOption("before_parts");
+
+  const stepPhases = page.locator('select[name^="step."][name$=".phase"]');
+  await expect(stepPhases.nth(0)).toHaveValue("");
+  await expect(stepPhases.nth(1)).toHaveValue("before_parts");
+  await expect(stepPhases.nth(2)).toHaveValue("after_parts");
+  await stepPhases.nth(1).selectOption("after_parts");
+
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL("/recipes/3");
+
+  const cookingText = await page.locator("main").innerText();
+  expect(cookingText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
+    cookingText.indexOf("Jauhelihakastike"),
+  );
+  expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
+    cookingText.indexOf("Lämmitä uuni"),
+  );
 });
 
 test("a dish with no sub-headings makes no parts", async ({ page }) => {
