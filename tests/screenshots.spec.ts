@@ -98,6 +98,12 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/13-dish-in-parts.png`, fullPage: true });
   });
 
+  test("a dish scaled to a planned day", async ({ page }) => {
+    await page.goto("/recipes/3?portions=8");
+    await expect(page.locator(".part").first()).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/14-scaled.png`, fullPage: true });
+  });
+
   test("the recipe editor", async ({ page }) => {
     await page.goto("/recipes/1/edit");
     await expect(page.locator(".line").first()).toBeVisible();

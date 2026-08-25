@@ -2,6 +2,7 @@ import { problem } from "./auth.ts";
 import { html, page, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
+import { scaleFactor, scaleMeasurement } from "./scaling.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -273,7 +274,7 @@ export async function recipeListScreen(
 
 /** `GET /recipes/:id` — one recipe, as it gets read at the hob. */
 export async function recipeScreen(
-  { env, params }: RouteContext,
+  { env, params, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const recipe = await loadRequested(env.DB, member, params["id"]);
@@ -287,17 +288,21 @@ export async function recipeScreen(
     );
   }
 
-  return page(recipe.title, recipeBody(recipe));
+  // Arriving from a day on the week carries that day's portion count.
+  const asked = Number(url.searchParams.get("portions"));
+  const portions = Number.isSafeInteger(asked) && asked > 0 ? asked : null;
+
+  return page(recipe.title, recipeBody(recipe, portions));
 }
 
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
-function body(recipe: Recipe): Raw {
+function body(recipe: Recipe, factor: number | null): Raw {
   return html`${recipe.lines.length === 0
       ? ""
       : html`<h3>Ainekset</h3>
           <ul class="lines">
             ${recipe.lines.map((line) => {
-              const amount = formatMeasurement(line);
+              const amount = formatMeasurement(scaleMeasurement(line, factor));
               return html`<li>
                 ${amount === ""
                   ? ""
@@ -315,21 +320,26 @@ function body(recipe: Recipe): Raw {
           </ol>`}`;
 }
 
-function recipeBody(recipe: Recipe): Raw {
+function recipeBody(recipe: Recipe, portions: number | null): Raw {
+  const factor = scaleFactor(recipe.yieldPortions, portions);
+
   return html`<h1>${recipe.title}</h1>
     <p class="yield">
       ${recipe.yieldPortions === null
         ? // A recipe with no yield says so where a scale control would be: you
           // cannot scale it, and hiding that would be worse than saying it.
           "Annosmäärää ei tiedetä, joten reseptiä ei voi skaalata."
-        : `${recipe.yieldPortions} annosta`}
+        : factor === null
+          ? `${recipe.yieldPortions} annosta`
+          : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
     </p>
 
-    ${body(recipe)}
+    ${body(recipe, factor)}
     ${recipe.parts.map(
       (part) => html`<section class="part">
         <h2>${part.title}</h2>
-        ${body(part)}
+        <!-- A part has no yield of its own, so it scales by the dish's factor. -->
+        ${body(part, factor)}
       </section>`,
     )}
 
