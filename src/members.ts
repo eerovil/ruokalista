@@ -53,6 +53,22 @@ export async function findMemberByGoogleSub(
   return row === null ? null : toMember(row);
 }
 
+/**
+ * Every member, for the development sign-in on `/signin`. There is no
+ * household-facing screen that lists people, and there is not meant to be —
+ * this exists so a development server can offer the members that already exist
+ * rather than inventing one.
+ */
+export async function allMembers(db: D1Database): Promise<Member[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT id, household_id, display_name, email FROM member ORDER BY id",
+    )
+    .all<MemberRow>();
+
+  return results.map(toMember);
+}
+
 function toMember(row: MemberRow): Member {
   return {
     id: row.id,

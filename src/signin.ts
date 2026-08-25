@@ -5,9 +5,13 @@ import {
   readIdentity,
   type GoogleCredentials,
 } from "./google.ts";
-import { html, page } from "./html.ts";
-import { findMemberByGoogleSub } from "./members.ts";
-import { googleCallbackUrl } from "./public-origin.ts";
+import { html, page, type Raw } from "./html.ts";
+import {
+  allMembers,
+  findMemberById,
+  findMemberByGoogleSub,
+} from "./members.ts";
+import { googleCallbackUrl, isLocalOrigin } from "./public-origin.ts";
 import type { RouteContext } from "./router.ts";
 import { clearSessionCookie, issueSessionCookie } from "./session.ts";
 import { base64UrlEncode, cookieValue, sign, verify } from "./signing.ts";
@@ -29,25 +33,102 @@ function credentials(env: Env): GoogleCredentials | null {
 // ---------------------------------------------------------------- screens
 
 /** `GET /signin` */
-export function signInScreen({ env }: RouteContext): Response {
+export async function signInScreen({
+  env,
+  url,
+}: RouteContext): Promise<Response> {
+  const dev = isLocalOrigin(url) ? await devSignInForm(env) : "";
+
   if (credentials(env) === null) {
     return page(
       "Kirjautuminen",
       html`<h1>Ruokalista</h1>
         <p class="empty">
           Google-kirjautumista ei ole vielä määritetty tähän ympäristöön.
-        </p>`,
+        </p>
+        ${dev}`,
       "signed-out",
-      503,
+      // A development server with no Google credentials can still be walked
+      // through, so this is only degraded when there is genuinely no way in.
+      dev === "" ? 503 : 200,
     );
   }
 
   return page(
     "Kirjautuminen",
     html`<h1>Ruokalista</h1>
-      <p><a class="button" href="/auth/google">Kirjaudu Google-tilillä</a></p>`,
+      <p><a class="button" href="/auth/google">Kirjaudu Google-tilillä</a></p>
+      ${dev}`,
     "signed-out",
   );
+}
+
+/**
+ * The development sign-in. Offered only by a development server, and refused by
+ * the route itself rather than merely hidden — a gate that only removes a
+ * button is not a gate.
+ *
+ * CLAUDE.md says a shipped auth bypass is one of the things that went wrong in
+ * the closed attempt, and this is deliberately not that: the test is the
+ * address the browser used (`isLocalOrigin`), so no flag, env var or secret can
+ * turn it on for the deployment. It also creates nobody. It can only hand out a
+ * session for a member row that already exists, which is the same rule Google
+ * sign-in follows — there is still no signup path anywhere.
+ */
+async function devSignInForm(env: Env): Promise<Raw> {
+  const members = await allMembers(env.DB);
+
+  if (members.length === 0) {
+    return html`<hr />
+      <p class="empty">
+        Kehityspalvelin: tietokannassa ei ole yhtään jäsentä. Aja
+        <code>seed:local</code>.
+      </p>`;
+  }
+
+  return html`<hr />
+    <h2>Kehityskirjautuminen</h2>
+    <p class="empty">
+      Vain kehityspalvelimella. Julkaistussa sovelluksessa tätä ei ole, eikä
+      tämä luo ketään — se antaa istunnon jäsenelle joka on jo olemassa.
+    </p>
+    ${members.map(
+      (member) => html`<form method="post" action="/auth/dev-signin">
+        <input type="hidden" name="memberId" value="${member.id}" />
+        <button type="submit" class="quiet">
+          Kirjaudu: ${member.displayName}
+        </button>
+      </form>`,
+    )}`;
+}
+
+/** `POST /auth/dev-signin` — refuses anywhere but a development server. */
+export async function devSignIn({
+  env,
+  url,
+  request,
+}: RouteContext): Promise<Response> {
+  // Not a 403: on the deployment this route does not exist at all.
+  if (!isLocalOrigin(url)) return new Response("Not found", { status: 404 });
+
+  const secret = env.SESSION_SECRET;
+  if (!secret) return failedScreen("Kirjautumista ei ole määritetty.");
+
+  const form = await request.formData();
+  const member = await findMemberById(env.DB, Number(form.get("memberId")));
+  if (member === null) return failedScreen("Tuntematon jäsen.");
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/",
+      "Set-Cookie": await issueSessionCookie(
+        secret,
+        member.id,
+        Math.floor(Date.now() / 1000),
+      ),
+    },
+  });
 }
 
 /**

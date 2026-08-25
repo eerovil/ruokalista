@@ -35,6 +35,7 @@ import {
 import { Router, type RouteContext } from "./router.ts";
 import {
   completeSignIn,
+  devSignIn,
   signInScreen,
   signOut,
   startSignIn,
@@ -70,6 +71,7 @@ const router = new Router()
   .get("/signin", signInScreen)
   .get("/auth/google", startSignIn)
   .get("/auth/google/callback", completeSignIn)
+  .post("/auth/dev-signin", devSignIn)
   .post("/auth/signout", signOut)
   .get("/recipes", requireMemberScreen(recipeListScreen))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))

@@ -20,6 +20,12 @@ test("a development server is local", () => {
     "http://10.0.0.7:8787/intake",
     "http://172.16.5.4:8787/intake",
     "http://172.31.255.1:8787/intake",
+    // Tailscale: the CGNAT address a peer dials directly, and the serve name
+    // that gives a phone the HTTPS the session cookie needs.
+    "http://100.106.174.60:8787/intake",
+    "http://100.64.0.1:8787/intake",
+    "http://100.127.255.255:8787/intake",
+    "https://bazzite.taile8d16e.ts.net:8787/intake",
   ]) {
     assert.equal(isLocalOrigin(new URL(origin)), true, origin);
   }
@@ -48,6 +54,12 @@ test("a public address that merely looks private is not local", () => {
     "https://127.0.0.1.example.com/intake",
     "https://localhost.example.com/intake",
     "https://notlocalhost/intake",
+    // Either side of the CGNAT range, and a name that merely contains the
+    // tailnet suffix rather than ending in it.
+    "https://100.63.0.1/intake",
+    "https://100.128.0.1/intake",
+    "https://ts.net.example.com/intake",
+    "https://evil.ts.net.example.com/intake",
     "https://ruokalista.vilpponen.fi.example.com/intake",
   ]) {
     assert.equal(isLocalOrigin(new URL(origin)), false, origin);

@@ -47,7 +47,11 @@ function isPrivateIpv4(host: string): boolean {
 
   if (first === 10) return true;
   if (first === 192 && second === 168) return true;
-  return first === 172 && second >= 16 && second <= 31;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+
+  // 100.64–127.x, the carrier-grade NAT range Tailscale hands out. Not
+  // publicly routable, and how a tailnet peer addresses this host directly.
+  return first === 100 && second >= 64 && second <= 127;
 }
 
 /**
@@ -73,6 +77,11 @@ export function isLocalOrigin(url: URL): boolean {
     host.endsWith(".localhost") ||
     host === "127.0.0.1" ||
     host === "::1" ||
+    // A `tailscale serve` name. The suffix belongs to Tailscale and resolves
+    // only inside a tailnet, so the deployment can never be reached at one —
+    // and serving over it is how a phone gets HTTPS, which the session cookie
+    // requires.
+    host.endsWith(".ts.net") ||
     isPrivateIpv4(host)
   );
 }
