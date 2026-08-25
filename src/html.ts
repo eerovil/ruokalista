@@ -87,6 +87,12 @@ const STYLES = `
   }
   .remove { font-size: .8rem; opacity: .65; }
   .remove input { width: auto; }
+  .progress {
+    max-height: 14rem; overflow: auto; white-space: pre-wrap; word-break: break-all;
+    padding: .6rem; font-size: .75rem; opacity: .7;
+    border: 1px solid var(--edge); border-radius: .3rem;
+  }
+  input[type=file] { font: inherit; }
   .refused {
     padding: .6rem .8rem; margin: 0 0 1rem;
     border: 1px solid currentColor; border-radius: .3rem; font-size: .9rem;

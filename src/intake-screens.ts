@@ -1,6 +1,15 @@
-import { html, page, type Raw } from "./html.ts";
+import { problem } from "./auth.ts";
+import { html, page, raw, type Raw } from "./html.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
-import { structureDraftWithRetry, type Draft, type DraftLine } from "./intake.ts";
+import {
+  draftFromJson,
+  streamDraft,
+  structureDraftWithRetry,
+  STRUCTURED_BY,
+  type Draft,
+  type DraftLine,
+  type IntakeSource,
+} from "./intake.ts";
 import type { Member } from "./members.ts";
 import { formatDecimal } from "./quantities.ts";
 import { saveRecipe, SaveRefused, type LineIngredient } from "./recipe-save.ts";
@@ -18,26 +27,133 @@ import type { RouteContext } from "./router.ts";
 /** Blank rows so a line the model missed can be added without any JavaScript. */
 const SPARE_LINES = 3;
 
+/**
+ * The one island of client-side work in the app. It streams the draft so bytes
+ * keep flowing, shows it filling in, and then hands the finished draft to the
+ * server to render the correction screen.
+ *
+ * Without JavaScript the form posts to /intake and works exactly as before,
+ * just without the progress. The camera route needs this script either way:
+ * downscaling a photograph is a canvas job.
+ */
+const STREAMING_ISLAND = `
+(function () {
+  var form = document.getElementById('intake');
+  if (!form || !window.fetch || !window.ReadableStream || !window.createImageBitmap) return;
+
+  var progress = document.getElementById('progress');
+  var status = document.getElementById('status');
+  var LONG_EDGE = 1500;
+
+  function shrink(file) {
+    return createImageBitmap(file).then(function (bitmap) {
+      var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      var url = canvas.toDataURL('image/jpeg', 0.85);
+      return url.slice(url.indexOf(',') + 1);
+    });
+  }
+
+  function handOver(draft, route, sourceText) {
+    var hidden = document.createElement('form');
+    hidden.method = 'post';
+    hidden.action = '/intake/correct';
+    [['draft', draft], ['route', route], ['sourceText', sourceText]].forEach(function (pair) {
+      var field = document.createElement('input');
+      field.type = 'hidden';
+      field.name = pair[0];
+      field.value = pair[1];
+      hidden.appendChild(field);
+    });
+    document.body.appendChild(hidden);
+    hidden.submit();
+  }
+
+  form.addEventListener('submit', function (event) {
+    var file = form.photo.files[0];
+    var text = form.sourceText.value.trim();
+    if (!file && !text) return;
+
+    event.preventDefault();
+    form.querySelector('button').disabled = true;
+    status.textContent = file ? 'Luetaan kuvaa…' : 'Jäsennetään…';
+    progress.hidden = false;
+    progress.textContent = '';
+
+    var prepared = file
+      ? shrink(file).then(function (b64) { return { image: b64, mediaType: 'image/jpeg' }; })
+      : Promise.resolve({ sourceText: text });
+
+    prepared
+      .then(function (body) {
+        return fetch('/api/intake/structure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(function (response) {
+          if (!response.ok) {
+            return response.text().then(function (t) { throw new Error(t || response.status); });
+          }
+          status.textContent = 'Jäsennetään…';
+          var reader = response.body.getReader();
+          var decoder = new TextDecoder();
+          var draft = '';
+          return (function pump() {
+            return reader.read().then(function (chunk) {
+              if (chunk.done) return draft;
+              draft += decoder.decode(chunk.value, { stream: true });
+              progress.textContent = draft;
+              progress.scrollTop = progress.scrollHeight;
+              return pump();
+            });
+          })();
+        });
+      })
+      .then(function (draft) {
+        status.textContent = 'Valmis, avataan tarkistus…';
+        handOver(draft, file ? 'photographed' : 'pasted', text);
+      })
+      .catch(function (error) {
+        status.textContent = 'Jäsennys epäonnistui: ' + error.message;
+        form.querySelector('button').disabled = false;
+      });
+  });
+})();
+`;
+
 /** `GET /intake` */
 export function intakeScreen(): Response {
   return page(
     "Lisää resepti",
     html`<h1>Lisää resepti</h1>
-      <form method="post" action="/intake" class="stacked">
+      <form method="post" action="/intake" class="stacked" id="intake">
         <label for="sourceText">Liitä reseptin teksti</label>
         <textarea
           id="sourceText"
           name="sourceText"
-          rows="16"
-          required
+          rows="14"
           placeholder="Liitä tähän resepti sellaisenaan."
         ></textarea>
+
+        <label for="photo">…tai kuvaa painettu sivu</label>
+        <input id="photo" name="photo" type="file" accept="image/*" capture="environment" />
         <p class="empty">
-          Teksti säilytetään sellaisenaan. Malli ehdottaa jäsennyksen, jonka
-          tarkistat ennen tallennusta.
+          Kuva pienennetään selaimessa ja luetaan kerran. Sitä ei tallenneta
+          minnekään — talteen jää vain sivulta luettu teksti.
         </p>
+
         <button type="submit">Jäsennä</button>
-      </form>`,
+      </form>
+
+      <p id="status" class="empty" aria-live="polite"></p>
+      <pre id="progress" class="progress" hidden></pre>
+
+      <script>
+        ${raw(STREAMING_ISLAND)}
+      </script>`,
   );
 }
 
@@ -57,13 +173,90 @@ export async function structureScreen(
 
   let draft: Draft;
   try {
-    draft = await structureDraftWithRetry(env, sourceText, ingredients);
+    draft = await structureDraftWithRetry(
+      env,
+      { route: "pasted", text: sourceText },
+      ingredients,
+    );
   } catch (error) {
     // The member's text is handed back rather than thrown away.
     return failed(String((error as Error).message ?? error), sourceText);
   }
 
   return page("Tarkista resepti", correctionForm(draft, ingredients));
+}
+
+/**
+ * `POST /api/intake/structure` — run the model and stream the draft straight
+ * through. The browser accumulates it and hands it back to /intake/correct,
+ * which keeps the correction screen server-rendered.
+ */
+export async function structureStream(
+  { env, request }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  let body: { sourceText?: unknown; image?: unknown; mediaType?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return problem(400, "Expected a JSON body.");
+  }
+
+  let source: IntakeSource;
+  if (typeof body.image === "string" && body.image !== "") {
+    source = {
+      route: "photographed",
+      imageBase64: body.image,
+      mediaType: typeof body.mediaType === "string" ? body.mediaType : "image/jpeg",
+    };
+  } else if (typeof body.sourceText === "string" && body.sourceText.trim() !== "") {
+    source = { route: "pasted", text: body.sourceText };
+  } else {
+    return problem(400, "Anna joko tekstiä tai kuva.");
+  }
+
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
+
+  let stream: ReadableStream<Uint8Array>;
+  try {
+    stream = streamDraft(env, source, ingredients);
+  } catch (error) {
+    return problem(503, String((error as Error).message ?? error));
+  }
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      // Nothing between here and the browser should hold bytes back.
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+/** `POST /intake/correct` — render the correction screen for a streamed draft. */
+export async function correctScreen(
+  { env, request }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const form = await request.formData();
+  const json = String(form.get("draft") ?? "");
+  const route = form.get("route") === "photographed" ? "photographed" : "pasted";
+  const pasted = String(form.get("sourceText") ?? "");
+
+  const source: IntakeSource =
+    route === "photographed"
+      ? { route, imageBase64: "", mediaType: "image/jpeg" }
+      : { route, text: pasted };
+
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
+
+  try {
+    const draft = draftFromJson(json, source, STRUCTURED_BY);
+    return page("Tarkista resepti", correctionForm(draft, ingredients));
+  } catch (error) {
+    return failed(String((error as Error).message ?? error), pasted);
+  }
 }
 
 /** `POST /recipes` — save the corrected draft. */

@@ -22,7 +22,7 @@ const MODEL = "claude-sonnet-5";
  * this sits in the middle rather than at either end. It is the one dial worth
  * turning if imports feel dear or drafts feel sloppy.
  */
-const EFFORT = "medium";
+const EFFORT = "medium" as const;
 
 export interface DraftLine {
   quantity: number | null;
@@ -44,6 +44,19 @@ export interface Draft {
   lines: DraftLine[];
   structuredBy: string;
 }
+
+/**
+ * The two routes in, and only two. Nothing is ever fetched from a web address.
+ *
+ * A photograph is held in memory for the length of one model call and then
+ * dropped — never written to D1, and there is no bucket.
+ */
+export type IntakeSource =
+  | { route: "pasted"; text: string }
+  | { route: "photographed"; imageBase64: string; mediaType: string };
+
+/** The model asked for. Exposed so a streamed draft can be stamped with it. */
+export const STRUCTURED_BY = MODEL;
 
 /** Thrown when the model failed in a way that re-running might fix. */
 export class RetryableStructuringError extends Error {}
@@ -91,13 +104,39 @@ const DRAFT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * Extra standing rules for a photographed page. There is no given text, so
+ * source_text becomes the model's own transcription — and that transcription is
+ * what gets kept forever as the record of what arrived.
+ */
+const PHOTOGRAPHED_RULES = `
+Kuvatun sivun lisäsäännöt:
+
+- source_text on oma tarkka transkriptio kuvasta sellaisenaan; älä siivoa,
+  järjestä uudelleen, käännä tai tiivistä.
+- Litteroi vain se, mikä on oikeasti luettavissa; älä arvaa sumeita tai
+  rajautuneita sanoja.
+- Ainesosarivit ja vaiheet johdetaan samasta transkriptiosta, ei kuvasta
+  erikseen tulkiten.
+- Jos sivulla on useampi resepti, poimi vain pääresepti.
+- Ohita sivun oheismateriaali: sivunumerot, otsikkotunnisteet, mainokset ja
+  aiheeseen liittymättömät kuvatekstit.
+- Jos kuva on epäselvä tai osa tekstistä puuttuu, jätä vastaava kenttä null sen
+  sijaan että täydentäisit sen arvauksella.
+`;
+
 /** The standing rules, from docs/spec.md's intake flow. */
-function systemPrompt(ingredients: IngredientSummary[]): string {
+function systemPrompt(
+  ingredients: IngredientSummary[],
+  route: IntakeSource["route"],
+): string {
   const list = ingredients
     .map((ingredient) => `${ingredient.id}\t${ingredient.name}`)
     .join("\n");
 
-  return `Rakennat suomenkielisestä reseptitekstistä jäsennellyn reseptin.
+  const extra = route === "photographed" ? PHOTOGRAPHED_RULES : "";
+
+  return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
 
 Säännöt, joista ei poiketa:
 
@@ -113,10 +152,39 @@ Säännöt, joista ei poiketa:
 - source_text on annettu teksti sellaisenaan.
 - Yhdistä jokainen rivi olemassa olevaan ainekseen sen id:llä kun jokin selvästi
   sopii. Muuten jätä ingredient_id null ja ehdota nimi ingredient_name-kentässä.
-
+${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
 ${list || "(ei vielä yhtään)"}`;
+}
+
+/** What the model is handed: a block of text, or a photograph of a page. */
+function userContent(source: IntakeSource) {
+  if (source.route === "pasted") {
+    return source.text;
+  }
+
+  return [
+    {
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: source.mediaType as "image/jpeg",
+        data: source.imageBase64,
+      },
+    },
+    { type: "text" as const, text: "Jäsennä tämän sivun resepti." },
+  ];
+}
+
+/**
+ * The text a draft's source_text should hold: for a paste, exactly what
+ * arrived; for a photograph, the model's transcription, since nothing else
+ * records what was on the page.
+ */
+function keptSourceText(source: IntakeSource, transcribed: unknown): string {
+  if (source.route === "pasted") return source.text;
+  return typeof transcribed === "string" ? transcribed : "";
 }
 
 /**
@@ -125,26 +193,15 @@ ${list || "(ei vielä yhtään)"}`;
  */
 export async function structureDraft(
   env: Env,
-  sourceText: string,
+  source: IntakeSource,
   ingredients: IngredientSummary[],
 ): Promise<Draft> {
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not configured.");
-  }
-
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const client = anthropic(env);
 
   let response;
   try {
     response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      output_config: {
-        effort: EFFORT,
-        format: { type: "json_schema", schema: DRAFT_SCHEMA },
-      },
-      system: systemPrompt(ingredients),
-      messages: [{ role: "user", content: sourceText }],
+      ...requestFor(source, ingredients),
     });
   } catch (cause) {
     throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
@@ -165,6 +222,70 @@ export async function structureDraft(
   // Structured outputs constrain the shape, so this should not fail — but the
   // draft is a human's afternoon either way, so a bad one is retried rather
   // than shown.
+  return draftFromJson(text, source, response.model);
+}
+
+/** Runs the model, retrying a retryable failure once before anyone sees it. */
+export async function structureDraftWithRetry(
+  env: Env,
+  source: IntakeSource,
+  ingredients: IngredientSummary[],
+): Promise<Draft> {
+  try {
+    return await structureDraft(env, source, ingredients);
+  } catch (error) {
+    if (!(error instanceof RetryableStructuringError)) throw error;
+    return structureDraft(env, source, ingredients);
+  }
+}
+
+/**
+ * The draft as a stream of bytes.
+ *
+ * Bytes never stop flowing, so Cloudflare's ~125 s proxy cutoff never fires —
+ * this is the whole reason the stack is Workers (#7). It also makes a slow
+ * import feel like progress rather than a hang.
+ */
+export function streamDraft(
+  env: Env,
+  source: IntakeSource,
+  ingredients: IngredientSummary[],
+): ReadableStream<Uint8Array> {
+  const client = anthropic(env);
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        const stream = client.messages.stream({
+          ...requestFor(source, ingredients),
+        });
+
+        for await (const event of stream) {
+          if (
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
+          ) {
+            controller.enqueue(encoder.encode(event.delta.text));
+          }
+        }
+
+        controller.close();
+      } catch (cause) {
+        // A JSON body has no room for an in-band error, so the stream is torn
+        // down instead. The browser still has what the member typed.
+        controller.error(cause);
+      }
+    },
+  });
+}
+
+/** Parse a draft the browser streamed and handed back. */
+export function draftFromJson(
+  text: string,
+  source: IntakeSource,
+  model: string,
+): Draft {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -172,24 +293,30 @@ export async function structureDraft(
     throw new RetryableStructuringError("The model returned unparseable JSON.");
   }
 
-  return toDraft(raw, sourceText, response.model);
+  return toDraft(raw, source, model);
 }
 
-/** Runs the model, retrying a retryable failure once before anyone sees it. */
-export async function structureDraftWithRetry(
-  env: Env,
-  sourceText: string,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  try {
-    return await structureDraft(env, sourceText, ingredients);
-  } catch (error) {
-    if (!(error instanceof RetryableStructuringError)) throw error;
-    return structureDraft(env, sourceText, ingredients);
+function anthropic(env: Env): Anthropic {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is not configured.");
   }
+  return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 }
 
-function toDraft(raw: unknown, sourceText: string, model: string): Draft {
+function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
+  return {
+    model: MODEL,
+    max_tokens: 16000,
+    output_config: {
+      effort: EFFORT,
+      format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },
+    },
+    system: systemPrompt(ingredients, source.route),
+    messages: [{ role: "user" as const, content: userContent(source) }],
+  };
+}
+
+function toDraft(raw: unknown, source: IntakeSource, model: string): Draft {
   if (typeof raw !== "object" || raw === null) {
     throw new RetryableStructuringError("The draft was not an object.");
   }
@@ -201,8 +328,7 @@ function toDraft(raw: unknown, sourceText: string, model: string): Draft {
   return {
     title: typeof draft["title"] === "string" ? draft["title"] : "",
     yieldPortions: wholeOrNull(draft["yield_portions"]),
-    // Kept exactly as it arrived, never as the model echoed it back.
-    sourceText,
+    sourceText: keptSourceText(source, draft["source_text"]),
     steps: steps.filter((step): step is string => typeof step === "string"),
     lines: lines.map(toDraftLine),
     structuredBy: model,
