@@ -178,6 +178,13 @@ on every pull request, in the same pinned Playwright image. It writes a
 throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
 is calling the model, and that is a test that should not exist.
 
+**Merging to `main` deploys.** The same workflow applies any new migration and
+then deploys, but only on a push to `main` and only after the tests pass. A pull
+request never reaches that job, so the Cloudflare token is never exposed to one —
+which is what makes keeping it in a public repository's secrets safe. It finishes
+by curling the live site, because a deploy reporting success is not the same as
+the app answering.
+
 Screenshots land in `docs/screenshots/` and are committed as review artifacts —
 nothing compares them, so they cannot fail a build. Regenerate with
 `./scripts/playwright.sh npx playwright test screenshots`.
