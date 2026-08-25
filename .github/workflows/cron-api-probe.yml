@@ -1,0 +1,25 @@
+name: Cron API probe
+
+on:
+  push:
+    branches: [chatgpt/issue-64-cron-api-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Read Cloudflare Cron Trigger registration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          response=$(curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/ruokalista/schedules" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          echo "$response" | jq '{success, errors, result: {schedules: [.result.schedules[] | {cron, created_on, modified_on}]}}'
+          echo "$response" | jq -e '.success == true' >/dev/null
