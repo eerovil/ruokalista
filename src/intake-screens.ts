@@ -348,14 +348,25 @@ function correctionForm(draft: Draft, ingredients: IngredientSummary[]): Raw {
       <ol class="edit-steps">
         ${draft.steps.map(
           (step, index) => html`<li class="edit-step">
+            <div class="amounts">
+              <!-- The spec asks for steps to be reorderable here, not only in
+                   the editor. A position box does it without JavaScript. -->
+              <input
+                name="step.${index}.position"
+                inputmode="numeric"
+                value="${index + 1}"
+                aria-label="Järjestys"
+                class="position"
+              />
+              <input
+                name="step.${index}.section"
+                value="${step.section ?? ""}"
+                aria-label="Osa"
+                placeholder="Osa"
+                class="section"
+              />
+            </div>
             <textarea name="step.${index}" rows="2">${step.text}</textarea>
-            <input
-              name="step.${index}.section"
-              value="${step.section ?? ""}"
-              aria-label="Osa"
-              placeholder="Osa"
-              class="section"
-            />
           </li>`,
         )}
       </ol>

@@ -175,6 +175,25 @@ test("a photographed recipe keeps the model's transcription as its source", asyn
   expect(kept).toBe(DRAFT_FIXTURE.source_text);
 });
 
+test("steps can be reordered before saving", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  // The draft's two steps, swapped by their position boxes.
+  const positions = page.locator(".edit-step input[name$=position]");
+  await expect(positions).toHaveCount(2);
+  await positions.nth(0).fill("2");
+  await positions.nth(1).fill("1");
+
+  await page.locator(".line.is-new select").selectOption("new");
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  const steps = page.locator("ol li");
+  await expect(steps.nth(0)).toContainText("Lisää vesi");
+  await expect(steps.nth(1)).toContainText("Kuullota kaali");
+});
+
 test("a failed structuring keeps what was typed", async ({ page }) => {
   await page.route("**/api/intake/structure", (route) =>
     route.fulfill({ status: 503, body: '{"error":"Kokeile myöhemmin."}' }),
