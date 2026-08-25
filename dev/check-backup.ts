@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import worker from "../src/index.ts";
+import { scheduledBackup } from "../src/backup-scheduled.ts";
 import {
   BACKUP_TABLES,
   backupIsStale,
@@ -129,7 +129,7 @@ test("watchdog freshness boundary is 36 hours and invalid timestamps are stale",
   assert.equal(backupIsStale("not-a-date", now), true);
 });
 
-test("the Worker's scheduled handler performs the backup path locally", async () => {
+test("the scheduled entrypoint performs the backup path locally", async () => {
   const fake = fakeDatabase();
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
@@ -144,15 +144,9 @@ test("the Worker's scheduled handler performs the backup path locally", async ()
   console.log = () => {};
 
   try {
-    await worker.scheduled(
-      {
-        scheduledTime: Date.parse(SCHEDULED_AT),
-        cron: "17 2 * * *",
-        type: "scheduled",
-        noRetry() {},
-      } as unknown as ScheduledController,
+    await scheduledBackup(
+      { scheduledTime: Date.parse(SCHEDULED_AT) },
       { DB: fake.db, BACKUP_GITHUB_TOKEN: "test-token" },
-      {} as ExecutionContext,
     );
   } finally {
     globalThis.fetch = originalFetch;
