@@ -175,6 +175,8 @@ function editorForm(
           // A saved part is a recipe of its own, so a recipe's own lines never
           // carry one.
           section: null,
+          // A note is about an import, not about a saved recipe.
+          note: null,
         } satisfies DraftLine)),
         ...Array.from({ length: SPARE_LINES }, emptyLine),
       ];

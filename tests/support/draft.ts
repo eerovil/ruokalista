@@ -19,20 +19,20 @@ export const DRAFT_FIXTURE = {
       quantity: 0.5, quantity_max: null, unit: "dl",
       alt_quantity: null, alt_unit: null,
       ingredient_id: 1, ingredient_name: "öljy", source_line: "½ dl öljyä",
-      section: null,
+      section: null, note: null,
     },
     {
       quantity: 1, quantity_max: 1.5, unit: "l",
       alt_quantity: null, alt_unit: null,
       ingredient_id: 2, ingredient_name: "vesi", source_line: "1–1 ja ½ l vettä",
-      section: null,
+      section: null, note: null,
     },
     {
       quantity: 0.5, quantity_max: null, unit: null,
       alt_quantity: 500, alt_unit: "g",
       ingredient_id: 3, ingredient_name: "valkokaali",
       source_line: "½ (500 g) valkokaali",
-      section: null,
+      section: null, note: null,
     },
     {
       quantity: null, quantity_max: null, unit: null,
@@ -40,6 +40,8 @@ export const DRAFT_FIXTURE = {
       ingredient_id: 4, ingredient_name: "sitruunaruoho",
       source_line: "hieman sitruunaruohoa",
       section: null,
+      // The model saying so itself is what lets the screen be a read view.
+      note: "Määrää ei kerrottu, vain \"hieman\".",
     },
     {
       quantity: 2, quantity_max: null, unit: "rkl",
@@ -47,7 +49,7 @@ export const DRAFT_FIXTURE = {
       // Unmatched on purpose: this is the line the gate must stop.
       ingredient_id: null, ingredient_name: "hunaja",
       source_line: "2 rkl hunajaa",
-      section: null,
+      section: null, note: null,
     },
   ],
 };

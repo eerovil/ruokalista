@@ -27,6 +27,7 @@ import {
   type StepFormValues,
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
+import { formatMeasurement } from "./quantities.ts";
 import { saveRecipe, SaveRefused } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -422,26 +423,168 @@ function correctionFormFromSubmission(
 }
 
 /**
- * How many lines are actually asking the reader for something. The model
- * proposes an ingredient it could not match, and nothing gets saved until a
- * person answers — so the count goes at the top, where it is the first thing
- * read, rather than being discovered by scrolling for badges.
+ * The draft, read as the recipe it is about to become — parts and all.
+ *
+ * Testing the deployed v1 found that 99% of imports need no change at all, so
+ * the screen that used to ask for corrections now mostly needs to be *read*
+ * (#53). The form is still here, one disclosure down, and it is the same form:
+ * a closed `<details>` still submits, so nothing about saving changed.
  */
-function decisionsNotice(rows: Array<DraftLine | LineFormValues>): Raw {
-  const waiting = rows.filter((row) => {
-    const values = isLineFormValues(row) ? row : lineValuesFromDraft(row, 0);
-    return values.ingredientChoice === "" && values.newName.trim() !== "";
-  }).length;
+function draftReview(
+  view: CorrectionView,
+  ingredients: IngredientSummary[],
+): Raw {
+  const rows = view.rows.map((row, index) =>
+    isLineFormValues(row) ? row : lineValuesFromDraft(row, index),
+  );
 
-  if (waiting === 0) return html``;
+  const kept = rows.filter((row) => !row.remove && !isBlank(row));
+  const sections = [...new Set(kept.map((row) => row.section.trim()))];
 
-  // Its own class, not .refused: nothing has gone wrong yet. This is the
-  // screen saying what it is waiting for.
-  return html`<p class="needs-answer">
-    ${waiting === 1
-      ? "Yksi aines on tuntematon. Valitse sille vastine tai hyväksy se uutena."
-      : `${waiting} ainesta on tuntemattomia. Valitse niille vastineet tai hyväksy ne uusina.`}
+  return html`<p class="review-title">${view.title}</p>
+    <p class="meta">
+      ${view.yieldValue.trim() === ""
+        ? "Annosmäärää ei kerrottu"
+        : `${view.yieldValue.trim()} annosta`}
+    </p>
+
+    ${newIngredientsNotice(kept)} ${notesNotice(kept)}
+
+    ${sections.map((section) => {
+      const lines = kept.filter((row) => row.section.trim() === section);
+      const steps = view.steps.filter(
+        (step) => step.section.trim() === section && step.text.trim() !== "",
+      );
+
+      return html`<section class="${section === "" ? "" : "part"}">
+        ${section === "" ? "" : html`<h2>${section}</h2>`}
+        ${lines.length === 0
+          ? ""
+          : html`<h3>Ainekset</h3>
+              <ul class="lines">
+                ${lines.map(reviewLine(ingredients))}
+              </ul>`}
+        ${steps.length === 0
+          ? ""
+          : html`<h3>Valmistus</h3>
+              <ol>
+                ${steps.map((step) => html`<li>${step.text}</li>`)}
+              </ol>`}
+      </section>`;
+    })}`;
+}
+
+/**
+ * The amount as the saved recipe will print it — "½ dl", "1–1½ l",
+ * "½ kpl (500 g)" — rather than as the form holds it. A review that showed
+ * `0,5` and dropped the range would not be a review of what gets saved.
+ *
+ * A value too broken to parse is shown as typed: that is the thing to look at.
+ */
+function reviewAmount(row: LineFormValues): string {
+  const number = (text: string): number | null => {
+    const parsed = Number(text.trim().replace(",", "."));
+    return text.trim() === "" || !Number.isFinite(parsed) ? null : parsed;
+  };
+
+  const quantity = number(row.quantity);
+  if (quantity === null) {
+    return [row.quantity.trim(), row.unit.trim()]
+      .filter((part) => part !== "")
+      .join(" ");
+  }
+
+  const altQuantity = number(row.altQuantity);
+  const altUnit = row.altUnit.trim();
+
+  return formatMeasurement({
+    quantity,
+    quantityMax: number(row.quantityMax),
+    unit: row.unit.trim() === "" ? null : row.unit.trim(),
+    altQuantity: altUnit === "" ? null : altQuantity,
+    altUnit: altQuantity === null ? null : altUnit || null,
+  });
+}
+
+function reviewLine(ingredients: IngredientSummary[]) {
+  return (row: LineFormValues): Raw => {
+    const amount = reviewAmount(row);
+
+    return html`<li>
+      ${amount === "" ? "" : html`<span class="amount">${amount}</span> `}
+      ${ingredientLabel(row, ingredients)}
+      ${row.ingredientChoice === "new"
+        ? html`<span class="badge is-decision">uusi</span>`
+        : ""}
+      ${row.note === ""
+        ? ""
+        : html`<span class="line-note">${row.note}</span>`}
+      <span class="source">${row.sourceLine}</span>
+    </li>`;
+  };
+}
+
+function ingredientLabel(
+  row: LineFormValues,
+  ingredients: IngredientSummary[],
+): string {
+  const matched = ingredients.find(
+    (ingredient) => String(ingredient.id) === row.ingredientChoice,
+  );
+  if (matched !== undefined) return matched.name;
+
+  const proposed = row.newName.trim();
+  return proposed === "" ? "— aines valitsematta —" : proposed;
+}
+
+/**
+ * What saving will add to the household's shared vocabulary. Stated, not asked:
+ * unmatched ingredients are almost always genuinely new, so the answer is
+ * preselected and this is here to make a wrong one visible (#53).
+ */
+function newIngredientsNotice(rows: LineFormValues[]): Raw {
+  const names = rows
+    .filter((row) => row.ingredientChoice === "new")
+    .map((row) => row.newName.trim())
+    .filter((name) => name !== "");
+
+  if (names.length === 0) return html``;
+
+  return html`<p class="creating">
+    Uutena luodaan: ${names.join(", ")}.
   </p>`;
+}
+
+/** The model's own doubts, gathered where they cannot be scrolled past. */
+function notesNotice(rows: LineFormValues[]): Raw {
+  const noted = rows.filter((row) => row.note !== "");
+  if (noted.length === 0) return html``;
+
+  return html`<div class="needs-answer is-doubt">
+    <div>
+      <strong
+        >${noted.length === 1
+          ? "Yksi rivi kannattaa vilkaista:"
+          : `${noted.length} riviä kannattaa vilkaista:`}</strong
+      >
+      <ul class="plain">
+        ${noted.map(
+          (row) => html`<li>${row.sourceLine} — ${row.note}</li>`,
+        )}
+      </ul>
+    </div>
+  </div>`;
+}
+
+/** A spare row nobody filled in is not part of the recipe being reviewed. */
+function isBlank(row: LineFormValues): boolean {
+  return (
+    row.ingredientChoice === "" &&
+    row.newName.trim() === "" &&
+    row.quantity.trim() === "" &&
+    row.unit.trim() === "" &&
+    row.sourceLine.trim() === ""
+  );
 }
 
 function isLineFormValues(
@@ -461,6 +604,15 @@ function renderCorrection(
       <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
 
+      ${draftReview(view, ingredients)}
+
+      <button type="submit" class="button save-draft">Tallenna resepti</button>
+
+      <!-- The same form, one tap down. A closed details still submits, so the
+           99% that needs no change never opens it and loses nothing. -->
+      <details class="edit-draft">
+        <summary>Muokkaa ennen tallennusta</summary>
+
       <label for="title">Nimi</label>
       <input id="title" name="title" value="${view.title}" required />
 
@@ -474,7 +626,6 @@ function renderCorrection(
       />
 
       <h2>Ainekset</h2>
-      ${decisionsNotice(view.rows)}
       ${lineRows(view.rows, ingredients, { sections: true })}
 
       <h2>Valmistus</h2>
@@ -503,8 +654,7 @@ function renderCorrection(
           </li>`,
         )}
       </ol>
-
-      <button type="submit">Tallenna resepti</button>
+      </details>
     </form>`;
 }
 

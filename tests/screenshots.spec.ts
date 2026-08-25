@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { stubStructuring } from "./support/draft";
+import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -104,6 +105,8 @@ test.describe("signed in", () => {
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
     await page.getByRole("button", { name: "Jäsennä" }).click();
+    await openDraftEditor(page);
+    await page.locator(".line.is-new select").selectOption("");
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page.locator(".refused")).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/09-gate-refused.png`, fullPage: true });

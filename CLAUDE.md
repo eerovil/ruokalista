@@ -110,6 +110,26 @@ shapes if you do.
 `src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
 AgentDeck and paste the result in, rather than looping real imports.
 
+Testing the deployed v1 found that 99% of imports need no change and 99% of
+unmatched ingredients are genuinely new, so the screen after the model runs is a
+**review, not a correction** (decision #53). It reads as the recipe it is about
+to become — parts and all — with one `Tallenna resepti`. The editable form is
+the same form, one `<details>` down, so nothing about validation or saving
+changed.
+
+Two things make a read view safe. The draft schema carries a per-line `note` —
+the model's own short sentence about what it guessed or lost — gathered at the
+top where it cannot be scrolled past. And the ingredients that will be created
+are *stated* rather than asked about: a name the model proposed is preselected
+as "create it", so saving needs no interaction. The gate is narrowed, not
+removed — a line with no answer at all is still refused. This reverses part of
+what #1 locked; #53 says why.
+
+The `note` rule is the fiddly part of the prompt. Too loose and it flags most
+lines, which is the noise the review was meant to remove; the wording in
+`src/intake.ts` says a note belongs only where something was guessed or lost,
+and caps the expectation at zero or one per recipe.
+
 The correction screen and the editor share `lineRow` in `src/line-form.ts`, and
 it is exception-first (decision #35). A row shows amount, unit and ingredient;
 the range's upper bound, the second measurement, the part, the source line, the

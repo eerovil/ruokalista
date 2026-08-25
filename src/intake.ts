@@ -36,6 +36,15 @@ export interface DraftLine {
   sourceLine: string;
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
+  /**
+   * The model's own doubt about this line, in one short Finnish sentence, or
+   * null when it is sure. Null on nearly every line.
+   *
+   * This is what lets the import screen be a read view rather than a form: a
+   * line worth a second look says so, instead of waiting to be found. It
+   * describes the import, not the dish, so it is never saved.
+   */
+  note: string | null;
 }
 
 export interface DraftStep {
@@ -101,6 +110,7 @@ const DRAFT_SCHEMA = {
           ingredient_name: { type: "string" },
           source_line: { type: "string" },
           section: nullable("string"),
+          note: nullable("string"),
         },
         required: [
           "quantity",
@@ -112,6 +122,7 @@ const DRAFT_SCHEMA = {
           "ingredient_name",
           "source_line",
           "section",
+          "note",
         ],
         additionalProperties: false,
       },
@@ -174,6 +185,14 @@ Säännöt, joista ei poiketa:
   section-kenttään sen osan nimi täsmälleen kuten se sivulla lukee. Jos rivi tai
   vaihe ei kuulu mihinkään osaan, jätä section null. Älä keksi osia: jos
   sivulla ei ole väliotsikoita, kaikki section-kentät ovat null.
+- Aseta note vain kun rivistä oikeasti katosi tai arvattiin jotain: jouduit
+  päättelemään yksikön, määrä oli sanallinen, rivillä oli vaihtoehto tai
+  valmistustapa jota kentät eivät kanna, tai teksti oli epäselvä. Kirjoita
+  yhdellä lyhyellä suomenkielisellä lauseella mikä jäi auki.
+  Note on huomiolista, ei selostus: yhdessä reseptissä niitä on tyypillisesti
+  nolla tai yksi. Jos merkitsisit yli puolet riveistä, merkitse vain ne joissa
+  tietoa todella katosi, ja jätä muut nulliksi. Rivi jonka luit suoraan oikein
+  ei koskaan saa notea.
 ${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
@@ -383,6 +402,7 @@ function toDraftLine(raw: unknown): DraftLine {
     altQuantity: altPairIsWhole && quantity !== null ? altQuantity : null,
     altUnit: altPairIsWhole && quantity !== null ? altUnit : null,
     ingredientId: wholeOrNull(line["ingredient_id"]),
+    note: textOrNull(line["note"]),
     ingredientName:
       typeof line["ingredient_name"] === "string" ? line["ingredient_name"] : "",
     sourceLine:

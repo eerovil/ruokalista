@@ -284,8 +284,29 @@ const STYLES = `
   .nothing .empty { margin: 0 0 1rem; }
   .recipe-delete { margin-top: 2.5rem; font-size: .9rem; }
   .recipe-delete a { color: var(--warn); }
+  .review-title { margin: 0; font-size: 1.25rem; font-weight: 600; }
+  .creating {
+    padding: .6rem .8rem; margin: 1rem 0;
+    font-size: .9rem; color: var(--muted);
+    background: var(--surface); border-radius: var(--radius);
+  }
+  .line-note {
+    display: block; margin-top: .15rem;
+    color: var(--warn); font-size: .8rem;
+  }
+  .save-draft { width: 100%; margin: 1.5rem 0 .5rem; }
+  .edit-draft > summary {
+    display: inline-flex; align-items: center;
+    min-height: var(--tap); cursor: pointer;
+    color: var(--muted); font-size: .9rem;
+  }
+  .needs-answer ul.plain { margin-top: .35rem; font-weight: 400; }
+  /* The doubts box is a "look at this", not a "well done" — so it borrows the
+     warning colour rather than the accent every other panel uses. */
+  .needs-answer.is-doubt { border-color: var(--warn); }
+  .needs-answer.is-doubt strong { color: var(--warn); }
   .needs-answer {
-    display: flex; align-items: center; gap: .5rem;
+    display: flex; align-items: flex-start; gap: .5rem;
     padding: .7rem .8rem; margin: 0 0 1rem;
     font-size: .9rem; font-weight: 600;
     background: var(--surface); border: 1px solid var(--accent);

@@ -20,3 +20,14 @@ export async function openSpareLines(page: Page): Promise<void> {
     await add.locator("> summary").click();
   }
 }
+
+/**
+ * The import screen is a read view; the editable form is one disclosure down.
+ * A test that means to change the draft has to open it, as a person does.
+ */
+export async function openDraftEditor(page: Page): Promise<void> {
+  const editor = page.locator("details.edit-draft");
+  if (!(await editor.evaluate((el: HTMLDetailsElement) => el.open))) {
+    await editor.locator("> summary").click();
+  }
+}
