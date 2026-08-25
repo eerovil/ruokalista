@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
-import { openMore, openSpareLines } from "./support/lines";
+import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -120,6 +120,7 @@ test("a photographed import keeps its route when it is saved", async ({ page }) 
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await openDraftEditor(page);
   await page.locator(".line.is-new select").selectOption("new");
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);

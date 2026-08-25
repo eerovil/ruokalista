@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
+import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -33,16 +34,73 @@ test("pasting text streams a draft and opens the correction screen", async ({
   expect(calls[0]?.body.sourceText).toContain("Uunikaali");
   expect(calls[0]?.body.image).toBeUndefined();
 
+  // What lands is the recipe as it will be saved, not a form to fill in.
+  await expect(page.locator(".review-title")).toHaveText("Uunikaali");
+  await expect(page.locator(".lines li")).toHaveCount(DRAFT_FIXTURE.lines.length);
+  await expect(page.locator("#title")).toBeHidden();
+
+  await openDraftEditor(page);
   await expect(page.locator("#title")).toHaveValue("Uunikaali");
   await expect(page.locator("#yield")).toHaveValue("4");
   await expect(page.locator(".line")).toHaveCount(DRAFT_FIXTURE.lines.length + 3);
+});
+
+test("a draft that needs nothing saves in one tap", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  // No selects touched, no fields filled, no disclosure opened. This is the
+  // 99% case, and it is now one button.
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(page.getByRole("heading", { name: "Uunikaali" })).toBeVisible();
+
+  // The unmatched name became a shared ingredient, as the screen said it would.
+  const response = await page.request.get("/api/ingredients");
+  const body = (await response.json()) as { ingredients: { name: string }[] };
+  expect(body.ingredients.map((i) => i.name)).toContain("hunaja");
+});
+
+test("the review reads as the recipe it will become", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  const lines = page.locator(".lines li");
+  // The same awkward shapes the saved recipe prints, printed the same way —
+  // not the decimals the form happens to hold.
+  await expect(lines.nth(0)).toContainText("½ dl");
+  await expect(lines.nth(1)).toContainText("1–1½ l");
+  // The fixture's line states no unit, so it reads exactly as the source did.
+  await expect(lines.nth(2)).toContainText("½ (500 g)");
+  await expect(lines.nth(3)).not.toContainText("0");
+});
+
+test("what will be created is stated before saving", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  await expect(page.locator(".creating")).toContainText("hunaja");
+});
+
+test("the model's own doubts are gathered at the top", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  const report = page.locator(".needs-answer");
+  await expect(report).toContainText("Yksi rivi");
+  await expect(report).toContainText("hieman");
+
+  // And the doubted line carries it too, where the line is read.
+  await expect(page.locator(".lines .line-note")).toHaveCount(1);
 });
 
 test("the unmatched line is the only one marked new", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
 
-  await expect(page.locator(".badge")).toHaveCount(1);
+  await openDraftEditor(page);
+  await expect(page.locator(".line .badge")).toHaveCount(1);
   await expect(page.locator(".line.is-new")).toContainText("hunaja");
 });
 
@@ -51,6 +109,8 @@ test("a normal line shows what to check, not the storage schema", async ({
 }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
+
+  await openDraftEditor(page);
 
   // Line 0 is "½ dl öljyä": an ordinary amount, unit and ingredient.
   const ordinary = page.locator(".line").nth(0);
@@ -70,6 +130,8 @@ test("a line that uses a rare field is already showing it", async ({ page }) => 
   await stubStructuring(page);
   await pasteAndStructure(page);
 
+  await openDraftEditor(page);
+
   // Line 1 is the range "1–1 ja ½ l vettä"; line 2 the second measurement
   // "½ (500 g) valkokaali". Neither may be hiding what it actually holds.
   await expect(
@@ -85,19 +147,19 @@ test("a line that uses a rare field is already showing it", async ({ page }) => 
   ).toBeHidden();
 });
 
-test("the screen says up front what it is waiting for", async ({ page }) => {
+test("nothing on the review is dressed as a refusal", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
 
-  await expect(page.locator(".needs-answer")).toContainText("Yksi aines");
-
-  // Nothing has gone wrong yet, so it is not dressed as a refusal.
+  // The screen has things to point out, but nothing has gone wrong.
   await expect(page.locator(".refused")).toHaveCount(0);
 });
 
 test("blank rows are not the last thing on the screen", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
+
+  await openDraftEditor(page);
 
   // Five real lines are shown; the spares are behind an explicit add.
   await expect(page.locator(".edit-lines").first().locator("> li")).toHaveCount(5);
@@ -109,16 +171,21 @@ test("blank rows are not the last thing on the screen", async ({ page }) => {
   ).toBeHidden();
 });
 
-test("the gate refuses a save while a line is unanswered", async ({ page }) => {
+test("the gate still refuses a line with no answer at all", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
 
+  // The model's own proposals are preselected, so this has to be undone by
+  // hand. The gate is narrowed, not removed.
+  await openDraftEditor(page);
+  await page.locator(".line.is-new select").selectOption("");
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
 
   await expect(page.locator(".refused")).toContainText(
     "Jokaiselle uudelle ainekselle pitää vastata",
   );
-  // Still on the correction screen, with the work intact.
+  // Still on the review, with the work intact.
+  await openDraftEditor(page);
   await expect(page.locator("#title")).toHaveValue("Uunikaali");
 });
 
@@ -126,9 +193,8 @@ test("answering the new line saves the recipe", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
 
-  await page
-    .locator(".line.is-new select")
-    .selectOption("new");
+  await openDraftEditor(page);
+  await page.locator(".line.is-new select").selectOption("new");
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
@@ -153,6 +219,7 @@ test("pointing a new line at an existing ingredient creates nothing", async ({
 
   const before = await ingredientNames(page);
 
+  await openDraftEditor(page);
   await page.locator(".line.is-new select").selectOption({ label: "vesi" });
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
@@ -242,13 +309,14 @@ test("steps can be reordered before saving", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
 
+  await openDraftEditor(page);
+
   // The draft's two steps, swapped by their position boxes.
   const positions = page.locator(".edit-step input[name$=position]");
   await expect(positions).toHaveCount(2);
   await positions.nth(0).fill("2");
   await positions.nth(1).fill("1");
 
-  await page.locator(".line.is-new select").selectOption("new");
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
+import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -140,6 +141,7 @@ test("correcting a part name before saving moves the lines", async ({ page }) =>
   await page.getByRole("button", { name: "Jäsennä" }).click();
 
   // Rename the part on both of its lines.
+  await openDraftEditor(page);
   const sections = page.locator(".line input[name$=section]");
   await sections.nth(0).fill("Öljykastike");
   await sections.nth(1).fill("Öljykastike");
@@ -158,7 +160,6 @@ test("a dish with no sub-headings makes no parts", async ({ page }) => {
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await page.locator(".line.is-new select").selectOption("new");
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/\d+$/);

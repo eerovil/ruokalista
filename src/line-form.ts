@@ -34,6 +34,8 @@ export interface LineFormValues {
   ingredientChoice: string;
   newName: string;
   sourceLine: string;
+  /** The model's doubt about this line, carried so a refusal does not lose it. */
+  note: string;
   remove: boolean;
 }
 
@@ -150,6 +152,10 @@ export function lineRow(
           placeholder="Uuden aineksen nimi"
         />`
       : ""}
+
+    ${values.note === ""
+      ? ""
+      : html`<input type="hidden" name="line.${index}.note" value="${values.note}" />`}
 
     ${values.sourceLine === ""
       ? ""
@@ -286,6 +292,7 @@ export function emptyLine(): DraftLine {
     ingredientName: "",
     sourceLine: "",
     section: null,
+    note: null,
   };
 }
 
@@ -303,10 +310,20 @@ export function lineValuesFromDraft(
       line.altQuantity === null ? "" : formatDecimal(line.altQuantity),
     altUnit: line.altUnit ?? "",
     section: line.section ?? "",
+    // A name the model proposed is preselected as "create it". Unmatched
+    // ingredients are almost always genuinely new, so asking once per line
+    // charged for a decision nobody was really making (#53). The names are
+    // still stated on screen before saving, and the gate still refuses a line
+    // with no answer at all — it is only the model's proposals that default.
     ingredientChoice:
-      line.ingredientId === null ? "" : String(line.ingredientId),
+      line.ingredientId !== null
+        ? String(line.ingredientId)
+        : line.ingredientName.trim() === ""
+          ? ""
+          : "new",
     newName: line.ingredientName,
     sourceLine: line.sourceLine,
+    note: line.note ?? "",
     remove: false,
   };
 }
@@ -326,6 +343,7 @@ export function lineValuesFromForm(
     ingredientChoice: formField(form, `line.${index}.ingredient`),
     newName: formField(form, `line.${index}.newName`),
     sourceLine: formField(form, `line.${index}.source`),
+    note: formField(form, `line.${index}.note`),
     remove: form.get(`line.${index}.remove`) !== null,
   };
 }
