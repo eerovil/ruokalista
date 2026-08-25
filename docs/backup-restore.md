@@ -62,9 +62,10 @@ npm run restore:backup -- \
   --remote
 ```
 
-The CLI has an additional hard stop against a remote database named `ruokalista`.
-That guard is not a substitute for checking the target name: the acceptance drill must
-use a disposable database created for that purpose.
+The CLI has additional hard stops for the known production selectors: database name
+`ruokalista`, binding `DB`, and the production D1 database id. Those guards are not a
+substitute for checking the target name: the acceptance drill must use a disposable
+database created for that purpose.
 
 After a successful drill, record only non-sensitive evidence in issue #64: backup git
 commit, snapshot digest, row counts, temporary database name, commands used and the
