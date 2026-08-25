@@ -105,7 +105,9 @@ const KEEP_AWAKE_ISLAND = `
         });
       }
     }, function () {
-      if (generation === requestGeneration) nativeFailed();
+      if (generation !== requestGeneration) return;
+      acquiring = false;
+      if (active && isVisible()) nativeFailed();
     });
   }
 

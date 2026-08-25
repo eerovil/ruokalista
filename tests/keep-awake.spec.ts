@@ -110,6 +110,53 @@ test("a native request settling after backgrounding is discarded", async ({
     .toBe("2");
 });
 
+test("a native rejection while backgrounding does not disable a later retry", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const browserWindow = window as typeof window & {
+      wakeRejectors: ((reason?: unknown) => void)[];
+    };
+    browserWindow.wakeRejectors = [];
+
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: {
+        request() {
+          const count = Number(sessionStorage.getItem("reject-requests") ?? "0");
+          sessionStorage.setItem("reject-requests", String(count + 1));
+          return new Promise((_resolve, reject) => {
+            browserWindow.wakeRejectors.push(reject);
+          });
+        },
+      },
+    });
+  });
+
+  await page.goto("/recipes/1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("reject-requests")))
+    .toBe("1");
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    const browserWindow = window as typeof window & {
+      wakeRejectors: ((reason?: unknown) => void)[];
+    };
+    browserWindow.wakeRejectors.shift()?.(
+      new DOMException("Backgrounded", "NotAllowedError"),
+    );
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await setVisibility(page, "visible");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("reject-requests")))
+    .toBe("2");
+  await expect(page.locator("#keep-awake")).toBeHidden();
+});
+
 test("a refused standard lock offers the media fallback without breaking cooking", async ({
   page,
 }) => {
