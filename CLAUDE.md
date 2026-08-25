@@ -166,6 +166,18 @@ a test that saves a recipe cannot change what a later test sees.
 suite is free to run as often as you like. That fixture is also what makes the
 approval gate testable: one of its lines is deliberately unmatched.
 
+Every spec reseeds in `beforeAll`. Skipping that is not a shortcut — it makes a
+spec depend on rows an earlier run happened to leave, which passes locally and
+fails on a fresh database.
+
+`retries: 0`, on purpose. The one flake this suite ever had turned out to be two
+real faults, and a retry would have kept both hidden.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, the checks and the browser suite
+on every pull request, in the same pinned Playwright image. It writes a
+throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
+is calling the model, and that is a test that should not exist.
+
 Screenshots land in `docs/screenshots/` and are committed as review artifacts —
 nothing compares them, so they cannot fail a build. Regenerate with
 `./scripts/playwright.sh npx playwright test screenshots`.

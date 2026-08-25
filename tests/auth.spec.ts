@@ -1,8 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /** Google is the gate, and there is no signup path anywhere in the app. */
+
+// This file used to be the only spec without a reseed, so it quietly depended
+// on rows an earlier run had left behind. It passed locally and failed on a
+// fresh database — which is what "flaky" turned out to mean.
+test.beforeAll(reseed);
 
 test("a signed-out screen goes to sign-in", async ({ page }) => {
   await page.goto("/recipes");
@@ -31,7 +37,22 @@ test("a cookie that has expired is not entry", async ({ context, page }) => {
 
 test("a tampered signature is not entry", async ({ context, page }) => {
   const cookie = sessionCookie(1);
-  await context.addCookies([{ ...cookie, value: `${cookie.value.slice(0, -1)}X` }]);
+  const [memberId, expiresAt, signature] = cookie.value.split(".") as [
+    string,
+    string,
+    string,
+  ];
+
+  // The FIRST character of the signature, not the last. A base64url string's
+  // final character carries spare bits, so several different characters decode
+  // to the same bytes — changing it left the signature valid about one run in
+  // sixteen, which is what this test's flakiness turned out to be.
+  const flipped = (signature[0] === "A" ? "B" : "A") + signature.slice(1);
+
+  await context.addCookies([
+    { ...cookie, value: `${memberId}.${expiresAt}.${flipped}` },
+  ]);
+
   await page.goto("/recipes");
   await expect(page).toHaveURL(/\/signin$/);
 });

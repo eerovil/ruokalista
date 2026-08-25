@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a branch makes the first run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # The same image scripts/playwright.sh uses, pinned to the same version as
+    # the @playwright/test in package.json. It already carries the browsers;
+    # installing them would need root for apt.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+
+    env:
+      # Nothing here should reach the network. No test calls Anthropic — the
+      # streaming endpoint is stubbed — and wrangler runs in local mode.
+      WRANGLER_SEND_METRICS: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Checks
+        run: npm run check
+
+      - name: Local development values
+        # Throwaway values. SESSION_SECRET signs the cookies the browser tests
+        # mint; the Google pair only has to exist, because the sign-in tests
+        # check the redirect that is built from it, never a real handshake.
+        # ANTHROPIC_API_KEY is deliberately absent: if a test ever needs it, it
+        # is calling the model, and that is a test that should not exist.
+        run: |
+          {
+            printf 'SESSION_SECRET="%s"\n' "$(openssl rand -base64 32)"
+            printf 'GOOGLE_CLIENT_ID="ci.apps.googleusercontent.com"\n'
+            printf 'GOOGLE_CLIENT_SECRET="ci-not-a-real-secret"\n'
+          } > .dev.vars
+
+      - name: Migrate the local database
+        run: npx wrangler d1 migrations apply ruokalista --local
+
+      - name: Browser tests
+        run: npx playwright test
+
+      - name: Keep the traces from a failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
