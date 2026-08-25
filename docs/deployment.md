@@ -7,7 +7,7 @@ put the existing VPS in front of it:
 ```
 browser
   -> https://ruokalista.vilpponen.fi
-  -> VPS / Caddy
+  -> VPS / nginx
   -> https://ruokalista.eerovil.workers.dev
   -> Worker / D1
 ```
@@ -26,36 +26,30 @@ At the authoritative DNS provider for `vilpponen.fi`, create:
 Add an `AAAA` record only if the VPS has working public IPv6 and ports 80 and 443
 are reachable over IPv6. Do not create a CNAME to `workers.dev`.
 
-The VPS must accept inbound TCP 80 and 443. Port 80 is needed so Caddy can perform
-HTTP-to-HTTPS redirects and certificate validation; the app itself is served on
+The VPS must accept inbound TCP 80 and 443. Port 80 serves dehydrated's HTTP-01
+challenge and redirects ordinary requests to HTTPS; the app itself is served on
 HTTPS.
 
-## Caddy
+## nginx and TLS
 
-`deploy/Caddyfile` is the production virtual host. Install it into the VPS's
-Caddy configuration (or merge the site block into the existing Caddyfile):
+The production reverse-proxy configuration is managed in the private
+`eerovil/vps-config` repository, not in this application repository. Its
+`nginx/sites-available/ruokalista` vhost:
 
-```caddyfile
-ruokalista.vilpponen.fi {
-    reverse_proxy https://ruokalista.eerovil.workers.dev {
-        header_up Host ruokalista.eerovil.workers.dev
-    }
-}
-```
+- terminates TLS for `ruokalista.vilpponen.fi` using dehydrated's certificate,
+- sends the upstream `Host` and TLS SNI as `ruokalista.eerovil.workers.dev` so
+  Cloudflare routes the request to this Worker,
+- sends `X-Forwarded-Host: ruokalista.vilpponen.fi` and
+  `X-Forwarded-Proto: https` so the Worker can reconstruct the canonical public
+  origin for OAuth.
 
-The upstream `Host` must be the `workers.dev` hostname so Cloudflare can route the
-request to this Worker and verify TLS. Caddy preserves the browser-facing host in
-`X-Forwarded-Host` and the original scheme in `X-Forwarded-Proto`; the app trusts
-that pair only when the request arrived at its exact known `workers.dev` origin.
+That repo also enables the vhost and includes `ruokalista.vilpponen.fi` in
+`dehydrated/domains.txt`, so the normal weekly dehydrated job renews the
+certificate after the initial issuance.
 
-Once DNS resolves to the VPS, Caddy obtains and renews the public TLS certificate
-automatically. Validate and reload the server config after installing it, for
-example:
-
-```sh
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
+The first certificate must be issued before installing the HTTPS vhost because
+`nginx -t` rejects a configuration that references certificate files which do
+not yet exist. The VPS repo's pull request contains the bootstrap sequence.
 
 ## Google OAuth
 
@@ -71,14 +65,14 @@ Local development still uses:
 http://127.0.0.1:8787/auth/google/callback
 ```
 
-The Worker normally derives the callback from the request origin. Behind Caddy it
+The Worker normally derives the callback from the request origin. Behind nginx it
 sees the `workers.dev` upstream hostname, so `src/public-origin.ts` recognizes
 only this one production proxy path and restores the canonical public origin.
 Arbitrary forwarded hosts are ignored.
 
 ## Cutover check
 
-After DNS and Caddy are live and this code is deployed:
+After DNS, the VPS certificate and nginx are live, and this code is deployed:
 
 ```sh
 curl -fsS https://ruokalista.vilpponen.fi/health
