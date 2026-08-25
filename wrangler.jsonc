@@ -21,9 +21,9 @@
     ]
   },
 
-  // Temporary #64 scheduled-path proof. Cron Triggers use UTC; after the real
-  // scheduled snapshot + restore drill, restore the normal 02:17 UTC cron.
-  "triggers": { "crons": ["0 17 * * *"] },
+  // Temporary #64 Cron Trigger diagnostic. Keep this deployment untouched until
+  // one authentic scheduled invocation is observed, then restore 17 2 * * *.
+  "triggers": { "crons": ["*/5 * * * *"] },
 
   "d1_databases": [
     {
