@@ -9,10 +9,12 @@
     "migrate:local": "wrangler d1 migrations apply ruokalista --local",
     "seed:local": "wrangler d1 execute ruokalista --local --file dev/seed.sql",
     "migrate:remote": "wrangler d1 migrations apply ruokalista --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260823.1",
+    "@playwright/test": "^1.62.1",
     "typescript": "^5.6.0",
     "wrangler": "^4.0.0"
   },
