@@ -101,6 +101,12 @@ const STYLES = `
   form.inline input { width: 3.2rem; padding: .25rem; text-align: center; }
   form.inline button { padding: .25rem .5rem; font-size: .8rem; }
   button.quiet { background: transparent; border: 1px solid var(--edge); opacity: .7; }
+  .ingredients li { display: flex; align-items: center; gap: .5rem;
+    padding: .4rem 0; border-bottom: 1px solid var(--edge); }
+  .ingredients form.inline { flex: 1; }
+  .ingredients form.inline input { width: auto; flex: 1; text-align: left; }
+  .position { width: 2.6rem !important; opacity: .7; }
+  .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .pick-title { flex: 1; }
   .progress {
@@ -125,7 +131,7 @@ export function page(title: string, body: Raw, status = 200): Response {
 <style>${raw(STYLES)}</style>
 </head>
 <body>
-<nav><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a></nav>
+<nav><a href="/">Viikko</a><a href="/recipes">Reseptit</a><a href="/intake">Lisää resepti</a><a href="/ingredients">Ainekset</a></nav>
 ${body}
 </body>
 </html>`;

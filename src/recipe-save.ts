@@ -39,11 +39,16 @@ export interface RecipeToSave {
 
 export class SaveRefused extends Error {}
 
-export async function saveRecipe(
+/**
+ * Validate the lines and work out which ingredient each one means, creating
+ * statements for any genuinely new ones. Shared by saving and editing, so the
+ * approval gate cannot be enforced in one and skipped in the other.
+ */
+async function resolveIngredients(
   db: D1Database,
   member: Member,
   recipe: RecipeToSave,
-): Promise<number> {
+): Promise<{ statements: D1PreparedStatement[]; resolved: number[] }> {
   if (recipe.title.trim() === "") {
     throw new SaveRefused("Reseptillä pitää olla nimi.");
   }
@@ -67,7 +72,6 @@ export async function saveRecipe(
   // racing in the same household would collide on the primary key and the batch
   // would roll back — loud, and correct, for a household of a few people.
   let nextIngredientId = await nextId(db, "ingredient");
-  const recipeId = await nextId(db, "recipe");
 
   const newIngredients: { id: number; name: string }[] = [];
   const resolved: number[] = [];
@@ -118,6 +122,17 @@ export async function saveRecipe(
     );
   }
 
+  return { statements, resolved };
+}
+
+export async function saveRecipe(
+  db: D1Database,
+  member: Member,
+  recipe: RecipeToSave,
+): Promise<number> {
+  const { statements, resolved } = await resolveIngredients(db, member, recipe);
+  const recipeId = await nextId(db, "recipe");
+
   statements.push(
     db
       .prepare(
@@ -138,6 +153,58 @@ export async function saveRecipe(
         member.id,
       ),
   );
+
+  statements.push(...childStatements(db, recipeId, recipe, resolved));
+  await db.batch(statements);
+
+  return recipeId;
+}
+
+/**
+ * Edit a saved recipe. Its children are replaced wholesale rather than diffed —
+ * positions shift when a line moves, and one batch keeps the recipe from ever
+ * being half-rewritten.
+ *
+ * source_text and source_route are not editable and are not touched here.
+ */
+export async function replaceRecipe(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+  recipe: RecipeToSave,
+): Promise<void> {
+  const { statements, resolved } = await resolveIngredients(db, member, recipe);
+
+  statements.push(
+    db
+      .prepare(
+        `UPDATE recipe
+            SET title = ?, yield_portions = ?,
+                updated_at = datetime('now'), updated_by = ?
+          WHERE id = ? AND household_id = ?`,
+      )
+      .bind(
+        recipe.title.trim(),
+        recipe.yieldPortions,
+        member.id,
+        recipeId,
+        member.householdId,
+      ),
+    db.prepare("DELETE FROM recipe_step WHERE recipe_id = ?").bind(recipeId),
+    db.prepare("DELETE FROM ingredient_line WHERE recipe_id = ?").bind(recipeId),
+  );
+
+  statements.push(...childStatements(db, recipeId, recipe, resolved));
+  await db.batch(statements);
+}
+
+function childStatements(
+  db: D1Database,
+  recipeId: number,
+  recipe: RecipeToSave,
+  resolved: number[],
+): D1PreparedStatement[] {
+  const statements: D1PreparedStatement[] = [];
 
   recipe.steps.forEach((text, index) => {
     if (text.trim() === "") return;
@@ -173,9 +240,7 @@ export async function saveRecipe(
     );
   });
 
-  await db.batch(statements);
-
-  return recipeId;
+  return statements;
 }
 
 async function nextId(db: D1Database, table: string): Promise<number> {
