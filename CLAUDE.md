@@ -106,6 +106,17 @@ model when the model call itself changed — one import is enough to prove it.
 tested end to end; lower it if imports feel dear, but re-test the awkward line
 shapes if you do.
 
+**Prompt work belongs on free Sonnet, not on the key.** The standing rules in
+`src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
+AgentDeck and paste the result in, rather than looping real imports.
+
+Intake has two paths on purpose. Without JavaScript the form posts to `/intake`
+and the model call is a plain request. With it, the island in
+`src/intake-screens.ts` streams from `/api/intake/structure` so bytes never stop
+flowing, then hands the finished draft to `/intake/correct` — which keeps the
+correction screen server-rendered rather than built in the browser. The camera
+route needs the island either way: downscaling a photograph is a canvas job.
+
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework

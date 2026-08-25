@@ -2,9 +2,11 @@ import { requireMember, requireMemberScreen } from "./auth.ts";
 import type { Env } from "./env.ts";
 import { listIngredients } from "./ingredients.ts";
 import {
+  correctScreen,
   intakeScreen,
   saveScreen,
   structureScreen,
+  structureStream,
 } from "./intake-screens.ts";
 import {
   apiListRecipes,
@@ -40,6 +42,8 @@ const router = new Router()
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake", requireMemberScreen(structureScreen))
+  .post("/intake/correct", requireMemberScreen(correctScreen))
+  .post("/api/intake/structure", requireMember(structureStream))
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
