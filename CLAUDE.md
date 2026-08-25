@@ -33,9 +33,24 @@ protected route before Google sign-in exists, mint a cookie for a seeded member:
     curl -H "Cookie: $(./scripts/node.sh node scripts/mint-cookie.mjs 1)" \
       http://127.0.0.1:8787/api/ingredients
 
-That script is a developer tool, not a route. The Worker has no way to sign
-anyone in without Google, on purpose — a shipped auth bypass is one of the things
-that went wrong in #13.
+That script is a developer tool, not a route.
+
+A development server also offers **Kehityskirjautuminen** on `/signin`: a button
+per existing member that issues a session directly. This is the one exception to
+"no way in without Google", and it is narrow on purpose, because a shipped auth
+bypass is one of the things that went wrong in #13:
+
+- `POST /auth/dev-signin` **refuses with a 404** unless `isLocalOrigin`
+  (`src/public-origin.ts`) says the browser reached a loopback, private-network
+  or tailnet address. The route says no; it does not merely hide a button.
+- The gate is the address, not a flag — no env var and no `wrangler secret put`
+  can turn it on for the deployment.
+- It **creates nobody.** Only a `member` row that already exists gets a session,
+  which is the same rule Google sign-in follows. There is still no signup path.
+
+`tests/auth.spec.ts` checks that it refuses both production hostnames and sets
+no cookie, and that an unknown member id is refused. Those are the tests that
+fail if somebody widens this.
 
 The local D1 database is keyed by the `database_id` in `wrangler.jsonc`. Change
 that id and local dev silently points at a different, empty database — the
