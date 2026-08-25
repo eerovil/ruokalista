@@ -227,6 +227,14 @@ test("pointing a new line at an existing ingredient creates nothing", async ({
   expect(await ingredientNames(page)).toEqual(before);
 });
 
+test("photo intake allows taking or choosing an image", async ({ page }) => {
+  await page.goto("/intake");
+
+  const input = page.getByLabel("…tai ota tai valitse kuva painetusta sivusta");
+  await expect(input).toHaveAttribute("accept", "image/*");
+  expect(await input.getAttribute("capture")).toBeNull();
+});
+
 test("a photographed page is downscaled in the browser before it is sent", async ({
   page,
 }) => {

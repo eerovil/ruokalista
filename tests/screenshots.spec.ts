@@ -88,6 +88,9 @@ test.describe("signed in", () => {
 
   test("intake", async ({ page }) => {
     await page.goto("/intake");
+    await expect(
+      page.getByLabel("…tai ota tai valitse kuva painetusta sivusta"),
+    ).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/07-intake.png`, fullPage: true });
   });
 
