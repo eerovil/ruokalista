@@ -14,7 +14,8 @@ import {
   emptyLine,
   FormRefused,
   lineCountForRendering,
-  lineRow,
+  lineRows,
+  lineValuesFromDraft,
   lineValuesFromForm,
   readLineCount,
   readLines,
@@ -388,6 +389,35 @@ function correctionFormFromSubmission(
   );
 }
 
+/**
+ * How many lines are actually asking the reader for something. The model
+ * proposes an ingredient it could not match, and nothing gets saved until a
+ * person answers — so the count goes at the top, where it is the first thing
+ * read, rather than being discovered by scrolling for badges.
+ */
+function decisionsNotice(rows: Array<DraftLine | LineFormValues>): Raw {
+  const waiting = rows.filter((row) => {
+    const values = isLineFormValues(row) ? row : lineValuesFromDraft(row, 0);
+    return values.ingredientChoice === "" && values.newName.trim() !== "";
+  }).length;
+
+  if (waiting === 0) return html``;
+
+  // Its own class, not .refused: nothing has gone wrong yet. This is the
+  // screen saying what it is waiting for.
+  return html`<p class="needs-answer">
+    ${waiting === 1
+      ? "Yksi aines on tuntematon. Valitse sille vastine tai hyväksy se uutena."
+      : `${waiting} ainesta on tuntemattomia. Valitse niille vastineet tai hyväksy ne uusina.`}
+  </p>`;
+}
+
+function isLineFormValues(
+  row: DraftLine | LineFormValues,
+): row is LineFormValues {
+  return "ingredientChoice" in row;
+}
+
 function renderCorrection(
   view: CorrectionView,
   ingredients: IngredientSummary[],
@@ -412,11 +442,8 @@ function renderCorrection(
       />
 
       <h2>Ainekset</h2>
-      <ol class="edit-lines">
-        ${view.rows.map((line, index) =>
-          lineRow(line, index, ingredients, { sections: true }),
-        )}
-      </ol>
+      ${decisionsNotice(view.rows)}
+      ${lineRows(view.rows, ingredients, { sections: true })}
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">

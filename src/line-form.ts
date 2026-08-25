@@ -1,4 +1,4 @@
-import { html, type Raw } from "./html.ts";
+import { html, raw, type Raw } from "./html.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import { formatDecimal } from "./quantities.ts";
@@ -54,6 +54,30 @@ export interface LineRowOptions {
   sections?: boolean;
 }
 
+/**
+ * Which of this line's fields are the uncommon ones — the range's upper bound,
+ * a second measurement, the part it belongs to, the source line, its position,
+ * its removal. They are still on the form and still submit when hidden; a
+ * closed `<details>` does not stop a field being sent.
+ *
+ * They are revealed rather than removed, and revealed *by default* whenever any
+ * of them already carries a value, so a recipe that genuinely uses one is never
+ * quietly hiding it — including on a re-render after a refusal.
+ */
+function hasUncommonValues(values: LineFormValues, index: number): boolean {
+  return (
+    values.quantityMax.trim() !== "" ||
+    values.altQuantity.trim() !== "" ||
+    values.altUnit.trim() !== "" ||
+    values.section.trim() !== "" ||
+    values.remove ||
+    // A position that has been moved off its natural place is a decision
+    // somebody made, so it shows.
+    (values.position.trim() !== "" &&
+      values.position.trim() !== String(index + 1))
+  );
+}
+
 export function lineRow(
   line: DraftLine | LineFormValues,
   index: number,
@@ -67,67 +91,33 @@ export function lineRow(
   const needsAnswer =
     values.ingredientChoice === "" && proposedName !== "";
   const isNew = needsAnswer || values.ingredientChoice === "new";
+  const expanded = hasUncommonValues(values, index);
 
   return html`<li class="${isNew ? "line is-new" : "line"}">
-    ${isNew ? html`<span class="badge">Uusi aines</span>` : ""}
+    ${isNew
+      ? html`<span class="badge is-decision"
+          >${needsAnswer ? "Vastaa: uusi aines?" : "Uusi aines"}</span
+        >`
+      : ""}
 
+    <!-- The common path: how much, of what. Everything else is one tap down. -->
     <div class="amounts">
-      ${options.reorderable
-        ? html`<input
-            name="line.${index}.position"
-            inputmode="numeric"
-            value="${values.position}"
-            aria-label="Järjestys"
-            class="position"
-          />`
-        : ""}
       <input
         name="line.${index}.quantity"
         inputmode="decimal"
         value="${values.quantity}"
         aria-label="Määrä"
         placeholder="Määrä"
-      />
-      <input
-        name="line.${index}.quantityMax"
-        inputmode="decimal"
-        value="${values.quantityMax}"
-        aria-label="Välin yläpää"
-        placeholder="–"
+        class="qty"
       />
       <input
         name="line.${index}.unit"
         value="${values.unit}"
         aria-label="Yksikkö"
         placeholder="Yksikkö"
+        class="unit"
       />
     </div>
-
-    <div class="amounts">
-      <input
-        name="line.${index}.altQuantity"
-        inputmode="decimal"
-        value="${values.altQuantity}"
-        aria-label="Toinen määrä"
-        placeholder="Toinen määrä"
-      />
-      <input
-        name="line.${index}.altUnit"
-        value="${values.altUnit}"
-        aria-label="Toinen yksikkö"
-        placeholder="Toinen yksikkö"
-      />
-    </div>
-
-    ${options.sections
-      ? html`<input
-          name="line.${index}.section"
-          value="${values.section}"
-          aria-label="Osa"
-          placeholder="Osa (esim. juustokastike)"
-          class="section"
-        />`
-      : ""}
 
     <select name="line.${index}.ingredient" aria-label="Aines">
       <option value="" ${values.ingredientChoice === "" ? "selected" : ""}>
@@ -150,32 +140,139 @@ export function lineRow(
       )}
     </select>
 
-    <input
-      name="line.${index}.newName"
-      value="${values.newName}"
-      aria-label="Uuden aineksen nimi"
-      placeholder="Uuden aineksen nimi"
-    />
-    <input
-      name="line.${index}.source"
-      value="${values.sourceLine}"
-      aria-label="Lähderivi"
-      placeholder="Lähderivi"
-    />
+    <!-- The proposed name only earns its place while the line is asking to
+         create one. Otherwise it rides along below with the rest. -->
+    ${isNew
+      ? html`<input
+          name="line.${index}.newName"
+          value="${values.newName}"
+          aria-label="Uuden aineksen nimi"
+          placeholder="Uuden aineksen nimi"
+        />`
+      : ""}
 
     ${values.sourceLine === ""
       ? ""
       : html`<span class="source">${values.sourceLine}</span>`}
 
-    <label class="remove">
-      <input
-        type="checkbox"
-        name="line.${index}.remove"
-        ${values.remove ? "checked" : ""}
-      />
-      Poista rivi
-    </label>
+    <!-- Everything below is labelled rather than placeholdered: a filled field
+         shows no placeholder, so grouping these behind a disclosure without
+         labels would leave a column of naked numbers. -->
+    <details class="line-more" ${expanded ? "open" : ""}>
+      <summary>Lisätiedot</summary>
+
+      <div class="more-fields">
+        ${options.reorderable
+          ? field(
+              `line.${index}.position`,
+              "Järjestys",
+              values.position,
+              "numeric",
+            )
+          : ""}
+        ${field(
+          `line.${index}.quantityMax`,
+          "Välin yläpää",
+          values.quantityMax,
+          "decimal",
+        )}
+        ${field(
+          `line.${index}.altQuantity`,
+          "Toinen määrä",
+          values.altQuantity,
+          "decimal",
+        )}
+        ${field(`line.${index}.altUnit`, "Toinen yksikkö", values.altUnit)}
+        ${options.sections
+          ? field(
+              `line.${index}.section`,
+              "Osa (esim. juustokastike)",
+              values.section,
+            )
+          : ""}
+        ${isNew
+          ? ""
+          : field(
+              `line.${index}.newName`,
+              "Uuden aineksen nimi",
+              values.newName,
+            )}
+        ${field(`line.${index}.source`, "Lähderivi", values.sourceLine)}
+      </div>
+
+      <label class="remove">
+        <input
+          type="checkbox"
+          name="line.${index}.remove"
+          ${values.remove ? "checked" : ""}
+        />
+        Poista rivi
+      </label>
+    </details>
   </li>`;
+}
+
+/** One labelled field. The name doubles as the id, which is already unique. */
+function field(
+  name: string,
+  label: string,
+  value: string,
+  inputMode?: "numeric" | "decimal",
+): Raw {
+  return html`<div class="more-field">
+    <label for="${name}">${label}</label>
+    <input
+      id="${name}"
+      name="${name}"
+      value="${value}"
+      ${inputMode === undefined ? "" : raw(`inputmode="${inputMode}"`)}
+    />
+  </div>`;
+}
+
+/**
+ * The ingredient rows, with the unused spares folded away.
+ *
+ * Both screens append blank rows so a line the model missed can be added
+ * without JavaScript. Rendering them permanently means every recipe ends in
+ * three empty forms; putting them behind a disclosure keeps the add-a-line
+ * escape hatch and stops it being the last thing on the screen.
+ *
+ * Which rows are spare is not remembered between requests — it is read back off
+ * the values, as "everything after the last row anybody put anything in". A
+ * spare somebody filled in and had refused is therefore a real row again.
+ */
+export function lineRows(
+  rows: Array<DraftLine | LineFormValues>,
+  ingredients: IngredientSummary[],
+  options: LineRowOptions = {},
+): Raw {
+  const values = rows.map((row, index) =>
+    isLineFormValues(row) ? row : lineValuesFromDraft(row, index),
+  );
+
+  let realCount = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (!untouched(values[i]!)) realCount = i + 1;
+  }
+
+  const spares = values.slice(realCount);
+
+  return html`<ol class="edit-lines">
+      ${values
+        .slice(0, realCount)
+        .map((row, index) => lineRow(row, index, ingredients, options))}
+    </ol>
+    ${spares.length === 0
+      ? ""
+      : html`<details class="add-lines">
+          <summary>+ Lisää ainesrivi</summary>
+          <ol class="edit-lines" start="${realCount + 1}">
+            ${spares.map((row, offset) =>
+              lineRow(row, realCount + offset, ingredients, options),
+            )}
+          </ol>
+        </details>`}`;
 }
 
 export function emptyLine(): DraftLine {
@@ -219,16 +316,16 @@ export function lineValuesFromForm(
   index: number,
 ): LineFormValues {
   return {
-    position: field(form, `line.${index}.position`),
-    quantity: field(form, `line.${index}.quantity`),
-    quantityMax: field(form, `line.${index}.quantityMax`),
-    unit: field(form, `line.${index}.unit`),
-    altQuantity: field(form, `line.${index}.altQuantity`),
-    altUnit: field(form, `line.${index}.altUnit`),
-    section: field(form, `line.${index}.section`),
-    ingredientChoice: field(form, `line.${index}.ingredient`),
-    newName: field(form, `line.${index}.newName`),
-    sourceLine: field(form, `line.${index}.source`),
+    position: formField(form, `line.${index}.position`),
+    quantity: formField(form, `line.${index}.quantity`),
+    quantityMax: formField(form, `line.${index}.quantityMax`),
+    unit: formField(form, `line.${index}.unit`),
+    altQuantity: formField(form, `line.${index}.altQuantity`),
+    altUnit: formField(form, `line.${index}.altUnit`),
+    section: formField(form, `line.${index}.section`),
+    ingredientChoice: formField(form, `line.${index}.ingredient`),
+    newName: formField(form, `line.${index}.newName`),
+    sourceLine: formField(form, `line.${index}.source`),
     remove: form.get(`line.${index}.remove`) !== null,
   };
 }
@@ -337,9 +434,9 @@ export function stepValuesFromForm(form: FormData): StepFormValues[] {
 
     steps.push({
       index,
-      position: field(form, `step.${index}.position`),
+      position: formField(form, `step.${index}.position`),
       text: String(value),
-      section: field(form, `step.${index}.section`),
+      section: formField(form, `step.${index}.section`),
     });
   }
 
@@ -370,9 +467,9 @@ export function stepValuesForRendering(form: FormData): StepFormValues[] {
       seen.add(index);
       steps.push({
         index,
-        position: field(form, `step.${index}.position`),
+        position: formField(form, `step.${index}.position`),
         text: String(value),
-        section: field(form, `step.${index}.section`),
+        section: formField(form, `step.${index}.section`),
       });
     }
     return steps.sort((a, b) => a.index - b.index);
@@ -399,10 +496,10 @@ export function readSteps(form: FormData): StepToSave[] {
 }
 
 export function readIngredient(form: FormData, index: number): LineIngredient {
-  const choice = field(form, `line.${index}.ingredient`);
+  const choice = formField(form, `line.${index}.ingredient`);
 
   if (choice === "new") {
-    return { kind: "new", name: field(form, `line.${index}.newName`) };
+    return { kind: "new", name: formField(form, `line.${index}.newName`) };
   }
 
   const id = Number(choice);
@@ -475,7 +572,7 @@ function untouched(values: LineFormValues): boolean {
   );
 }
 
-function field(form: FormData, name: string): string {
+function formField(form: FormData, name: string): string {
   return String(form.get(name) ?? "");
 }
 

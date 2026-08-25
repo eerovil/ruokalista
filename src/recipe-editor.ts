@@ -6,7 +6,7 @@ import {
   emptyLine,
   FormRefused,
   lineCountForRendering,
-  lineRow,
+  lineRows,
   lineValuesFromForm,
   readLineCount,
   readLines,
@@ -237,11 +237,7 @@ function editorForm(
       />
 
       <h2>Ainekset</h2>
-      <ol class="edit-lines">
-        ${rows.map((line, index) =>
-          lineRow(line, index, ingredients, { reorderable: true }),
-        )}
-      </ol>
+      ${lineRows(rows, ingredients, { reorderable: true })}
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">

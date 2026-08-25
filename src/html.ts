@@ -256,6 +256,39 @@ const STYLES = `
     padding: .6rem; font-size: .75rem; color: var(--muted);
     border: 1px solid var(--edge); border-radius: var(--radius);
   }
+  .needs-answer {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .7rem .8rem; margin: 0 0 1rem;
+    font-size: .9rem; font-weight: 600;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-left-width: 4px; border-radius: var(--radius);
+  }
+  .line-more { margin-top: .5rem; }
+  .line-more > summary {
+    display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); cursor: pointer;
+    color: var(--muted); font-size: .8rem;
+  }
+  .more-fields {
+    display: grid; grid-template-columns: 1fr 1fr; gap: .5rem;
+    margin: .5rem 0;
+  }
+  .more-field label {
+    display: block; margin-bottom: .15rem;
+    color: var(--muted); font-size: .75rem;
+  }
+  .more-field input { min-height: var(--tap-compact); }
+  .add-lines { margin: .5rem 0 1rem; }
+  .add-lines > summary {
+    display: inline-flex; align-items: center;
+    min-height: var(--tap); cursor: pointer;
+    color: var(--accent); font-size: .9rem; font-weight: 600;
+  }
+  .amounts .qty { flex: 0 0 6rem; }
+  .badge.is-decision {
+    color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
+    font-weight: 600;
+  }
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;
     color: var(--warn); font-size: .9rem;

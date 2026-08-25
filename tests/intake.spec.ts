@@ -46,6 +46,69 @@ test("the unmatched line is the only one marked new", async ({ page }) => {
   await expect(page.locator(".line.is-new")).toContainText("hunaja");
 });
 
+test("a normal line shows what to check, not the storage schema", async ({
+  page,
+}) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  // Line 0 is "½ dl öljyä": an ordinary amount, unit and ingredient.
+  const ordinary = page.locator(".line").nth(0);
+  await expect(ordinary.locator('input[name$=".quantity"]')).toBeVisible();
+  await expect(ordinary.locator('input[name$=".unit"]')).toBeVisible();
+  await expect(ordinary.locator("select")).toBeVisible();
+
+  // The rare fields exist and will submit, but they are not in the way.
+  await expect(ordinary.locator('input[name$=".quantityMax"]')).toBeHidden();
+  await expect(ordinary.locator('input[name$=".altQuantity"]')).toBeHidden();
+  await expect(ordinary.locator('input[name$=".section"]')).toBeHidden();
+  await expect(ordinary.locator('input[name$=".source"]')).toBeHidden();
+  await expect(ordinary.locator('input[type=checkbox]')).toBeHidden();
+});
+
+test("a line that uses a rare field is already showing it", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  // Line 1 is the range "1–1 ja ½ l vettä"; line 2 the second measurement
+  // "½ (500 g) valkokaali". Neither may be hiding what it actually holds.
+  await expect(
+    page.locator(".line").nth(1).locator('input[name$=".quantityMax"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator(".line").nth(2).locator('input[name$=".altQuantity"]'),
+  ).toBeVisible();
+
+  // The ordinary line beside them stays folded.
+  await expect(
+    page.locator(".line").nth(0).locator('input[name$=".quantityMax"]'),
+  ).toBeHidden();
+});
+
+test("the screen says up front what it is waiting for", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  await expect(page.locator(".needs-answer")).toContainText("Yksi aines");
+
+  // Nothing has gone wrong yet, so it is not dressed as a refusal.
+  await expect(page.locator(".refused")).toHaveCount(0);
+});
+
+test("blank rows are not the last thing on the screen", async ({ page }) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+
+  // Five real lines are shown; the spares are behind an explicit add.
+  await expect(page.locator(".edit-lines").first().locator("> li")).toHaveCount(5);
+  await expect(
+    page.locator(".add-lines").getByText("+ Lisää ainesrivi"),
+  ).toBeVisible();
+  await expect(
+    page.locator(".add-lines .line").first().locator('input[name$=".quantity"]'),
+  ).toBeHidden();
+});
+
 test("the gate refuses a save while a line is unanswered", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);

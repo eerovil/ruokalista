@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { openMore, openSpareLines } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -57,8 +58,31 @@ test("editing a title and a quantity keeps the source text", async ({ page }) =>
   await expect(page.locator(".source-text")).toContainText("½ dl öljyä");
 });
 
+test("changing an amount needs no advanced controls opened", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+
+  // Only the two lines that actually hold something rare are open — the range
+  // and the second measurement. The ordinary ones are folded.
+  await expect(page.locator("details.line-more[open]")).toHaveCount(2);
+  await expect(
+    page.locator(".line").nth(0).locator("details.line-more"),
+  ).not.toHaveAttribute("open", "");
+
+  await page.locator(".line").first().locator("input[name$=quantity]").fill("2");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+  await expect(page.locator(".lines li").first()).toContainText("2 dl");
+});
+
 test("lines can be reordered by their position boxes", async ({ page }) => {
   await page.goto("/recipes/1/edit");
+
+  // Reordering is a line-management action, so it lives under Lisätiedot.
+  await openMore(page.locator(".line").nth(0));
+  await openMore(page.locator(".line").nth(1));
 
   const positions = page.locator(".line input[name$=position]");
   await positions.nth(0).fill("2");
@@ -75,6 +99,7 @@ test("a line can be removed", async ({ page }) => {
   const before = await page.locator(".lines li").count().catch(() => 0);
   expect(before).toBe(0); // we are on the editor, not the recipe
 
+  await openMore(page.locator(".line").first());
   await page.locator(".line").first().locator('input[type=checkbox]').check();
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
@@ -84,7 +109,9 @@ test("a line can be removed", async ({ page }) => {
 test("the approval gate applies to the editor too", async ({ page }) => {
   await page.goto("/recipes/1/edit");
 
-  // A spare row with an amount but no ingredient answered.
+  // A spare row with an amount but no ingredient answered. Spares are folded
+  // away until asked for.
+  await openSpareLines(page);
   const spare = page.locator(".line").nth(4);
   await spare.locator("input[name$=quantity]").first().fill("2");
   await spare.locator("input[name$=unit]").first().fill("rkl");
