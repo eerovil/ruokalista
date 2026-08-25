@@ -1,0 +1,122 @@
+name: Backup freshness
+
+on:
+  schedule:
+    - cron: "47 6 * * *"
+  workflow_dispatch:
+    inputs:
+      scheduled_at_override:
+        description: "Optional fixture timestamp; bypasses the private backup read"
+        required: false
+        type: string
+      now_override:
+        description: "Optional fixture clock paired with scheduled_at_override"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read latest backup timestamp
+        id: snapshot
+        env:
+          BACKUP_REPO_READ_TOKEN: ${{ secrets.BACKUP_REPO_READ_TOKEN }}
+          SCHEDULED_AT_OVERRIDE: ${{ inputs.scheduled_at_override }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${SCHEDULED_AT_OVERRIDE:-}" ]; then
+            scheduled_at="$SCHEDULED_AT_OVERRIDE"
+          else
+            if [ -z "${BACKUP_REPO_READ_TOKEN:-}" ]; then
+              echo "BACKUP_REPO_READ_TOKEN is not configured" >&2
+              exit 1
+            fi
+
+            snapshot=$(mktemp)
+            trap 'rm -f "$snapshot"' EXIT
+            status=$(curl -sS -L -o "$snapshot" -w '%{http_code}' \
+              -H "Accept: application/vnd.github.raw+json" \
+              -H "Authorization: Bearer $BACKUP_REPO_READ_TOKEN" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              https://api.github.com/repos/eerovil/ruokalista-backup/contents/snapshot.json)
+
+            if [ "$status" != "200" ]; then
+              echo "private backup snapshot read failed: HTTP $status" >&2
+              exit 1
+            fi
+
+            scheduled_at=$(jq -er '.scheduled_at | select(type == "string")' "$snapshot") || {
+              echo "snapshot.json has no valid scheduled_at string" >&2
+              exit 1
+            }
+          fi
+
+          {
+            echo 'scheduled_at<<EOF'
+            printf '%s\n' "$scheduled_at"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Maintain stale-backup issue
+        uses: actions/github-script@v7
+        env:
+          SCHEDULED_AT: ${{ steps.snapshot.outputs.scheduled_at }}
+          NOW_OVERRIDE: ${{ inputs.now_override }}
+        with:
+          script: |
+            const staleTitle = "backup stale";
+            const maxAgeMs = 36 * 60 * 60 * 1000;
+            const scheduledAt = process.env.SCHEDULED_AT || "";
+            const now = new Date(process.env.NOW_OVERRIDE || Date.now());
+
+            let problem = "";
+            const scheduled = Date.parse(scheduledAt);
+            if (!Number.isFinite(scheduled)) {
+              problem = `latest backup has an invalid scheduled_at timestamp: ${scheduledAt}`;
+            } else {
+              const ageMs = now.getTime() - scheduled;
+              if (ageMs > maxAgeMs) {
+                problem = `latest scheduled backup is ${Math.floor(ageMs / 3600000)}h old (${scheduledAt})`;
+              }
+            }
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const staleIssues = issues.filter(
+              (issue) => !issue.pull_request && issue.title === staleTitle,
+            );
+
+            if (problem) {
+              if (staleIssues.length === 0) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: staleTitle,
+                  body: `The independent backup watchdog failed at ${now.toISOString()}.\n\n${problem}`,
+                });
+              }
+              core.setFailed(problem);
+              return;
+            }
+
+            for (const issue of staleIssues) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+            }
+
+            core.info(`backup is fresh: ${scheduledAt}`);
