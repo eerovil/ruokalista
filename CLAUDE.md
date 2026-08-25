@@ -123,6 +123,24 @@ route needs the island either way: downscaling a photograph is a canvas job.
 as a dependency. `dev/` is outside the Worker's tsconfig on purpose: node's
 globals clash with the Workers ones.
 
+## Browser tests
+
+    ./scripts/playwright.sh npx playwright test
+
+Runs in Microsoft's Playwright image, which already carries the browsers —
+installing them into the plain node image would need root for apt. The config
+starts its own `wrangler dev` and each spec reseeds the local database first, so
+a test that saves a recipe cannot change what a later test sees.
+
+**No browser test calls Anthropic.** `tests/support/draft.ts` intercepts
+`/api/intake/structure` with `page.route()` and answers from a fixture, so the
+suite is free to run as often as you like. That fixture is also what makes the
+approval gate testable: one of its lines is deliberately unmatched.
+
+Screenshots land in `docs/screenshots/` and are committed as review artifacts —
+nothing compares them, so they cannot fail a build. Regenerate with
+`./scripts/playwright.sh npx playwright test screenshots`.
+
 ## HTML
 
 `src/html.ts` holds the one shell and the `html` tagged template, which escapes
