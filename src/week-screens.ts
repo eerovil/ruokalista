@@ -98,7 +98,11 @@ function slotBlock(date: string, slot: Slot, entries: MealEntry[]): Raw {
 
 function entryRow(entry: MealEntry): Raw {
   return html`<li class="entry">
-    <a href="/recipes/${entry.recipeId}">${entry.title}</a>
+    <!-- The day's portion count travels with the link, so the recipe opens at
+         the amounts this meal actually needs. -->
+    <a href="/recipes/${entry.recipeId}?portions=${entry.portions}"
+      >${entry.title}</a
+    >
     <form method="post" action="/meal-entries/${entry.id}/portions" class="inline">
       <!-- Which week to come back to. Without it you land on today's week,
            which is not the one you were looking at. -->

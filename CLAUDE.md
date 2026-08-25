@@ -137,6 +137,21 @@ recipe you edit on its own screen.
 See `docs/adr/0002-a-part-is-a-recipe.md`, including what it deliberately does
 not decide — scaling parts with the parent is still open.
 
+## Scaling
+
+A recipe opened from a day carries that day's portions: the week links to
+`/recipes/:id?portions=N`. `src/scaling.ts` turns that into a factor, and a
+dish's factor reaches into its parts — a part has no yield of its own because it
+is a piece of the dish.
+
+Amounts round to what a cook can measure rather than to what the arithmetic
+says: 5 dl times 1⅓ reads 6½ dl, not 6,666. Small amounts keep quarters, larger
+ones go to halves and then whole numbers, weights go to the nearest 5 or 10 g.
+The source line underneath always still says what the page said.
+
+A recipe with no stated yield cannot be scaled and says so — there is nothing to
+scale *from*.
+
 ## Browser tests
 
     ./scripts/playwright.sh npx playwright test
