@@ -16,6 +16,9 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# shellcheck source=scripts/lib-cloudflare.sh
+. ./scripts/lib-cloudflare.sh
+
 failures=""
 
 put_secret() {
