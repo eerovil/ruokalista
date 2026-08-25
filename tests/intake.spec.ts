@@ -325,6 +325,30 @@ test("steps can be reordered before saving", async ({ page }) => {
   await expect(steps.nth(1)).toContainText("Kuullota kaali");
 });
 
+test("the sample draft opens the review without calling anything", async ({
+  page,
+}) => {
+  // Deliberately no stub: if this reached the model the request would fail,
+  // because CI writes a .dev.vars with no key at all.
+  let called = 0;
+  await page.route("**/api/intake/structure", (route) => {
+    called += 1;
+    return route.abort();
+  });
+
+  await page.goto("/intake");
+  await page.getByRole("button", { name: "Avaa esimerkkiluonnos" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.locator(".review-title")).toHaveText("Uunikaali");
+  expect(called).toBe(0);
+
+  // And it is the real save, not a mock of one.
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(page.locator(".lines li")).toHaveCount(5);
+});
+
 test("a failed structuring keeps what was typed", async ({ page }) => {
   await page.route("**/api/intake/structure", (route) =>
     route.fulfill({ status: 503, body: '{"error":"Kokeile myöhemmin."}' }),

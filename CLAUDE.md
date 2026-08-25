@@ -96,6 +96,21 @@ so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
 
+**To walk the import flow by hand, use the sample draft and spend nothing.**
+A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
+`src/sample-draft.ts` to the same `/intake/correct` the streaming island hands
+over to, so the review, the editor and the save are all the real ones — only
+the model call is skipped. That is the same fixture the browser suite answers
+`/api/intake/structure` from, so there is one draft rather than two that drift.
+
+The button exists only when `isLocalOrigin` (`src/public-origin.ts`) says the
+browser reached a loopback or private-network address. It is not a flag or an
+env var on purpose: a deployed Worker is only ever addressed by a public
+hostname, so nothing you can misconfigure — including `wrangler secret put` —
+turns it on live. `dev/check-local-origin.ts` checks that gate directly,
+because a browser test always runs on 127.0.0.1 and would agree with any
+implementation that just returned true.
+
 **The API key has a small balance, so do not re-run imports casually.** Almost
 everything is testable without spending anything: the correction screen, the
 approval gate and the save path all take an ordinary form post, so exercise them
