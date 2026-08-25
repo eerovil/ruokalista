@@ -26,6 +26,12 @@ interface Options {
 
 type BackupRow = Record<string, string | number | boolean | null>;
 
+const PRODUCTION_DATABASE_SELECTORS = new Set([
+  "ruokalista",
+  "DB",
+  "f81fabeb-b38f-453d-8966-dfe52c721341",
+]);
+
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
@@ -39,8 +45,8 @@ async function main(): Promise<void> {
   // is allowed to write even migrations to the target.
   const snapshot = await parseAndValidateSnapshot(snapshotText);
 
-  if (options.remote && options.database === "ruokalista") {
-    throw new Error("refusing to restore into the production database 'ruokalista'");
+  if (options.remote && PRODUCTION_DATABASE_SELECTORS.has(options.database)) {
+    throw new Error(`refusing to restore into production database selector '${options.database}'`);
   }
 
   runWrangler([
