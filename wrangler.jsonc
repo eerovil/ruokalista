@@ -8,6 +8,19 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Keep the runtime secret contract explicit. Wrangler validates these names
+  // against the Worker before deploy, and local development only exposes listed
+  // keys from .dev.vars/.env when this block is present.
+  "secrets": {
+    "required": [
+      "SESSION_SECRET",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "ANTHROPIC_API_KEY",
+      "BACKUP_GITHUB_TOKEN"
+    ]
+  },
+
   // Temporary #64 acceptance-run schedule. Cron Triggers use UTC; after the
   // real production snapshot + restore drill, restore the normal 02:17 UTC cron.
   "triggers": { "crons": ["30 14 * * *"] },
