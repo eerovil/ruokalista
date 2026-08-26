@@ -110,6 +110,9 @@ test("the panel lists both admin tools", async ({ context, page }) => {
     "href",
     "/admin/recipe-images",
   );
+  await expect(page.getByRole("link", { name: /Reseptikuvat/ })).toContainText(
+    "hallitse niiden kuvia",
+  );
   await expect(
     page.getByRole("link", { name: /Tuo AgentDeck-reseptejä/ }),
   ).toHaveAttribute("href", "/intake/batch");

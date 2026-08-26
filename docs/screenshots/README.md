@@ -34,4 +34,4 @@ Regenerate after a change that alters a screen:
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
 | `28-week-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
 | `29-week-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
-| `30-admin.png` | Proposed admin panel: the recipe image generator and the AgentDeck import |
+| `30-admin.png` | Proposed admin panel: recipe image management and the AgentDeck import |

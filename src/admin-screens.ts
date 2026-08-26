@@ -29,8 +29,8 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
             <span class="recipes-text">
               Reseptikuvat
               <span class="meta">
-                Katso mistä resepteistä kuva puuttuu tai on vanhentunut, ja luo
-                ne enintään 16 reseptin erissä.
+                Katso mistä resepteistä kuva puuttuu tai on vanhentunut, ja
+                hallitse niiden kuvia.
               </span>
             </span>
           </a>
