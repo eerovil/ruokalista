@@ -7,6 +7,8 @@
  * escaping, so it is also the only thing to look at when reviewing for XSS.
  */
 
+import { PWA_CLIENT_SCRIPT, THEME_COLOR } from "./pwa-content.ts";
+
 export class Raw {
   constructor(readonly value: string) {}
 }
@@ -99,7 +101,7 @@ const STYLES = `
   .topbar {
     position: sticky; top: 0; z-index: 2;
     display: flex; align-items: center; justify-content: space-between; gap: .5rem;
-    margin: 0 auto; padding: .5rem 1rem;
+    margin: 0 auto; padding: calc(.5rem + env(safe-area-inset-top)) 1rem .5rem;
     max-width: 40rem;
     background: var(--bg);
   }
@@ -514,6 +516,14 @@ export function page(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="${THEME_COLOR}">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Ruokalista">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>${title} · Ruokalista</title>
 <style>${raw(STYLES)}</style>
 </head>
@@ -528,6 +538,7 @@ ${signedIn
 ${body}
 </main>
 ${signedIn ? tabs(shell) : ""}
+<script>${raw(PWA_CLIENT_SCRIPT)}</script>
 </body>
 </html>`;
 
