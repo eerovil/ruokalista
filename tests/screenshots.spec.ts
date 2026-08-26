@@ -409,19 +409,12 @@ test.describe("signed in as an admin", () => {
   });
 
   test("choosing which recipes get a picture", async ({ page }) => {
-    const sheet = readFileSync(
-      new URL("./fixtures/contact-sheet.png", import.meta.url),
-    ).toString("base64");
-
     // A household in the middle of things, which is the only state this screen
     // is interesting in: one recipe with no picture, one with a picture
     // somebody uploaded, and one whose generated picture no longer matches the
     // recipe. Two real pictures are cut from the fixture sheet first, then
     // re-recorded as those two kinds — nothing here is drawn by hand.
-    const generated = await page.request.post("/api/admin/recipe-images/generate", {
-      data: { recipeIds: [2, 3], sheetBase64: sheet },
-    });
-    expect((await generated.json()).stored).toBe(2);
+    await splitSheet(page, [2, 3]);
 
     const asUploaded = await page.request.get("/api/recipes/2/image");
     await page.request.put("/api/recipes/2/image", {
@@ -431,7 +424,7 @@ test.describe("signed in as an admin", () => {
 
     const asStale = await page.request.get("/api/recipes/3/image");
     await page.request.put(
-      "/api/recipes/3/image?origin=generated&fingerprint=vanha&model=openai:gpt-image-2/s1",
+      "/api/recipes/3/image?origin=generated&fingerprint=vanha&model=supplied:manual/s1",
       { headers: { "content-type": "image/png" }, data: await asStale.body() },
     );
 
@@ -443,49 +436,35 @@ test.describe("signed in as an admin", () => {
       fullPage: true,
     });
 
+    // The working screen: the prompt to copy, the numbered manifest, and the
+    // field the finished sheet comes back to. Nothing on it costs anything.
     await page.goto("/admin/recipe-images/confirm?id=1&id=3");
-    await expect(page.locator(".image-manifest li")).toHaveCount(2);
+    await expect(page.locator("#split-manifest li")).toHaveCount(2);
+    await expect(page.locator("#sheet-prompt")).toContainText("4-column by 4-row grid");
     await page.screenshot({
       path: `${SHOTS}/33-admin-recipe-images-confirm.png`,
       fullPage: true,
     });
 
-    // The paid button, pressed with the sheet supplied rather than bought.
-    await page.locator("#generate").evaluate((form, bytes) => {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = "sheetBase64";
-      input.value = bytes as string;
-      form.appendChild(input);
-    }, sheet);
-    await page.getByRole("button", { name: /Luo kuvat nyt/ }).click();
-
-    await expect(page.getByRole("heading", { name: "Kuvat luotu" })).toBeVisible();
-    const pictured = page.locator(".image-list .recipe-image img");
+    // And the same screen after the browser has cut a sheet and stored it.
+    await putSheetOnInput(page);
+    await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
+    await expect(page.locator("#split-note")).toContainText("2 / 2 reseptiä sai kuvan.", {
+      timeout: 30_000,
+    });
+    const pictured = page.locator("#split-manifest .recipe-image img");
     await expect(pictured).toHaveCount(2);
-    for (let at = 0; at < 2; at += 1) {
-      await expect(pictured.nth(at)).not.toHaveJSProperty("naturalWidth", 0);
-    }
     await page.screenshot({
       path: `${SHOTS}/34-admin-recipe-images-done.png`,
       fullPage: true,
     });
   });
 
-  test("recipes pictured from one generated contact sheet", async ({ page }) => {
-    // The sheet is the real one bought while #96 was built, supplied rather
-    // than re-bought — see tests/recipe-image-batch.spec.ts. Three recipes take
+  test("recipes pictured from one contact sheet", async ({ page }) => {
+    // The sheet is the real one bought while #96 was built, before #111 removed
+    // the paid route — see tests/recipe-image-admin.spec.ts. Three recipes take
     // cells 1 to 3 of it, which is what these two shots are of.
-    const sheet = readFileSync(
-      new URL("./fixtures/contact-sheet.png", import.meta.url),
-    ).toString("base64");
-
-    const generated = await page.request.post(
-      "/api/admin/recipe-images/generate",
-      { data: { recipeIds: [1, 2, 3], sheetBase64: sheet } },
-    );
-    expect(generated.status()).toBe(200);
-    expect((await generated.json()).stored).toBe(3);
+    await splitSheet(page, [1, 2, 3]);
 
     await page.goto("/recipes");
     // Every row pictured, and loaded rather than a broken-image icon: the shot
@@ -530,4 +509,31 @@ async function setCoverage(
     },
   });
   expect(response.status()).toBe(204);
+}
+
+/**
+ * Give some recipes real pictures, by cutting the committed sheet the way an
+ * admin does.
+ *
+ * There is no server route that does this any more: since #111 the split runs
+ * in the browser, so a screenshot that wants pictured recipes has to walk the
+ * actual screen. Which is no loss — it means these shots are of the flow as it
+ * ships rather than of a state only a test could reach.
+ */
+async function splitSheet(page: Page, recipeIds: readonly number[]): Promise<void> {
+  await page.goto(`/admin/recipe-images/confirm?${recipeIds.map((id) => `id=${id}`).join("&")}`);
+  await putSheetOnInput(page);
+  await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
+  await expect(page.locator("#split-note")).toContainText(
+    `${recipeIds.length} / ${recipeIds.length} reseptiä sai kuvan.`,
+    { timeout: 30_000 },
+  );
+}
+
+async function putSheetOnInput(page: Page): Promise<void> {
+  await page.locator("#sheet").setInputFiles({
+    name: "contact-sheet.png",
+    mimeType: "image/png",
+    buffer: readFileSync(new URL("./fixtures/contact-sheet.png", import.meta.url)),
+  });
 }

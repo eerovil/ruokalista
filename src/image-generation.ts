@@ -1,15 +1,27 @@
-import type { Env } from "./env.ts";
 import { GRID, MAX_CELLS } from "./contact-sheet.ts";
 import type { FingerprintRecipe } from "./recipe-fingerprint.ts";
 
 /**
- * Asking for sixteen recipe pictures with one paid request.
+ * The prompt that asks for sixteen recipe pictures at once, and nothing that
+ * sends it.
  *
- * The trick is that the picture we buy is not a picture of a dish — it is a
- * *contact sheet*: one square image holding a 4×4 grid of sixteen dishes on
- * transparent background, which `contact-sheet.ts` then cuts apart locally for
- * nothing. So a household of a hundred recipes costs seven requests rather than
- * a hundred, and the per-dish price falls by the same factor.
+ * The picture wanted here is not a picture of a dish — it is a *contact sheet*:
+ * one square image holding a 4x4 grid of sixteen dishes on transparent
+ * background, which `contact-sheet.ts` cuts apart into sixteen recipe pictures.
+ * Sixteen dishes for one drawing is the whole point, whoever does the drawing.
+ *
+ * **There is no image API call in this app.** #96 built one, against OpenAI,
+ * and #111 removed it: the Workers Free plan gives a request 10 ms of CPU, and
+ * cutting one sheet needs well over a second of it, so the paid route could
+ * never finish. The one live attempt ran 178 seconds, was killed with
+ * `exceededResources`, and threw away the sheet it had just bought. See
+ * `docs/adr/0005-the-worker-does-no-pixel-work.md`.
+ *
+ * So what is left is the prompt, which an admin copies and takes to whichever
+ * image tool they like. That makes this module the shared contract rather than
+ * an implementation detail: the sheet the admin brings back is cut against the
+ * grid this prompt asked for, and the two agreeing is what makes the mapping
+ * from cell to recipe true.
  *
  * Three things about the prompt are load-bearing rather than decorative:
  *
@@ -19,7 +31,9 @@ import type { FingerprintRecipe } from "./recipe-fingerprint.ts";
  *     a cell back to a recipe. Unused cells are asked for empty and ignored.
  *   - It asks for generous transparent gutters and for each dish to sit well
  *     inside its cell. That slack is what the splitter recovers with when the
- *     model draws a little outside the lines, which a real test sheet did.
+ *     drawing strays a little outside the lines, which a real sheet did. The
+ *     transparency is not cosmetic either: it is the only thing the dishes are
+ *     told apart by, and a sheet without it is refused by name.
  *   - It renders no text. No recipe names, no labels, no numbers. The mapping
  *     from cell to recipe is positional, so a rendered name would be something
  *     to misread rather than something to read.
@@ -31,78 +45,29 @@ import type { FingerprintRecipe } from "./recipe-fingerprint.ts";
  */
 
 /**
- * The provider and model, explicit in code for the same reason the intake
- * model is: an environment override is how the closed attempt's model choice
- * drifted, and this one spends money per call.
- */
-const PROVIDER = "openai";
-
-/**
- * `gpt-image-2` rather than `gpt-image-1`, and the reason is a date: at the time
- * of writing the account's `gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`
- * and `chatgpt-image-latest` all carry a retirement date within a few months,
- * and `gpt-image-2` carries none. A model id in code is a thing somebody has to
- * come back and change, so it may as well be the one that is not already dated.
- */
-const MODEL = "gpt-image-2";
-
-/**
- * The one square size this model offers. Sixteen cells of a 1,024 px sheet are
- * 256 px each, which is the ceiling on how detailed one dish can be — the price
- * of batching, paid in pixels rather than in money.
- */
-const SIZE = "1024x1024";
-
-/**
- * Quality, and the cost dial.
- *
- * One real sheet was bought while building this, and it is the fixture in
- * `tests/fixtures/contact-sheet.png`. What it cost, measured from the API's own
- * `usage`, is **7,024 image output tokens plus 487 text input tokens** for eight
- * dishes at `high` on a 1,024-square.
- *
- * That token count is the durable fact and is what to do arithmetic with. The
- * money is not quoted here on purpose: image-output pricing is per model and has
- * moved more than once, and a stale dollar figure in a comment is worse than no
- * figure, because it reads like something that was checked. Multiply the tokens
- * by GPT Image 2's current image-output rate on OpenAI's pricing page — and note
- * that the sixteen-dish batch this is built for divides that one sheet's cost by
- * sixteen, which is the whole economic point.
- *
- * `medium` and `low` cost materially fewer tokens per sheet. High is chosen
- * because sixteen dishes share one image: whatever detail is lost here is lost
- * again when one cell of a 1,024 px sheet becomes a recipe's picture.
- */
-const QUALITY = "high";
-
-/**
  * Bumped whenever the style text below changes. Stored with every generated
  * picture, so a household can be told which rules drew what.
  */
 export const STYLE_VERSION = "s1";
 
-/** What gets written into `image_generated_by`. Provider, model and style. */
-export const GENERATED_BY = `${PROVIDER}:${MODEL}/${STYLE_VERSION}`;
-
 /**
- * A batch's worth of paid work is one request, so it gets a long leash — image
- * generation of this size routinely takes a minute or more. It is still bounded:
- * a request that never answers must fail rather than hold a Worker open.
+ * What gets written into `image_generated_by`.
+ *
+ * It used to name the provider and model that were paid for the sheet. Nothing
+ * is paid now, and nothing here knows which tool the admin used — they copied a
+ * prompt and came back with a file — so what it records is the true and useful
+ * part: a person supplied the sheet, drawn to our prompt under this style
+ * version. Bumping `STYLE_VERSION` therefore dates every picture in the
+ * household, which is the point of storing it at all.
+ *
+ * Pictures made before #111 carry `openai:gpt-image-2/s1`. Those are still
+ * generated pictures drawn from the same style text, so they read as fresh and
+ * are compared the same way; only the string differs.
  */
-const TIMEOUT_MS = 180_000;
-
-/**
- * A cap on the response we will read, before reading it. A transparent 1,024 px
- * PNG is a megabyte or two, and base64 inflates it by a third; twenty is room
- * for a surprising sheet and a refusal for a runaway one.
- */
-const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+export const GENERATED_BY = `supplied:manual/${STYLE_VERSION}`;
 
 /** How many ingredients of a dish reach the brief. */
 const INGREDIENTS_PER_DISH = 8;
-
-/** What went wrong, in words a caller can report. Never carries the key. */
-export class GenerationError extends Error {}
 
 /** One requested dish, in manifest order. */
 export interface DishBrief {
@@ -110,17 +75,6 @@ export interface DishBrief {
   title: string;
   /** The ingredient names that decide what the dish looks like. */
   ingredients: string[];
-}
-
-/** What came back, and what it cost to describe. */
-export interface GeneratedSheet {
-  /** PNG bytes of the whole 4×4 sheet. */
-  png: Uint8Array;
-  model: string;
-  styleVersion: string;
-  generatedBy: string;
-  /** The provider's own token accounting, when it reports any. */
-  usage: unknown;
 }
 
 /**
@@ -209,146 +163,4 @@ export function sheetPrompt(dishes: readonly DishBrief[]): string {
     "The dishes, in grid order:",
     ...cells,
   ].join("\n");
-}
-
-/**
- * Buy one contact sheet. One request for the whole batch — that is the entire
- * economic point, so there is no per-dish path here to fall back to.
- *
- * A refusal is a `GenerationError` with something a caller can show. The key
- * never appears in one, and neither does the recipe payload: what is worth
- * logging about a generation is which model, how many dishes and what the
- * provider said, not the household's private recipes.
- */
-export async function generateContactSheet(
-  env: Env,
-  dishes: readonly DishBrief[],
-): Promise<GeneratedSheet> {
-  const key = env.OPENAI_API_KEY;
-  if (!key) {
-    throw new GenerationError("Image generation is not configured on this deployment.");
-  }
-
-  const body = JSON.stringify({
-    model: MODEL,
-    prompt: sheetPrompt(dishes),
-    n: 1,
-    size: SIZE,
-    quality: QUALITY,
-    // Transparency is not cosmetic: it is what makes the sheet separable at
-    // all, because the splitter finds a dish by following its own alpha.
-    background: "transparent",
-    output_format: "png",
-  });
-
-  let response: Response;
-  try {
-    response = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-      },
-      body,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch (error) {
-    const why = error instanceof Error && error.name === "TimeoutError"
-      ? `no answer within ${Math.round(TIMEOUT_MS / 1000)} seconds`
-      : "the request could not be made";
-    throw new GenerationError(`Image generation failed: ${why}.`);
-  }
-
-  const text = await readBounded(response);
-
-  if (!response.ok) {
-    throw new GenerationError(
-      `Image generation failed: ${MODEL} answered ${response.status}. ${providerMessage(text)}`,
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new GenerationError("Image generation returned something that is not JSON.");
-  }
-
-  const base64 = firstImage(parsed);
-  if (base64 === null) {
-    throw new GenerationError("Image generation returned no image.");
-  }
-
-  return {
-    png: decodeBase64(base64),
-    model: MODEL,
-    styleVersion: STYLE_VERSION,
-    generatedBy: GENERATED_BY,
-    usage: (parsed as { usage?: unknown }).usage ?? null,
-  };
-}
-
-/**
- * Read the body, stopping if it grows past the cap. The declared length is
- * checked first where there is one, but it is the caller's claim rather than a
- * fact, so the read is bounded as it goes too.
- */
-async function readBounded(response: Response): Promise<string> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-    throw new GenerationError("Image generation returned more data than we will read.");
-  }
-
-  if (response.body === null) return "";
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let out = "";
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new GenerationError("Image generation returned more data than we will read.");
-    }
-    out += decoder.decode(value, { stream: true });
-  }
-
-  return out + decoder.decode();
-}
-
-/** gpt-image-1 always answers with base64; there is no URL form to fall back to. */
-function firstImage(parsed: unknown): string | null {
-  const data = (parsed as { data?: unknown }).data;
-  if (!Array.isArray(data) || data.length === 0) return null;
-  const first = data[0] as { b64_json?: unknown };
-  return typeof first?.b64_json === "string" && first.b64_json.length > 0
-    ? first.b64_json
-    : null;
-}
-
-/** The provider's own explanation, if it gave one, and nothing else. */
-function providerMessage(text: string): string {
-  try {
-    const error = (JSON.parse(text) as { error?: { message?: unknown } }).error;
-    if (typeof error?.message === "string") return error.message;
-  } catch {
-    // Not JSON. Saying so is more use than echoing an HTML error page.
-  }
-  return "No explanation was given.";
-}
-
-function decodeBase64(value: string): Uint8Array {
-  let binary: string;
-  try {
-    binary = atob(value);
-  } catch {
-    throw new GenerationError("Image generation returned an image we cannot decode.");
-  }
-  const out = new Uint8Array(binary.length);
-  for (let at = 0; at < binary.length; at += 1) out[at] = binary.charCodeAt(at);
-  return out;
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MAX_CELLS,
+  NO_TRANSPARENCY,
   OUTPUT_EDGE,
   splitContactSheet,
   type SplitResult,
@@ -37,9 +38,19 @@ function ok(result: SplitResult): Extract<SplitResult, { ok: true }> {
   return result as Extract<SplitResult, { ok: true }>;
 }
 
-function refused(result: SplitResult): Extract<SplitResult, { ok: false }> {
+/**
+ * A sheet refused cell by cell. Distinct from a sheet refused whole — the
+ * transparency case below — because the two are answered differently on screen:
+ * one names the cells, the other names the sheet.
+ */
+function refused(result: SplitResult): Extract<SplitResult, { kind: "cells" }> {
   assert.equal(result.ok, false, "expected the sheet to be refused");
-  return result as Extract<SplitResult, { ok: false }>;
+  assert.equal(
+    (result as Extract<SplitResult, { ok: false }>).kind,
+    "cells",
+    `expected per-cell problems, got ${JSON.stringify(result)}`,
+  );
+  return result as Extract<SplitResult, { kind: "cells" }>;
 }
 
 test("a full sheet yields sixteen square crops, in manifest order", async () => {
@@ -255,4 +266,52 @@ test("a crop keeps the dish's shape rather than stretching it", async () => {
   const middle = (OUTPUT_EDGE / 2) * OUTPUT_EDGE * 4;
   assert.equal(image.data[middle + (OUTPUT_EDGE / 2) * 4 + 3], 255);
   assert.equal(image.data[3], 0);
+});
+
+/**
+ * The refusal an external image tool is most likely to earn (#111).
+ *
+ * The sheet is no longer drawn by an API this app calls; an admin copies the
+ * prompt and brings a file back from whichever tool they chose, and plenty of
+ * those flatten transparency on export. A flat opaque sheet is one enormous
+ * connected component, so without this check the flood fill would report every
+ * cell as joined to every other — sixteen identical complaints for one cause.
+ *
+ * There is deliberately no white-background fallback. Deciding which white
+ * pixels are plate and which are background is guesswork, and guessing wrong
+ * puts half of somebody else's dinner on a recipe.
+ */
+test("a sheet with no transparency is refused whole, naming transparency", async () => {
+  const sheet = blank(SHEET, SHEET);
+  // Opaque everywhere, with dishes drawn on it — a perfectly good-looking sheet
+  // that happens to have been exported onto a background.
+  for (let at = 3; at < sheet.data.length; at += 4) sheet.data[at] = 255;
+  for (let index = 0; index < 4; index += 1) dish(sheet, index);
+
+  const result = await splitContactSheet(await png(sheet), 4);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.kind, "sheet", "the sheet is refused whole, not cell by cell");
+  if (result.kind !== "sheet") return;
+  assert.equal(result.reason, NO_TRANSPARENCY);
+  assert.match(result.reason, /transparen/);
+});
+
+/**
+ * And the other side of it: the padding the splitter does itself must not be
+ * mistaken for the transparency it requires. A sheet whose edges are not a
+ * multiple of four is padded transparent, so the check has to run on the
+ * decoded image rather than the padded one — otherwise every flattened sheet of
+ * an awkward size would slip through and be mis-cut.
+ */
+test("the splitter's own padding does not count as transparency", async () => {
+  const sheet = blank(SHEET + 2, SHEET + 2);
+  for (let at = 3; at < sheet.data.length; at += 4) sheet.data[at] = 255;
+  for (let index = 0; index < 2; index += 1) dish(sheet, index);
+
+  const result = await splitContactSheet(await png(sheet), 2);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.kind, "sheet");
 });

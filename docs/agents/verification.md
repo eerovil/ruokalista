@@ -44,8 +44,8 @@ Which spec covers what, roughly:
 | parts of a dish | `parts.spec.ts` |
 | import, the review screen, the streaming island | `intake.spec.ts`, `batch-intake.spec.ts` |
 | pictures, upload, the bulk API | `recipe-images.spec.ts` |
-| generating pictures, the contact sheet | `recipe-image-batch.spec.ts` |
-| the admin screen that chooses which pictures to generate | `recipe-image-admin.spec.ts` |
+| the contact-sheet splitter, the crop rules | `dev/check-contact-sheet.ts` |
+| choosing recipes, the copied prompt, cutting a sheet in the browser | `recipe-image-admin.spec.ts` |
 | sign-in, sessions, the development shortcut | `auth.spec.ts` |
 | the admin gate, the admin screen | `admin.spec.ts` |
 | the shell, the tabs, navigation | `shell.spec.ts` |

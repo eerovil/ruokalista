@@ -3,7 +3,6 @@ import test from "node:test";
 
 import type { Env } from "../src/env.ts";
 import { encodePng } from "../src/png.ts";
-import { commitCrops, type CropPlan } from "../src/recipe-image-batch.ts";
 import { removeRecipeImage, storeRecipeImage } from "../src/recipe-images.ts";
 
 /**
@@ -21,9 +20,17 @@ import { removeRecipeImage, storeRecipeImage } from "../src/recipe-images.ts";
  *     recipe or deleted. An object in R2 with nothing pointing at it is a bill
  *     nobody can explain and a file nobody can find.
  *   - **No lost updates.** A write that was planned against a picture somebody
- *     has since replaced must decline, not overwrite. The generator reads a
- *     recipe, waits minutes for a drawing, and comes back to a row that may
- *     have moved on.
+ *     has since replaced must decline, not overwrite. The image screen reads a
+ *     recipe, the admin goes away to draw a sheet, and the crops come back to
+ *     rows that may have moved on.
+ *
+ * Since #111 the batch loop itself runs in the admin's browser
+ * (`src/client/recipe-image-split.ts`), because the Worker's plan gives a
+ * request 10 ms of CPU and cutting a sheet needs a hundred times that. The
+ * batch section at the bottom therefore drives the same *sequence* of
+ * `storeRecipeImage` calls that loop makes, which is where every property worth
+ * defending actually lives — the browser adds only which order to call them in
+ * and what to say afterwards.
  */
 
 /** A bucket that remembers what it holds and can be told to fail. */
@@ -109,17 +116,6 @@ async function png(): Promise<ArrayBuffer> {
   const data = new Uint8Array(8 * 8 * 4).fill(200);
   const bytes = await encodePng({ width: 8, height: 8, data });
   return bytes.slice().buffer;
-}
-
-function plan(overrides: Partial<CropPlan> = {}): CropPlan {
-  return {
-    cell: 0,
-    recipeId: 1,
-    title: "Kaalilaatikko",
-    fingerprint: "abc123",
-    expectedKey: null,
-    ...overrides,
-  };
 }
 
 // ------------------------------------------------------------ storeRecipeImage
@@ -268,49 +264,76 @@ test("a removal that raced a replacement leaves the newer picture alone", async 
 
 // ------------------------------------------------------------------ the batch
 
-/** `count` crops of real PNG bytes, one per cell. */
-async function crops(count: number) {
-  const data = new Uint8Array(8 * 8 * 4).fill(180);
-  const bytes = await encodePng({ width: 8, height: 8, data });
-  return Array.from({ length: count }, (_, cell) => ({ cell, png: bytes }));
+/**
+ * What the browser's upload loop does, in one function, so its two ordering
+ * rules can be checked without a browser.
+ *
+ * It is deliberately the dumb version — store each crop in turn, keep going
+ * after a failure, record what happened — because that is exactly what
+ * `src/client/recipe-image-split.ts` does once the crops are cut. What cannot be
+ * checked here is the part before it: that no crop is uploaded until all of them
+ * have been cut and validated. That is the browser suite's job, and
+ * `tests/recipe-image-admin.spec.ts` holds it by uploading a sheet that cannot
+ * be cut and finding every recipe untouched.
+ */
+async function uploadEach(
+  env: Env,
+  recipeIds: readonly number[],
+  expected: ReadonlyMap<number, string | null>,
+): Promise<{ stored: number; outcomes: ("stored" | "refused" | "failed")[] }> {
+  const outcomes: ("stored" | "refused" | "failed")[] = [];
+  let stored = 0;
+
+  for (const recipeId of recipeIds) {
+    try {
+      const refusal = await storeRecipeImage(
+        env,
+        1,
+        recipeId,
+        expected.get(recipeId) ?? null,
+        await png(),
+        { origin: "generated", fingerprint: "abc123", model: "supplied:manual/s1" },
+      );
+      if (refusal === null) {
+        stored += 1;
+        outcomes.push("stored");
+      } else {
+        outcomes.push("refused");
+      }
+    } catch {
+      // The browser catches per recipe too: one recipe's answer, not the batch's.
+      outcomes.push("failed");
+    }
+  }
+
+  return { stored, outcomes };
 }
 
-test("a whole batch stores, and reports each recipe by name", async () => {
-  const { env, db } = fakeEnv();
-  const entries = [plan({ cell: 0, recipeId: 1 }), plan({ cell: 1, recipeId: 2 })];
-  for (const entry of entries) db.rows.set(entry.recipeId, null);
+test("a whole batch stores every crop", async () => {
+  const { env, bucket, db } = fakeEnv();
+  db.rows.set(1, null);
+  db.rows.set(2, null);
 
-  const result = await commitCrops(env, 1, entries, await crops(2), "openai:gpt-image-2/s1");
+  const result = await uploadEach(env, [1, 2], new Map());
 
   assert.equal(result.stored, 2);
-  assert.deepEqual(
-    result.cells.map((cell) => [cell.recipeId, cell.status]),
-    [[1, "stored"], [2, "stored"]],
-  );
+  assert.deepEqual(result.outcomes, ["stored", "stored"]);
+  assert.equal(bucket.objects.size, 2);
 });
 
 test("one recipe failing does not stop the rest, and does not undo them", async () => {
   const { env, bucket, db } = fakeEnv();
-  const entries = [
-    plan({ cell: 0, recipeId: 1 }),
-    plan({ cell: 1, recipeId: 2 }),
-    plan({ cell: 2, recipeId: 3 }),
-  ];
-  for (const entry of entries) db.rows.set(entry.recipeId, null);
+  for (const id of [1, 2, 3]) db.rows.set(id, null);
 
   // Only the second write fails. The first has already committed and the third
-  // is still to come, which is the case the card asked to have made explicit:
-  // one crop failing in the middle of a batch.
+  // is still to come, which is the case worth making explicit: one crop failing
+  // in the middle of a batch that is already cut.
   bucket.failPut = 2;
 
-  const result = await commitCrops(env, 1, entries, await crops(3), "openai:gpt-image-2/s1");
+  const result = await uploadEach(env, [1, 2, 3], new Map());
 
   assert.equal(result.stored, 2);
-  assert.deepEqual(
-    result.cells.map((cell) => cell.status),
-    ["stored", "not-stored", "stored"],
-  );
-  assert.match(result.cells[1]!.reason!, /storing it failed: R2 is unavailable/);
+  assert.deepEqual(result.outcomes, ["stored", "failed", "stored"]);
 
   // Recipe 1's picture is kept rather than rolled back, and recipe 2 has none.
   assert.notEqual(db.rows.get(1), null);
@@ -322,19 +345,20 @@ test("one recipe failing does not stop the rest, and does not undo them", async 
 
 test("a batch where every write fails changes nothing at all", async () => {
   const { env, bucket, db } = fakeEnv();
-  const entries = [plan({ cell: 0, recipeId: 1 }), plan({ cell: 1, recipeId: 2 })];
   db.rows.set(1, "one");
   db.rows.set(2, "two");
   bucket.objects.set("one", 10);
   bucket.objects.set("two", 10);
-  entries[0]!.expectedKey = "one";
-  entries[1]!.expectedKey = "two";
   db.failUpdates = true;
 
-  const result = await commitCrops(env, 1, entries, await crops(2), "openai:gpt-image-2/s1");
+  const result = await uploadEach(
+    env,
+    [1, 2],
+    new Map([[1, "one"], [2, "two"]]),
+  );
 
   assert.equal(result.stored, 0);
-  for (const cell of result.cells) assert.equal(cell.status, "not-stored");
+  assert.deepEqual(result.outcomes, ["failed", "failed"]);
 
   // Both recipes keep the picture they had, and nothing was added.
   assert.equal(db.rows.get(1), "one");
@@ -344,32 +368,17 @@ test("a batch where every write fails changes nothing at all", async () => {
 
 test("a batch that loses every race reports the conflict, not a crash", async () => {
   const { env, bucket, db } = fakeEnv();
-  const entries = [plan({ cell: 0, recipeId: 1 }), plan({ cell: 1, recipeId: 2 })];
-  // Both rows moved on while the sheet was being drawn.
+  // Both rows moved on while the admin was drawing the sheet.
   db.rows.set(1, "someone-elses");
   db.rows.set(2, "someone-elses-too");
   bucket.objects.set("someone-elses", 10);
   bucket.objects.set("someone-elses-too", 10);
 
-  const result = await commitCrops(env, 1, entries, await crops(2), "openai:gpt-image-2/s1");
+  const result = await uploadEach(env, [1, 2], new Map());
 
   assert.equal(result.stored, 0);
-  for (const cell of result.cells) {
-    assert.equal(cell.status, "not-stored");
-    assert.match(cell.reason!, /changed while/);
-  }
+  assert.deepEqual(result.outcomes, ["refused", "refused"]);
   // The two pictures somebody else chose are intact, and ours are not lying
   // around beside them.
   assert.equal(bucket.objects.size, 2);
-});
-
-test("a crop for a cell with no plan is ignored rather than misfiled", async () => {
-  const { env, db } = fakeEnv();
-  db.rows.set(1, null);
-
-  // Three crops, one planned recipe: the extra two belong to nobody.
-  const result = await commitCrops(env, 1, [plan()], await crops(3), "openai:gpt-image-2/s1");
-
-  assert.equal(result.stored, 1);
-  assert.equal(result.cells.length, 1);
 });

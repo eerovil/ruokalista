@@ -122,7 +122,7 @@ Console — the live one and `http://127.0.0.1:8787` for local work.
 This pull request (#94) proposes the one distinction between members there is
 meant to be: a member either is an admin or is not. It exists for the operations
 that are not every member's to run — the first is the recipe image generation in
-#96, which spends money and can replace pictures in bulk. It is deliberately not
+#96 and #111, which can replace pictures in bulk. It is deliberately not
 a role system, and turning it into one is the failure mode to watch for.
 
 `member.is_admin` is the only thing that decides it. Nothing reads an email, a
@@ -294,25 +294,26 @@ old one — so a failure leaves a stray object rather than a recipe pointing at
 nothing. Deleting a recipe drops its pictures and its parts' pictures first, for
 the same reason: the keys are only readable while the rows still exist.
 
-#96 proposes tightening that further: the key a caller read becomes part of the
-write, so `UPDATE … WHERE image_key IS ?` replaces a picture only if it is still
-the one that was there when the caller looked. `IS` rather than `=`, because a
+#96 tightened that further, and it still holds: the key a caller read becomes
+part of the write, so `UPDATE … WHERE image_key IS ?` replaces a picture only if
+it is still the one that was there when the caller looked. `IS` rather than `=`, because a
 recipe with no picture holds NULL and `= NULL` is never true. Losing that
 comparison is a 409 and the loser deletes the object it just wrote, so the
 outcome of a lost race is never an orphan in R2. The removal path is conditional
 in the same way and stays silent, since a picture already gone is not an error.
 
-This matters because of how long the gap can be. The batch generator reads every
-recipe, waits up to three minutes for a sheet to be drawn, and comes back to rows
-that may have moved on; without the comparison a picture somebody uploaded during
-that wait would be replaced by one drawn from the recipe as it was before, and
-their bytes left behind with nothing pointing at them.
+This matters because of how long the gap can be. The image screen reads every
+recipe, the admin goes away to draw a sheet in another tool, and the crops come
+back to rows that may have moved on — a gap of minutes or of an afternoon.
+Without the comparison a picture somebody uploaded during that time would be
+replaced by one drawn from the recipe as it was before, and their bytes left
+behind with nothing pointing at them.
 
 ### Is the picture still the dish? (#95, proposed)
 
 This pull request adds a way to ask whether a picture still shows the recipe,
-because generating one is going to cost money (#96) and nothing yet knows which
-recipes need it (#97).
+because generating one takes a person's effort (#111) and nothing yet knows which
+recipes need it.
 
 `src/recipe-fingerprint.ts` hashes the recipe content that decides what the
 picture shows: the title, every line's amount, range, unit, second measurement
@@ -338,134 +339,171 @@ compared, and only against the fingerprint it states it was made from —
 fingerprint out means "made from the recipe as it stands right now", which is a
 claim about a recipe nobody read.
 
-### Sixteen pictures for one request (#96, proposed)
+### Sixteen pictures for one request, cut in the browser (#111, proposed)
 
-This pull request proposes the first thing behind the admin boundary, and the
-thing that boundary was built for: `POST /api/admin/recipe-images/generate`
-takes up to sixteen recipe ids, buys **one** OpenAI image — a 4×4 grid of
-sixteen dishes on transparent background — and cuts it up locally. So a
-household of a hundred recipes costs seven paid requests rather than a hundred.
+This pull request replaces what #96 and #97 shipped, and the reason is a hard
+limit rather than a preference. **Read `docs/adr/0005-the-worker-does-no-pixel-work.md`
+before touching any of it.**
 
-The manifest is the whole mapping. Cell 1 is the first id posted, cell 2 the
-second, row-major to cell 16, and nothing else decides which picture goes to
-which recipe. There is no OCR, no vision model and no semantic matching in the
-split, because position already is the answer and asking a model to confirm it
-would only add a way to be wrong. The prompt therefore renders no text at all.
+#96 bought a 4×4 contact sheet of sixteen dishes from OpenAI inside the Worker
+and cut it up there. Used live for the first time on 2026-08-26, it ran for 178
+seconds, was killed with `exceededResources`, stored nothing, and threw away the
+sheet it had just paid for. The account is on the **Workers Free** plan: 10 ms of
+CPU a request, against a measured 0.22 s to decode one sheet and 1.0 s to encode
+sixteen crops. A hundred times the budget, and not a tuning problem — and note
+that removing the paid call does not help, because an uploaded sheet needs the
+same decode and the same sixteen encodes.
+
+So #111 removes the paid path outright — `generateContactSheet`,
+`POST /api/admin/recipe-images/generate`, `src/recipe-image-batch.ts`,
+`OPENAI_API_KEY`, and the `sheetBase64` hatch that existed only to keep tests off
+the API — and moves the cutting into the admin's browser. **A button that always
+504s after spending money is worse than no button.**
+
+What is left is two GETs and no POST at all:
+
+  1. `GET /admin/recipe-images` — every dish and what its picture is.
+  2. `GET /admin/recipe-images/confirm` — the batch, the prompt to copy, the
+     numbered manifest, and the field the finished sheet comes back to.
+
+The flow is: copy the prompt, draw the sheet in whichever image tool you like,
+bring the file back. **Nothing in the app calls an image API, and nothing spends
+money.**
+
+`src/image-generation.ts` is now the prompt and nothing else — `sheetPrompt`,
+`dishBrief`, `STYLE_VERSION`, `GENERATED_BY`. That makes it a *contract between
+two things that never meet*: the words a person pastes into some other tool, and
+the splitter that cuts what they bring back. Nothing at runtime can notice the
+two disagreeing, which is why `dev/check-image-generation.ts` pins the parts that
+must always be in it — sixteen cells whatever the batch size, generous
+transparent gutters, and no text anywhere. It also asserts the module contains no
+`fetch` at all, because a paid call creeping back in is not the kind of thing to
+discover in a bill.
 
 The prompt always asks for sixteen cells even for a batch of three, since a grid
-whose shape depended on the batch size would move every cell. It also asks for
-generous transparent gutters and for each dish to sit well inside its cell —
-that slack is what the splitter recovers with.
+whose shape depended on the batch size would move every cell. It renders no text,
+because the mapping from cell to recipe is *positional*: cell 1 is the first
+recipe in the manifest, row-major to cell 16, and nothing else decides which
+picture goes to which recipe. No OCR, no vision model, no semantic matching.
 
-`src/png.ts` unpacks and repacks the pixels, because a Worker has no image
-library and no canvas. It leans on `DecompressionStream("deflate")` for the part
-that would have been hard, and it is deliberately narrow: 8-bit non-interlaced
-only, refusing anything else by name rather than guessing.
+#### The split runs in the browser, from one implementation
 
-`src/contact-sheet.ts` is the cutting, and it treats the 4×4 grid as a *locator*
-rather than as a promise the model kept — a real generated sheet had one dish
-drawn over its boundary, and cutting on the arithmetic line sliced it in half.
-Each cell's artwork is found by following its own alpha out into the gutter, and
-the crop is that artwork's real bounding box, padded square and scaled to one
-512 px output.
+`src/client/recipe-image-split.ts` imports `src/contact-sheet.ts` and
+`src/png.ts` — the very modules `dev/check-contact-sheet.ts` tests under node —
+and `npm run generate:client` bundles them with esbuild into a committed
+`src/generated/recipe-image-split.ts`. **There is one splitter.** A hand-written
+browser copy of the crop rules would be a second set to keep in step, which is
+the drift this repository keeps being bitten by.
 
-**It fails closed, and it fails whole.** A sheet is refused entirely — nothing
-stored, no recipe marked fresh, no existing picture replaced — if any requested
-cell has no artwork, reaches the edge of the gutter or of the sheet, is joined
-to a neighbour as one shape whose owner cannot be decided, or would overlap
-another cell's crop. Retrying means buying one more sheet; the cutting stays
-local and free, and there is no automatic retry because that would be spending
-the household's money on a decision nobody made.
+The artifact is committed and `npm run check` fails when it is stale, following
+`assets/pwa/generated/*.png` — so CI and the deploy job need no new build step
+and the deployed bytes are the reviewed bytes. **Run `npm run generate:client`
+after touching the splitter or `png.ts`.** It is a TypeScript module exporting the
+source as a string rather than a `.js` file behind a wrangler `Text` rule,
+because wrangler's own bundler claims `.js` before any rule is consulted.
 
-The order of work is the safety property: recipes are loaded and fingerprinted,
-the sheet is bought, and all sixteen crops are cut and validated *before* the
-first byte reaches R2. Storage goes through #89's `storeRecipeImage` with
-`origin: generated`, so freshness bookkeeping from #95 is the same code the
-manual path uses — and `image_generated_by` carries provider, model and style
-version together, which is why no new column was needed.
+Client code needs DOM types, which clash with the Workers ones the way `dev/`
+does, so it has its own `tsconfig.client.json` and `npm run typecheck` runs both.
+The shared modules get checked twice, once against each platform.
 
-Once the writes start, `commitCrops` is where the batch stops being all-or-
-nothing, and that is deliberate. **A recipe already given its picture keeps it.**
-If the fourth crop cannot be stored, the three before it are not undone: each is
-a correct picture of its recipe with a fingerprint that still matches, and
-deleting three good pictures to tidy up one failure would destroy work to make
-the bookkeeping neater. One failure does not stop the rest either — the sheet is
-already paid for. The response names every recipe and whether it got its
-picture, so nothing is silently half-done.
+**This one screen requires JavaScript**, a deliberate exception to #65. It says
+so, and its button renders disabled until the bundle turns it on. Cutting a PNG
+apart is not something a server on this plan can do at all.
 
-Storage failure and the lost-update race are checked in
-`dev/check-recipe-image-commit.ts` with a bucket and a database that fail on
-demand, because neither can be provoked through a browser and `retries: 0` rules
-out a timing-dependent test. That check is also why `Raw` in `src/html.ts` is
-written out longhand: node's `--experimental-strip-types` cannot desugar a
-constructor parameter property, and that one line made every module reaching
-`html.ts` — which is most of them, via `auth.ts` — impossible to load in `dev/`.
+#### The cutting itself
 
-`gpt-image-2`, not `gpt-image-1`: the older image models on the account all
-carry a retirement date within months and this one carries none. Quality is
-`high`, and the measured cost of the one real sheet bought while building this
-was 7,024 image output tokens — roughly $0.28, under two cents a recipe at a
-full sixteen. `STYLE_VERSION` in `src/image-generation.ts` is the dial: change
-the style text, bump the version, and everything drawn before it is dated on
-purpose.
+`src/contact-sheet.ts` treats the 4×4 grid as a *locator* rather than as a
+promise the drawing kept — a real generated sheet had one dish drawn over its
+boundary, and cutting on the arithmetic line sliced it in half. Each cell's
+artwork is found by following its own alpha out into the gutter, and the crop is
+that artwork's real bounding box, padded square and scaled to one 512 px output.
 
-That one real sheet is committed as `tests/fixtures/contact-sheet.png`, and it
-is what the browser suite splits on every run. **No test calls OpenAI, and none
-may** — every request in `tests/recipe-image-batch.spec.ts` supplies the sheet
-itself, which a development server accepts in place of buying one, gated by
-`isLocalOrigin` exactly like `Avaa esimerkkiluonnos`. A test that left
-`sheetBase64` out would spend real money on every run of the suite.
+**It fails closed, and it fails whole.** A sheet is refused entirely if any
+requested cell has no artwork, reaches the edge of the gutter or of the sheet, is
+joined to a neighbour as one shape whose owner cannot be decided, or would
+overlap another cell's crop.
 
-One thing the real sheet did not obey: the locked style asks for semi-realistic
-clip-art and gpt-image-2 drew photographs. The pictures are good, so this is
-noted rather than fixed — each attempt at the wording costs another sheet.
+**A sheet with no transparency is refused by name, and there is no
+white-background fallback.** The dishes are told apart by nothing but their own
+alpha, so a flattened sheet is one enormous component that would otherwise report
+sixteen cells as joined together. Many external image tools flatten transparency
+on export, so this refusal will be met often; deciding which white pixels are
+plate would put half of somebody else's dinner on a recipe. The check runs before
+the splitter's own padding, which adds transparent pixels and would answer the
+question for us.
 
-### Choosing which pictures to buy (#97, proposed)
+#### Storing what came out
 
-This pull request proposes the screen the two before it were for: `/admin/recipe-images`
-lists every dish in the household with what its picture is — **Ei kuvaa**,
-**Vanhentunut**, **Ajan tasalla** or **Itse lisätty** — and is the only place in
-the app where a person can spend money.
+Each crop goes through `PUT /api/recipes/:id/image?origin=generated&fingerprint=…&model=…`
+— #89's bulk route with #95's provenance. One request per recipe and **no new
+endpoint**, so the freshness bookkeeping and the compare-and-swap are code that
+was already there and already tested. The confirm screen carries each recipe's
+current fingerprint down to the browser in a `data-fingerprint` attribute;
+`imageCandidates` computed it for the freshness verdict anyway.
 
-It is three plain form posts and needs no JavaScript: the list, then
-`GET /admin/recipe-images/confirm` naming the exact recipes in the order they
-will take cells, then `POST /admin/recipe-images/generate`, which is the paid
-one. Only the third costs anything, and it is only ever reached from a button
-that says so. Nothing regenerates on save, on a schedule, or on opening a page.
+`GENERATED_BY` is `supplied:manual/<style>`: nothing knows which tool the admin
+used, so what it records is the true part — a person supplied the sheet, drawn to
+our prompt under this style version. `image_origin` stays `generated`, so an
+uploaded-sheet picture goes stale when its recipe changes just like a bought one
+did. Pictures made before #111 carry `openai:gpt-image-2/s1` and are unaffected.
 
-Missing and stale are preselected, up to the sixteen a sheet holds; a
-seventeenth candidate is the next batch, said in the wording rather than only in
-the validation. Pictures that are current sit behind a closed disclosure with
-nothing ticked and their own button, because a fresh recipe in the same list
-with the same checkbox is one mis-click away from being paid for. A picture
-somebody uploaded has no checkbox at all — #95 calls those manually managed, and
-this screen spending money to overwrite a photograph a person chose is what that
-rule exists to prevent. Replacing one is still the editor's job.
+Two ordering rules from #96 survive unchanged, and both matter:
 
-`runImageBatch` in `src/recipe-image-batch.ts` is #96's route with the
-response-shaping lifted out, so the screen and `POST /api/admin/recipe-images/generate`
-run the same work in the same order and only the words differ. The cap, the
-manifest order, the all-or-nothing split and the per-recipe report are unchanged.
+  - **Every crop is cut and checked before the first one is uploaded.** A sheet
+    that cannot be cut changes nothing at all.
+  - **Once uploading starts, a recipe that got its picture keeps it.** One
+    failure does not undo the ones before it and does not stop the ones after:
+    each stored crop is a correct picture with a fingerprint that still matches,
+    and deleting good pictures to tidy up one failure would destroy work to make
+    a report look neater.
+
+`dev/check-recipe-image-commit.ts` drives that upload sequence against a bucket
+and a database that fail on demand — the storage-failure and lost-update-race
+cases, neither of which can be provoked through a browser.
+
+#### The screen that chooses
+
+`/admin/recipe-images` lists every dish with what its picture is — **Ei kuvaa**,
+**Vanhentunut**, **Ajan tasalla** or **Itse lisätty**. Missing and stale are
+preselected, up to the sixteen a sheet holds; a seventeenth candidate is the next
+batch, said in the wording rather than only in the validation. Pictures that are
+current sit behind a closed disclosure with nothing ticked and their own button.
+
+**A picture somebody uploaded has no checkbox at all.** #95 calls those manually
+managed, and a bulk screen overwriting a photograph a person chose is what that
+rule exists to prevent. That the batch is free now does not change it — their
+picture is still theirs. Replacing one is the editor's job.
 
 `imageCandidates` in `src/recipe-image-admin.ts` reads the whole list in two
 queries and fingerprints it in memory, rather than calling `findRecipe` once per
 recipe — a hundred recipes would otherwise be several hundred round trips to
-render one screen. The verdict itself is still `imageStatus`, so this screen and
-the JSON API cannot disagree.
+render one screen. The verdict itself is `imageStatus`, so this screen and the
+JSON API cannot disagree.
 
-The form accepts a supplied `sheetBase64` on a local origin, the same escape
-hatch and the same gate the JSON route has, which is how
-`tests/recipe-image-admin.spec.ts` walks the whole flow — selection,
-confirmation, split, commit, refreshed statuses — without calling OpenAI. The
-duplicate-submit guard is a small feature-detected script that disables the
-button as the form goes; without it the worst case is the duplicate, not a
-broken screen.
+The Copy button is an enhancement with three levels — the clipboard API,
+`document.execCommand`, then leaving the text selected for the keyboard — and the
+prompt sits in a read-only textarea so it is copyable whatever happens.
+
+#### Testing it
+
+`tests/fixtures/contact-sheet.png` is the one real sheet bought while #96 was
+built, and it is what the browser suite cuts on every run.
+`tests/recipe-image-admin.spec.ts` walks the whole flow from the file input, and
+every test that cuts a sheet fails the run if any request reaches
+`api.openai.com`. There is no key to spend and no route to spend it on, which is
+the point — but the assertion is cheap and the mistake it catches is expensive.
 
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework
 as a dependency. `dev/` is outside the Worker's tsconfig on purpose: node's
-globals clash with the Workers ones.
+globals clash with the Workers ones. So is `src/client/`, one platform along,
+which has its own `tsconfig.client.json`; `npm run typecheck` runs both.
+
+`npm run check` also verifies the two committed generated artifacts are current —
+the PWA icons and the browser splitter bundle — so a stale one fails a build
+rather than shipping. Regenerate with `npm run generate:pwa-assets` and
+`npm run generate:client`.
 
 ## Parts of a dish
 
