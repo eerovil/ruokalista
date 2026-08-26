@@ -12,6 +12,7 @@ if (!Number.isInteger(browserPort) || browserPort < 1 || browserPort > 65_535) {
   throw new Error("PLAYWRIGHT_PORT must be a valid TCP port.");
 }
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
+const runWalkthrough = process.env["PLAYWRIGHT_WALKTHROUGH"] === "1";
 
 /**
  * Browser tests run against a real `wrangler dev` with the seeded local
@@ -46,7 +47,10 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /keep-awake-legacy\.spec\.ts/,
+      testIgnore: [
+        /keep-awake-legacy\.spec\.ts/,
+        ...(runWalkthrough ? [] : [/walkthrough\.spec\.ts/]),
+      ],
       use: {
         // A phone, because a week gets planned at the kitchen table.
         ...devices["Pixel 7"],
