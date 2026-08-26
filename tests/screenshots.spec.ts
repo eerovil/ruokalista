@@ -355,6 +355,36 @@ test.describe("signed in", () => {
     await expect(page.locator(".recipes li")).toHaveCount(1);
     await page.screenshot({ path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
   });
+
+  test("the week as an ordinary member sees it", async ({ page }) => {
+    await page.goto("/?week=2026-10-05");
+    await expect(page.getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
+    await page.screenshot({
+      path: `${SHOTS}/28-week-not-admin.png`,
+      fullPage: true,
+    });
+  });
+});
+
+test.describe("signed in as an admin", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(3)]);
+  });
+
+  test("the week, with the way into the admin surface", async ({ page }) => {
+    await page.goto("/?week=2026-10-05");
+    await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/29-week-admin.png`,
+      fullPage: true,
+    });
+  });
+
+  test("the admin screen", async ({ page }) => {
+    await page.goto("/admin");
+    await expect(page.getByRole("heading", { name: "Ylläpito" })).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
+  });
 });
 
 async function createBatch(

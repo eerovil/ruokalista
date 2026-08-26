@@ -16,9 +16,14 @@ INSERT INTO household (id, name) VALUES
   (1, 'Koti'),
   (2, 'Naapuri');
 
-INSERT INTO member (id, household_id, google_sub, display_name, email) VALUES
-  (1, 1, 'dev-seed-koti',    'Eero',   'eero@example.com'),
-  (2, 2, 'dev-seed-naapuri', 'Naapuri', NULL);
+-- Member 1 is the ordinary member almost every test signs in as: not an admin,
+-- so anything that quietly stopped refusing shows up as a screen it can suddenly
+-- reach. Member 3 is the household's admin, and exists only so the gate has both
+-- sides to be proved against.
+INSERT INTO member (id, household_id, google_sub, display_name, email, is_admin) VALUES
+  (1, 1, 'dev-seed-koti',    'Eero',        'eero@example.com', 0),
+  (2, 2, 'dev-seed-naapuri', 'Naapuri',     NULL,               0),
+  (3, 1, 'dev-seed-admin',   'Ylläpitäjä',  NULL,               1);
 
 INSERT INTO ingredient (id, household_id, name, created_by) VALUES
   (1, 1, 'öljy',           1),

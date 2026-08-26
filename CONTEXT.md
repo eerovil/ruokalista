@@ -16,8 +16,16 @@ _Avoid_: Family, team, tenant, account
 **Member**:
 One person in a household, known by the Google account they sign in with.
 Everything they create is attributed to them, and every member of a household
-may do everything.
+may do everything the household does day to day — plan, cook, import, edit.
 _Avoid_: User, person, owner, role
+
+**Admin**:
+A member who may also use the few operations that are not everybody's to run:
+the ones that spend money or rewrite what the household already has. It is one
+flag on the member row, marked by hand like membership itself, and it is the
+only distinction between members there is or is meant to be. This is what #94
+proposes; before it, every member could do everything.
+_Avoid_: Role, permission, superuser, owner
 
 ### The menu
 

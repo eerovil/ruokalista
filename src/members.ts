@@ -9,6 +9,12 @@ export interface Member {
   householdId: number;
   displayName: string;
   email: string | null;
+  /**
+   * Whether this person may use the operations that are not every member's to
+   * use — the ones that spend money or rewrite what the household already has.
+   * It comes from the `member.is_admin` column and from nowhere else.
+   */
+  isAdmin: boolean;
 }
 
 interface MemberRow {
@@ -16,7 +22,11 @@ interface MemberRow {
   household_id: number;
   display_name: string;
   email: string | null;
+  is_admin: number;
 }
+
+const MEMBER_COLUMNS =
+  "id, household_id, display_name, email, is_admin" as const;
 
 export async function findMemberById(
   db: D1Database,
@@ -24,7 +34,7 @@ export async function findMemberById(
 ): Promise<Member | null> {
   const row = await db
     .prepare(
-      "SELECT id, household_id, display_name, email FROM member WHERE id = ?",
+      `SELECT ${MEMBER_COLUMNS} FROM member WHERE id = ?`,
     )
     .bind(id)
     .first<MemberRow>();
@@ -45,7 +55,7 @@ export async function findMemberByGoogleSub(
 ): Promise<Member | null> {
   const row = await db
     .prepare(
-      "SELECT id, household_id, display_name, email FROM member WHERE google_sub = ?",
+      `SELECT ${MEMBER_COLUMNS} FROM member WHERE google_sub = ?`,
     )
     .bind(googleSub)
     .first<MemberRow>();
@@ -62,7 +72,7 @@ export async function findMemberByGoogleSub(
 export async function allMembers(db: D1Database): Promise<Member[]> {
   const { results } = await db
     .prepare(
-      "SELECT id, household_id, display_name, email FROM member ORDER BY id",
+      `SELECT ${MEMBER_COLUMNS} FROM member ORDER BY id`,
     )
     .all<MemberRow>();
 
@@ -75,5 +85,6 @@ function toMember(row: MemberRow): Member {
     householdId: row.household_id,
     displayName: row.display_name,
     email: row.email,
+    isAdmin: row.is_admin === 1,
   };
 }

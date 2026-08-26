@@ -117,6 +117,40 @@ sign-in is not configured and lets nobody in. The redirect URI is derived from
 the request's origin, so every origin used has to be registered in Google Cloud
 Console — the live one and `http://127.0.0.1:8787` for local work.
 
+## Admin, and nothing more than admin
+
+This pull request (#94) proposes the one distinction between members there is
+meant to be: a member either is an admin or is not. It exists for the operations
+that are not every member's to run — the first is the recipe image generation in
+#96, which spends money and can replace pictures in bulk. It is deliberately not
+a role system, and turning it into one is the failure mode to watch for.
+
+`member.is_admin` is the only thing that decides it. Nothing reads an email, a
+display name, a header, a query string or the origin the request arrived on, and
+`tests/admin.spec.ts` sends all of those to prove it. Existing members default to
+0, so nobody gains anything by the migration landing.
+
+`requireAdmin` and `requireAdminScreen` (`src/auth.ts`) wrap `requireMember`
+rather than replacing it, so an admin route is still a signed-in route and still
+carries a household_id — household isolation is untouched. An ordinary member is
+answered 404, the same answer another household's record gets: whether an admin
+route exists is not their business. `/admin` and `GET /api/admin/status` are the
+two routes wired to it, and the second exists so the JSON half of the gate is
+exercised rather than assumed.
+
+Granting it is an operator action, like membership: `scripts/set-admin.sh
+<google-sub> on|off`, which only ever updates a member who already exists. There
+is no way to grant it from inside the app and there is not meant to be.
+
+The week screen shows an admin a `Ylläpito` link and shows an ordinary member
+nothing. That is tidiness, not the boundary — `/admin` refuses whether or not
+anybody saw a link. It sits on the week rather than in the shell because putting
+it in the shared header would mean threading the viewer through `page()` at
+thirty-odd call sites, which is a bigger change than this boundary is worth.
+
+Seed member 3 is Koti's admin and member 1 stays ordinary, so the specs have both
+sides and every existing screenshot is unchanged.
+
 ## Intake, and what it costs to test
 
 `src/intake.ts` calls Claude Sonnet 5 (decision #11) with **structured outputs**,

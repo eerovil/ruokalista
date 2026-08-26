@@ -59,6 +59,14 @@ export async function weekScreen(
         <a href="/">Tämä viikko</a>
         <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
       </nav>
+      ${
+        // The one way into the admin surface, and the only screen that mentions
+        // it. An ordinary member is not shown it — but that is tidiness, not
+        // security: /admin refuses them whether they saw a link or not.
+        member.isAdmin
+          ? html`<p class="admin-entry"><a href="/admin">Ylläpito</a></p>`
+          : ""
+      }
       <style>
         .week-days .day {
           display: grid;
