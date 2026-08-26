@@ -1,5 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { ensureDevVars } from "./tests/support/dev-vars.ts";
+
+// Before anything starts, and deliberately not in a globalSetup: the `wrangler
+// dev` below reads .dev.vars as it boots, so the values have to be on disk
+// before this config is even handed back.
+ensureDevVars();
+
 /**
  * Browser tests run against a real `wrangler dev` with the seeded local
  * database — the same thing a person would poke at.

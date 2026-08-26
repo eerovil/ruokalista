@@ -339,6 +339,14 @@ fails on a fresh database.
 `retries: 0`, on purpose. The one flake this suite ever had turned out to be two
 real faults, and a retry would have kept both hidden.
 
+**The whole suite is not the default before a pull request.** A narrow change
+runs the typecheck, the checks and the spec that covers what it touched, and
+lets CI run everything; a change nobody can draw a blast radius around runs the
+lot locally first. `docs/agents/verification.md` says which is which, and which
+spec covers what. The suite also fills its own blanks in `.dev.vars`
+(`tests/support/dev-vars.ts`) so a fresh checkout does not fail two auth specs
+for want of Google values and have to be run twice.
+
 CI (`.github/workflows/ci.yml`) runs typecheck, the checks and the browser suite
 on every pull request, in the same pinned Playwright image. It writes a
 throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
@@ -382,6 +390,11 @@ the `gh` CLI. See `docs/agents/issue-tracker.md`.
 The five canonical triage labels, unchanged: `needs-triage`, `needs-info`,
 `ready-for-agent`, `ready-for-human`, `wontfix`. See
 `docs/agents/triage-labels.md`.
+
+### Verification
+
+How much to run before opening a pull request, and what a review pass reruns
+after a fix. See `docs/agents/verification.md`.
 
 ### Domain docs
 
