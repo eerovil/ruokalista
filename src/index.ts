@@ -35,15 +35,15 @@ import {
   apiDeleteRecipe,
   confirmDeleteScreen,
   deleteRecipeForm,
+  deleteRecipeImageForm,
   editorScreen,
   saveEditForm,
+  uploadRecipeImageForm,
 } from "./recipe-editor.ts";
 import {
   apiDeleteRecipeImage,
   apiPutRecipeImage,
   apiRecipeImage,
-  deleteRecipeImageForm,
-  uploadRecipeImageForm,
 } from "./recipe-images.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {

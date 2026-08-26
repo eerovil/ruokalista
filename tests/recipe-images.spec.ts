@@ -1,0 +1,225 @@
+import { expect, test } from "@playwright/test";
+import zlib from "node:zlib";
+
+import { reseed } from "./support/seed";
+import { sessionCookie } from "./support/session";
+
+/**
+ * A recipe's picture: the editor's upload, the read-only image on the recipe
+ * screen, and the API that bulk tooling uses.
+ *
+ * The pictures here are built rather than committed, because what is being
+ * checked is what the bytes say about themselves — the size a PNG declares in
+ * its header, and the fact that HTML claiming to be a PNG is not one. A fixture
+ * file would hide exactly that.
+ */
+
+function chunk(type: string, body: Buffer): Buffer {
+  const head = Buffer.alloc(4);
+  head.writeUInt32BE(body.length);
+  const typed = Buffer.concat([Buffer.from(type, "ascii"), body]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(zlib.crc32(typed) >>> 0);
+  return Buffer.concat([head, typed, crc]);
+}
+
+/** A real, decodable PNG of a single flat colour. */
+function png(width: number, height: number, rgb: [number, number, number]): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3)]);
+  for (let x = 0; x < width; x += 1) row.set(rgb, 1 + x * 3);
+  const pixels = Buffer.concat(Array.from({ length: height }, () => row));
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(pixels)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const RECIPE = 1; // Kaalilaatikko, household 1.
+const IMAGE_URL = `/api/recipes/${RECIPE}/image`;
+
+test.beforeAll(reseed);
+
+test.describe("the editor", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("a picture can be added, replaced and removed", async ({ page }) => {
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
+    await expect(page.locator(".recipe-image img")).toHaveCount(0);
+
+    await page.setInputFiles("#recipe-image", {
+      name: "kaalilaatikko.png",
+      mimeType: "image/png",
+      buffer: png(900, 600, [200, 110, 60]),
+    });
+    await page.locator("#recipe-image-form button[type=submit]").click();
+
+    const shown = page.locator(".recipe-image img");
+    await expect(shown).toBeVisible();
+    await expect(shown).toHaveJSProperty("complete", true);
+    // Loaded, not a broken-image icon.
+    await expect(shown).not.toHaveJSProperty("naturalWidth", 0);
+
+    // Replacing swaps the picture rather than adding a second one.
+    await page.setInputFiles("#recipe-image", {
+      name: "toinen.png",
+      mimeType: "image/png",
+      buffer: png(400, 400, [40, 120, 220]),
+    });
+    await page.locator("#recipe-image-form button[type=submit]").click();
+    await expect(page.locator(".recipe-image img")).toHaveCount(1);
+
+    await page.locator(".recipe-image-editor button.danger").click();
+    await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
+    await expect(page.locator(".recipe-image img")).toHaveCount(0);
+  });
+
+  test("a file that is not an image is refused on the editor, not in JSON", async ({
+    page,
+  }) => {
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    await page.setInputFiles("#recipe-image", {
+      name: "kuva.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("<html><script>alert(1)</script></html>", "ascii"),
+    });
+    await page.locator("#recipe-image-form button[type=submit]").click();
+
+    // The refusal is the editor with the reason on it — the member keeps the
+    // screen they were on, and never sees a raw JSON body.
+    await expect(page.locator("p.refused")).toContainText("JPEG, PNG tai WebP");
+    await expect(page.getByRole("heading", { name: "Muokkaa reseptiä" })).toBeVisible();
+    await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
+  });
+});
+
+test.describe("the recipe screen", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("shows the picture, and a placeholder when there is none", async ({
+    page,
+  }) => {
+    await page.goto(`/recipes/${RECIPE}`);
+    await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
+
+    // page.request shares the browser context, so it is signed in already.
+    await page.request.put(IMAGE_URL, {
+      headers: { "content-type": "image/png" },
+      data: png(600, 400, [200, 110, 60]),
+    });
+
+    await page.goto(`/recipes/${RECIPE}`);
+    await expect(page.locator(".recipe-image img")).toBeVisible();
+    // Read-only: uploading lives in the editor and nowhere else.
+    await expect(page.locator("input[type=file]")).toHaveCount(0);
+  });
+
+  test("no screen but the editor offers an upload", async ({ page }) => {
+    for (const url of ["/recipes", `/recipes/${RECIPE}`, "/?week=2026-10-05"]) {
+      await page.goto(url);
+      await expect(page.locator("input[type=file]")).toHaveCount(0);
+    }
+  });
+});
+
+test.describe("the bulk API", () => {
+  test("attaches, replaces and removes without a browser", async ({ request }) => {
+    const cookie = sessionCookie(1);
+    const headers = {
+      cookie: `${cookie.name}=${cookie.value}`,
+      "content-type": "image/png",
+    };
+
+    const put = await request.put(IMAGE_URL, {
+      headers,
+      data: png(800, 600, [200, 110, 60]),
+    });
+    expect(put.status()).toBe(204);
+
+    const got = await request.get(IMAGE_URL, { headers: { cookie: headers.cookie } });
+    expect(got.status()).toBe(200);
+    expect(got.headers()["content-type"]).toBe("image/png");
+    // Untrusted bytes served from our own origin: no browser may re-guess what
+    // they are.
+    expect(got.headers()["x-content-type-options"]).toBe("nosniff");
+
+    const replaced = await request.put(IMAGE_URL, {
+      headers,
+      data: png(320, 240, [40, 120, 220]),
+    });
+    expect(replaced.status()).toBe(204);
+
+    const removed = await request.delete(IMAGE_URL, {
+      headers: { cookie: headers.cookie },
+    });
+    expect(removed.status()).toBe(204);
+    const gone = await request.get(IMAGE_URL, { headers: { cookie: headers.cookie } });
+    expect(gone.status()).toBe(404);
+  });
+
+  test("bytes are taken on what they are, not on what the caller says", async ({
+    request,
+  }) => {
+    const cookie = sessionCookie(1);
+    const headers = {
+      cookie: `${cookie.name}=${cookie.value}`,
+      "content-type": "image/png",
+    };
+
+    const lying = await request.put(IMAGE_URL, {
+      headers,
+      data: Buffer.from("<html><script>alert(1)</script></html>", "ascii"),
+    });
+    expect(lying.status()).toBe(415);
+
+    // A picture too big to display is refused rather than stored unchanged.
+    const huge = await request.put(IMAGE_URL, {
+      headers,
+      data: png(2400, 1200, [200, 110, 60]),
+    });
+    expect(huge.status()).toBe(413);
+    expect(await huge.text()).toContain("2400x1200");
+
+    const empty = await request.put(IMAGE_URL, { headers, data: Buffer.alloc(0) });
+    expect(empty.status()).toBe(400);
+  });
+
+  test("another household's recipe is a 404, not a 403", async ({ request }) => {
+    const neighbour = sessionCookie(2);
+    const headers = { cookie: `${neighbour.name}=${neighbour.value}` };
+
+    const mine = sessionCookie(1);
+    await request.put(IMAGE_URL, {
+      headers: {
+        cookie: `${mine.name}=${mine.value}`,
+        "content-type": "image/png",
+      },
+      data: png(600, 400, [200, 110, 60]),
+    });
+
+    expect((await request.get(IMAGE_URL, { headers })).status()).toBe(404);
+    expect(
+      (await request.put(IMAGE_URL, {
+        headers: { ...headers, "content-type": "image/png" },
+        data: png(100, 100, [0, 0, 0]),
+      })).status(),
+    ).toBe(404);
+    expect((await request.delete(IMAGE_URL, { headers })).status()).toBe(404);
+
+    // Signed out is refused too.
+    expect((await request.get(IMAGE_URL)).status()).toBe(401);
+  });
+});

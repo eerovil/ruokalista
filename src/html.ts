@@ -67,6 +67,9 @@ const STYLES = `
     --tabs-height: 3.75rem;
   }
   * { box-sizing: border-box; }
+  /* No picture may be wider than the screen it is on. Recipe images arrive from
+     outside and are whatever size the tool that made them chose. */
+  img { max-width: 100%; height: auto; }
   body {
     margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 1rem/1.55 system-ui, sans-serif;
@@ -396,6 +399,18 @@ const STYLES = `
     color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
     font-weight: 600;
   }
+  /* A fixed height rather than an aspect-ratio: the same band is there whether
+     the recipe has a picture or not, so nothing shifts as you scroll, and old
+     Safari — which has no aspect-ratio — gets the same layout as everything
+     else. */
+  .recipe-image {
+    height: 11rem; margin: 0 0 1rem; overflow: hidden;
+    border-radius: var(--radius); background: var(--surface);
+  }
+  .recipe-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .recipe-image.is-empty { border: 1px dashed var(--edge); }
+  .recipe-image-editor { margin: 0 0 1.5rem; }
+  .recipe-image-editor h2 { margin: 0 0 .5rem; }
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;
     color: var(--warn); font-size: .9rem;

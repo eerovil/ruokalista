@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, type Raw } from "./html.ts";
+import { html, page, raw, type Raw } from "./html.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
@@ -19,8 +19,13 @@ import {
   type StepFormValues,
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
-import { deleteImagesForRecipeTree } from "./recipe-images.ts";
-import { findRecipe, type Recipe } from "./recipes.ts";
+import {
+  deleteImagesForRecipeTree,
+  imageRow,
+  removeRecipeImage,
+  storeRecipeImage,
+} from "./recipe-images.ts";
+import { findRecipe, recipeImage, type Recipe } from "./recipes.ts";
 import {
   replaceRecipe,
   SaveRefused,
@@ -43,6 +48,86 @@ interface EditorAttempt {
   revision: number;
 }
 
+/**
+ * Shrink the chosen picture in the browser before it is ever uploaded.
+ *
+ * This is where "not stored as-is" actually happens for a person: an image tool
+ * hands you a 3000-pixel PNG, and what leaves the phone is a 1200-pixel JPEG a
+ * few hundred kilobytes big. A Worker cannot re-encode an image without another
+ * Cloudflare product, but a canvas can, which is the same reason the intake
+ * camera route downscales here rather than on the server.
+ *
+ * Everything is feature-detected and every failure falls back to the plain form
+ * post, so an old iPad still uploads — it just has to send a picture already
+ * within the bounds the server states. No regular expressions and no
+ * backslashes: this is a template literal, so a backslash never reaches the
+ * browser.
+ */
+const SHRINK_ISLAND = `
+(function () {
+  var form = document.getElementById('recipe-image-form');
+  if (!form || !window.fetch || !window.FormData || !window.createImageBitmap) return;
+
+  var LONG_EDGE = 1200;
+  var input = document.getElementById('recipe-image');
+  var button = form.querySelector('button[type=submit]');
+  var busy = false;
+
+  function shrink(file) {
+    return createImageBitmap(file).then(function (bitmap) {
+      var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      if (!canvas.toBlob) return null;
+      return new Promise(function (resolve) {
+        canvas.toBlob(function (blob) { resolve(blob); }, 'image/jpeg', 0.85);
+      });
+    });
+  }
+
+  form.addEventListener('submit', function (event) {
+    if (busy) return;
+    var file = input && input.files && input.files[0];
+    if (!file) return;
+
+    event.preventDefault();
+    busy = true;
+    if (button) button.disabled = true;
+
+    shrink(file).then(function (blob) {
+      if (!blob) throw new Error('cannot re-encode');
+      var body = new FormData();
+      body.append('image', blob, 'kuva.jpg');
+      return fetch(form.action, {
+        method: 'POST',
+        body: body,
+        credentials: 'same-origin',
+      });
+    }).then(function (response) {
+      if (response.ok || response.redirected) {
+        window.location.href = form.getAttribute('data-editor');
+        return null;
+      }
+      // The server refused the shrunk picture too. It answered with the editor
+      // and the reason on it, so show exactly that.
+      return response.text().then(function (body) {
+        document.open();
+        document.write(body);
+        document.close();
+      });
+    }).catch(function () {
+      // Canvas, network, anything: hand it back to the browser, which posts the
+      // file as chosen and gets a plain server answer.
+      busy = false;
+      if (button) button.disabled = false;
+      form.submit();
+    });
+  });
+})();
+`;
+
 /** `GET /recipes/:id/edit` */
 export async function editorScreen(
   { env, params }: RouteContext,
@@ -51,13 +136,10 @@ export async function editorScreen(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound();
 
-  const [ingredients, imagePresent] = await Promise.all([
-    ingredientsFor(env.DB, member.householdId),
-    hasImage(env.DB, member.householdId, recipe.id),
-  ]);
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
   return page(
     `Muokkaa: ${recipe.title}`,
-    editorForm(recipe, ingredients, imagePresent),
+    editorForm(recipe, ingredients),
     "recipes",
   );
 }
@@ -79,6 +161,7 @@ export async function saveEditForm(
     await replaceRecipe(env.DB, member, recipe.id, expectedRevision, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
+      // Never taken from the form: it is the record of what arrived.
       sourceText: recipe.sourceText,
       sourceRoute: recipe.sourceRoute,
       structuredBy: null,
@@ -94,16 +177,16 @@ export async function saveEditForm(
     if (latest === null) return notFound();
 
     const stale = error instanceof StaleRecipe;
-    const [ingredients, imagePresent] = await Promise.all([
-      ingredientsFor(env.DB, member.householdId),
-      hasImage(env.DB, member.householdId, latest.id),
-    ]);
+    const ingredients = await ingredientsFor(env.DB, member.householdId);
     return page(
       `Muokkaa: ${latest.title}`,
       html`<p class="refused">${error.message}</p>
-        ${editorForm(latest, ingredients, imagePresent, {
+        ${editorForm(latest, ingredients, {
           form,
           lineCount: lineCountForRendering(form),
+          // A stale form must deliberately submit against the version now on
+          // screen. Other validation failures keep their original revision, so
+          // they cannot quietly overwrite an edit made in another tab.
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
@@ -157,12 +240,93 @@ export async function apiDeleteRecipe(
   return new Response(null, { status: 204 });
 }
 
+/**
+ * `POST /recipes/:id/image` — the editor's own upload, which is the only
+ * upload control anywhere in the app.
+ *
+ * A refusal re-renders the editor with the reason at the top, the same as every
+ * other refusal here. The API's JSON answer belongs to the API; a browser that
+ * posted a form gets a screen back.
+ */
+export async function uploadRecipeImageForm(
+  { env, request, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await load(env.DB, member, params["id"]);
+  if (recipe === null) return notFound();
+
+  const form = await request.formData();
+  const entry = form.get("image");
+  if (!(entry instanceof File) || entry.size === 0) {
+    return imageRefused(env, member, recipe, "Valitse kuva.", 400);
+  }
+
+  const refusal = await storeRecipeImage(
+    env,
+    member.householdId,
+    recipe.id,
+    recipe.imageKey,
+    await entry.arrayBuffer(),
+  );
+  if (refusal !== null) {
+    return imageRefused(env, member, recipe, refusal.finnish, refusal.status);
+  }
+
+  return seeEditor(recipe.id);
+}
+
+/** `POST /recipes/:id/image/delete` — the editor's remove button. */
+export async function deleteRecipeImageForm(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await load(env.DB, member, params["id"]);
+  if (recipe === null) return notFound();
+
+  await removeRecipeImage(env, member.householdId, recipe.id, recipe.imageKey);
+  return seeEditor(recipe.id);
+}
+
+/**
+ * The editor again, with the reason the picture was not taken.
+ *
+ * The recipe is re-read rather than reused: the refusal may have arrived after
+ * the row moved on, and the image the screen shows has to be the one actually
+ * stored.
+ */
+async function imageRefused(
+  env: RouteContext["env"],
+  member: Member,
+  recipe: Recipe,
+  message: string,
+  status: number,
+): Promise<Response> {
+  const [ingredients, row] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    imageRow(env.DB, member.householdId, recipe.id),
+  ]);
+
+  return page(
+    `Muokkaa: ${recipe.title}`,
+    html`<p class="refused">${message}</p>
+      ${editorForm({ ...recipe, imageKey: row?.image_key ?? null }, ingredients)}`,
+    "recipes",
+    status,
+  );
+}
+
+function seeEditor(recipeId: number): Response {
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/recipes/${recipeId}/edit` },
+  });
+}
+
 // ---------------------------------------------------------------- rendering
 
 function editorForm(
   recipe: Recipe,
   ingredients: IngredientSummary[],
-  imagePresent: boolean,
   attempted?: EditorAttempt,
 ): Raw {
   const rows: Array<DraftLine | LineFormValues> = attempted
@@ -179,8 +343,11 @@ function editorForm(
           ingredientId: idOf(line.ingredient, ingredients),
           ingredientName: line.ingredient,
           sourceLine: line.sourceLine,
+          // A saved part is a recipe of its own, so a recipe's own lines never
+          // carry one.
           section: null,
           phase: line.phase,
+          // A note is about an import, not about a saved recipe.
           note: null,
         } satisfies DraftLine)),
         ...Array.from({ length: SPARE_LINES }, emptyLine),
@@ -215,20 +382,23 @@ function editorForm(
     ? String(attempted.form.get("yield") ?? "")
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
+  const hasPicture = recipe.imageKey !== null;
 
   return html`<h1>Muokkaa reseptiä</h1>
     <section class="recipe-image-editor">
       <h2>Kuva</h2>
-      ${imagePresent
-        ? html`<p><img src="/api/recipes/${recipe.id}/image" alt="${recipe.title}" /></p>`
-        : html`<p class="empty">Reseptillä ei ole kuvaa.</p>`}
+      ${recipeImage(recipe)}
       <form
         method="post"
         action="/recipes/${recipe.id}/image"
         enctype="multipart/form-data"
         class="stacked"
+        id="recipe-image-form"
+        data-editor="/recipes/${recipe.id}/edit"
       >
-        <label for="recipe-image">${imagePresent ? "Vaihda kuva" : "Lisää kuva"}</label>
+        <label for="recipe-image">
+          ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
+        </label>
         <input
           id="recipe-image"
           name="image"
@@ -236,15 +406,16 @@ function editorForm(
           accept="image/jpeg,image/png,image/webp"
           required
         />
-        <p class="empty">JPEG, PNG tai WebP, enintään 5 MiB.</p>
-        <button type="submit">${imagePresent ? "Vaihda kuva" : "Lisää kuva"}</button>
+        <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
+        <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
       </form>
-      ${imagePresent
+      ${hasPicture
         ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
             <button type="submit" class="danger">Poista kuva</button>
           </form>`
         : ""}
     </section>
+    ${raw(`<script>${SHRINK_ISLAND}</script>`)}
 
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <input type="hidden" name="lineCount" value="${rows.length}" />
@@ -296,6 +467,8 @@ function editorForm(
     <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
     <p class="source-text">${recipe.sourceText}</p>
 
+    <!-- A link, not a submit: deleting a recipe is not something a mistyped tap
+         should finish. The confirmation screen is where the button lives. -->
     <p class="recipe-delete">
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
     </p>`;
@@ -372,18 +545,6 @@ async function load(
   const id = Number(rawId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   return findRecipe(db, member.householdId, id);
-}
-
-async function hasImage(
-  db: D1Database,
-  householdId: number,
-  recipeId: number,
-): Promise<boolean> {
-  const row = await db
-    .prepare("SELECT image_key FROM recipe WHERE id = ? AND household_id = ?")
-    .bind(recipeId, householdId)
-    .first<{ image_key: string | null }>();
-  return row?.image_key !== null && row?.image_key !== undefined;
 }
 
 async function countOnMenu(

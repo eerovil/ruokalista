@@ -40,6 +40,8 @@ export interface Recipe extends RecipeSummary {
   sourceRoute: "pasted" | "photographed";
   /** Optimistic edit version. Incremented whenever this recipe is changed. */
   revision: number;
+  /** The R2 object holding this recipe's picture, or null if it has none. */
+  imageKey: string | null;
   steps: RecipeStep[];
   lines: RecipeLine[];
   /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
@@ -100,6 +102,7 @@ interface RecipeRow extends SummaryRow {
   source_text: string;
   source_route: "pasted" | "photographed";
   revision: number;
+  image_key: string | null;
 }
 
 interface LineRow {
@@ -128,6 +131,7 @@ export async function findRecipe(
               recipe.source_text,
               recipe.source_route,
               recipe.revision,
+              recipe.image_key,
               recipe.created_at,
               member.display_name AS created_by
          FROM recipe
@@ -184,6 +188,7 @@ export async function findRecipe(
     sourceText: row.source_text,
     sourceRoute: row.source_route,
     revision: row.revision,
+    imageKey: row.image_key,
     createdAt: row.created_at,
     createdBy: row.created_by,
     parts,
@@ -405,10 +410,30 @@ function body(
           </ol>`}`;
 }
 
+/**
+ * A recipe's picture, or the same shape of space saying it has none.
+ *
+ * Always one or the other, never nothing: a card that changes height depending
+ * on whether somebody got round to adding a photograph is a list that jumps
+ * about while you scroll it. The picture is decorative — the title is right
+ * beside it — so it carries no alt text for a screen reader to read twice.
+ *
+ * Read-only on purpose. Uploading happens in the editor and nowhere else, so
+ * no screen that calls this offers a control.
+ */
+export function recipeImage(recipe: Recipe): Raw {
+  return recipe.imageKey === null
+    ? html`<div class="recipe-image is-empty" aria-hidden="true"></div>`
+    : html`<div class="recipe-image">
+        <img src="/api/recipes/${recipe.id}/image" alt="" />
+      </div>`;
+}
+
 function recipeBody(recipe: Recipe, portions: number | null): Raw {
   const factor = scaleFactor(recipe.yieldPortions, portions);
 
-  return html`<h1>${recipe.title}</h1>
+  return html`${recipeImage(recipe)}
+    <h1>${recipe.title}</h1>
     <!-- Whether the amounts below are the page's or this meal's is the first
          thing a cook needs to know, so it sits under the title and says which. -->
     <p class="${factor === null ? "yield" : "yield is-scaled"}">

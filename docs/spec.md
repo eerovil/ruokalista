@@ -265,7 +265,9 @@ Pasting: a textarea, sent as-is. Photographing: a file/camera input, downscaled
 in the browser to a long edge of about 1,500 px and re-encoded as JPEG before
 upload — enough for printed text, small enough to keep the request quick. The
 image is held in memory in the Worker for the length of one model call and then
-dropped. It is never written to D1 and there is no bucket.
+dropped. It is never written to D1 and it never reaches R2 — the recipe image
+bucket added for #88 holds pictures a household chose to show, and a
+photographed cookbook page is not one of those.
 
 **2. `POST /api/intake/structure` runs the model.**
 
