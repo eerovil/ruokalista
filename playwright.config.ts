@@ -7,6 +7,12 @@ import { ensureDevVars } from "./tests/support/dev-vars.ts";
 // before this config is even handed back.
 ensureDevVars();
 
+const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
+if (!Number.isInteger(browserPort) || browserPort < 1 || browserPort > 65_535) {
+  throw new Error("PLAYWRIGHT_PORT must be a valid TCP port.");
+}
+const browserOrigin = `http://127.0.0.1:${browserPort}`;
+
 /**
  * Browser tests run against a real `wrangler dev` with the seeded local
  * database — the same thing a person would poke at.
@@ -27,8 +33,14 @@ export default defineConfig({
   timeout: 30_000,
 
   use: {
-    baseURL: "http://127.0.0.1:8787",
+    baseURL: browserOrigin,
     trace: "retain-on-failure",
+    // Most specs create a fresh browser context per test, and some create a
+    // second household context. Keep those tests about their own feature; the
+    // dedicated PWA spec opts back into real workers and covers the full PWA
+    // boundary without hundreds of short-lived registrations fighting the
+    // browser harness.
+    serviceWorkers: "block",
   },
 
   projects: [
@@ -53,8 +65,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "npx wrangler dev --ip 127.0.0.1 --port 8787",
-    url: "http://127.0.0.1:8787/health",
+    command: `npx wrangler dev --ip 127.0.0.1 --port ${browserPort}`,
+    url: `${browserOrigin}/health`,
     reuseExistingServer: true,
     timeout: 120_000,
     stdout: "ignore",

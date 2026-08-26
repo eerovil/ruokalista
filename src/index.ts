@@ -52,6 +52,16 @@ import {
   apiRecipeImage,
   apiRecipeImageStatus,
 } from "./recipe-images.ts";
+import {
+  appleIcon,
+  faviconIcon,
+  manifest,
+  maskableIcon,
+  offline,
+  regularIcon192,
+  regularIcon512,
+  serviceWorker,
+} from "./pwa.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
   completeSignIn,
@@ -83,6 +93,14 @@ import {
 
 const router = new Router()
   .get("/health", health)
+  .get("/manifest.webmanifest", manifest)
+  .get("/sw.js", serviceWorker)
+  .get("/offline", offline)
+  .get("/favicon.svg", faviconIcon)
+  .get("/icon-192.png", regularIcon192)
+  .get("/icon-512.png", regularIcon512)
+  .get("/icon-maskable-512.png", maskableIcon)
+  .get("/apple-touch-icon.png", appleIcon)
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/batches", requireMemberScreen(addBatchForm))
