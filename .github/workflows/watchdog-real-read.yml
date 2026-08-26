@@ -1,0 +1,49 @@
+name: Watchdog real private read
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify latest private backup is readable and fresh
+        env:
+          BACKUP_REPO_READ_TOKEN: ${{ secrets.BACKUP_REPO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKUP_REPO_READ_TOKEN:-}" ]; then
+            echo "BACKUP_REPO_READ_TOKEN is not configured" >&2
+            exit 1
+          fi
+
+          snapshot=$(mktemp)
+          trap 'rm -f "$snapshot"' EXIT
+          status=$(curl -sS -L -o "$snapshot" -w '%{http_code}' \
+            -H "Accept: application/vnd.github.raw+json" \
+            -H "Authorization: Bearer $BACKUP_REPO_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            https://api.github.com/repos/eerovil/ruokalista-backup/contents/snapshot.json)
+
+          [ "$status" = "200" ] || {
+            echo "private backup snapshot read failed: HTTP $status" >&2
+            exit 1
+          }
+
+          scheduled_at=$(jq -er '.scheduled_at | select(type == "string")' "$snapshot") || {
+            echo "snapshot.json has no valid scheduled_at string" >&2
+            exit 1
+          }
+
+          scheduled_epoch=$(date -u -d "$scheduled_at" +%s)
+          now_epoch=$(date -u +%s)
+          age_seconds=$((now_epoch - scheduled_epoch))
+          if [ "$age_seconds" -gt 129600 ]; then
+            echo "private backup snapshot is stale" >&2
+            exit 1
+          fi
+
+          echo "real private backup freshness read succeeded: $scheduled_at"
