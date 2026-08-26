@@ -420,6 +420,47 @@ One thing the real sheet did not obey: the locked style asks for semi-realistic
 clip-art and gpt-image-2 drew photographs. The pictures are good, so this is
 noted rather than fixed — each attempt at the wording costs another sheet.
 
+### Choosing which pictures to buy (#97, proposed)
+
+This pull request proposes the screen the two before it were for: `/admin/recipe-images`
+lists every dish in the household with what its picture is — **Ei kuvaa**,
+**Vanhentunut**, **Ajan tasalla** or **Itse lisätty** — and is the only place in
+the app where a person can spend money.
+
+It is three plain form posts and needs no JavaScript: the list, then
+`GET /admin/recipe-images/confirm` naming the exact recipes in the order they
+will take cells, then `POST /admin/recipe-images/generate`, which is the paid
+one. Only the third costs anything, and it is only ever reached from a button
+that says so. Nothing regenerates on save, on a schedule, or on opening a page.
+
+Missing and stale are preselected, up to the sixteen a sheet holds; a
+seventeenth candidate is the next batch, said in the wording rather than only in
+the validation. Pictures that are current sit behind a closed disclosure with
+nothing ticked and their own button, because a fresh recipe in the same list
+with the same checkbox is one mis-click away from being paid for. A picture
+somebody uploaded has no checkbox at all — #95 calls those manually managed, and
+this screen spending money to overwrite a photograph a person chose is what that
+rule exists to prevent. Replacing one is still the editor's job.
+
+`runImageBatch` in `src/recipe-image-batch.ts` is #96's route with the
+response-shaping lifted out, so the screen and `POST /api/admin/recipe-images/generate`
+run the same work in the same order and only the words differ. The cap, the
+manifest order, the all-or-nothing split and the per-recipe report are unchanged.
+
+`imageCandidates` in `src/recipe-image-admin.ts` reads the whole list in two
+queries and fingerprints it in memory, rather than calling `findRecipe` once per
+recipe — a hundred recipes would otherwise be several hundred round trips to
+render one screen. The verdict itself is still `imageStatus`, so this screen and
+the JSON API cannot disagree.
+
+The form accepts a supplied `sheetBase64` on a local origin, the same escape
+hatch and the same gate the JSON route has, which is how
+`tests/recipe-image-admin.spec.ts` walks the whole flow — selection,
+confirmation, split, commit, refreshed statuses — without calling OpenAI. The
+duplicate-submit guard is a small feature-detected script that disables the
+button as the form goes; without it the worst case is the duplicate, not a
+broken screen.
+
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework

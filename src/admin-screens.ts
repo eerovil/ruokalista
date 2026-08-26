@@ -18,9 +18,19 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
   return page(
     "Ylläpito",
     html`<h1>Ylläpito</h1>
-      <p>
-        Ylläpitäjän työkalut ilmestyvät tänne; toistaiseksi niitä ei ole yhtään.
-      </p>
+      <ul class="recipes">
+        <li>
+          <a href="/admin/recipe-images">
+            <span class="recipes-text">
+              Reseptikuvat
+              <span class="meta">
+                Katso mistä resepteistä kuva puuttuu tai on vanhentunut, ja luo
+                ne enintään 16 reseptin erissä.
+              </span>
+            </span>
+          </a>
+        </li>
+      </ul>
       <p class="empty">
         Kirjautuneena: ${member.displayName}. Ylläpitäjyys merkitään käsin
         tietokantaan, samoin kuin jäsenyyskin.
