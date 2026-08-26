@@ -46,6 +46,7 @@ import {
   saveEditForm,
   uploadRecipeImageForm,
 } from "./recipe-editor.ts";
+import { generateRecipeImages } from "./recipe-image-batch.ts";
 import {
   apiDeleteRecipeImage,
   apiPutRecipeImage,
@@ -129,7 +130,8 @@ const router = new Router()
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
   .get("/api/ingredients", requireMember(listIngredients))
   .get("/admin", requireAdminScreen(adminScreen))
-  .get("/api/admin/status", requireAdmin(adminStatus));
+  .get("/api/admin/status", requireAdmin(adminStatus))
+  .post("/api/admin/recipe-images/generate", requireAdmin(generateRecipeImages));
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
