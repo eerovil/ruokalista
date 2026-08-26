@@ -88,6 +88,33 @@ test.describe("signed in", () => {
     });
   });
 
+  test("lunches precede dinners within a day", async ({ page }) => {
+    const first = await createBatch(page, "2027-01-05", "lunch", 1);
+    await setCoverage(page, first, [
+      ["2027-01-05", "lunch"],
+      ["2027-01-05", "dinner"],
+    ]);
+    const second = await createBatch(page, "2027-01-05", "lunch", 2);
+    await setCoverage(page, second, [
+      ["2027-01-05", "lunch"],
+      ["2027-01-05", "dinner"],
+    ]);
+
+    await page.goto("/?week=2027-01-04");
+    const tuesday = page.locator(".day").nth(1);
+    await expect(tuesday.locator(".entry-slot")).toHaveText([
+      "Lounas",
+      "Lounas",
+      "Päivällinen",
+      "Päivällinen",
+    ]);
+    await expect(tuesday.locator(".batch-rail")).toHaveCount(2);
+    await page.screenshot({
+      path: `${SHOTS}/27-week-slot-order.png`,
+      fullPage: true,
+    });
+  });
+
   test("what you can do to a planned meal", async ({ page }) => {
     await page.goto("/picker?date=2026-10-13&slot=dinner");
     await page
