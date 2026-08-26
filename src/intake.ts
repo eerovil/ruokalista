@@ -85,7 +85,7 @@ const nullable = (type: string) => ({
   anyOf: [{ type }, { type: "null" }],
 });
 
-const DRAFT_SCHEMA = {
+export const DRAFT_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
@@ -359,7 +359,127 @@ export function draftFromJson(
     throw new RetryableStructuringError("The model returned unparseable JSON.");
   }
 
+  assertDraftWire(raw);
   return toDraft(raw, source, model);
+}
+
+/**
+ * Enforce the same wire contract for every producer of a draft. Structured
+ * model output is constrained by DRAFT_SCHEMA, but browser handoff and
+ * AgentDeck bundles are still untrusted JSON by the time they reach here.
+ */
+function assertDraftWire(raw: unknown): void {
+  const draft = objectWithKeys(raw, "draft", [
+    "title",
+    "yield_portions",
+    "source_text",
+    "steps",
+    "lines",
+  ]);
+  requireString(draft["title"], "title");
+  requireWholeOrNull(draft["yield_portions"], "yield_portions");
+  requireString(draft["source_text"], "source_text");
+
+  if (!Array.isArray(draft["steps"])) invalid("steps must be an array");
+  draft["steps"].forEach((rawStep, index) => {
+    const step = objectWithKeys(rawStep, `steps[${index}]`, [
+      "text",
+      "section",
+      "phase",
+    ]);
+    requireString(step["text"], `steps[${index}].text`);
+    requireStringOrNull(step["section"], `steps[${index}].section`);
+    requirePhase(step["phase"], `steps[${index}].phase`);
+  });
+
+  if (!Array.isArray(draft["lines"])) invalid("lines must be an array");
+  draft["lines"].forEach((rawLine, index) => {
+    const line = objectWithKeys(rawLine, `lines[${index}]`, [
+      "quantity",
+      "quantity_max",
+      "unit",
+      "alt_quantity",
+      "alt_unit",
+      "ingredient_id",
+      "ingredient_name",
+      "source_line",
+      "section",
+      "phase",
+      "note",
+    ]);
+    requireNumberOrNull(line["quantity"], `lines[${index}].quantity`);
+    requireNumberOrNull(line["quantity_max"], `lines[${index}].quantity_max`);
+    requireStringOrNull(line["unit"], `lines[${index}].unit`);
+    requireNumberOrNull(line["alt_quantity"], `lines[${index}].alt_quantity`);
+    requireStringOrNull(line["alt_unit"], `lines[${index}].alt_unit`);
+    const altQuantity = line["alt_quantity"];
+    const altUnit = textOrNull(line["alt_unit"]);
+    if ((altQuantity === null) !== (altUnit === null)) {
+      invalid(
+        `lines[${index}].alt_quantity and alt_unit must both be set or both be null`,
+      );
+    }
+    if (altQuantity !== null && line["quantity"] === null) {
+      invalid(`lines[${index}].alternative measurement requires quantity`);
+    }
+    requireWholeOrNull(line["ingredient_id"], `lines[${index}].ingredient_id`);
+    requireString(line["ingredient_name"], `lines[${index}].ingredient_name`);
+    requireString(line["source_line"], `lines[${index}].source_line`);
+    requireStringOrNull(line["section"], `lines[${index}].section`);
+    requirePhase(line["phase"], `lines[${index}].phase`);
+    requireStringOrNull(line["note"], `lines[${index}].note`);
+  });
+}
+
+function objectWithKeys(
+  value: unknown,
+  label: string,
+  keys: string[],
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalid(`${label} must be an object`);
+  }
+  const object = value as Record<string, unknown>;
+  const expected = new Set(keys);
+  for (const key of keys) {
+    if (!(key in object)) invalid(`${label}.${key} is required`);
+  }
+  for (const key of Object.keys(object)) {
+    if (!expected.has(key)) invalid(`${label}.${key} is not allowed`);
+  }
+  return object;
+}
+
+function requireString(value: unknown, label: string): void {
+  if (typeof value !== "string") invalid(`${label} must be a string`);
+}
+
+function requireStringOrNull(value: unknown, label: string): void {
+  if (value !== null && typeof value !== "string") {
+    invalid(`${label} must be a string or null`);
+  }
+}
+
+function requireNumberOrNull(value: unknown, label: string): void {
+  if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+    invalid(`${label} must be a number or null`);
+  }
+}
+
+function requireWholeOrNull(value: unknown, label: string): void {
+  if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value))) {
+    invalid(`${label} must be an integer or null`);
+  }
+}
+
+function requirePhase(value: unknown, label: string): void {
+  if (value !== null && value !== "before_parts" && value !== "after_parts") {
+    invalid(`${label} is not a supported phase`);
+  }
+}
+
+function invalid(message: string): never {
+  throw new RetryableStructuringError(`Invalid draft: ${message}.`);
 }
 
 function anthropic(env: Env): Anthropic {

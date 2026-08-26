@@ -4,6 +4,7 @@ node_modules/
 .dev.vars
 test-results/
 playwright-report/
+.generated/
 
 # Hand-walk screenshots from tests/walkthrough.spec.ts — look at them, do not commit.
 /walkthrough/
