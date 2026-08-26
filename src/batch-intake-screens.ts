@@ -18,9 +18,20 @@ const MAX_FORM_BYTES = 4_100_000;
 
 class BundleTooLarge extends BatchRefused {}
 
-/** `GET /intake/batch` — authenticated local-file handoff from AgentDeck. */
-export function batchIntakeScreen(): Response {
-  return uploadPage();
+/**
+ * `GET /intake/batch` — admin-only local-file handoff from AgentDeck.
+ *
+ * #82 shipped this to any signed-in member and linked it from `/intake`. #106
+ * proposes it as an admin tool: it writes a whole bundle of recipes in one go
+ * and creates ingredients while doing it, which is not every member's to run.
+ * All three routes are wrapped in `requireAdminScreen` in `src/index.ts`, so
+ * removing the link from `/intake` is tidiness and the gate is the boundary.
+ */
+export function batchIntakeScreen(
+  _ctx: RouteContext,
+  member: Member,
+): Response {
+  return uploadPage(member);
 }
 
 /** `POST /intake/batch/review` — refuse the whole bundle or show one review. */
@@ -29,17 +40,17 @@ export async function reviewBatchScreen(
   member: Member,
 ): Promise<Response> {
   if (requestTooLarge(request)) {
-    return uploadPage("Nippu on liian suuri; jaa se pienempiin eriin.", "", 413);
+    return uploadPage(member, "Nippu on liian suuri; jaa se pienempiin eriin.", "", 413);
   }
   const form = await request.formData();
   let json = "";
   try {
     json = await bundleText(form);
     const analysis = await analyseBatch(env.DB, member, json);
-    return page("Tarkista reseptinippu", review(analysis), "intake");
+    return page("Tarkista reseptinippu", review(analysis), "intake", member);
   } catch (error) {
     if (!(error instanceof BatchRefused)) throw error;
-    return uploadPage(error.message, json, error instanceof BundleTooLarge ? 413 : 400);
+    return uploadPage(member, error.message, json, error instanceof BundleTooLarge ? 413 : 400);
   }
 }
 
@@ -49,7 +60,7 @@ export async function importBatchScreen(
   member: Member,
 ): Promise<Response> {
   if (requestTooLarge(request)) {
-    return uploadPage("Nippu on liian suuri; jaa se pienempiin eriin.", "", 413);
+    return uploadPage(member, "Nippu on liian suuri; jaa se pienempiin eriin.", "", 413);
   }
   const form = await request.formData();
   const json = String(form.get("bundle") ?? "");
@@ -59,7 +70,7 @@ export async function importBatchScreen(
     analysis = await analyseBatch(env.DB, member, json);
   } catch (error) {
     if (!(error instanceof BatchRefused)) throw error;
-    return uploadPage(error.message, json, error instanceof BundleTooLarge ? 413 : 400);
+    return uploadPage(member, error.message, json, error instanceof BundleTooLarge ? 413 : 400);
   }
 
   const reviewedKeys = reviewedIngredientKeys(form);
@@ -74,6 +85,7 @@ export async function importBatchScreen(
         </p>
         ${review(analysis)}`,
       "intake",
+      member,
       409,
     );
   }
@@ -92,6 +104,7 @@ export async function importBatchScreen(
         <p class="refused">${String((error as Error).message ?? error)}</p>
         ${review(analysis)}`,
       "intake",
+      member,
       400,
     );
   }
@@ -104,6 +117,7 @@ export async function importBatchScreen(
       .slice(result.failed.index)
       .map((recipe) => recipe.title.trim());
     return resultPage(
+      member,
       result.saved,
       `Reseptiä “${result.failed.title}” ei voitu tallentaa: ${String((result.failed.error as Error).message ?? result.failed.error)}`,
       500,
@@ -113,10 +127,15 @@ export async function importBatchScreen(
       },
     );
   }
-  return resultPage(result.saved, null, 200, null);
+  return resultPage(member, result.saved, null, 200, null);
 }
 
-function uploadPage(message = "", json = "", status = 200): Response {
+function uploadPage(
+  member: Member,
+  message = "",
+  json = "",
+  status = 200,
+): Response {
   return page(
     "Tuo AgentDeck-reseptejä",
     html`<h1>Tuo AgentDeck-reseptejä</h1>
@@ -137,8 +156,10 @@ function uploadPage(message = "", json = "", status = 200): Response {
         <label for="bundle">…tai JSON tekstinä</label>
         <textarea id="bundle" name="bundle" rows="14">${json}</textarea>
         <button type="submit">Tarkista nippu</button>
-      </form>`,
+      </form>
+      <p><a href="/admin">Takaisin ylläpitoon</a></p>`,
     "intake",
+    member,
     status,
   );
 }
@@ -266,6 +287,7 @@ function previewSection(
 }
 
 function resultPage(
+  member: Member,
   saved: Array<{ id: number; title: string }>,
   error: string | null,
   status: number,
@@ -293,6 +315,7 @@ function resultPage(
             </form>`}
       <p><a href="/intake/batch">Tuo toinen nippu</a></p>`,
     "intake",
+    member,
     status,
   );
 }

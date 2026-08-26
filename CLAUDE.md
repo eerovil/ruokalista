@@ -147,9 +147,38 @@ nothing. That is tidiness, not the boundary — `/admin` refuses whether or not
 anybody saw a link. It sits on the week rather than in the shell because putting
 it in the shared header would mean threading the viewer through `page()` at
 thirty-odd call sites, which is a bigger change than this boundary is worth.
+#106 proposes paying exactly that cost; the section below says what it buys.
 
 Seed member 3 is Koti's admin and member 1 stays ordinary, so the specs have both
 sides and every existing screenshot is unchanged.
+
+### One panel, and one way to it (#106, proposed)
+
+This pull request proposes that the admin panel be the *only* place an admin
+tool is found, and the account button in the top bar be the only way to the
+panel. So `page()` takes a `viewer` — `Member` satisfies it by shape — and every
+screen passes the member it already holds; the four sign-in screens pass null,
+which is also the shell that renders no account button. That is the threading
+#94 deferred, and paying for it is what lets one entry point serve every screen
+instead of only the week. The week's own `Ylläpito` link goes away with it.
+
+`accountMenu` in `src/html.ts` is the whole of the visible half, and it asks one
+question about the viewer: `isAdmin`. Nothing else about a member reaches the
+shell, and the entry is still courtesy — every route behind it refuses an
+ordinary member whether or not a link was rendered.
+
+`/admin` becomes a list of tools, one row each: the recipe images from #97 and
+the AgentDeck bundle import from #82. Adding the next admin tool is adding a row
+here rather than a link somewhere an ordinary member looks.
+
+The import moves with it. `/intake/batch`, `/intake/batch/review` and
+`/intake/batch/import` go from `requireMemberScreen` to `requireAdminScreen`,
+and the link off `/intake` is removed — it writes a whole bundle of recipes at
+once and creates ingredients doing it, which is not every member's to run. The
+paths are unchanged, so `docs/agentdeck-recipe-bundles.md` still names the
+screen it always did, and `tests/batch-intake.spec.ts` now signs in as member 3.
+`tests/admin.spec.ts` asks all three routes directly as an ordinary member and
+as a signed-out browser, because the link being gone proves nothing.
 
 ## Intake, and what it costs to test
 

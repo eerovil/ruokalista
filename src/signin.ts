@@ -48,6 +48,7 @@ export async function signInScreen({
         </p>
         ${dev}`,
       "signed-out",
+      null,
       // A development server with no Google credentials can still be walked
       // through, so this is only degraded when there is genuinely no way in.
       dev === "" ? 503 : 200,
@@ -60,6 +61,7 @@ export async function signInScreen({
       <p><a class="button" href="/auth/google">Kirjaudu Google-tilillä</a></p>
       ${dev}`,
     "signed-out",
+    null,
   );
 }
 
@@ -151,6 +153,7 @@ function notAMemberScreen(sub: string, email: string | null): Response {
       </p>
       <p class="empty">Anna hänelle tämä tunniste: <code>${sub}</code></p>`,
     "signed-out",
+    null,
     403,
   );
 }
@@ -162,6 +165,7 @@ function failedScreen(message: string): Response {
       <p class="empty">${message}</p>
       <p><a href="/signin">Yritä uudelleen</a></p>`,
     "signed-out",
+    null,
     400,
   );
 }

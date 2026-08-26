@@ -87,17 +87,18 @@ export function requireAdmin(handler: MemberHandler): Handler {
 /** Same wall, for a screen: a 404 page rather than a JSON body. */
 export function requireAdminScreen(handler: MemberHandler): Handler {
   return requireMemberScreen((ctx, member) =>
-    member.isAdmin ? handler(ctx, member) : adminNotFound(),
+    member.isAdmin ? handler(ctx, member) : adminNotFound(member),
   );
 }
 
-function adminNotFound(): Response {
+function adminNotFound(member: Member): Response {
   return page(
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>
       <p class="empty">Tätä sivua ei ole.</p>
       <p><a href="/">Takaisin viikkoon</a></p>`,
     "week",
+    member,
     404,
   );
 }

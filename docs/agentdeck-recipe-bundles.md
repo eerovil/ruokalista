@@ -62,9 +62,12 @@ Generation contract:
   phases, realistic quantities, null ingredient IDs, and obvious near-duplicate
   recipes in the batch.
 
-The signed-in member can upload or paste the file from the proposed
-`/intake/batch` screen. Ruokalista will validate the full bundle, show its
-provenance and proposed new ingredients, allow each proposed name to be
-repointed to an existing ingredient, preview every recipe, and only then offer
-the save action. No Anthropic intake call or AgentDeck production credential is
-part of this path.
+An admin can upload or paste the file from the proposed `/intake/batch` screen,
+which #106 proposes reaching from the admin panel — the account button offers
+`Ylläpito` to an admin, and the panel lists this import. All three of its routes
+are behind the admin gate, so an ordinary member is told they are not there.
+
+Ruokalista will validate the full bundle, show its provenance and proposed new
+ingredients, allow each proposed name to be repointed to an existing
+ingredient, preview every recipe, and only then offer the save action. No
+Anthropic intake call or AgentDeck production credential is part of this path.
