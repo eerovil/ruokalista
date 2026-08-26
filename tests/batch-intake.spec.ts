@@ -73,6 +73,23 @@ test("repoints one proposed name everywhere to an existing ingredient", async ({
   expect(await ingredientNames(page)).not.toContain("kikherne");
 });
 
+test("refuses a reviewed repoint when exact-name resolution changed", async ({ page }) => {
+  const bundle = batchCopy();
+  bundle.recipes = [bundle.recipes[0]];
+  await review(page, bundle);
+
+  await page.locator('select[data-proposed-index="0"]').selectOption({
+    label: "Käytä olemassa olevaa: ananas",
+  });
+  createIngredient("kikherne");
+  await page.getByRole("button", { name: "Tuo 1 reseptiä" }).click();
+
+  expect(await page.locator("main").textContent()).toContain(
+    "Talouden ainekset muuttuivat tarkistamisen jälkeen",
+  );
+  expect(provenanceRows()).toEqual([]);
+});
+
 test("refuses duplicate titles within a bundle and in the household", async ({ page }) => {
   const within = batchCopy();
   within.recipes[1].title = "  agentdeck-KEITTO ";
@@ -91,6 +108,29 @@ test("refuses malformed drafts and supplied production ingredient ids", async ({
   malformed.recipes[0].lines[0].quantity = "1";
   await review(page, malformed);
   await expect(page.locator(".refused")).toContainText("quantity must be a number or null");
+
+  const incompleteAlternative = batchCopy();
+  incompleteAlternative.recipes[0].lines[0].alt_quantity = 2;
+  await review(page, incompleteAlternative);
+  await expect(page.locator(".refused")).toContainText(
+    "alt_quantity and alt_unit must both be set or both be null",
+  );
+
+  const incompleteAlternativeUnit = batchCopy();
+  incompleteAlternativeUnit.recipes[0].lines[0].alt_unit = "g";
+  await review(page, incompleteAlternativeUnit);
+  await expect(page.locator(".refused")).toContainText(
+    "alt_quantity and alt_unit must both be set or both be null",
+  );
+
+  const alternativeWithoutPrimary = batchCopy();
+  alternativeWithoutPrimary.recipes[0].lines[0].quantity = null;
+  alternativeWithoutPrimary.recipes[0].lines[0].alt_quantity = 2;
+  alternativeWithoutPrimary.recipes[0].lines[0].alt_unit = "dl";
+  await review(page, alternativeWithoutPrimary);
+  await expect(page.locator(".refused")).toContainText(
+    "alternative measurement requires quantity",
+  );
 
   const supplied = batchCopy();
   supplied.recipes[0].lines[0].ingredient_id = 2;
@@ -192,4 +232,20 @@ function provenanceRows(): Array<Record<string, string>> {
   );
   const result = JSON.parse(output) as Array<{ results: Array<Record<string, string>> }>;
   return result[0]?.results ?? [];
+}
+
+function createIngredient(name: string): void {
+  execFileSync(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      "ruokalista",
+      "--local",
+      "--command",
+      `INSERT INTO ingredient (household_id, name, created_by) VALUES (1, '${name.replaceAll("'", "''")}', 1)`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
 }

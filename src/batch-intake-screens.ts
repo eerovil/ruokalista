@@ -62,15 +62,25 @@ export async function importBatchScreen(
     return uploadPage(error.message, json, error instanceof BundleTooLarge ? 413 : 400);
   }
 
-  const proposed = new Set(analysis.proposedIngredients.map((item) => item.key));
+  const reviewedKeys = reviewedIngredientKeys(form);
+  const currentKeys = analysis.proposedIngredients.map((item) => item.key);
+  if (!sameKeys(reviewedKeys, currentKeys)) {
+    return page(
+      "Tarkista reseptinippu uudelleen",
+      html`<h1>Tarkista reseptinippu uudelleen</h1>
+        <p class="refused">
+          Talouden ainekset muuttuivat tarkistamisen jälkeen. Tarkista
+          ainesvalinnat uudelleen ennen tuontia.
+        </p>
+        ${review(analysis)}`,
+      "intake",
+      409,
+    );
+  }
+
   const choices = new Map<string, string>();
-  for (const [name, value] of form.entries()) {
-    const match = /^ingredientKey\.(\d+)$/.exec(name);
-    if (match === null) continue;
-    const key = String(value);
-    if (proposed.has(key)) {
-      choices.set(key, String(form.get(`ingredient.${match[1]}`) ?? ""));
-    }
+  for (const [index, key] of reviewedKeys.entries()) {
+    choices.set(key, String(form.get(`ingredient.${index}`) ?? ""));
   }
   let recipes;
   try {
@@ -309,4 +319,18 @@ function assertBundleSize(json: string): void {
 function requestTooLarge(request: Request): boolean {
   const length = Number(request.headers.get("Content-Length"));
   return Number.isFinite(length) && length > MAX_FORM_BYTES;
+}
+
+function reviewedIngredientKeys(form: FormData): string[] {
+  const keys: string[] = [];
+  for (let index = 0; ; index += 1) {
+    const value = form.get(`ingredientKey.${index}`);
+    if (value === null) return keys;
+    keys.push(String(value));
+  }
+}
+
+function sameKeys(reviewed: string[], current: string[]): boolean {
+  return reviewed.length === current.length &&
+    reviewed.every((key, index) => key === current[index]);
 }

@@ -412,6 +412,16 @@ function assertDraftWire(raw: unknown): void {
     requireStringOrNull(line["unit"], `lines[${index}].unit`);
     requireNumberOrNull(line["alt_quantity"], `lines[${index}].alt_quantity`);
     requireStringOrNull(line["alt_unit"], `lines[${index}].alt_unit`);
+    const altQuantity = line["alt_quantity"];
+    const altUnit = textOrNull(line["alt_unit"]);
+    if ((altQuantity === null) !== (altUnit === null)) {
+      invalid(
+        `lines[${index}].alt_quantity and alt_unit must both be set or both be null`,
+      );
+    }
+    if (altQuantity !== null && line["quantity"] === null) {
+      invalid(`lines[${index}].alternative measurement requires quantity`);
+    }
     requireWholeOrNull(line["ingredient_id"], `lines[${index}].ingredient_id`);
     requireString(line["ingredient_name"], `lines[${index}].ingredient_name`);
     requireString(line["source_line"], `lines[${index}].source_line`);
