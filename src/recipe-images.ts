@@ -1,6 +1,14 @@
 import { problem } from "./auth.ts";
 import { extensionFor, readImage } from "./image-bytes.ts";
+import {
+  imageStatus,
+  type ImageOrigin,
+  type ImageStatus,
+  type StoredImage,
+} from "./image-freshness.ts";
 import type { Member } from "./members.ts";
+import { recipeFingerprint } from "./recipe-fingerprint.ts";
+import { findRecipe } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -10,6 +18,11 @@ import type { RouteContext } from "./router.ts";
  * remove buttons live in `recipe-editor.ts` with the rest of the editor, and
  * call into `storeRecipeImage`/`removeRecipeImage` here — so a refusal can be
  * rendered as a screen there and as JSON here, from one set of rules.
+ *
+ * It is also where a picture's provenance is written: whether somebody uploaded
+ * it or something generated it, and for a generated one, which recipe
+ * fingerprint it was made from. `image-freshness.ts` turns that into missing /
+ * fresh / stale.
  */
 
 /**
@@ -30,6 +43,25 @@ export interface ImageRefusal {
 
 interface ImageRow {
   image_key: string | null;
+}
+
+/**
+ * Where a picture being stored came from. A generated one states the
+ * fingerprint it was made from rather than having it read back out of the
+ * database, because what matters is the recipe the picture actually depicts —
+ * not the recipe as it stands the moment the bytes arrive.
+ */
+export type ImageProvenance =
+  | { origin: "manual" }
+  | { origin: "generated"; fingerprint: string; model: string | null };
+
+const MANUAL: ImageProvenance = { origin: "manual" };
+
+interface FreshnessRow extends ImageRow {
+  image_origin: ImageOrigin | null;
+  image_fingerprint: string | null;
+  image_generated_at: string | null;
+  image_generated_by: string | null;
 }
 
 /** GET /api/recipes/:id/image */
@@ -67,9 +99,18 @@ export async function apiRecipeImage(
   return new Response(object.body, { headers });
 }
 
-/** PUT /api/recipes/:id/image — raw image bytes, suitable for bulk tooling. */
+/**
+ * PUT /api/recipes/:id/image — raw image bytes, suitable for bulk tooling.
+ *
+ * `?origin=generated` records the picture as generated rather than uploaded,
+ * with `&model=` for the diagnostics and `&fingerprint=` for the recipe content
+ * it was actually made from. A generator that read the recipe, spent money on a
+ * picture, and comes back to store it should state that fingerprint: leaving it
+ * out means "made from the recipe as it stands right now", which is a claim
+ * about a recipe nobody looked at.
+ */
 export async function apiPutRecipeImage(
-  { env, request, params }: RouteContext,
+  { env, request, url, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const recipeId = parseRecipeId(params["id"]);
@@ -83,15 +124,117 @@ export async function apiPutRecipeImage(
     return problem(413, tooLarge().english);
   }
 
+  const origin = url.searchParams.get("origin");
+  if (origin !== null && origin !== "manual" && origin !== "generated") {
+    return problem(400, "origin must be manual or generated.");
+  }
+
+  let provenance: ImageProvenance = MANUAL;
+  if (origin === "generated") {
+    const stated = url.searchParams.get("fingerprint");
+    const fingerprint = stated ?? (await currentFingerprint(env.DB, member.householdId, recipeId));
+    if (fingerprint === null) return problem(404, "No such recipe.");
+    provenance = {
+      origin: "generated",
+      fingerprint,
+      model: url.searchParams.get("model"),
+    };
+  }
+
   const refusal = await storeRecipeImage(
     env,
     member.householdId,
     recipeId,
     row.image_key,
     await request.arrayBuffer(),
+    provenance,
   );
   if (refusal !== null) return problem(refusal.status, refusal.english);
   return new Response(null, { status: 204 });
+}
+
+/**
+ * GET /api/recipes/:id/image/status — missing, fresh or stale, and what that
+ * verdict was reached from.
+ *
+ * The calculation itself lives in `image-freshness.ts` and needs no request;
+ * this is the way in for anything outside the Worker, which for now means the
+ * batch generator and the admin list that are still to be built.
+ */
+export async function apiRecipeImageStatus(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipeId = parseRecipeId(params["id"]);
+  if (recipeId === null) return problem(404, "No such recipe.");
+
+  const state = await recipeImageState(env.DB, member.householdId, recipeId);
+  if (state === null) return problem(404, "No such recipe.");
+
+  return Response.json(state);
+}
+
+/** What is known about one recipe's picture, freshness included. */
+export interface RecipeImageState {
+  recipeId: number;
+  status: ImageStatus;
+  origin: ImageOrigin | null;
+  /** What the recipe's ingredients hash to right now. */
+  recipeFingerprint: string;
+  /** What the stored generated picture was made from, if it was generated. */
+  imageFingerprint: string | null;
+  generatedAt: string | null;
+  generatedBy: string | null;
+}
+
+/**
+ * Read one recipe's picture state. Two reads, because the fingerprint is of the
+ * whole dish — its parts included — and that is what `findRecipe` already
+ * loads; nothing here re-implements it.
+ */
+export async function recipeImageState(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<RecipeImageState | null> {
+  const row = await db
+    .prepare(
+      `SELECT image_key, image_origin, image_fingerprint,
+              image_generated_at, image_generated_by
+         FROM recipe WHERE id = ? AND household_id = ?`,
+    )
+    .bind(recipeId, householdId)
+    .first<FreshnessRow>();
+  if (row === null) return null;
+
+  const fingerprint = await currentFingerprint(db, householdId, recipeId);
+  if (fingerprint === null) return null;
+
+  const stored: StoredImage = {
+    imageKey: row.image_key,
+    imageOrigin: row.image_origin,
+    imageFingerprint: row.image_fingerprint,
+  };
+
+  return {
+    recipeId,
+    status: imageStatus(stored, fingerprint),
+    origin: row.image_key === null ? null : (row.image_origin ?? "manual"),
+    recipeFingerprint: fingerprint,
+    imageFingerprint: row.image_fingerprint,
+    generatedAt: row.image_generated_at,
+    generatedBy: row.image_generated_by,
+  };
+}
+
+/** The recipe's own content hash, or null if the recipe is not there. */
+async function currentFingerprint(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<string | null> {
+  const recipe = await findRecipe(db, householdId, recipeId);
+  return recipe === null ? null : recipeFingerprint(recipe);
 }
 
 /** DELETE /api/recipes/:id/image */
@@ -118,6 +261,7 @@ export async function storeRecipeImage(
   recipeId: number,
   oldKey: string | null,
   bytes: ArrayBuffer,
+  provenance: ImageProvenance = MANUAL,
 ): Promise<ImageRefusal | null> {
   if (bytes.byteLength === 0) {
     return {
@@ -159,11 +303,32 @@ export async function storeRecipeImage(
   });
 
   try {
+    // The provenance columns are written in the same statement as the key, so
+    // there is no instant where a picture exists with somebody else's
+    // fingerprint against it. A manual upload clears them all: it is not
+    // compared against anything, and a leftover fingerprint would say it was.
     const result = await env.DB
       .prepare(
-        "UPDATE recipe SET image_key = ? WHERE id = ? AND household_id = ?",
+        `UPDATE recipe
+            SET image_key = ?,
+                image_origin = ?,
+                image_fingerprint = ?,
+                image_generated_at = ${
+          provenance.origin === "generated"
+            ? "strftime('%Y-%m-%d %H:%M:%f', 'now')"
+            : "NULL"
+        },
+                image_generated_by = ?
+          WHERE id = ? AND household_id = ?`,
       )
-      .bind(key, recipeId, householdId)
+      .bind(
+        key,
+        provenance.origin,
+        provenance.origin === "generated" ? provenance.fingerprint : null,
+        provenance.origin === "generated" ? provenance.model : null,
+        recipeId,
+        householdId,
+      )
       .run();
 
     if (result.meta.changes !== 1) throw new Error("Recipe disappeared during image upload.");
@@ -184,7 +349,15 @@ export async function removeRecipeImage(
   oldKey: string | null,
 ): Promise<void> {
   await env.DB
-    .prepare("UPDATE recipe SET image_key = NULL WHERE id = ? AND household_id = ?")
+    .prepare(
+      `UPDATE recipe
+          SET image_key = NULL,
+              image_origin = NULL,
+              image_fingerprint = NULL,
+              image_generated_at = NULL,
+              image_generated_by = NULL
+        WHERE id = ? AND household_id = ?`,
+    )
     .bind(recipeId, householdId)
     .run();
   if (oldKey !== null) await env.RECIPE_IMAGES.delete(oldKey);

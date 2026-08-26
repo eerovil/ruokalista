@@ -260,6 +260,36 @@ old one — so a failure leaves a stray object rather than a recipe pointing at
 nothing. Deleting a recipe drops its pictures and its parts' pictures first, for
 the same reason: the keys are only readable while the rows still exist.
 
+### Is the picture still the dish? (#95, proposed)
+
+This pull request adds a way to ask whether a picture still shows the recipe,
+because generating one is going to cost money (#96) and nothing yet knows which
+recipes need it (#97).
+
+`src/recipe-fingerprint.ts` hashes the recipe content that decides what the
+picture shows: the title, every line's amount, range, unit, second measurement
+and ingredient name, and the parts of a multipart dish each under its own name.
+Nothing else — not the steps, not the source text, not the yield, not an id, and
+not the order the rows happen to be in. So reordering lines or fixing a typo in
+a step is not a change to the dish, and putting an ingredient back gives the
+fingerprint it had before. `VERSION` is the way to change what counts: an old
+fingerprint then compares unequal on purpose, because the rule that made it is
+gone.
+
+`recipe.image_origin`, `image_fingerprint`, `image_generated_at` and
+`image_generated_by` (migration 0007) say what the stored picture is, and
+`src/image-freshness.ts` turns that into `missing`, `fresh` or `stale` — one
+function, no queries, so the generator and the admin list cannot disagree.
+
+A picture somebody uploaded is *manually managed*: fresh until they replace or
+remove it, never compared, never queued for a paid regeneration. A row from #89
+carries no origin, and reads as one of those, so nothing that already exists
+goes stale when the migration lands. Only a picture recorded as generated is
+compared, and only against the fingerprint it states it was made from —
+`PUT /api/recipes/:id/image?origin=generated&fingerprint=…&model=…`. Leaving the
+fingerprint out means "made from the recipe as it stands right now", which is a
+claim about a recipe nobody read.
+
 ## Checks
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework
