@@ -273,6 +273,8 @@ export async function structureDraft(
     throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
   }
 
+  logImportUsage(recipeTitle(response.content), response.usage);
+
   if (response.stop_reason === "refusal") {
     throw new Error("The model declined to structure this text.");
   }
@@ -327,14 +329,20 @@ export function streamDraft(
           ...requestFor(source, ingredients),
         });
 
+        let text = "";
+
         for await (const event of stream) {
           if (
             event.type === "content_block_delta" &&
             event.delta.type === "text_delta"
           ) {
+            text += event.delta.text;
             controller.enqueue(encoder.encode(event.delta.text));
           }
         }
+
+        const response = await stream.finalMessage();
+        logImportUsage(recipeTitle(response.content, text), response.usage);
 
         controller.close();
       } catch (cause) {
@@ -344,6 +352,32 @@ export function streamDraft(
       }
     },
   });
+}
+
+/** Record the cost-bearing part of a completed model response. */
+export function logImportUsage(title: string | null, usage: unknown): void {
+  console.log(JSON.stringify({
+    event: "intake.model_usage",
+    recipe_title: title,
+    usage,
+  }));
+}
+
+function recipeTitle(
+  content: Array<{ type: string; text?: string }>,
+  streamedText?: string,
+): string | null {
+  const text = streamedText ?? content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text ?? "")
+    .join("");
+
+  try {
+    const parsed = JSON.parse(text) as { title?: unknown };
+    return typeof parsed.title === "string" ? parsed.title : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Parse a draft the browser streamed and handed back. */
