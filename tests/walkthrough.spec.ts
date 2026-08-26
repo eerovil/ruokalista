@@ -6,7 +6,8 @@ import { sessionCookie } from "./support/session";
  * A hand-walk of the whole product, kept out of `npm run check` and CI — this
  * file is run on demand to look at the app, not to assert about it.
  *
- *   ./scripts/playwright.sh npx playwright test walkthrough
+ *   ./scripts/playwright.sh env PLAYWRIGHT_WALKTHROUGH=1 \
+ *     npx playwright test walkthrough
  *
  * It deliberately does not reseed: it is meant to be pointed at whatever the
  * development database currently holds.
