@@ -17,7 +17,7 @@ test("multi-day rails join at day boundaries and overlapping batches use separat
   const lunches = await createBatch(page, MONDAY, "lunch", 1);
   await setCoverage(page, lunches, [
     ["2026-12-07", "lunch"],
-    ["2026-12-08", "lunch"],
+    ["2026-12-08", "dinner"],
     ["2026-12-09", "lunch"],
   ]);
 
@@ -65,6 +65,66 @@ test("multi-day rails join at day boundaries and overlapping batches use separat
 
   expect(Math.abs(lineBoxes[0]!.bottom - lineBoxes[1]!.top)).toBeLessThanOrEqual(1);
   expect(Math.abs(lineBoxes[1]!.bottom - lineBoxes[2]!.top)).toBeLessThanOrEqual(1);
+});
+
+test("rails stay open when the batch crosses either visible week edge", async ({
+  page,
+}) => {
+  const fromPreviousWeek = await createBatch(page, "2026-12-06", "dinner", 1);
+  await setCoverage(page, fromPreviousWeek, [
+    ["2026-12-06", "dinner"],
+    ["2026-12-07", "lunch"],
+    ["2026-12-08", "dinner"],
+  ]);
+  const intoNextWeek = await createBatch(page, "2026-12-11", "lunch", 2);
+  await setCoverage(page, intoNextWeek, [
+    ["2026-12-11", "lunch"],
+    ["2026-12-12", "lunch"],
+    ["2026-12-13", "dinner"],
+    ["2026-12-14", "lunch"],
+  ]);
+
+  await page.goto(`/?week=${MONDAY}`);
+
+  const openStart = page.locator(
+    `.batch-rail[data-batch-id="${fromPreviousWeek}"]`,
+  ).first();
+  await expect(openStart).toHaveClass(/continues-before/);
+  await expect(openStart).not.toHaveClass(/is-start/);
+  await expect(openStart.locator(".is-start")).toHaveCount(0);
+
+  const openEnd = page.locator(
+    `.batch-rail[data-batch-id="${intoNextWeek}"]`,
+  ).last();
+  await expect(openEnd).toHaveClass(/continues-after/);
+  await expect(openEnd).not.toHaveClass(/is-end/);
+  await expect(openEnd.locator(".is-end")).toHaveCount(0);
+});
+
+test("dense overlapping rails preserve usable phone-width cards", async ({ page }) => {
+  for (let index = 0; index < 10; index += 1) {
+    const id = await createBatch(
+      page,
+      MONDAY,
+      index % 2 === 0 ? "lunch" : "dinner",
+      index % 2 === 0 ? 1 : 2,
+    );
+    await setCoverage(page, id, [
+      ["2026-12-07", index % 2 === 0 ? "lunch" : "dinner"],
+      ["2026-12-08", index % 2 === 0 ? "dinner" : "lunch"],
+      ["2026-12-09", index % 2 === 0 ? "lunch" : "dinner"],
+    ]);
+  }
+
+  await page.goto(`/?week=${MONDAY}`);
+
+  const dimensions = await page.evaluate(() => ({
+    cardWidth: document.querySelector(".entry a")!.getBoundingClientRect().width,
+    pageWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+  }));
+  expect(dimensions.pageWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
+  expect(dimensions.cardWidth).toBeGreaterThanOrEqual(270);
 });
 
 async function createBatch(

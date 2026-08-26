@@ -49,7 +49,7 @@ export async function weekScreen(
   );
   const now = today();
   const { laneById, laneCount } = assignBatchLanes(batches);
-  const railGutter = laneCount === 0 ? 0 : laneCount * 0.8 + 0.35;
+  const railWidth = laneCount === 0 ? 0 : Math.min(0.8, 5 / laneCount);
 
   return page(
     "Viikko",
@@ -62,7 +62,7 @@ export async function weekScreen(
       <style>
         .week-days .day {
           display: grid;
-          grid-template-columns: repeat(var(--rail-count), .8rem) minmax(0, 1fr);
+          grid-template-columns: repeat(var(--rail-count), var(--rail-width)) minmax(0, 1fr);
           position: relative;
           margin-bottom: 0;
           padding-bottom: 1.5rem;
@@ -75,11 +75,7 @@ export async function weekScreen(
         .week-days .day h2,
         .week-days .batch-track,
         .week-days .slot-actions {
-          grid-column: 1 / -1;
-        }
-        .week-days .day h2,
-        .week-days .batch-track {
-          padding-left: var(--rail-gutter);
+          grid-column: -2 / -1;
         }
         .week-days .batch-track {
           display: block;
@@ -89,7 +85,6 @@ export async function weekScreen(
           content: none;
         }
         .week-days .slot-actions {
-          margin-left: var(--rail-gutter);
           padding-left: 0;
         }
         .week-days .batch-rail {
@@ -126,7 +121,7 @@ export async function weekScreen(
       </style>
       <div
         class="week-days"
-        style="--rail-count:${Math.max(1, laneCount)};--rail-gutter:${railGutter}rem"
+        style="--rail-count:${Math.max(1, laneCount)};--rail-width:${railWidth}rem"
       >${days.map((date) => dayCard(date, batches, date === now, laneById))}</div>`,
     "week",
   );

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { AGENTDECK_BATCH } from "./support/batch";
 import { stubStructuring } from "./support/draft";
@@ -63,6 +63,29 @@ test.describe("signed in", () => {
     await expect(page.locator(".batch-start")).toBeVisible();
     await expect(page.locator(".batch-end")).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
+  });
+
+  test("continuous overlapping rails", async ({ page }) => {
+    const lunches = await createBatch(page, "2026-12-07", "lunch", 1);
+    await setCoverage(page, lunches, [
+      ["2026-12-07", "lunch"],
+      ["2026-12-08", "dinner"],
+      ["2026-12-09", "lunch"],
+    ]);
+    const dinners = await createBatch(page, "2026-12-07", "dinner", 2);
+    await setCoverage(page, dinners, [
+      ["2026-12-07", "dinner"],
+      ["2026-12-08", "dinner"],
+      ["2026-12-09", "dinner"],
+    ]);
+
+    await page.goto("/?week=2026-12-07");
+    await expect(page.locator(".batch-rail")).toHaveCount(6);
+    await expect(page.locator(".batch-end")).toHaveCount(2);
+    await page.screenshot({
+      path: `${SHOTS}/24-continuous-rails.png`,
+      fullPage: true,
+    });
   });
 
   test("what you can do to a planned meal", async ({ page }) => {
@@ -245,3 +268,29 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
   });
 });
+
+async function createBatch(
+  page: Page,
+  date: string,
+  slot: "lunch" | "dinner",
+  recipeId: number,
+): Promise<number> {
+  const response = await page.request.post("/api/batches", {
+    data: { date, slot, recipeId, portions: 4 },
+  });
+  expect(response.status()).toBe(201);
+  return ((await response.json()) as { id: number }).id;
+}
+
+async function setCoverage(
+  page: Page,
+  id: number,
+  occurrences: Array<[string, "lunch" | "dinner"]>,
+): Promise<void> {
+  const response = await page.request.patch(`/api/batches/${id}`, {
+    data: {
+      occurrences: occurrences.map(([date, slot]) => ({ date, slot })),
+    },
+  });
+  expect(response.status()).toBe(204);
+}
