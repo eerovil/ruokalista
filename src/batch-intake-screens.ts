@@ -12,7 +12,9 @@ import { saveRecipe } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
 const MAX_BUNDLE_BYTES = 2_000_000;
-const MAX_FORM_BYTES = 2_100_000;
+// Confirmation carries the JSON plus one bounded hidden key per proposed
+// ingredient. Fixed indexed field names keep the multipart headers small.
+const MAX_FORM_BYTES = 4_100_000;
 
 class BundleTooLarge extends BatchRefused {}
 
@@ -60,12 +62,16 @@ export async function importBatchScreen(
     return uploadPage(error.message, json, error instanceof BundleTooLarge ? 413 : 400);
   }
 
-  const choices = new Map(
-    analysis.proposedIngredients.map((item) => [
-      item.key,
-      String(form.get(choiceName(item.key)) ?? ""),
-    ]),
-  );
+  const proposed = new Set(analysis.proposedIngredients.map((item) => item.key));
+  const choices = new Map<string, string>();
+  for (const [name, value] of form.entries()) {
+    const match = /^ingredientKey\.(\d+)$/.exec(name);
+    if (match === null) continue;
+    const key = String(value);
+    if (proposed.has(key)) {
+      choices.set(key, String(form.get(`ingredient.${match[1]}`) ?? ""));
+    }
+  }
   let recipes;
   try {
     recipes = recipesToSave(analysis, choices);
@@ -155,8 +161,13 @@ function review(analysis: BatchAnalysis): Raw {
               ${analysis.proposedIngredients.map(
                 (item, index) => html`<label>
                   ${item.name}
+                  <input
+                    type="hidden"
+                    name="ingredientKey.${index}"
+                    value="${item.key}"
+                  />
                   <select
-                    name="${choiceName(item.key)}"
+                    name="ingredient.${index}"
                     data-proposed-index="${index}"
                   >
                     <option value="new">Luo uutena: ${item.name}</option>
@@ -298,9 +309,4 @@ function assertBundleSize(json: string): void {
 function requestTooLarge(request: Request): boolean {
   const length = Number(request.headers.get("Content-Length"));
   return Number.isFinite(length) && length > MAX_FORM_BYTES;
-}
-
-/** Keep a decision attached to its name if the ingredient list changes. */
-function choiceName(key: string): string {
-  return `ingredient.${encodeURIComponent(key)}`;
 }

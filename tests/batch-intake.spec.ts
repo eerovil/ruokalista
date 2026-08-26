@@ -21,6 +21,13 @@ test("imports plain and multipart drafts through the shared save path", async ({
   ]);
   await expect(page.locator(".batch-ingredients label")).toHaveCount(1);
   await expect(page.locator(".batch-ingredients label")).toContainText("kikherne");
+  await expect(page.locator('select[data-proposed-index="0"]')).toHaveAttribute(
+    "name",
+    "ingredient.0",
+  );
+  await expect(page.locator('input[name="ingredientKey.0"]')).toHaveValue(
+    "kikherne",
+  );
   await expect(page.locator(".batch-preview")).toHaveCount(2);
   await expect(page.locator(".needs-answer")).toContainText(
     "Veden lämpötilaa ei kerrottu",
