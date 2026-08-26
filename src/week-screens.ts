@@ -48,6 +48,8 @@ export async function weekScreen(
     days[6]!,
   );
   const now = today();
+  const { laneById, laneCount } = assignBatchLanes(batches);
+  const railWidth = laneCount === 0 ? 0 : Math.min(0.8, 5 / laneCount);
 
   return page(
     "Viikko",
@@ -57,36 +59,161 @@ export async function weekScreen(
         <a href="/">Tämä viikko</a>
         <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
       </nav>
-      ${days.map((date) => dayCard(date, batches, date === now))}`,
+      <style>
+        .week-days .day {
+          display: grid;
+          grid-template-columns: repeat(var(--rail-count), var(--rail-width)) minmax(0, 1fr);
+          position: relative;
+          margin-bottom: 0;
+          padding-bottom: 1.5rem;
+        }
+        .week-days .day.is-today {
+          border-left: 0;
+          padding-left: 0;
+          box-shadow: inset 3px 0 0 var(--accent);
+        }
+        .week-days .day h2,
+        .week-days .batch-track,
+        .week-days .slot-actions {
+          grid-column: -2 / -1;
+        }
+        .week-days .batch-track {
+          display: block;
+          min-width: 0;
+        }
+        .week-days .batch-track.is-end .batch-day-content::after {
+          content: none;
+        }
+        .week-days .slot-actions {
+          padding-left: 0;
+        }
+        .week-days .batch-rail {
+          position: relative;
+          z-index: 1;
+          min-width: 0;
+          pointer-events: none;
+        }
+        .week-days .batch-rail-line {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 50%;
+          width: 3px;
+          border-radius: 2px;
+          background: var(--accent);
+          transform: translateX(-50%);
+        }
+        .week-days .batch-rail.continues-after .batch-rail-line {
+          bottom: -1.5rem;
+        }
+        .week-days .batch-rail-dot {
+          position: absolute;
+          left: 50%;
+          z-index: 2;
+          width: .65rem;
+          height: .65rem;
+          border-radius: 50%;
+          background: var(--accent);
+          transform: translateX(-50%);
+        }
+        .week-days .batch-rail-dot.is-start { top: .35rem; }
+        .week-days .batch-rail-dot.is-end { bottom: .35rem; }
+      </style>
+      <div
+        class="week-days"
+        style="--rail-count:${Math.max(1, laneCount)};--rail-width:${railWidth}rem"
+      >${days.map((date) => dayCard(date, batches, date === now, laneById))}</div>`,
     "week",
   );
+}
+
+function assignBatchLanes(
+  batches: PlannedBatch[],
+): { laneById: Map<number, number>; laneCount: number } {
+  const laneEnds: string[] = [];
+  const laneById = new Map<number, number>();
+  const ordered = [...batches].sort(
+    (a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id,
+  );
+
+  for (const batch of ordered) {
+    let lane = laneEnds.findIndex((endDate) => endDate < batch.startDate);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = batch.endDate;
+    laneById.set(batch.id, lane);
+  }
+
+  return { laneById, laneCount: laneEnds.length };
 }
 
 function dayCard(
   date: string,
   batches: PlannedBatch[],
   isToday: boolean,
+  laneById: Map<number, number>,
 ): Raw {
-  const active = batches.filter(
-    (batch) => batch.startDate <= date && batch.endDate >= date,
-  );
+  const active = batches
+    .filter((batch) => batch.startDate <= date && batch.endDate >= date)
+    .sort(
+      (a, b) =>
+        (laneById.get(a.id) ?? 0) - (laneById.get(b.id) ?? 0),
+    );
+  const lastGridLine = active.length + 3;
+
   return html`<section class="${isToday ? "day is-today" : "day"}">
-    <h2>${dayName(date)} <span class="meta">${shortDate(date)}</span></h2>
-    ${active.length === 0
-      ? ""
-      : html`<div class="batch-tracks">${active.map((batch) => batchTrack(batch, date))}</div>`}
-    <div class="slot-actions">
+    <h2 style="grid-row:1">${dayName(date)} <span class="meta">${shortDate(date)}</span></h2>
+    ${active.map((batch, index) =>
+      batchRail(
+        batch,
+        date,
+        laneById.get(batch.id) ?? 0,
+        index + 2,
+        lastGridLine,
+      ),
+    )}
+    ${active.map((batch, index) => batchTrack(batch, date, index + 2))}
+    <div class="slot-actions" style="grid-row:${active.length + 2}">
       ${SLOTS.map((slot) => slotAction(date, slot, batches))}
     </div>
   </section>`;
 }
 
-function batchTrack(batch: PlannedBatch, date: string): Raw {
+function batchRail(
+  batch: PlannedBatch,
+  date: string,
+  lane: number,
+  trackRow: number,
+  lastGridLine: number,
+): Raw {
+  const starts = date === batch.startDate;
+  const ends = date === batch.endDate;
+  const continuesBefore = date > batch.startDate;
+  const continuesAfter = date < batch.endDate;
+  const startRow = starts ? trackRow : 1;
+  const endRow = ends ? trackRow + 1 : lastGridLine;
+
+  return html`<div
+    class="batch-rail${starts ? " is-start" : ""}${ends ? " is-end" : ""}${continuesBefore ? " continues-before" : ""}${continuesAfter ? " continues-after" : ""}"
+    data-batch-id="${batch.id}"
+    data-lane="${lane}"
+    aria-hidden="true"
+    style="grid-column:${lane + 1};grid-row:${startRow} / ${endRow}"
+  >
+    <span class="batch-rail-line"></span>
+    ${starts ? html`<span class="batch-rail-dot is-start"></span>` : ""}
+    ${ends ? html`<span class="batch-rail-dot is-end"></span>` : ""}
+  </div>`;
+}
+
+function batchTrack(batch: PlannedBatch, date: string, gridRow: number): Raw {
   const occurrences = batch.occurrences.filter((item) => item.date === date);
   const starts = date === batch.startDate;
   const ends = date === batch.endDate;
-  return html`<div class="batch-track${starts ? " is-start" : ""}${ends ? " is-end" : ""}">
-    <div class="batch-marker" aria-hidden="true"></div>
+  return html`<div
+    class="batch-track${starts ? " is-start" : ""}${ends ? " is-end" : ""}"
+    data-batch-id="${batch.id}"
+    style="grid-row:${gridRow}"
+  >
     <div class="batch-day-content">
       ${starts
         ? html`<strong class="batch-start">Kokataan · ${batch.portions} annosta</strong>`
