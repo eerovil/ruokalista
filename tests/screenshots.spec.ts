@@ -154,6 +154,34 @@ test.describe("signed in", () => {
     });
   });
 
+  test("AgentDeck stale ingredient review", async ({ page }) => {
+    const bundle = structuredClone(AGENTDECK_BATCH);
+    bundle.recipes = [bundle.recipes[0]];
+    await page.goto("/intake/batch");
+    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(bundle));
+    await page.getByRole("button", { name: "Tarkista nippu" }).click();
+    await page.locator('select[data-proposed-index="0"]').selectOption({
+      label: "Käytä olemassa olevaa: vesi",
+    });
+    await page.request.post("/ingredients/5/rename", {
+      form: { name: "kikherne" },
+    });
+    await page.getByRole("button", { name: "Tuo 1 reseptiä" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tarkista reseptinippu uudelleen" }),
+    ).toBeVisible();
+    await expect(page.locator(".refused")).toContainText(
+      "Talouden ainekset muuttuivat tarkistamisen jälkeen",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/21-agentdeck-stale-review.png`,
+      fullPage: true,
+    });
+    await page.request.post("/ingredients/5/rename", {
+      form: { name: "ananas" },
+    });
+  });
+
   test("the approval gate refusing", async ({ page }) => {
     await stubStructuring(page);
     await page.goto("/intake");
