@@ -9,8 +9,21 @@
 
 import { PWA_CLIENT_SCRIPT, THEME_COLOR } from "./pwa-content.ts";
 
+/**
+ * Written out longhand rather than as a `constructor(readonly value: string)`
+ * parameter property, because node's `--experimental-strip-types` only removes
+ * types and cannot desugar one. That single line made every module that reaches
+ * this one — which is most of them, through `auth.ts` — impossible to load in a
+ * `dev/` check, and the storage failure cases in
+ * `dev/check-recipe-image-commit.ts` are exactly the kind that cannot be
+ * provoked through a browser. Same class, same behaviour, one more line.
+ */
 export class Raw {
-  constructor(readonly value: string) {}
+  readonly value: string;
+
+  constructor(value: string) {
+    this.value = value;
+  }
 }
 
 export function raw(value: string): Raw {

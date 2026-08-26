@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
 import { stubStructuring } from "./support/draft";
@@ -405,6 +406,39 @@ test.describe("signed in as an admin", () => {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: "Ylläpito" })).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
+  });
+
+  test("recipes pictured from one generated contact sheet", async ({ page }) => {
+    // The sheet is the real one bought while #96 was built, supplied rather
+    // than re-bought — see tests/recipe-image-batch.spec.ts. Three recipes take
+    // cells 1 to 3 of it, which is what these two shots are of.
+    const sheet = readFileSync(
+      new URL("./fixtures/contact-sheet.png", import.meta.url),
+    ).toString("base64");
+
+    const generated = await page.request.post(
+      "/api/admin/recipe-images/generate",
+      { data: { recipeIds: [1, 2, 3], sheetBase64: sheet } },
+    );
+    expect(generated.status()).toBe(200);
+    expect((await generated.json()).stored).toBe(3);
+
+    await page.goto("/recipes");
+    // Every row pictured, and loaded rather than a broken-image icon: the shot
+    // has to be of the thing working, not of three grey squares.
+    await expect(page.locator(".recipes .recipe-image img")).toHaveCount(3);
+    for (let at = 0; at < 3; at += 1) {
+      await expect(page.locator(".recipes .recipe-image img").nth(at))
+        .not.toHaveJSProperty("naturalWidth", 0);
+    }
+    await page.screenshot({ path: `${SHOTS}/32-generated-images.png`, fullPage: true });
+
+    await page.goto("/recipes/1");
+    await expect(page.locator(".recipe-image img").first()).toHaveJSProperty(
+      "naturalWidth",
+      512,
+    );
+    await page.screenshot({ path: `${SHOTS}/33-generated-recipe.png`, fullPage: true });
   });
 });
 

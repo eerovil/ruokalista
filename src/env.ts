@@ -25,6 +25,13 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
 
   /**
+   * Draws recipe pictures, sixteen to a contact sheet. Admin-only and paid per
+   * request, so a deployment without it refuses generation rather than crashes —
+   * and every other picture path, including the manual upload, works without it.
+   */
+  OPENAI_API_KEY?: string;
+
+  /**
    * Fine-grained PAT restricted to eerovil/ruokalista-backup with repository
    * Contents read/write. The nightly scheduled handler fails loudly without it.
    */

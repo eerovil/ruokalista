@@ -254,6 +254,16 @@ export async function apiDeleteRecipeImage(
 /**
  * Check, store, and point the recipe at the new object. Returns the refusal
  * when the bytes are not something we will keep, or null once they are stored.
+ *
+ * `oldKey` is not just the object to tidy up afterwards — it is the key this
+ * caller believes the row still holds, and the update only happens if it does.
+ * That matters because the gap between reading the row and writing it is not
+ * always short: the batch generator (#96) reads every recipe, then waits up to
+ * three minutes for an image to be drawn. Without the check, somebody who
+ * uploaded a picture during that wait would have it silently replaced by a
+ * generated one made from the recipe as it was before, and their object would be
+ * left in R2 with nothing pointing at it. With it, the loser of the race is told
+ * so and the picture that was actually chosen last survives.
  */
 export async function storeRecipeImage(
   env: RouteContext["env"],
@@ -302,11 +312,17 @@ export async function storeRecipeImage(
     httpMetadata: { contentType: facts.contentType },
   });
 
+  let changed: number;
   try {
     // The provenance columns are written in the same statement as the key, so
     // there is no instant where a picture exists with somebody else's
     // fingerprint against it. A manual upload clears them all: it is not
     // compared against anything, and a leftover fingerprint would say it was.
+    //
+    // `image_key IS ?` rather than `=` on purpose: a recipe with no picture yet
+    // has NULL there, and `= NULL` is never true in SQL, so `=` would refuse
+    // every first upload. `IS` compares NULL to NULL as equal, which is exactly
+    // the claim being made — "there was nothing here when I looked".
     const result = await env.DB
       .prepare(
         `UPDATE recipe
@@ -319,7 +335,7 @@ export async function storeRecipeImage(
             : "NULL"
         },
                 image_generated_by = ?
-          WHERE id = ? AND household_id = ?`,
+          WHERE id = ? AND household_id = ? AND image_key IS ?`,
       )
       .bind(
         key,
@@ -328,27 +344,47 @@ export async function storeRecipeImage(
         provenance.origin === "generated" ? provenance.model : null,
         recipeId,
         householdId,
+        oldKey,
       )
       .run();
 
-    if (result.meta.changes !== 1) throw new Error("Recipe disappeared during image upload.");
+    changed = result.meta.changes;
   } catch (error) {
+    // The row was not written, so the object nothing points at goes now.
     await env.RECIPE_IMAGES.delete(key);
     throw error;
+  }
+
+  if (changed !== 1) {
+    // Either the recipe is gone or its picture is no longer the one we read.
+    // Either way this upload has lost, so it takes its own object with it and
+    // leaves what is there alone — an orphan is the one thing that must not be
+    // the outcome of losing a race.
+    await env.RECIPE_IMAGES.delete(key);
+    return staleImage();
   }
 
   if (oldKey !== null && oldKey !== key) await env.RECIPE_IMAGES.delete(oldKey);
   return null;
 }
 
-/** Forget the recipe's image, then drop the bytes. */
+/**
+ * Forget the recipe's image, then drop the bytes.
+ *
+ * Conditional on the same key, for the same reason as `storeRecipeImage`: a
+ * remove that raced a replacement would otherwise clear the row of a picture it
+ * never saw and delete the object it did see, leaving the new bytes in R2 with
+ * nothing pointing at them. Removing a picture that is already gone is not an
+ * error, so the answer to losing is silence rather than a refusal — the recipe
+ * ends up how the person asked either way.
+ */
 export async function removeRecipeImage(
   env: RouteContext["env"],
   householdId: number,
   recipeId: number,
   oldKey: string | null,
 ): Promise<void> {
-  await env.DB
+  const result = await env.DB
     .prepare(
       `UPDATE recipe
           SET image_key = NULL,
@@ -356,11 +392,16 @@ export async function removeRecipeImage(
               image_fingerprint = NULL,
               image_generated_at = NULL,
               image_generated_by = NULL
-        WHERE id = ? AND household_id = ?`,
+        WHERE id = ? AND household_id = ? AND image_key IS ?`,
     )
-    .bind(recipeId, householdId)
+    .bind(recipeId, householdId, oldKey)
     .run();
-  if (oldKey !== null) await env.RECIPE_IMAGES.delete(oldKey);
+
+  // Only drop the bytes if this is the row we cleared. If somebody replaced the
+  // picture first, the object we were holding is already theirs to tidy up.
+  if (result.meta.changes === 1 && oldKey !== null) {
+    await env.RECIPE_IMAGES.delete(oldKey);
+  }
 }
 
 /** Remove image objects for a recipe tree before the DB rows disappear. */
@@ -393,6 +434,24 @@ export async function imageRow(
     .prepare("SELECT image_key FROM recipe WHERE id = ? AND household_id = ?")
     .bind(recipeId, householdId)
     .first<ImageRow>();
+}
+
+/**
+ * Somebody else changed this recipe's picture while we were making ours. A 409
+ * rather than a 404: the recipe is there, the request was well formed, and the
+ * answer is simply that it is out of date.
+ */
+function staleImage(): ImageRefusal {
+  return {
+    status: 409,
+    english:
+      "This recipe's image changed while this one was being prepared, so it " +
+      "was not replaced. Look at the current image and try again if it still " +
+      "needs replacing.",
+    finnish:
+      "Reseptin kuva vaihtui samaan aikaan, joten sitä ei korvattu. Katso " +
+      "nykyinen kuva ja yritä uudelleen, jos se pitää silti vaihtaa.",
+  };
 }
 
 function tooLarge(): ImageRefusal {
