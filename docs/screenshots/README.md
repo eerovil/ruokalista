@@ -14,7 +14,7 @@ Regenerate after a change that alters a screen:
 | file | screen |
 | --- | --- |
 | `01-signin.png` | Sign-in — the one button |
-| `02-week.png` | The week: seven days, lunch and dinner, empty slots inviting |
+| `02-week.png` | Proposed batch timeline: cooking marker, continuation rail and final portion |
 | `03-picker.png` | The recipe picker, reached from a slot |
 | `04-recipes.png` | The recipe list, newest first |
 | `05-recipe.png` | One recipe: every awkward line shape, source lines underneath |
@@ -27,4 +27,6 @@ Regenerate after a change that alters a screen:
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
 | `14-scaled.png` | The same lasagne planned for 8, amounts rounded for a kitchen |
+| `15-meal-actions.png` | Proposed whole-batch recipe, portions, continuation and removal actions |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
+| `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |

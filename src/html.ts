@@ -231,8 +231,27 @@ const STYLES = `
   .day h2 { margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
   .day.is-today h2 { font-weight: 700; }
   .day.is-today { border-left: 3px solid var(--accent); padding-left: .6rem; }
-  .slot { padding: .4rem 0 .6rem; border-top: 1px solid var(--edge); }
-  .slot h3 { margin: 0 0 .3rem; }
+  .batch-tracks { display: flex; flex-direction: column; gap: .25rem; }
+  .batch-track { display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); }
+  .batch-marker { position: relative; }
+  .batch-marker::before { content: ""; position: absolute; left: .4rem;
+    top: -.4rem; bottom: -.4rem; width: 3px; border-radius: 2px;
+    background: var(--accent); }
+  .batch-track.is-start .batch-marker::before { top: .65rem; }
+  .batch-track.is-end .batch-marker::before { bottom: .65rem; }
+  .batch-track.is-start .batch-marker::after,
+  .batch-track.is-end .batch-day-content::after { content: ""; position: absolute;
+    width: .65rem; height: .65rem; border-radius: 50%; background: var(--accent); }
+  .batch-track.is-start .batch-marker::after { left: .1rem; top: .35rem; }
+  .batch-track.is-end .batch-day-content { position: relative; }
+  .batch-track.is-end .batch-day-content::after { left: -1rem; bottom: .35rem; }
+  .batch-day-content { display: flex; flex-direction: column; gap: .25rem;
+    min-width: 0; padding: .2rem 0 .6rem; }
+  .batch-start { color: var(--accent); font-size: .8rem; }
+  .batch-passes, .batch-end { color: var(--muted); font-size: .75rem; }
+  .batch-end { align-self: flex-end; }
+  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem 1.1rem;
+    border-top: 1px solid var(--edge); }
   .empty-slot, .add-more { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
   .entry > a {
@@ -243,12 +262,38 @@ const STYLES = `
   }
   .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
   .entry-title { flex: 1; }
+  .entry-slot { color: var(--muted); font-size: .75rem; min-width: 4.8rem; }
   .entry-portions { color: var(--muted); font-size: .8rem; white-space: nowrap;
     font-variant-numeric: tabular-nums; }
-  .entry-when { margin: 0 0 .2rem; text-transform: capitalize; }
+  .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
+  .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
   .portions-row { display: flex; gap: .5rem; align-items: center; }
   .portions-row input { width: 5rem; text-align: center; }
+  .coverage-weeks { align-items: center; }
+  .coverage-weeks span { color: var(--muted); }
+  .coverage-grid { display: grid; grid-template-columns: minmax(7rem, 1fr) 1fr 1fr;
+    gap: .35rem; align-items: stretch; margin-bottom: 1rem; }
+  .coverage-grid > strong { align-self: end; font-size: .75rem; text-align: center; }
+  .coverage-day { display: flex; flex-direction: column; justify-content: center;
+    min-height: var(--tap); text-transform: capitalize; }
+  .coverage-day small { color: var(--muted); }
+  .coverage-form { display: block; }
+  .coverage-cell { position: relative; display: flex; cursor: pointer; }
+  .coverage-cell input { position: absolute; width: 1px; height: 1px;
+    overflow: hidden; opacity: 0; }
+  .coverage-cell > span { display: flex; align-items: center; justify-content: center;
+    width: 100%; min-height: var(--tap); padding: .3rem;
+    color: var(--muted); font-size: .75rem; border: 1px solid var(--edge);
+    border-radius: var(--radius); }
+  .coverage-cell .chosen { display: none; }
+  .coverage-cell input:checked + span { color: var(--accent-fg);
+    background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .coverage-cell input:checked + span .choose { display: none; }
+  .coverage-cell input:checked + span .chosen { display: inline; }
+  .coverage-cell input:focus-visible + span { outline: 2px solid var(--accent);
+    outline-offset: 2px; }
+  .coverage-form > button { width: 100%; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
   .part { margin: 1.5rem 0; padding-left: .7rem;
