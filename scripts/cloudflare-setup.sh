@@ -62,8 +62,6 @@ grep -q "$database_id" wrangler.jsonc \
   || { echo "failed to write database_id into wrangler.jsonc" >&2; exit 1; }
 echo "    database_id written"
 
-# From here on a failing step must not abandon the ones after it: the token may
-# be good for a single run, so the script gets as far as it can and reports what
 echo "==> 3/6  recipe image bucket"
 # Before the tolerant section below on purpose: a missing bucket is not a
 # stumble the deploy can survive, so this one is fatal.
@@ -82,6 +80,8 @@ else
   exit 1
 fi
 
+# From here on a failing step must not abandon the ones after it: the token may
+# be good for a single run, so the script gets as far as it can and reports what
 # did not happen, rather than stopping at the first stumble.
 set +e
 failures=""

@@ -94,6 +94,50 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/05-recipe.png`, fullPage: true });
   });
 
+  test("a recipe with a picture, and the editor that put it there", async ({
+    page,
+  }) => {
+    // Built rather than committed, so what the shot shows is a picture that
+    // really went through the upload path.
+    const canvas = await page.evaluate(() => {
+      const el = document.createElement("canvas");
+      el.width = 900;
+      el.height = 600;
+      const ctx = el.getContext("2d");
+      if (ctx === null) return "";
+      const sky = ctx.createLinearGradient(0, 0, 0, 600);
+      sky.addColorStop(0, "#c8703c");
+      sky.addColorStop(1, "#7d3f1d");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, 900, 600);
+      ctx.fillStyle = "#f2e2cf";
+      ctx.beginPath();
+      ctx.arc(450, 320, 190, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#a9552a";
+      ctx.beginPath();
+      ctx.arc(450, 320, 150, 0, Math.PI * 2);
+      ctx.fill();
+      return el.toDataURL("image/png").split(",")[1] ?? "";
+    });
+
+    await page.request.put("/api/recipes/1/image", {
+      headers: { "content-type": "image/png" },
+      data: Buffer.from(canvas, "base64"),
+    });
+
+    await page.goto("/recipes/1");
+    await expect(page.locator(".recipe-image img")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/22-recipe-image.png`, fullPage: true });
+
+    await page.goto("/recipes/1/edit");
+    await expect(page.locator(".recipe-image-editor img")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/23-editor-image.png`, fullPage: true });
+
+    // Put it back, so the recipe every other shot photographs is unchanged.
+    await page.request.delete("/api/recipes/1/image");
+  });
+
   test("older iPad keep-awake confirmation", async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "wakeLock", {

@@ -74,9 +74,11 @@ function readJpeg(view: DataView): ImageFacts | null {
     const length = view.getUint16(at + 2);
     if (length < 2) return null;
 
-    // SOF0-SOF15, less the four that are not frame headers (DHT, JPG, DAC, DNL).
+    // SOF0-SOF15, less the three markers sharing that range that are not frame
+    // headers: DHT, JPG and DAC. Every other value here states a size, however
+    // the picture behind it happens to be coded.
     const isFrame = marker >= 0xc0 && marker <= 0xcf &&
-      marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc && marker !== 0xc9;
+      marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isFrame) {
       if (at + 9 > view.byteLength) return null;
       return {

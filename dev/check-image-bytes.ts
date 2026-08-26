@@ -35,13 +35,13 @@ function png(width: number, height: number): Buffer {
 }
 
 /** A JPEG with one comment segment before the frame header, as cameras write. */
-function jpeg(width: number, height: number): Buffer {
+function jpeg(width: number, height: number, sofMarker = 0xffc0): Buffer {
   const comment = Buffer.concat([
     Buffer.from([0xff, 0xfe, 0x00, 0x08]),
     Buffer.from("ruoka!", "ascii"),
   ]);
   const sof = Buffer.alloc(11);
-  sof.writeUInt16BE(0xffc0, 0);
+  sof.writeUInt16BE(sofMarker, 0);
   sof.writeUInt16BE(9, 2);
   sof[4] = 8;
   sof.writeUInt16BE(height, 5);
@@ -84,6 +84,24 @@ test("a JPEG is measured past the segments in front of its frame header", () => 
     width: 640,
     height: 480,
   });
+});
+
+test("every frame marker that states a size is read, not just the common one", () => {
+  // 0xc2 is progressive and 0xc9 is arithmetic-coded. Both are JPEGs, and both
+  // carry their size in the same place as the baseline 0xc0.
+  for (const marker of [0xffc0, 0xffc1, 0xffc2, 0xffc9, 0xffcb]) {
+    assert.deepEqual(
+      facts(jpeg(1024, 768, marker)),
+      { contentType: "image/jpeg", width: 1024, height: 768 },
+      `marker ${marker.toString(16)}`,
+    );
+  }
+
+  // The three in that range that state no size are not frames, so a file whose
+  // only such marker is one of them is not measurable.
+  for (const marker of [0xffc4, 0xffc8, 0xffcc]) {
+    assert.equal(facts(jpeg(1024, 768, marker)), null, `marker ${marker.toString(16)}`);
+  }
 });
 
 test("a lossy WebP is identified and measured", () => {
