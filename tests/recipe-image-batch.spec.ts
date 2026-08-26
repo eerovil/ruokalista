@@ -44,6 +44,34 @@ function generate(
   });
 }
 
+/** One recipe's picture state, as the API reports it. */
+async function status(
+  request: APIRequestContext,
+  recipeId: number,
+): Promise<Record<string, unknown>> {
+  const response = await request.get(`/api/recipes/${recipeId}/image/status`, {
+    headers: { Cookie: cookie(3) },
+  });
+  expect(response.status()).toBe(200);
+  return response.json();
+}
+
+/** The smallest real picture a person could upload. */
+function onePixelPng(): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.from([0, 20, 90, 40, 255]))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 /** A transparent PNG with nothing drawn on it — a sheet the model wasted. */
 function emptySheet(edge = 512): string {
   const ihdr = Buffer.alloc(13);
@@ -228,6 +256,58 @@ test.describe("a real sheet", () => {
     await page.goto("/recipes/1");
     await expect(page.locator(".recipe-image img")).toHaveCount(1);
     await expect(page.locator(".recipe-image img")).not.toHaveJSProperty("naturalWidth", 0);
+  });
+});
+
+test.describe("alongside the manual path", () => {
+  /**
+   * The write is now conditional on the picture the caller read — see
+   * `storeRecipeImage`. That guards the batch generator's three-minute window
+   * against a manual upload landing in it, and the race itself is held down
+   * deterministically in `dev/check-recipe-image-commit.ts`, because a browser
+   * cannot hold that window open and `retries: 0` means a timing-dependent test
+   * is not something this suite may contain.
+   *
+   * What is worth checking through the real stack is the opposite risk: that the
+   * condition is not so strict that it refuses writes it should allow. Handing
+   * the two paths the same recipe in turn is what would break if it were.
+   */
+  test("generated and uploaded pictures still take turns", async ({ request }) => {
+    await generate(request, { recipeIds: [1], sheetBase64: SHEET });
+    expect((await status(request, 1)).origin).toBe("generated");
+
+    // A person uploads their own photograph over the generated one.
+    const uploaded = await request.put("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3), "content-type": "image/png" },
+      data: onePixelPng(),
+    });
+    expect(uploaded.status()).toBe(204);
+
+    const manual = await status(request, 1);
+    expect(manual.origin).toBe("manual");
+    // A picture a person chose is never compared against the recipe.
+    expect(manual.status).toBe("fresh");
+    expect(manual.imageFingerprint).toBeNull();
+
+    // And an admin who explicitly asks for this recipe again gets a generated
+    // one back. Naming the id is the instruction; nothing here is refused.
+    const again = await generate(request, { recipeIds: [1], sheetBase64: SHEET });
+    expect(again.status()).toBe(200);
+    expect((await again.json()).stored).toBe(1);
+    expect((await status(request, 1)).origin).toBe("generated");
+  });
+
+  test("removing a picture leaves the recipe with none", async ({ request }) => {
+    await generate(request, { recipeIds: [1], sheetBase64: SHEET });
+
+    const removed = await request.delete("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3) },
+    });
+    expect(removed.status()).toBe(204);
+
+    const after = await status(request, 1);
+    expect(after.status).toBe("missing");
+    expect(after.origin).toBeNull();
   });
 });
 

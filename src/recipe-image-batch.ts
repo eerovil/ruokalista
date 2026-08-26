@@ -5,6 +5,7 @@ import {
   PngError,
   splitContactSheet,
   type CellProblem,
+  type Crop,
 } from "./contact-sheet.ts";
 import {
   dishBrief,
@@ -44,7 +45,7 @@ import type { RouteContext } from "./router.ts";
  */
 
 /** How each requested recipe came out. */
-interface CellReport {
+export interface CellReport {
   cell: number;
   recipeId: number;
   title: string;
@@ -80,16 +81,23 @@ export async function generateRecipeImages(
   // recipe it was actually drawn from, not the recipe as it stands whenever the
   // bytes happen to land.
   const dishes: DishBrief[] = [];
-  const fingerprints: string[] = [];
-  const oldKeys: (string | null)[] = [];
+  const plan: CropPlan[] = [];
 
   for (const id of ids) {
     const recipe = await findRecipe(env.DB, member.householdId, id);
     if (recipe === null) return problem(404, `No such recipe: ${id}.`);
-    dishes.push(dishBrief(id, recipe));
-    fingerprints.push(await recipeFingerprint(recipe));
+    const dish = dishBrief(id, recipe);
+    dishes.push(dish);
     const row = await imageRow(env.DB, member.householdId, id);
-    oldKeys.push(row?.image_key ?? null);
+    plan.push({
+      cell: plan.length,
+      recipeId: id,
+      title: dish.title,
+      fingerprint: await recipeFingerprint(recipe),
+      // The picture this recipe has *now*. Sixteen crops later it may not be,
+      // and `storeRecipeImage` will say so rather than overwrite a stranger.
+      expectedKey: row?.image_key ?? null,
+    });
   }
 
   let sheet: GeneratedSheet;
@@ -130,39 +138,13 @@ export async function generateRecipeImages(
   }
 
   // Past here every crop exists and has been checked, so the writes begin.
-  const cells: CellReport[] = [];
-  let stored = 0;
-
-  for (const crop of split.crops) {
-    const dish = dishes[crop.cell]!;
-    const refusal = await storeRecipeImage(
-      env,
-      member.householdId,
-      dish.recipeId,
-      oldKeys[crop.cell]!,
-      // A fresh copy, because the stored bytes outlive the raster they were cut
-      // from and a view onto a larger buffer would keep the whole sheet alive.
-      crop.png.slice().buffer,
-      {
-        origin: "generated",
-        fingerprint: fingerprints[crop.cell]!,
-        model: sheet.generatedBy,
-      },
-    );
-
-    if (refusal === null) {
-      stored += 1;
-      cells.push({ cell: crop.cell, recipeId: dish.recipeId, title: dish.title, status: "stored" });
-    } else {
-      cells.push({
-        cell: crop.cell,
-        recipeId: dish.recipeId,
-        title: dish.title,
-        status: "not-stored",
-        reason: refusal.english,
-      });
-    }
-  }
+  const { stored, cells } = await commitCrops(
+    env,
+    member.householdId,
+    plan,
+    split.crops,
+    sheet.generatedBy,
+  );
 
   // Worth knowing, and none of it private: which model, how big the sheet was,
   // how many dishes it held. Not the prompt, not the recipes, not the key.
@@ -184,6 +166,104 @@ export async function generateRecipeImages(
     usage: sheet.usage,
     cells,
   });
+}
+
+/** One cell's worth of what has to be known before the sheet is even bought. */
+export interface CropPlan {
+  cell: number;
+  recipeId: number;
+  title: string;
+  /** The recipe content this picture will be a picture of. */
+  fingerprint: string;
+  /** The picture the row held when it was read, which the write is conditional on. */
+  expectedKey: string | null;
+}
+
+/**
+ * Store every validated crop, and say what happened to each.
+ *
+ * **A recipe already given its picture keeps it.** If the fourth crop cannot be
+ * stored, the three before it are not undone — deleting three good pictures to
+ * tidy up one failure would destroy work to make the bookkeeping neater, and
+ * every one of those three is a correct picture of its recipe made from a
+ * fingerprint that still matches. So this is not a transaction, and the report
+ * is the record: the response names each recipe and whether it got its picture.
+ * Nothing is silently half-done.
+ *
+ * Nor does one failure stop the rest. The sheet is already paid for; abandoning
+ * twelve good crops because the fourth hit a storage error would waste them.
+ *
+ * The three ways one crop can fail to land:
+ *
+ *   - the recipe's picture changed while the sheet was being drawn, so the
+ *     compare-and-swap in `storeRecipeImage` declines rather than overwriting
+ *   - the recipe was deleted in the same window, which looks the same
+ *   - the write itself failed — R2 or D1 was unavailable
+ *
+ * The first two are refusals and come back as text. The third is thrown, and is
+ * caught here so it becomes this recipe's answer rather than the whole batch's.
+ *
+ * Exported because a storage failure cannot be provoked through a browser, and
+ * `dev/check-recipe-image-commit.ts` drives it with a bucket and a database that
+ * fail on demand.
+ */
+export async function commitCrops(
+  env: RouteContext["env"],
+  householdId: number,
+  plan: readonly CropPlan[],
+  crops: readonly Crop[],
+  generatedBy: string,
+): Promise<{ stored: number; cells: CellReport[] }> {
+  const cells: CellReport[] = [];
+  let stored = 0;
+
+  for (const crop of crops) {
+    const entry = plan[crop.cell];
+    if (entry === undefined) continue;
+
+    let refusal: Awaited<ReturnType<typeof storeRecipeImage>>;
+    try {
+      refusal = await storeRecipeImage(
+        env,
+        householdId,
+        entry.recipeId,
+        entry.expectedKey,
+        // A fresh copy, because the stored bytes outlive the raster they were cut
+        // from and a view onto a larger buffer would keep the whole sheet alive.
+        crop.png.slice().buffer,
+        { origin: "generated", fingerprint: entry.fingerprint, model: generatedBy },
+      );
+    } catch (error) {
+      // `storeRecipeImage` has already removed its own object, so there is
+      // nothing of ours left behind — only a recipe that did not get a picture.
+      cells.push({
+        ...report(entry),
+        status: "not-stored",
+        reason: `storing it failed: ${message(error)}`,
+      });
+      continue;
+    }
+
+    if (refusal === null) {
+      stored += 1;
+      cells.push({ ...report(entry), status: "stored" });
+    } else {
+      cells.push({ ...report(entry), status: "not-stored", reason: refusal.english });
+    }
+  }
+
+  return { stored, cells };
+}
+
+function report(entry: CropPlan): Pick<CellReport, "cell" | "recipeId" | "title"> {
+  return { cell: entry.cell, recipeId: entry.recipeId, title: entry.title };
+}
+
+/** An error's own words, and nothing about where it came from. */
+function message(error: unknown): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
+    : "the storage layer gave no reason";
 }
 
 /**

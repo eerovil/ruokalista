@@ -294,6 +294,20 @@ old one — so a failure leaves a stray object rather than a recipe pointing at
 nothing. Deleting a recipe drops its pictures and its parts' pictures first, for
 the same reason: the keys are only readable while the rows still exist.
 
+#96 proposes tightening that further: the key a caller read becomes part of the
+write, so `UPDATE … WHERE image_key IS ?` replaces a picture only if it is still
+the one that was there when the caller looked. `IS` rather than `=`, because a
+recipe with no picture holds NULL and `= NULL` is never true. Losing that
+comparison is a 409 and the loser deletes the object it just wrote, so the
+outcome of a lost race is never an orphan in R2. The removal path is conditional
+in the same way and stays silent, since a picture already gone is not an error.
+
+This matters because of how long the gap can be. The batch generator reads every
+recipe, waits up to three minutes for a sheet to be drawn, and comes back to rows
+that may have moved on; without the comparison a picture somebody uploaded during
+that wait would be replaced by one drawn from the recipe as it was before, and
+their bytes left behind with nothing pointing at them.
+
 ### Is the picture still the dish? (#95, proposed)
 
 This pull request adds a way to ask whether a picture still shows the recipe,
@@ -369,6 +383,23 @@ first byte reaches R2. Storage goes through #89's `storeRecipeImage` with
 `origin: generated`, so freshness bookkeeping from #95 is the same code the
 manual path uses — and `image_generated_by` carries provider, model and style
 version together, which is why no new column was needed.
+
+Once the writes start, `commitCrops` is where the batch stops being all-or-
+nothing, and that is deliberate. **A recipe already given its picture keeps it.**
+If the fourth crop cannot be stored, the three before it are not undone: each is
+a correct picture of its recipe with a fingerprint that still matches, and
+deleting three good pictures to tidy up one failure would destroy work to make
+the bookkeeping neater. One failure does not stop the rest either — the sheet is
+already paid for. The response names every recipe and whether it got its
+picture, so nothing is silently half-done.
+
+Storage failure and the lost-update race are checked in
+`dev/check-recipe-image-commit.ts` with a bucket and a database that fail on
+demand, because neither can be provoked through a browser and `retries: 0` rules
+out a timing-dependent test. That check is also why `Raw` in `src/html.ts` is
+written out longhand: node's `--experimental-strip-types` cannot desugar a
+constructor parameter property, and that one line made every module reaching
+`html.ts` — which is most of them, via `auth.ts` — impossible to load in `dev/`.
 
 `gpt-image-2`, not `gpt-image-1`: the older image models on the account all
 carry a retirement date within months and this one carries none. Quality is

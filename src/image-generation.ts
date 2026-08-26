@@ -57,16 +57,21 @@ const SIZE = "1024x1024";
  * Quality, and the cost dial.
  *
  * One real sheet was bought while building this, and it is the fixture in
- * `tests/fixtures/contact-sheet.png`. It cost **7,024 image output tokens** plus
- * 487 text input tokens for eight dishes at `high` — so at $40 per million image
- * output tokens that is roughly **$0.28 for the sheet, under two cents a recipe**
- * at a full sixteen. Check the current rate before quoting that figure; the token
- * count is measured, the price is not.
+ * `tests/fixtures/contact-sheet.png`. What it cost, measured from the API's own
+ * `usage`, is **7,024 image output tokens plus 487 text input tokens** for eight
+ * dishes at `high` on a 1,024-square.
  *
- * `medium` and `low` cost materially less per sheet. High is chosen because
- * sixteen dishes share one image: whatever detail is lost here is lost again
- * when one cell of a 1,024 px sheet becomes a recipe's picture, and two cents a
- * dish is cheap enough that the saving is not worth the mush.
+ * That token count is the durable fact and is what to do arithmetic with. The
+ * money is not quoted here on purpose: image-output pricing is per model and has
+ * moved more than once, and a stale dollar figure in a comment is worse than no
+ * figure, because it reads like something that was checked. Multiply the tokens
+ * by GPT Image 2's current image-output rate on OpenAI's pricing page — and note
+ * that the sixteen-dish batch this is built for divides that one sheet's cost by
+ * sixteen, which is the whole economic point.
+ *
+ * `medium` and `low` cost materially fewer tokens per sheet. High is chosen
+ * because sixteen dishes share one image: whatever detail is lost here is lost
+ * again when one cell of a 1,024 px sheet becomes a recipe's picture.
  */
 const QUALITY = "high";
 

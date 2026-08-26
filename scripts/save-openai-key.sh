@@ -51,19 +51,23 @@ fi
 echo "==> 3/3  check the key against the API"
 # Header passed via a curl config on stdin so the key never reaches argv. A
 # listing, not a generation: this must not cost anything.
+# The model the Worker actually generates with. Checking any other one would
+# prove the key works and still leave generation broken.
+want="gpt-image-2"
+
 response=$(printf 'header = "authorization: Bearer %s"\n' "$value" | curl -s -K - \
-  https://api.openai.com/v1/models/gpt-image-1)
+  "https://api.openai.com/v1/models/$want")
 
 model=$(printf '%s' "$response" | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 error=$(printf '%s' "$response" | grep -oE '"code"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1)
 
-if [ "$model" = "gpt-image-1" ]; then
-  echo "    key works — gpt-image-1 is available to this account"
+if [ "$model" = "$want" ]; then
+  echo "    key works — $want is available to this account"
 elif [ -n "$model" ]; then
-  echo "    key works, but answered with $model rather than gpt-image-1"
+  echo "    key works, but answered with $model rather than $want"
   failures="${failures}  - API check"$'\n'
 else
-  echo "    key rejected or gpt-image-1 not available ${error:-}"
+  echo "    key rejected or $want not available ${error:-}"
   failures="${failures}  - API check"$'\n'
 fi
 
