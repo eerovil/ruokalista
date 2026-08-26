@@ -158,39 +158,92 @@ function dayCard(
       (a, b) =>
         (laneById.get(a.id) ?? 0) - (laneById.get(b.id) ?? 0),
     );
-  const lastGridLine = active.length + 3;
+  const tracks = dayTracks(date, active, laneById);
+  const rowsByBatch = new Map<number, { first: number; last: number }>();
+  tracks.forEach((track, index) => {
+    const row = index + 2;
+    const rows = rowsByBatch.get(track.batch.id);
+    if (rows === undefined) {
+      rowsByBatch.set(track.batch.id, { first: row, last: row });
+    } else {
+      rows.last = row;
+    }
+  });
+  const lastGridLine = tracks.length + 3;
 
   return html`<section class="${isToday ? "day is-today" : "day"}">
     <h2 style="grid-row:1">${dayName(date)} <span class="meta">${shortDate(date)}</span></h2>
-    ${active.map((batch, index) =>
-      batchRail(
+    ${active.map((batch) => {
+      const rows = rowsByBatch.get(batch.id)!;
+      return batchRail(
         batch,
         date,
         laneById.get(batch.id) ?? 0,
-        index + 2,
+        rows.first,
+        rows.last,
         lastGridLine,
-      ),
-    )}
-    ${active.map((batch, index) => batchTrack(batch, date, index + 2))}
-    <div class="slot-actions" style="grid-row:${active.length + 2}">
+      );
+    })}
+    ${tracks.map((track, index) => {
+      const row = index + 2;
+      const rows = rowsByBatch.get(track.batch.id)!;
+      return batchTrack(
+        track.batch,
+        date,
+        row,
+        track.occurrence,
+        row === rows.first,
+        row === rows.last,
+      );
+    })}
+    <div class="slot-actions" style="grid-row:${tracks.length + 2}">
       ${SLOTS.map((slot) => slotAction(date, slot, batches))}
     </div>
   </section>`;
+}
+
+interface DayTrack {
+  batch: PlannedBatch;
+  occurrence: BatchOccurrence | null;
+}
+
+function dayTracks(
+  date: string,
+  batches: PlannedBatch[],
+  laneById: Map<number, number>,
+): DayTrack[] {
+  return batches
+    .flatMap<DayTrack>((batch) => {
+      const occurrences = batch.occurrences.filter((item) => item.date === date);
+      return occurrences.length === 0
+        ? [{ batch, occurrence: null }]
+        : occurrences.map((occurrence) => ({ batch, occurrence }));
+    })
+    .sort(
+      (a, b) =>
+        slotOrder(a.occurrence) - slotOrder(b.occurrence) ||
+        (laneById.get(a.batch.id) ?? 0) - (laneById.get(b.batch.id) ?? 0),
+    );
+}
+
+function slotOrder(occurrence: BatchOccurrence | null): number {
+  return occurrence === null ? SLOTS.length : SLOTS.indexOf(occurrence.slot);
 }
 
 function batchRail(
   batch: PlannedBatch,
   date: string,
   lane: number,
-  trackRow: number,
+  firstTrackRow: number,
+  lastTrackRow: number,
   lastGridLine: number,
 ): Raw {
   const starts = date === batch.startDate;
   const ends = date === batch.endDate;
   const continuesBefore = date > batch.startDate;
   const continuesAfter = date < batch.endDate;
-  const startRow = starts ? trackRow : 1;
-  const endRow = ends ? trackRow + 1 : lastGridLine;
+  const startRow = starts ? firstTrackRow : 1;
+  const endRow = ends ? lastTrackRow + 1 : lastGridLine;
 
   return html`<div
     class="batch-rail${starts ? " is-start" : ""}${ends ? " is-end" : ""}${continuesBefore ? " continues-before" : ""}${continuesAfter ? " continues-after" : ""}"
@@ -205,10 +258,16 @@ function batchRail(
   </div>`;
 }
 
-function batchTrack(batch: PlannedBatch, date: string, gridRow: number): Raw {
-  const occurrences = batch.occurrences.filter((item) => item.date === date);
-  const starts = date === batch.startDate;
-  const ends = date === batch.endDate;
+function batchTrack(
+  batch: PlannedBatch,
+  date: string,
+  gridRow: number,
+  occurrence: BatchOccurrence | null,
+  firstForBatch: boolean,
+  lastForBatch: boolean,
+): Raw {
+  const starts = date === batch.startDate && firstForBatch;
+  const ends = date === batch.endDate && lastForBatch;
   return html`<div
     class="batch-track${starts ? " is-start" : ""}${ends ? " is-end" : ""}"
     data-batch-id="${batch.id}"
@@ -218,15 +277,13 @@ function batchTrack(batch: PlannedBatch, date: string, gridRow: number): Raw {
       ${starts
         ? html`<strong class="batch-start">Kokataan · ${batch.portions} annosta</strong>`
         : ""}
-      ${occurrences.length === 0
+      ${occurrence === null
         ? html`<span class="batch-passes">Jatkuu</span>`
-        : occurrences.map(
-            (occurrence) => html`<div class="entry"><a href="/batches/${batch.id}">
-              ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
-              <span class="entry-slot">${SLOT_NAMES[occurrence.slot]}</span>
-              <span class="entry-title">${batch.title}</span>
-            </a></div>`,
-          )}
+        : html`<div class="entry"><a href="/batches/${batch.id}">
+            ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
+            <span class="entry-slot">${SLOT_NAMES[occurrence.slot]}</span>
+            <span class="entry-title">${batch.title}</span>
+          </a></div>`}
       ${ends ? html`<span class="batch-end">viimeinen annos</span>` : ""}
     </div>
   </div>`;

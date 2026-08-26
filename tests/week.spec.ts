@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -212,6 +212,32 @@ test("overlapping batches and same-recipe batches keep separate identity", async
   await expect(page.locator(".batch-track")).toHaveCount(7);
 });
 
+test("a day lists every lunch before every dinner", async ({ page }) => {
+  const first = await createBatch(page, "2027-01-05", "lunch", 1);
+  await setCoverage(page, first, [
+    ["2027-01-05", "lunch"],
+    ["2027-01-05", "dinner"],
+  ]);
+  const second = await createBatch(page, "2027-01-05", "lunch", 2);
+  await setCoverage(page, second, [
+    ["2027-01-05", "lunch"],
+    ["2027-01-05", "dinner"],
+  ]);
+
+  await page.goto("/?week=2027-01-04");
+  const tuesday = page.locator(".day").nth(1);
+  await expect(tuesday.locator(".entry-slot")).toHaveText([
+    "Lounas",
+    "Lounas",
+    "Päivällinen",
+    "Päivällinen",
+  ]);
+  await expect(tuesday.locator(".batch-track")).toHaveCount(4);
+  await expect(tuesday.locator(".batch-rail")).toHaveCount(2);
+  await expectRailSpansTracks(tuesday, first);
+  await expectRailSpansTracks(tuesday, second);
+});
+
 test("mixed coverage crosses a week boundary and projects into both weeks", async ({
   page,
 }) => {
@@ -417,6 +443,26 @@ async function setCoverage(
     },
   });
   expect(response.status()).toBe(204);
+}
+
+async function expectRailSpansTracks(
+  day: Locator,
+  batchId: number,
+): Promise<void> {
+  const railRows = await day
+    .locator(`.batch-rail[data-batch-id="${batchId}"]`)
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { start: style.gridRowStart, end: style.gridRowEnd };
+    });
+  const trackRows = await day
+    .locator(`.batch-track[data-batch-id="${batchId}"]`)
+    .evaluateAll((elements) =>
+      elements.map((element) => getComputedStyle(element).gridRowStart),
+    );
+
+  expect(railRows.start).toBe(trackRows[0]);
+  expect(railRows.end).toBe(String(Number(trackRows.at(-1)) + 1));
 }
 
 async function getBatch(
