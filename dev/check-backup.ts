@@ -196,7 +196,10 @@ function fakeDatabase(): {
         source_line: "½ dl öljyä",
       },
     ],
-    meal_entry: [{ id: 1, household_id: 1, date: "2026-08-25" }],
+    planned_batch: [{ id: 1, household_id: 1, recipe_id: 1, portions: 4 }],
+    batch_occurrence: [
+      { batch_id: 1, date: "2026-08-25", slot: "dinner" },
+    ],
   };
 
   const db = {

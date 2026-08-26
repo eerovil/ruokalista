@@ -44,6 +44,11 @@ One recipe placed on one date in one slot, with a portion count. The unit the
 whole app is built from.
 _Avoid_: Meal, planned meal, menu item, entry
 
+ADR-0004 proposes replacing this unit with a **planned batch**: one cooking of
+one recipe with stable identity, cooked portions, and its own selected
+date/slot occurrences. Until that proposal merges, meal entry remains the live
+term above.
+
 **Slot**:
 Which of a day's two planned meals an entry belongs to: lunch or dinner. A day
 has exactly these two, and each holds any number of meal entries — several

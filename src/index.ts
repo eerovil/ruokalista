@@ -21,10 +21,10 @@ import {
   recipeScreen,
 } from "./recipes.ts";
 import {
-  apiAddMealEntry,
-  apiChangePortions,
+  apiAddPlannedBatch,
   apiMenu,
-  apiRemoveMealEntry,
+  apiRemovePlannedBatch,
+  apiUpdatePlannedBatch,
 } from "./menu.ts";
 import {
   apiDeleteRecipe,
@@ -42,11 +42,14 @@ import {
   startSignIn,
 } from "./signin.ts";
 import {
-  addEntryForm,
-  changePortionsForm,
-  mealEntryScreen,
+  addBatchForm,
+  changeBatchPortionsForm,
+  changeBatchRecipeForm,
+  coverageForm,
+  coverageScreen,
   pickerScreen,
-  removeEntryForm,
+  plannedBatchScreen,
+  removeBatchForm,
   weekScreen,
 } from "./week-screens.ts";
 
@@ -61,14 +64,17 @@ const router = new Router()
   .get("/health", health)
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
-  .post("/meal-entries", requireMemberScreen(addEntryForm))
-  .get("/meal-entries/:id", requireMemberScreen(mealEntryScreen))
-  .post("/meal-entries/:id/portions", requireMemberScreen(changePortionsForm))
-  .post("/meal-entries/:id/delete", requireMemberScreen(removeEntryForm))
+  .post("/batches", requireMemberScreen(addBatchForm))
+  .get("/batches/:id", requireMemberScreen(plannedBatchScreen))
+  .get("/batches/:id/coverage", requireMemberScreen(coverageScreen))
+  .post("/batches/:id/coverage", requireMemberScreen(coverageForm))
+  .post("/batches/:id/portions", requireMemberScreen(changeBatchPortionsForm))
+  .post("/batches/:id/recipe", requireMemberScreen(changeBatchRecipeForm))
+  .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))
   .get("/api/menu", requireMember(apiMenu))
-  .post("/api/meal-entries", requireMember(apiAddMealEntry))
-  .patch("/api/meal-entries/:id", requireMember(apiChangePortions))
-  .delete("/api/meal-entries/:id", requireMember(apiRemoveMealEntry))
+  .post("/api/batches", requireMember(apiAddPlannedBatch))
+  .patch("/api/batches/:id", requireMember(apiUpdatePlannedBatch))
+  .delete("/api/batches/:id", requireMember(apiRemovePlannedBatch))
   .get("/signin", signInScreen)
   .get("/auth/google", startSignIn)
   .get("/auth/google/callback", completeSignIn)

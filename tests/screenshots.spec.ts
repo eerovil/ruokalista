@@ -47,7 +47,20 @@ test.describe("signed in", () => {
       .locator(".pick li", { hasText: "Kaalilaatikko" })
       .getByRole("button", { name: "Lisää" })
       .click();
-    await expect(page.locator(".entry").first()).toBeVisible();
+    await page.locator(".entry a").first().click();
+    await page.getByRole("link", { name: "Jatkuu…" }).click();
+    await page.locator('input[value="2026-10-06:lunch"]').check();
+    await page.locator('input[value="2026-10-07:lunch"]').check();
+    await expect(page.locator('input[value="2026-10-07:lunch"]')).toBeChecked();
+    await page.screenshot({
+      path: `${SHOTS}/19-batch-coverage.png`,
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Tallenna jatkumo" }).click();
+    await page.getByRole("link", { name: "Takaisin erään" }).click();
+    await page.getByRole("link", { name: "Takaisin viikkoon" }).click();
+    await expect(page.locator(".batch-start")).toBeVisible();
+    await expect(page.locator(".batch-end")).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
   });
 

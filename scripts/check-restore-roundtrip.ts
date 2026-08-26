@@ -33,7 +33,7 @@ try {
     "--persist-to",
     sourceState,
     "--command",
-    "INSERT INTO meal_entry (id, household_id, date, slot, recipe_id, portions, created_at, created_by) VALUES (1, 1, '2026-08-25', 'dinner', 3, 6, '2026-08-25 12:00:00', 1)",
+    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch')",
   ]);
 
   const snapshot = await captureSnapshot(sourceState);
@@ -70,8 +70,14 @@ try {
   if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha")?.household_id !== 1) {
     throw new Error("round-trip did not preserve household/member/ingredient relationships");
   }
-  if (target.meal_entry[0]?.recipe_id !== 3 || target.meal_entry[0]?.portions !== 6) {
-    throw new Error("round-trip did not preserve the planned meal entry");
+  if (target.planned_batch[0]?.recipe_id !== 3 || target.planned_batch[0]?.portions !== 6) {
+    throw new Error("round-trip did not preserve the planned batch");
+  }
+  if (canonicalJson(target.batch_occurrence) !== canonicalJson([
+    { batch_id: 1, date: "2026-08-25", slot: "dinner" },
+    { batch_id: 1, date: "2026-08-26", slot: "lunch" },
+  ])) {
+    throw new Error("round-trip did not preserve batch occurrences");
   }
 
   console.log(`restore round-trip ok: sha256=${snapshot.sha256}`);

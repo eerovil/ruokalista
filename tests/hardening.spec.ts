@@ -91,7 +91,7 @@ test("an editor opened before another save cannot overwrite it", async ({ page }
 test("a recipe part cannot be put on the menu through the JSON API", async ({
   page,
 }) => {
-  const response = await page.request.post("/api/meal-entries", {
+  const response = await page.request.post("/api/batches", {
     data: {
       date: "2026-12-08",
       slot: "dinner",

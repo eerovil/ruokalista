@@ -23,7 +23,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "recipe",
   "recipe_step",
   "ingredient_line",
-  "meal_entry",
+  "planned_batch",
+  "batch_occurrence",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -234,11 +235,16 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   const ingredientIds = uniqueIntegerKey(snapshot.tables.ingredient, "id", "ingredient");
   const recipeIds = uniqueIntegerKey(snapshot.tables.recipe, "id", "recipe");
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
-  uniqueIntegerKey(snapshot.tables.meal_entry, "id", "meal_entry");
+  const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
   uniqueComposite(snapshot.tables.ingredient, ["household_id", "name"], "ingredient name");
+  uniqueComposite(
+    snapshot.tables.batch_occurrence,
+    ["batch_id", "date", "slot"],
+    "batch occurrence",
+  );
 
   for (const row of snapshot.tables.member) {
     requireReference(row, "household_id", householdIds, "member.household_id");
@@ -261,10 +267,13 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     requireReference(row, "recipe_id", recipeIds, "ingredient_line.recipe_id");
     requireReference(row, "ingredient_id", ingredientIds, "ingredient_line.ingredient_id");
   }
-  for (const row of snapshot.tables.meal_entry) {
-    requireReference(row, "household_id", householdIds, "meal_entry.household_id");
-    requireReference(row, "recipe_id", recipeIds, "meal_entry.recipe_id");
-    requireReference(row, "created_by", memberIds, "meal_entry.created_by");
+  for (const row of snapshot.tables.planned_batch) {
+    requireReference(row, "household_id", householdIds, "planned_batch.household_id");
+    requireReference(row, "recipe_id", recipeIds, "planned_batch.recipe_id");
+    requireReference(row, "created_by", memberIds, "planned_batch.created_by");
+  }
+  for (const row of snapshot.tables.batch_occurrence) {
+    requireReference(row, "batch_id", batchIds, "batch_occurrence.batch_id");
   }
 }
 

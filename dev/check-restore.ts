@@ -21,7 +21,8 @@ const TABLES: readonly BackupTableName[] = [
   "recipe",
   "recipe_step",
   "ingredient_line",
-  "meal_entry",
+  "planned_batch",
+  "batch_occurrence",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -55,7 +56,7 @@ test("an unknown backup format is rejected", async () => {
 test("missing and unexpected tables are rejected", async () => {
   const snapshot = await validSnapshot();
   const tables = { ...snapshot.tables } as Record<string, unknown>;
-  delete tables.meal_entry;
+  delete tables.batch_occurrence;
   const raw = { ...snapshot, tables };
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(raw)),
@@ -78,11 +79,33 @@ test("duplicate ids are rejected before restore", async () => {
 test("orphan foreign keys are rejected before restore", async () => {
   const snapshot = await validSnapshot();
   const unsigned = unsignedOf(snapshot);
-  unsigned.tables.meal_entry[0]!.recipe_id = 999;
+  unsigned.tables.planned_batch[0]!.recipe_id = 999;
   const orphan = await finalizeSnapshot(unsigned);
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(orphan)),
-    /orphan meal_entry\.recipe_id=999/,
+    /orphan planned_batch\.recipe_id=999/,
+  );
+});
+
+test("orphan and duplicate batch occurrences are rejected", async () => {
+  const snapshot = await validSnapshot();
+  let unsigned = unsignedOf(snapshot);
+  unsigned.tables.batch_occurrence[0]!.batch_id = 999;
+  let invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /orphan batch_occurrence\.batch_id=999/,
+  );
+
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.batch_occurrence.push({
+    ...unsigned.tables.batch_occurrence[0]!,
+  });
+  unsigned.row_counts.batch_occurrence += 1;
+  invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /duplicate batch occurrence/,
   );
 });
 
@@ -214,17 +237,18 @@ async function validSnapshot() {
         source_line: "400 g jauhelihaa",
       },
     ],
-    meal_entry: [
+    planned_batch: [
       {
         id: 1,
         household_id: 1,
-        date: "2026-08-25",
-        slot: "dinner",
         recipe_id: 1,
         portions: 4,
         created_at: "2026-08-25 00:00:00",
         created_by: 1,
       },
+    ],
+    batch_occurrence: [
+      { batch_id: 1, date: "2026-08-25", slot: "dinner" },
     ],
   } satisfies BackupSnapshotUnsigned["tables"];
 

@@ -352,7 +352,7 @@ async function countOnMenu(
   const row = await db
     .prepare(
       `SELECT count(*) AS n
-         FROM meal_entry
+         FROM planned_batch
         WHERE household_id = ?
           AND recipe_id IN (
             SELECT id FROM recipe

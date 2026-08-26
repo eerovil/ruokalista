@@ -126,6 +126,10 @@ Notes on the choices, since a schema is where a decision quietly gets reversed:
   A slot with several rows is several people eating different food; a slot with
   none is a slot nobody has filled. Nothing distinguishes an empty week from a
   missing one, which is correct — there is nothing to create.
+- **Issue #57 proposes superseding `meal_entry` with `planned_batch` and
+  `batch_occurrence`.** This pull request would migrate each existing row into
+  one batch with one occurrence, then project batches whose spans intersect a
+  menu range. ADR-0004 records the proposed replacement and its gap rule.
 - **`quantity` is a number and may be blank.** "½ dl" becomes `0.5` + `dl`.
   A line with no stated amount — `tuoretta timjamia`, `hyppysellinen suolaa` —
   leaves it NULL, and `source_line` carries the truth. Nothing is ever invented
@@ -361,10 +365,10 @@ signed-in member's household.
 | --- | --- | --- |
 | `GET` | `/auth/google` , `/auth/google/callback` | Sign-in |
 | `POST` | `/auth/signout` | Clear the cookie |
-| `GET` | `/api/menu?from=&to=` | Meal entries in a date range |
-| `POST` | `/api/meal-entries` | Put a recipe on a date and slot |
-| `PATCH` | `/api/meal-entries/:id` | Change portions |
-| `DELETE` | `/api/meal-entries/:id` | Take it off |
+| `GET` | `/api/menu?from=&to=` | Proposed by #57: planned batches intersecting a date range |
+| `POST` | `/api/batches` | Proposed by #57: start one cooked batch in a date and slot |
+| `PATCH` | `/api/batches/:id` | Proposed by #57: change its recipe, portions or occurrences |
+| `DELETE` | `/api/batches/:id` | Proposed by #57: remove the whole cooked batch |
 | `GET` | `/api/recipes?q=` | Search by title |
 | `GET` | `/api/recipes/:id` | One recipe with lines and steps |
 | `POST` | `/api/recipes` | Save a corrected draft |
