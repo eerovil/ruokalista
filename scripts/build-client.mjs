@@ -9,7 +9,7 @@ import * as esbuild from "esbuild";
  * There is exactly one thing in the app that runs in a browser and is more than
  * a few lines of inline script: the contact-sheet splitter, which had to move
  * out of the Worker because the Free plan gives a request 10 ms of CPU (see
- * `docs/adr/0003-no-pixel-work-in-the-worker.md`). It imports
+ * `docs/adr/0005-the-worker-does-no-pixel-work.md`). It imports
  * `src/contact-sheet.ts` and `src/png.ts` directly, so the crop rules exist
  * once and `dev/check-contact-sheet.ts` still tests them under node — but those
  * files are TypeScript with `.ts` imports, which no browser will load.

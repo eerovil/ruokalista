@@ -135,9 +135,11 @@ edges, fused neighbours and overlapping crops refuse the whole sheet.
 Once validation succeeds, each crop goes through the existing
 `PUT /api/recipes/:id/image?origin=generated&fingerprint=…&model=…` route. The
 confirmation manifest supplies the recipe fingerprint and the image key seen
-before the external generation gap. The PUT conditions storage on that captured
-key, so a later manual replacement wins. `model` records
-`supplied:manual/<style>` and generated freshness continues to work.
+before the external generation gap. The browser sends that value in
+`x-expected-image-key` (an empty value means there was no image), and the PUT
+conditions storage on that captured key, so a later manual replacement wins.
+`model` records `supplied:manual/<style>` and generated freshness continues to
+work.
 
 Once uploads start, a successful crop is not rolled back when a later one fails,
 and one failure does not stop the rest. The browser reports every recipe's

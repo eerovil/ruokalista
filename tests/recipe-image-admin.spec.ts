@@ -243,6 +243,7 @@ test.describe("the prompt", () => {
     // what stops a crop being recorded against a recipe nobody read.
     expect((await status(page, 1)).recipeFingerprint).toBe(stated);
     expect(stated).toMatch(/^[0-9a-f]{16,}$/);
+    await expect(row).toHaveAttribute("data-expected-image-key", "");
   });
 
   test("the Copy button copies the prompt", async ({ context, page }) => {
@@ -256,6 +257,30 @@ test.describe("the prompt", () => {
     const copied = await page.evaluate(() => navigator.clipboard.readText());
     expect(copied).toContain("4-column by 4-row grid");
     expect(copied).toContain("Cell 1: Kaalilaatikko");
+  });
+
+  test("a rejected clipboard write falls back before reporting success", async ({
+    context,
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error("denied")) },
+      });
+      (window as unknown as { fallbackCopy?: boolean }).fallbackCopy = false;
+      document.execCommand = () => {
+        (window as unknown as { fallbackCopy?: boolean }).fallbackCopy = true;
+        return true;
+      };
+    });
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    await page.getByRole("button", { name: "Kopioi kehote" }).click();
+    await expect(page.getByRole("button", { name: "Kopioitu" })).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { fallbackCopy?: boolean }).fallbackCopy))
+      .toBe(true);
   });
 });
 
@@ -287,6 +312,41 @@ test.describe("cutting a sheet", () => {
 
     // The whole point of #111: not one paid request was made.
     expect(reached).toEqual([]);
+  });
+
+  test("a picture added after confirmation is not overwritten", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    // The manifest saw no picture. While the admin is away drawing the sheet,
+    // somebody chooses one manually through the ordinary upload path.
+    const uploaded = await page.request.put("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3), "content-type": "image/png" },
+      data: onePixelPng(),
+    });
+    expect(uploaded.status()).toBe(204);
+    const before = await page.request.get("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3) },
+    });
+    const chosenBytes = await before.body();
+
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("0 / 1", {
+      timeout: 30_000,
+    });
+    await expect(page.locator("[data-cell-status]")).toContainText(
+      "nykyinen kuva säilytettiin",
+    );
+
+    const state = await status(page, 1);
+    expect(state.origin).toBe("manual");
+    const after = await page.request.get("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3) },
+    });
+    expect(await after.body()).toEqual(chosenBytes);
   });
 
   test("the stored crops are real pictures at the output size", async ({

@@ -65,9 +65,10 @@ Two consequences, both taken in #111:
 
    Each crop is stored through `PUT /api/recipes/:id/image?origin=generated&fingerprint=…&model=…`,
    which is #89's bulk route with #95's provenance. One request per recipe, and
-   no new endpoint: the freshness bookkeeping and the compare-and-swap that
-   protects a picture somebody uploaded in the meantime are code that was already
-   there and already tested.
+   no new endpoint: `x-expected-image-key` carries the confirmation-time image
+   state into the request, while the freshness bookkeeping and compare-and-swap
+   that protect a picture somebody uploaded in the meantime are code that was
+   already there and already tested.
 
 So the Worker's whole part in a batch is now: list the recipes, write the
 prompt, state each recipe's fingerprint, and answer up to sixteen ordinary image

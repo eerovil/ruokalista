@@ -28,9 +28,10 @@ import { decodePng, encodePng, PngError, type Raster } from "./png.ts";
  * -------------
  * Unpacking a 1,024 px sheet, flooding it and writing sixteen crops measured at
  * about 1.5 seconds of CPU on a development host, a fifth of that for one crop.
- * Well inside a Worker's budget, and spent once per paid request that itself
- * takes a minute. Worth knowing before anybody optimises the per-scanline filter
- * search in `png.ts`, which is where most of it goes.
+ * That is far outside this deployment's 10 ms Worker budget, which is why #111
+ * runs this shared module in the admin's browser. Worth knowing before anybody
+ * moves it back or optimises the per-scanline filter search in `png.ts`, where
+ * most of the time goes.
  */
 
 /** Four columns, four rows, sixteen cells. The contract, not a setting. */

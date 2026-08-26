@@ -345,6 +345,7 @@ function confirmBody(chosen: readonly ImageCandidate[], prompt: string): Raw {
         (candidate) => html`<li
           data-recipe-id="${candidate.id}"
           data-fingerprint="${candidate.fingerprint}"
+          data-expected-image-key="${candidate.imageKey ?? ""}"
           data-title="${candidate.title}"
         >
           <span class="image-row">
@@ -409,25 +410,40 @@ const COPY_SCRIPT = html`<script>
     var field = document.getElementById("sheet-prompt");
     if (!button || !field || !button.addEventListener) return;
 
-    button.addEventListener("click", function () {
-      // Selecting first: it is what the keyboard fallback needs, and it is
-      // harmless feedback when a copy does go through.
-      field.focus();
-      field.select();
+    function finish(copied) {
+      button.innerHTML = copied ? "Kopioitu" : "Kopioi näppäimistöllä";
+    }
 
+    function fallback() {
       var copied = false;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(field.value);
-        copied = true;
-      } else if (document.execCommand) {
+      if (document.execCommand) {
         try {
           copied = document.execCommand("copy");
         } catch (error) {
           copied = false;
         }
       }
+      finish(copied);
+    }
 
-      button.innerHTML = copied ? "Kopioitu" : "Kopioi näppäimistöllä";
+    button.addEventListener("click", function () {
+      // Selecting first: it is what the keyboard fallback needs, and it is
+      // harmless feedback when a copy does go through.
+      field.focus();
+      field.select();
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          navigator.clipboard.writeText(field.value).then(function () {
+            finish(true);
+          }, fallback);
+          return;
+        } catch (error) {
+          fallback();
+          return;
+        }
+      }
+      fallback();
     });
   })();
 </script>`;

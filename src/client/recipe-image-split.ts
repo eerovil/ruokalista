@@ -49,6 +49,8 @@ interface Cell {
   title: string;
   /** The recipe content the picture will be a picture of, from the server. */
   fingerprint: string;
+  /** The image key the confirmation screen saw; empty means there was no image. */
+  expectedImageKey: string | null;
   row: HTMLElement;
 }
 
@@ -251,7 +253,12 @@ async function upload(cell: Cell, png: Uint8Array, model: string): Promise<strin
   try {
     response = await fetch(`/api/recipes/${cell.recipeId}/image${query}`, {
       method: "PUT",
-      headers: { "content-type": "image/png" },
+      headers: {
+        "content-type": "image/png",
+        // This is the state before the admin left to draw the sheet. The API
+        // must not replace a picture somebody chose during that long gap.
+        "x-expected-image-key": cell.expectedImageKey ?? "",
+      },
       // A fresh copy: the stored bytes outlive the raster they were cut from,
       // and a view onto a larger buffer would keep the whole sheet alive.
       body: png.slice(),
@@ -262,11 +269,12 @@ async function upload(cell: Cell, png: Uint8Array, model: string): Promise<strin
 
   if (response.status === 204) return null;
 
-  // 409 is the one worth reading: somebody changed this recipe's picture while
-  // the sheet was being drawn, so the compare-and-swap declined rather than
-  // overwriting theirs. The picture that was actually chosen last survives.
-  const text = await response.text().catch(() => "");
-  return text.length > 0 ? text : `palvelin vastasi ${response.status}`;
+  // 409 is the one worth explaining: somebody changed this recipe's picture
+  // while the sheet was being drawn, so the picture chosen last survives.
+  if (response.status === 409) {
+    return "kuva muuttui sillä välin — nykyinen kuva säilytettiin";
+  }
+  return `palvelin vastasi ${response.status}`;
 }
 
 function cellsOf(manifest: HTMLElement): Cell[] {
@@ -281,6 +289,7 @@ function cellsOf(manifest: HTMLElement): Cell[] {
       recipeId: id,
       title: row.getAttribute("data-title") ?? String(id),
       fingerprint: row.getAttribute("data-fingerprint") ?? "",
+      expectedImageKey: row.getAttribute("data-expected-image-key") || null,
       row,
     });
   }
