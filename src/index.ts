@@ -1,5 +1,10 @@
 import { requireMember, requireMemberScreen } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
+import {
+  batchIntakeScreen,
+  importBatchScreen,
+  reviewBatchScreen,
+} from "./batch-intake-screens.ts";
 import type { Env } from "./env.ts";
 import {
   apiRename,
@@ -91,6 +96,9 @@ const router = new Router()
   .post("/ingredients/:id/rename", requireMemberScreen(renameForm))
   .patch("/api/ingredients/:id", requireMember(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
+  .get("/intake/batch", requireMemberScreen(batchIntakeScreen))
+  .post("/intake/batch/review", requireMemberScreen(reviewBatchScreen))
+  .post("/intake/batch/import", requireMemberScreen(importBatchScreen))
   .post("/intake", requireMemberScreen(structureScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
   .post("/api/intake/structure", requireMember(structureStream))

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { AGENTDECK_BATCH } from "./support/batch";
 import { stubStructuring } from "./support/draft";
 import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
@@ -135,6 +136,22 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Jäsennä" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/08-correct.png`, fullPage: true });
+  });
+
+  test("AgentDeck batch review", async ({ page }) => {
+    await page.goto("/intake/batch");
+    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(AGENTDECK_BATCH));
+    await page.getByRole("button", { name: "Tarkista nippu" }).click();
+    await expect(page.locator(".batch-previews details")).toHaveCount(2);
+    await expect(page.locator(".batch-ingredients")).toContainText("kikherne");
+    await page.locator(".batch-previews details").first().evaluate((details) => {
+      (details as HTMLDetailsElement).open = true;
+    });
+    await expect(page.locator(".batch-previews details").first()).toHaveAttribute("open", "");
+    await page.screenshot({
+      path: `${SHOTS}/20-agentdeck-batch-review.png`,
+      fullPage: true,
+    });
   });
 
   test("the approval gate refusing", async ({ page }) => {

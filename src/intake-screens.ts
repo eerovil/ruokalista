@@ -233,6 +233,8 @@ export function intakeScreen({ url }: RouteContext): Response {
       <p id="status" class="status" aria-live="polite"></p>
       <p id="progress" class="progress" aria-live="polite" hidden></p>
 
+      <p><a href="/intake/batch">Tuo AgentDeckin tekemä reseptinippu</a></p>
+
       ${isLocalOrigin(url) ? sampleDraftForm() : ""}
 
       <script>

@@ -458,7 +458,7 @@ async function resolveIngredients(
   return { newIngredients, lines };
 }
 
-function validateRecipe(recipe: RecipeToSave): void {
+export function validateRecipe(recipe: RecipeToSave): void {
   if (recipe.title.trim() === "") {
     throw new SaveRefused("Reseptillä pitää olla nimi.");
   }

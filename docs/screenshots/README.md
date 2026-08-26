@@ -30,3 +30,4 @@ Regenerate after a change that alters a screen:
 | `15-meal-actions.png` | Proposed whole-batch recipe, portions, continuation and removal actions |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
 | `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
+| `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
