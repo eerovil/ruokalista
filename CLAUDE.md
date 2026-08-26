@@ -213,11 +213,23 @@ and `recipe.image_key` holds the object key, so an image is optional and a
 recipe without one is not a special case anywhere.
 
 `recipeImage()` in `src/recipes.ts` is the only thing that renders one, and it
-always renders *something* — the picture, or the same band saying there is none.
-A card whose height depends on whether somebody got round to adding a photograph
-is a list that jumps about while you scroll it. It is read-only by
+always renders *something* — the picture, or the same space saying there is
+none. A row whose height depends on whether somebody got round to adding a
+photograph is a list that jumps about while you scroll it. It is read-only by
 construction, which is what keeps the upload control in the editor and nowhere
 else.
+
+It has two sizes, because one object has to serve both a recipe screen and a
+list row: `hero` is the band above a title (the recipe screen, the planned
+meal, the editor), `thumb` is the square at the start of a row (the recipe
+list, the picker, each meal on the week). Both crop rather than squash — a
+recipe photograph is not a shape we choose. The picture is decorative, since
+the title is always beside it, so it carries no alt text and the empty one is
+hidden from a screen reader.
+
+Anything that renders a picture needs `imageKey` on the row it already loads:
+`recipeSummaries` and `findRecipe` in `src/recipes.ts` carry it, and so does
+`PlannedBatch` in `src/menu.ts`. Nothing does a second query for it.
 
 **Nothing trusts the content type a caller declares.** `src/image-bytes.ts`
 reads the signature and the pixel size out of the file's own header, and that is

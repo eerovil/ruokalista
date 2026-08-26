@@ -25,7 +25,7 @@ import {
   type PlannedBatch,
   type Slot,
 } from "./menu.ts";
-import { recipeSummaries, type RecipeSummary } from "./recipes.ts";
+import { recipeImage, recipeSummaries, type RecipeSummary } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
 const SLOT_NAMES: Record<Slot, string> = {
@@ -95,6 +95,7 @@ function batchTrack(batch: PlannedBatch, date: string): Raw {
         ? html`<span class="batch-passes">Jatkuu</span>`
         : occurrences.map(
             (occurrence) => html`<div class="entry"><a href="/batches/${batch.id}">
+              ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
               <span class="entry-slot">${SLOT_NAMES[occurrence.slot]}</span>
               <span class="entry-title">${batch.title}</span>
             </a></div>`,
@@ -147,6 +148,7 @@ function batchActions(
         ? shortDate(batch.startDate)
         : `${shortDate(batch.startDate)}–${shortDate(batch.endDate)}`}
     </p>
+    ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey })}
     <h1>${batch.title}</h1>
     ${refusal === null ? "" : html`<p class="refused">${refusal.message}</p>`}
 
@@ -291,6 +293,7 @@ export async function pickerScreen(
               <input type="hidden" name="date" value="${date}" />
               <input type="hidden" name="slot" value="${slot}" />
               <input type="hidden" name="recipeId" value="${recipe.id}" />
+              ${recipeImage(recipe, "thumb")}
               <span class="pick-title">${recipe.title}</span>
               <input name="portions" inputmode="numeric" value="${recipe.yieldPortions ?? DEFAULT_PORTIONS}" aria-label="Annoksia" size="2" />
               <button type="submit">Lisää</button>

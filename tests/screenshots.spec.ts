@@ -134,6 +134,23 @@ test.describe("signed in", () => {
     await expect(page.locator(".recipe-image-editor img")).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/23-editor-image.png`, fullPage: true });
 
+    // The list, with one recipe pictured and the rest showing the placeholder —
+    // which is the point of the placeholder, so the shot has to show both.
+    await page.goto("/recipes");
+    await expect(page.locator(".recipes .recipe-image img")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/24-recipes-images.png`, fullPage: true });
+
+    await page.goto("/picker?date=2026-10-05&slot=dinner");
+    await expect(page.locator(".pick .recipe-image img")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/25-picker-images.png`, fullPage: true });
+
+    await page.request.post("/api/batches", {
+      data: { date: "2026-10-06", slot: "dinner", recipeId: 1, portions: 4 },
+    });
+    await page.goto("/?week=2026-10-05");
+    await expect(page.locator(".entry .recipe-image img").first()).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/26-week-images.png`, fullPage: true });
+
     // Put it back, so the recipe every other shot photographs is unchanged.
     await page.request.delete("/api/recipes/1/image");
   });
