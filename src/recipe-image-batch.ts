@@ -67,13 +67,91 @@ export async function generateRecipeImages(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const { env, request, url } = ctx;
-
-  const body = await readBody(request);
+  const body = await readBody(ctx.request);
   if (body === null) return problem(400, "Send a JSON body.");
 
-  const ids = readIds(body.recipeIds);
-  if (typeof ids === "string") return problem(400, ids);
+  const outcome = await runImageBatch(ctx, member, body.recipeIds, body.sheetBase64);
+
+  if (outcome.kind === "refused") return problem(outcome.status, outcome.english);
+
+  if (outcome.kind === "rejected") {
+    // Nothing has been written, and nothing will be. The reasons name cells and
+    // recipes together, because "cell 7" means nothing to whoever asked for a
+    // list of recipes.
+    return Response.json(
+      {
+        stored: 0,
+        rejected: true,
+        model: outcome.model,
+        styleVersion: outcome.styleVersion,
+        reason: SHEET_REJECTED,
+        cells: outcome.cells,
+      },
+      { status: 422 },
+    );
+  }
+
+  return Response.json({
+    stored: outcome.stored,
+    rejected: false,
+    model: outcome.model,
+    styleVersion: outcome.styleVersion,
+    generatedBy: outcome.generatedBy,
+    sheet: outcome.sheet,
+    cropEdge: OUTPUT_EDGE,
+    usage: outcome.usage,
+    cells: outcome.cells,
+  });
+}
+
+/** What a sheet that could not be cut is reported as, whoever asked. */
+export const SHEET_REJECTED =
+  "The generated sheet could not be cut apart safely, so nothing was " +
+  "changed. Generate again to try another sheet.";
+
+/**
+ * How one batch came out, before anybody decides how to say it.
+ *
+ * There are two callers — the JSON route above and the admin screen in
+ * `recipe-image-admin.ts` — and one of them has to render Finnish while the
+ * other renders a machine-readable body. Everything that could differ between
+ * them is a way for the two to disagree about what a batch did, so the work
+ * itself happens once here and only the words are written twice.
+ */
+export type BatchOutcome =
+  | { kind: "refused"; status: number; english: string }
+  | {
+      kind: "rejected";
+      model: string;
+      styleVersion: string;
+      cells: CellReport[];
+    }
+  | {
+      kind: "stored";
+      stored: number;
+      model: string;
+      styleVersion: string;
+      generatedBy: string;
+      sheet: { width: number; height: number };
+      usage: unknown;
+      cells: CellReport[];
+    };
+
+/**
+ * Buy one sheet, cut it up, and store what came out. The order of the work is
+ * the safety property described at the top of this module, and it lives here so
+ * that no caller can reorder it.
+ */
+export async function runImageBatch(
+  ctx: RouteContext,
+  member: Member,
+  rawIds: unknown,
+  sheetBase64?: string,
+): Promise<BatchOutcome> {
+  const { env, url } = ctx;
+
+  const ids = readIds(rawIds);
+  if (typeof ids === "string") return { kind: "refused", status: 400, english: ids };
 
   // Load every recipe first. A batch naming a recipe this household does not
   // have is refused before any money is spent, and the fingerprint is taken
@@ -85,7 +163,9 @@ export async function generateRecipeImages(
 
   for (const id of ids) {
     const recipe = await findRecipe(env.DB, member.householdId, id);
-    if (recipe === null) return problem(404, `No such recipe: ${id}.`);
+    if (recipe === null) {
+      return { kind: "refused", status: 404, english: `No such recipe: ${id}.` };
+    }
     const dish = dishBrief(id, recipe);
     dishes.push(dish);
     const row = await imageRow(env.DB, member.householdId, id);
@@ -102,9 +182,11 @@ export async function generateRecipeImages(
 
   let sheet: GeneratedSheet;
   try {
-    sheet = await sheetFor(ctx, body, dishes);
+    sheet = await sheetFor(ctx, sheetBase64, dishes);
   } catch (error) {
-    if (error instanceof GenerationError) return problem(502, error.message);
+    if (error instanceof GenerationError) {
+      return { kind: "refused", status: 502, english: error.message };
+    }
     throw error;
   }
 
@@ -113,28 +195,22 @@ export async function generateRecipeImages(
     split = await splitContactSheet(sheet.png, dishes.length);
   } catch (error) {
     if (error instanceof PngError) {
-      return problem(502, `The generated sheet is not an image we can cut: ${error.message}`);
+      return {
+        kind: "refused",
+        status: 502,
+        english: `The generated sheet is not an image we can cut: ${error.message}`,
+      };
     }
     throw error;
   }
 
   if (!split.ok) {
-    // Nothing has been written, and nothing will be. The reasons name cells and
-    // recipes together, because "cell 7" means nothing to whoever asked for a
-    // list of recipes.
-    return Response.json(
-      {
-        stored: 0,
-        rejected: true,
-        model: sheet.model,
-        styleVersion: sheet.styleVersion,
-        reason:
-          "The generated sheet could not be cut apart safely, so nothing was " +
-          "changed. Generate again to try another sheet.",
-        cells: rejectionReport(dishes, split.problems),
-      },
-      { status: 422 },
-    );
+    return {
+      kind: "rejected",
+      model: sheet.model,
+      styleVersion: sheet.styleVersion,
+      cells: rejectionReport(dishes, split.problems),
+    };
   }
 
   // Past here every crop exists and has been checked, so the writes begin.
@@ -152,20 +228,19 @@ export async function generateRecipeImages(
     `recipe-image batch: ${stored}/${dishes.length} stored, ` +
       `${sheet.model} style ${sheet.styleVersion}, ` +
       `sheet ${split.sheet.width}x${split.sheet.height}, ` +
-      `crops ${OUTPUT_EDGE}px, local sheet ${isLocalOrigin(url) && body.sheetBase64 ? "yes" : "no"}`,
+      `crops ${OUTPUT_EDGE}px, local sheet ${isLocalOrigin(url) && sheetBase64 ? "yes" : "no"}`,
   );
 
-  return Response.json({
+  return {
+    kind: "stored",
     stored,
-    rejected: false,
     model: sheet.model,
     styleVersion: sheet.styleVersion,
     generatedBy: sheet.generatedBy,
     sheet: split.sheet,
-    cropEdge: OUTPUT_EDGE,
     usage: sheet.usage,
     cells,
-  });
+  };
 }
 
 /** One cell's worth of what has to be known before the sheet is even bought. */
@@ -284,10 +359,10 @@ function message(error: unknown): string {
  */
 async function sheetFor(
   { env, url }: RouteContext,
-  body: GenerateRequest,
+  sheetBase64: string | undefined,
   dishes: readonly DishBrief[],
 ): Promise<GeneratedSheet> {
-  if (body.sheetBase64 === undefined) return generateContactSheet(env, dishes);
+  if (sheetBase64 === undefined) return generateContactSheet(env, dishes);
 
   if (!isLocalOrigin(url)) {
     throw new GenerationError("A sheet can only be supplied on a development server.");
@@ -295,7 +370,7 @@ async function sheetFor(
 
   let binary: string;
   try {
-    binary = atob(body.sheetBase64);
+    binary = atob(sheetBase64);
   } catch {
     throw new GenerationError("The supplied sheet is not base64.");
   }

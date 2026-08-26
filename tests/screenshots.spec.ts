@@ -408,6 +408,70 @@ test.describe("signed in as an admin", () => {
     await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
   });
 
+  test("choosing which recipes get a picture", async ({ page }) => {
+    const sheet = readFileSync(
+      new URL("./fixtures/contact-sheet.png", import.meta.url),
+    ).toString("base64");
+
+    // A household in the middle of things, which is the only state this screen
+    // is interesting in: one recipe with no picture, one with a picture
+    // somebody uploaded, and one whose generated picture no longer matches the
+    // recipe. Two real pictures are cut from the fixture sheet first, then
+    // re-recorded as those two kinds — nothing here is drawn by hand.
+    const generated = await page.request.post("/api/admin/recipe-images/generate", {
+      data: { recipeIds: [2, 3], sheetBase64: sheet },
+    });
+    expect((await generated.json()).stored).toBe(2);
+
+    const asUploaded = await page.request.get("/api/recipes/2/image");
+    await page.request.put("/api/recipes/2/image", {
+      headers: { "content-type": "image/png" },
+      data: await asUploaded.body(),
+    });
+
+    const asStale = await page.request.get("/api/recipes/3/image");
+    await page.request.put(
+      "/api/recipes/3/image?origin=generated&fingerprint=vanha&model=openai:gpt-image-2/s1",
+      { headers: { "content-type": "image/png" }, data: await asStale.body() },
+    );
+
+    await page.goto("/admin/recipe-images");
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
+    await page.locator("details.image-current > summary").click();
+    await page.screenshot({
+      path: `${SHOTS}/32-admin-recipe-images.png`,
+      fullPage: true,
+    });
+
+    await page.goto("/admin/recipe-images/confirm?id=1&id=3");
+    await expect(page.locator(".image-manifest li")).toHaveCount(2);
+    await page.screenshot({
+      path: `${SHOTS}/33-admin-recipe-images-confirm.png`,
+      fullPage: true,
+    });
+
+    // The paid button, pressed with the sheet supplied rather than bought.
+    await page.locator("#generate").evaluate((form, bytes) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "sheetBase64";
+      input.value = bytes as string;
+      form.appendChild(input);
+    }, sheet);
+    await page.getByRole("button", { name: /Luo kuvat nyt/ }).click();
+
+    await expect(page.getByRole("heading", { name: "Kuvat luotu" })).toBeVisible();
+    const pictured = page.locator(".image-list .recipe-image img");
+    await expect(pictured).toHaveCount(2);
+    for (let at = 0; at < 2; at += 1) {
+      await expect(pictured.nth(at)).not.toHaveJSProperty("naturalWidth", 0);
+    }
+    await page.screenshot({
+      path: `${SHOTS}/34-admin-recipe-images-done.png`,
+      fullPage: true,
+    });
+  });
+
   test("recipes pictured from one generated contact sheet", async ({ page }) => {
     // The sheet is the real one bought while #96 was built, supplied rather
     // than re-bought — see tests/recipe-image-batch.spec.ts. Three recipes take

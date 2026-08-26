@@ -46,6 +46,11 @@ import {
   saveEditForm,
   uploadRecipeImageForm,
 } from "./recipe-editor.ts";
+import {
+  recipeImageAdminScreen,
+  recipeImageConfirmScreen,
+  recipeImageGenerateForm,
+} from "./recipe-image-admin.ts";
 import { generateRecipeImages } from "./recipe-image-batch.ts";
 import {
   apiDeleteRecipeImage,
@@ -87,7 +92,7 @@ import {
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
  * this file. Screens and API routes get added to the table below as they land.
  *
- * Everything except /health goes through requireMember. The two admin routes go
+ * Everything except /health goes through requireMember. The admin routes go
  * through requireAdmin as well, which is that same wall with one more question
  * asked after it.
  */
@@ -148,6 +153,9 @@ const router = new Router()
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
   .get("/api/ingredients", requireMember(listIngredients))
   .get("/admin", requireAdminScreen(adminScreen))
+  .get("/admin/recipe-images", requireAdminScreen(recipeImageAdminScreen))
+  .get("/admin/recipe-images/confirm", requireAdminScreen(recipeImageConfirmScreen))
+  .post("/admin/recipe-images/generate", requireAdminScreen(recipeImageGenerateForm))
   .get("/api/admin/status", requireAdmin(adminStatus))
   .post("/api/admin/recipe-images/generate", requireAdmin(generateRecipeImages));
 
