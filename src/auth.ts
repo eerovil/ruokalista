@@ -1,3 +1,4 @@
+import { html, page } from "./html.ts";
 import { findMemberById, type Member } from "./members.ts";
 import type { Handler, RouteContext } from "./router.ts";
 import { readSession } from "./session.ts";
@@ -59,6 +60,46 @@ function guard(
 
     return handler(ctx, member);
   };
+}
+
+/**
+ * The second wall, and the only one there is: a member either is an admin or is
+ * not. This is not a role system and is not meant to become one — it exists for
+ * the operations that are not every member's to run, the ones that spend money
+ * or rewrite what the household already has.
+ *
+ * It wraps the member wall rather than replacing it, so an admin route is still
+ * a signed-in route and still carries a household_id. Nothing here reads the
+ * request: admin comes from the member row, so no header, origin, form field or
+ * piece of markup can claim it.
+ *
+ * An ordinary member is told the route is not there, which is the same answer
+ * this app gives for another household's record — whether an admin route exists
+ * is not an ordinary member's business. Hiding the link is a courtesy; this is
+ * the boundary.
+ */
+export function requireAdmin(handler: MemberHandler): Handler {
+  return requireMember((ctx, member) =>
+    member.isAdmin ? handler(ctx, member) : problem(404, "Not found."),
+  );
+}
+
+/** Same wall, for a screen: a 404 page rather than a JSON body. */
+export function requireAdminScreen(handler: MemberHandler): Handler {
+  return requireMemberScreen((ctx, member) =>
+    member.isAdmin ? handler(ctx, member) : adminNotFound(),
+  );
+}
+
+function adminNotFound(): Response {
+  return page(
+    "Ei löytynyt",
+    html`<h1>Ei löytynyt</h1>
+      <p class="empty">Tätä sivua ei ole.</p>
+      <p><a href="/">Takaisin viikkoon</a></p>`,
+    "week",
+    404,
+  );
 }
 
 export function problem(status: number, message: string): Response {

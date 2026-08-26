@@ -28,7 +28,10 @@ function sessionSecret(): string {
   throw new Error("No SESSION_SECRET in .dev.vars — copy .dev.vars.example.");
 }
 
-/** A cookie for a seeded member. 1 is Koti's Eero, 2 is the neighbour. */
+/**
+ * A cookie for a seeded member. 1 is Koti's Eero, an ordinary member; 2 is the
+ * neighbour, in the other household; 3 is Koti's admin.
+ */
 export function sessionCookie(memberId = 1, lifetime = LIFETIME_SECONDS): Cookie {
   const expiresAt = Math.floor(Date.now() / 1000) + lifetime;
   const payload = `${memberId}.${expiresAt}`;

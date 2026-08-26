@@ -1,4 +1,10 @@
-import { requireMember, requireMemberScreen } from "./auth.ts";
+import { adminScreen, adminStatus } from "./admin-screens.ts";
+import {
+  requireAdmin,
+  requireAdminScreen,
+  requireMember,
+  requireMemberScreen,
+} from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
 import {
   batchIntakeScreen,
@@ -70,7 +76,9 @@ import {
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
  * this file. Screens and API routes get added to the table below as they land.
  *
- * Everything except /health goes through requireMember.
+ * Everything except /health goes through requireMember. The two admin routes go
+ * through requireAdmin as well, which is that same wall with one more question
+ * asked after it.
  */
 
 const router = new Router()
@@ -119,7 +127,9 @@ const router = new Router()
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
-  .get("/api/ingredients", requireMember(listIngredients));
+  .get("/api/ingredients", requireMember(listIngredients))
+  .get("/admin", requireAdminScreen(adminScreen))
+  .get("/api/admin/status", requireAdmin(adminStatus));
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {

@@ -32,3 +32,6 @@ Regenerate after a change that alters a screen:
 | `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
+| `28-week-not-admin.png` | Proposed week as an ordinary member sees it — no way into the admin surface |
+| `29-week-admin.png` | Proposed week as an admin sees it, with the one link to Ylläpito |
+| `30-admin.png` | Proposed admin screen: the boundary, with no tools behind it yet |
