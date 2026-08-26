@@ -19,6 +19,7 @@ import {
   type StepFormValues,
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
+import { deleteImagesForRecipeTree } from "./recipe-images.ts";
 import { findRecipe, type Recipe } from "./recipes.ts";
 import {
   replaceRecipe,
@@ -50,10 +51,13 @@ export async function editorScreen(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound();
 
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, imagePresent] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    hasImage(env.DB, member.householdId, recipe.id),
+  ]);
   return page(
     `Muokkaa: ${recipe.title}`,
-    editorForm(recipe, ingredients),
+    editorForm(recipe, ingredients, imagePresent),
     "recipes",
   );
 }
@@ -75,7 +79,6 @@ export async function saveEditForm(
     await replaceRecipe(env.DB, member, recipe.id, expectedRevision, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
-      // Never taken from the form: it is the record of what arrived.
       sourceText: recipe.sourceText,
       sourceRoute: recipe.sourceRoute,
       structuredBy: null,
@@ -91,16 +94,16 @@ export async function saveEditForm(
     if (latest === null) return notFound();
 
     const stale = error instanceof StaleRecipe;
-    const ingredients = await ingredientsFor(env.DB, member.householdId);
+    const [ingredients, imagePresent] = await Promise.all([
+      ingredientsFor(env.DB, member.householdId),
+      hasImage(env.DB, member.householdId, latest.id),
+    ]);
     return page(
       `Muokkaa: ${latest.title}`,
       html`<p class="refused">${error.message}</p>
-        ${editorForm(latest, ingredients, {
+        ${editorForm(latest, ingredients, imagePresent, {
           form,
           lineCount: lineCountForRendering(form),
-          // A stale form must deliberately submit against the version now on
-          // screen. Other validation failures keep their original revision, so
-          // they cannot quietly overwrite an edit made in another tab.
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
@@ -131,6 +134,7 @@ export async function deleteRecipeForm(
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
   if (onMenu > 0) return stillPlanned(recipe, onMenu);
 
+  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 303, headers: { Location: "/recipes" } });
 }
@@ -148,6 +152,7 @@ export async function apiDeleteRecipe(
     return problem(409, "That recipe or one of its parts is on the menu.");
   }
 
+  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 204 });
 }
@@ -157,6 +162,7 @@ export async function apiDeleteRecipe(
 function editorForm(
   recipe: Recipe,
   ingredients: IngredientSummary[],
+  imagePresent: boolean,
   attempted?: EditorAttempt,
 ): Raw {
   const rows: Array<DraftLine | LineFormValues> = attempted
@@ -173,11 +179,8 @@ function editorForm(
           ingredientId: idOf(line.ingredient, ingredients),
           ingredientName: line.ingredient,
           sourceLine: line.sourceLine,
-          // A saved part is a recipe of its own, so a recipe's own lines never
-          // carry one.
           section: null,
           phase: line.phase,
-          // A note is about an import, not about a saved recipe.
           note: null,
         } satisfies DraftLine)),
         ...Array.from({ length: SPARE_LINES }, emptyLine),
@@ -214,6 +217,35 @@ function editorForm(
   const revision = attempted?.revision ?? recipe.revision;
 
   return html`<h1>Muokkaa reseptiä</h1>
+    <section class="recipe-image-editor">
+      <h2>Kuva</h2>
+      ${imagePresent
+        ? html`<p><img src="/api/recipes/${recipe.id}/image" alt="${recipe.title}" /></p>`
+        : html`<p class="empty">Reseptillä ei ole kuvaa.</p>`}
+      <form
+        method="post"
+        action="/recipes/${recipe.id}/image"
+        enctype="multipart/form-data"
+        class="stacked"
+      >
+        <label for="recipe-image">${imagePresent ? "Vaihda kuva" : "Lisää kuva"}</label>
+        <input
+          id="recipe-image"
+          name="image"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          required
+        />
+        <p class="empty">JPEG, PNG tai WebP, enintään 5 MiB.</p>
+        <button type="submit">${imagePresent ? "Vaihda kuva" : "Lisää kuva"}</button>
+      </form>
+      ${imagePresent
+        ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
+            <button type="submit" class="danger">Poista kuva</button>
+          </form>`
+        : ""}
+    </section>
+
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <input type="hidden" name="lineCount" value="${rows.length}" />
       <input type="hidden" name="revision" value="${revision}" />
@@ -264,8 +296,6 @@ function editorForm(
     <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
     <p class="source-text">${recipe.sourceText}</p>
 
-    <!-- A link, not a submit: deleting a recipe is not something a mistyped tap
-         should finish. The confirmation screen is where the button lives. -->
     <p class="recipe-delete">
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
     </p>`;
@@ -342,6 +372,18 @@ async function load(
   const id = Number(rawId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   return findRecipe(db, member.householdId, id);
+}
+
+async function hasImage(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT image_key FROM recipe WHERE id = ? AND household_id = ?")
+    .bind(recipeId, householdId)
+    .first<{ image_key: string | null }>();
+  return row?.image_key !== null && row?.image_key !== undefined;
 }
 
 async function countOnMenu(
