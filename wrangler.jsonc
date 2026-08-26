@@ -8,6 +8,16 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Generated launcher icons are bundled as ArrayBuffer modules and served by
+  // the one Worker router, which keeps their headers and public routes explicit.
+  "rules": [
+    {
+      "type": "Data",
+      "globs": ["**/*.png", "**/*.svg"],
+      "fallthrough": true
+    }
+  ],
+
   // Keep the runtime secret contract explicit. Wrangler validates these names
   // against the Worker before deploy, and local development only exposes listed
   // keys from .dev.vars/.env when this block is present.

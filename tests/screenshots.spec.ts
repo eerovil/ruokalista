@@ -32,6 +32,27 @@ test("sign-in", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/01-signin.png`, fullPage: true });
 });
 
+test.describe("PWA", () => {
+  test.use({ serviceWorkers: "allow" });
+
+  test("offline shell", async ({ page, context }) => {
+    await page.goto("/signin");
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await expect.poll(
+      () => page.evaluate(() => navigator.serviceWorker.controller !== null),
+    ).toBe(true);
+    await context.setOffline(true);
+    await page.goto("/recipes/1", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", { name: "Ruokalista odottaa verkkoyhteyttä" }),
+    ).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/31-pwa-offline.png`, fullPage: true });
+    await context.setOffline(false);
+  });
+});
+
 test.describe("signed in", () => {
   test.beforeEach(async ({ context }) => {
     await context.addCookies([sessionCookie(1)]);
