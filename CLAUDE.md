@@ -70,6 +70,19 @@ development, which is no place for an account-wide API token.
 re-run. `push-google-secrets.sh` pushes the Google credentials and deploys;
 `add-member.sh` inserts a member, which is the only way anybody gets in.
 
+Recipe images (#88) add an R2 bucket, `ruokalista-recipe-images`, bound as
+`RECIPE_IMAGES`. The setup script creates it if it is missing, but **R2 has to
+be switched on for the account in the dashboard first** — no API token can do
+that, and `wrangler deploy` refuses outright while `wrangler.jsonc` binds a
+bucket that does not exist. Since merging to `main` applies migrations and then
+deploys, turning R2 on has to happen before that merge, or production gets the
+new column and keeps the old Worker.
+
+The backup covers D1, not R2. A restored snapshot therefore carries
+`recipe.image_key` values whose bytes may be gone; the recipe screen falls back
+to the placeholder, which is the same thing it does for a recipe that never had
+a picture.
+
 `SESSION_SECRET` is generated during setup and never stored anywhere, so a
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.
@@ -192,6 +205,60 @@ Intake's progress is counted, not dumped: the island reads the streaming JSON
 and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
 that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
 before the browser sees it** — no regular expressions in that script.
+
+## A recipe's picture
+
+Pictures are made outside Ruokalista and uploaded (#88). The bytes live in R2
+and `recipe.image_key` holds the object key, so an image is optional and a
+recipe without one is not a special case anywhere.
+
+`recipeImage()` in `src/recipes.ts` is the only thing that renders one, and it
+always renders *something* — the picture, or the same space saying there is
+none. A row whose height depends on whether somebody got round to adding a
+photograph is a list that jumps about while you scroll it. It is read-only by
+construction, which is what keeps the upload control in the editor and nowhere
+else.
+
+It has two sizes, because one object has to serve both a recipe screen and a
+list row: `hero` is the band above a title (the recipe screen, the planned
+meal, the editor), `thumb` is the square at the start of a row (the recipe
+list, the picker, each meal on the week). Both crop rather than squash — a
+recipe photograph is not a shape we choose. The picture is decorative, since
+the title is always beside it, so it carries no alt text and the empty one is
+hidden from a screen reader.
+
+Anything that renders a picture needs `imageKey` on the row it already loads:
+`recipeSummaries` and `findRecipe` in `src/recipes.ts` carry it, and so does
+`PlannedBatch` in `src/menu.ts`. Nothing does a second query for it.
+
+**Nothing trusts the content type a caller declares.** `src/image-bytes.ts`
+reads the signature and the pixel size out of the file's own header, and that is
+what decides whether the bytes are stored, what type they are served as, and
+what the key's extension says. A browser sends whatever the operating system
+guessed from the file name; a script sends whatever its author typed. The
+response also carries `nosniff`, because these are bytes from outside served
+from this app's own origin. `dev/check-image-bytes.ts` checks the reader
+directly — including that HTML calling itself a PNG is refused — because a
+browser test only ever sends real images and would agree with an implementation
+that always said yes.
+
+Normalizing happens in the browser: the editor's island shrinks the chosen
+picture to a long edge of 1,200 px and re-encodes it as JPEG before it is
+posted, the same canvas job and the same reason as the intake camera route. A
+Worker cannot re-encode an image without another Cloudflare product, so the
+server's half is a bound rather than a transform — 5 MiB and a 2,000 px longest
+edge, refused with the measurement in the message. Bulk callers get the bound,
+not the shrink, so they have to send display-sized pictures. If image
+transformation is ever enabled on the account, `storeRecipeImage` is the one
+place that would change.
+
+That island is a template literal too, so the backslash rule from *Finish
+states* applies to it.
+
+Replacing writes the new object, points the row at it, and only then deletes the
+old one — so a failure leaves a stray object rather than a recipe pointing at
+nothing. Deleting a recipe drops its pictures and its parts' pictures first, for
+the same reason: the keys are only readable while the rows still exist.
 
 ## Checks
 

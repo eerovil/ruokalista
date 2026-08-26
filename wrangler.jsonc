@@ -31,5 +31,12 @@
       "database_id": "f81fabeb-b38f-453d-8966-dfe52c721341",
       "migrations_dir": "migrations"
     }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "RECIPE_IMAGES",
+      "bucket_name": "ruokalista-recipe-images"
+    }
   ]
 }

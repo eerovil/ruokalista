@@ -67,6 +67,9 @@ const STYLES = `
     --tabs-height: 3.75rem;
   }
   * { box-sizing: border-box; }
+  /* No picture may be wider than the screen it is on. Recipe images arrive from
+     outside and are whatever size the tool that made them chose. */
+  img { max-width: 100%; height: auto; }
   body {
     margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 1rem/1.55 system-ui, sans-serif;
@@ -175,8 +178,10 @@ const STYLES = `
   /* ------------------------------------------------------------ screens */
 
   .recipes li { border-bottom: 1px solid var(--edge); }
-  .recipes a { display: flex; flex-direction: column; justify-content: center;
+  .recipes a { display: flex; align-items: center; gap: .7rem;
     min-height: var(--tap); padding: .75rem 0; text-decoration: none; }
+  .recipes-text { display: flex; flex-direction: column; justify-content: center;
+    min-width: 0; }
   .recipes .meta, .yield, .empty { color: var(--muted); font-size: .85rem; }
   .lines li { padding: .55rem 0; font-size: 1.05rem; border-bottom: 1px solid var(--edge); }
   .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -255,7 +260,7 @@ const STYLES = `
   .empty-slot, .add-more { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
   .entry > a {
-    display: flex; align-items: baseline; gap: .5rem;
+    display: flex; align-items: center; gap: .5rem;
     min-height: var(--tap); padding: .5rem .6rem;
     text-decoration: none;
     background: var(--surface); border-radius: var(--radius);
@@ -305,6 +310,8 @@ const STYLES = `
   .edit-steps li.has-phase { flex-wrap: wrap; }
   .edit-steps li.has-phase > label { flex-basis: 100%; }
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
+  .pick .recipe-image.is-thumb { width: 2.5rem; height: 2.5rem; }
+  .entry .recipe-image.is-thumb { width: 2.25rem; height: 2.25rem; }
   .pick-title { flex: 1; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
   .progress {
@@ -396,6 +403,24 @@ const STYLES = `
     color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
     font-weight: 600;
   }
+  /* A fixed height rather than an aspect-ratio: the same band is there whether
+     the recipe has a picture or not, so nothing shifts as you scroll, and old
+     Safari — which has no aspect-ratio — gets the same layout as everything
+     else. */
+  .recipe-image {
+    height: 11rem; margin: 0 0 1rem; overflow: hidden;
+    border-radius: var(--radius); background: var(--surface);
+  }
+  .recipe-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .recipe-image.is-empty { border: 1px dashed var(--edge); }
+  /* The same picture at row size. It never flexes, so a long title cannot
+     squeeze it, and it crops rather than squashing: a recipe photograph is not
+     a shape we get to choose. */
+  .recipe-image.is-thumb {
+    flex: none; width: 3rem; height: 3rem; margin: 0; align-self: center;
+  }
+  .recipe-image-editor { margin: 0 0 1.5rem; }
+  .recipe-image-editor h2 { margin: 0 0 .5rem; }
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;
     color: var(--warn); font-size: .9rem;

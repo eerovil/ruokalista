@@ -35,9 +35,16 @@ import {
   apiDeleteRecipe,
   confirmDeleteScreen,
   deleteRecipeForm,
+  deleteRecipeImageForm,
   editorScreen,
   saveEditForm,
+  uploadRecipeImageForm,
 } from "./recipe-editor.ts";
+import {
+  apiDeleteRecipeImage,
+  apiPutRecipeImage,
+  apiRecipeImage,
+} from "./recipe-images.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
   completeSignIn,
@@ -89,9 +96,14 @@ const router = new Router()
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
+  .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
+  .post("/recipes/:id/image/delete", requireMemberScreen(deleteRecipeImageForm))
   .get("/recipes/:id/delete", requireMemberScreen(confirmDeleteScreen))
   .post("/recipes/:id/delete", requireMemberScreen(deleteRecipeForm))
   .delete("/api/recipes/:id", requireMember(apiDeleteRecipe))
+  .get("/api/recipes/:id/image", requireMember(apiRecipeImage))
+  .put("/api/recipes/:id/image", requireMember(apiPutRecipeImage))
+  .delete("/api/recipes/:id/image", requireMember(apiDeleteRecipeImage))
   .get("/ingredients", requireMemberScreen(ingredientsScreen))
   .post("/ingredients/:id/rename", requireMemberScreen(renameForm))
   .patch("/api/ingredients/:id", requireMember(apiRename))

@@ -21,6 +21,8 @@ export interface RecipeSummary {
   createdBy: string;
   /** What the picker defaults portions to when the source stated one. */
   yieldPortions: number | null;
+  /** The R2 object holding this recipe's picture, or null if it has none. */
+  imageKey: string | null;
 }
 
 export interface RecipeLine extends Measurement {
@@ -54,6 +56,7 @@ interface SummaryRow {
   created_at: string;
   created_by: string;
   yield_portions: number | null;
+  image_key: string | null;
 }
 
 export async function recipeSummaries(
@@ -67,6 +70,7 @@ export async function recipeSummaries(
               recipe.title,
               recipe.created_at,
               recipe.yield_portions,
+              recipe.image_key,
               member.display_name AS created_by
          FROM recipe
          JOIN member ON member.id = recipe.created_by
@@ -83,6 +87,7 @@ export async function recipeSummaries(
     createdAt: row.created_at,
     createdBy: row.created_by,
     yieldPortions: row.yield_portions,
+    imageKey: row.image_key,
   }));
 
   // Matched here rather than with SQL LIKE: SQLite's case-insensitivity is
@@ -128,6 +133,7 @@ export async function findRecipe(
               recipe.source_text,
               recipe.source_route,
               recipe.revision,
+              recipe.image_key,
               recipe.created_at,
               member.display_name AS created_by
          FROM recipe
@@ -184,6 +190,7 @@ export async function findRecipe(
     sourceText: row.source_text,
     sourceRoute: row.source_route,
     revision: row.revision,
+    imageKey: row.image_key,
     createdAt: row.created_at,
     createdBy: row.created_by,
     parts,
@@ -299,10 +306,13 @@ export async function recipeListScreen(
             ${recipes.map(
               (recipe) => html`<li>
                 <a href="/recipes/${recipe.id}">
-                  ${recipe.title}
-                  <span class="meta"
-                    >${finnishDate(recipe.createdAt)} · ${recipe.createdBy}</span
-                  >
+                  ${recipeImage(recipe, "thumb")}
+                  <span class="recipes-text">
+                    ${recipe.title}
+                    <span class="meta"
+                      >${finnishDate(recipe.createdAt)} · ${recipe.createdBy}</span
+                    >
+                  </span>
                 </a>
               </li>`,
             )}
@@ -405,10 +415,46 @@ function body(
           </ol>`}`;
 }
 
+/** Everything rendering a picture needs to know. A `Recipe` is one of these. */
+export interface Pictured {
+  id: number;
+  imageKey: string | null;
+}
+
+/**
+ * A recipe's picture, or the same shape of space saying it has none.
+ *
+ * Always one or the other, never nothing: a row that changes height depending
+ * on whether somebody got round to adding a photograph is a list that jumps
+ * about while you scroll it. The picture is decorative — the title is always
+ * right beside it — so it carries no alt text for a screen reader to read
+ * twice, and the empty one is hidden from a screen reader entirely.
+ *
+ * Two sizes, because a list row and a recipe screen want very different
+ * pictures out of the same object: `hero` is the band above a title, `thumb`
+ * is the square that sits at the start of a row. Both crop rather than
+ * squash — a recipe photograph is not a shape we control.
+ *
+ * Read-only on purpose. Uploading happens in the editor and nowhere else, so
+ * no screen that calls this offers a control.
+ */
+export function recipeImage(
+  recipe: Pictured,
+  size: "hero" | "thumb" = "hero",
+): Raw {
+  const shape = size === "thumb" ? "recipe-image is-thumb" : "recipe-image";
+  return recipe.imageKey === null
+    ? html`<div class="${shape} is-empty" aria-hidden="true"></div>`
+    : html`<div class="${shape}">
+        <img src="/api/recipes/${recipe.id}/image" alt="" loading="lazy" />
+      </div>`;
+}
+
 function recipeBody(recipe: Recipe, portions: number | null): Raw {
   const factor = scaleFactor(recipe.yieldPortions, portions);
 
-  return html`<h1>${recipe.title}</h1>
+  return html`${recipeImage(recipe)}
+    <h1>${recipe.title}</h1>
     <!-- Whether the amounts below are the page's or this meal's is the first
          thing a cook needs to know, so it sits under the title and says which. -->
     <p class="${factor === null ? "yield" : "yield is-scaled"}">

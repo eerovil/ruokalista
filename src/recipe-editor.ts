@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, type Raw } from "./html.ts";
+import { html, page, raw, type Raw } from "./html.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
@@ -19,7 +19,13 @@ import {
   type StepFormValues,
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
-import { findRecipe, type Recipe } from "./recipes.ts";
+import {
+  deleteImagesForRecipeTree,
+  imageRow,
+  removeRecipeImage,
+  storeRecipeImage,
+} from "./recipe-images.ts";
+import { findRecipe, recipeImage, type Recipe } from "./recipes.ts";
 import {
   replaceRecipe,
   SaveRefused,
@@ -41,6 +47,86 @@ interface EditorAttempt {
   lineCount: number;
   revision: number;
 }
+
+/**
+ * Shrink the chosen picture in the browser before it is ever uploaded.
+ *
+ * This is where "not stored as-is" actually happens for a person: an image tool
+ * hands you a 3000-pixel PNG, and what leaves the phone is a 1200-pixel JPEG a
+ * few hundred kilobytes big. A Worker cannot re-encode an image without another
+ * Cloudflare product, but a canvas can, which is the same reason the intake
+ * camera route downscales here rather than on the server.
+ *
+ * Everything is feature-detected and every failure falls back to the plain form
+ * post, so an old iPad still uploads — it just has to send a picture already
+ * within the bounds the server states. No regular expressions and no
+ * backslashes: this is a template literal, so a backslash never reaches the
+ * browser.
+ */
+const SHRINK_ISLAND = `
+(function () {
+  var form = document.getElementById('recipe-image-form');
+  if (!form || !window.fetch || !window.FormData || !window.createImageBitmap) return;
+
+  var LONG_EDGE = 1200;
+  var input = document.getElementById('recipe-image');
+  var button = form.querySelector('button[type=submit]');
+  var busy = false;
+
+  function shrink(file) {
+    return createImageBitmap(file).then(function (bitmap) {
+      var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      if (!canvas.toBlob) return null;
+      return new Promise(function (resolve) {
+        canvas.toBlob(function (blob) { resolve(blob); }, 'image/jpeg', 0.85);
+      });
+    });
+  }
+
+  form.addEventListener('submit', function (event) {
+    if (busy) return;
+    var file = input && input.files && input.files[0];
+    if (!file) return;
+
+    event.preventDefault();
+    busy = true;
+    if (button) button.disabled = true;
+
+    shrink(file).then(function (blob) {
+      if (!blob) throw new Error('cannot re-encode');
+      var body = new FormData();
+      body.append('image', blob, 'kuva.jpg');
+      return fetch(form.action, {
+        method: 'POST',
+        body: body,
+        credentials: 'same-origin',
+      });
+    }).then(function (response) {
+      if (response.ok || response.redirected) {
+        window.location.href = form.getAttribute('data-editor');
+        return null;
+      }
+      // The server refused the shrunk picture too. It answered with the editor
+      // and the reason on it, so show exactly that.
+      return response.text().then(function (body) {
+        document.open();
+        document.write(body);
+        document.close();
+      });
+    }).catch(function () {
+      // Canvas, network, anything: hand it back to the browser, which posts the
+      // file as chosen and gets a plain server answer.
+      busy = false;
+      if (button) button.disabled = false;
+      form.submit();
+    });
+  });
+})();
+`;
 
 /** `GET /recipes/:id/edit` */
 export async function editorScreen(
@@ -131,6 +217,7 @@ export async function deleteRecipeForm(
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
   if (onMenu > 0) return stillPlanned(recipe, onMenu);
 
+  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 303, headers: { Location: "/recipes" } });
 }
@@ -148,8 +235,91 @@ export async function apiDeleteRecipe(
     return problem(409, "That recipe or one of its parts is on the menu.");
   }
 
+  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
   return new Response(null, { status: 204 });
+}
+
+/**
+ * `POST /recipes/:id/image` — the editor's own upload, which is the only
+ * upload control anywhere in the app.
+ *
+ * A refusal re-renders the editor with the reason at the top, the same as every
+ * other refusal here. The API's JSON answer belongs to the API; a browser that
+ * posted a form gets a screen back.
+ */
+export async function uploadRecipeImageForm(
+  { env, request, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await load(env.DB, member, params["id"]);
+  if (recipe === null) return notFound();
+
+  const form = await request.formData();
+  const entry = form.get("image");
+  if (!(entry instanceof File) || entry.size === 0) {
+    return imageRefused(env, member, recipe, "Valitse kuva.", 400);
+  }
+
+  const refusal = await storeRecipeImage(
+    env,
+    member.householdId,
+    recipe.id,
+    recipe.imageKey,
+    await entry.arrayBuffer(),
+  );
+  if (refusal !== null) {
+    return imageRefused(env, member, recipe, refusal.finnish, refusal.status);
+  }
+
+  return seeEditor(recipe.id);
+}
+
+/** `POST /recipes/:id/image/delete` — the editor's remove button. */
+export async function deleteRecipeImageForm(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await load(env.DB, member, params["id"]);
+  if (recipe === null) return notFound();
+
+  await removeRecipeImage(env, member.householdId, recipe.id, recipe.imageKey);
+  return seeEditor(recipe.id);
+}
+
+/**
+ * The editor again, with the reason the picture was not taken.
+ *
+ * The recipe is re-read rather than reused: the refusal may have arrived after
+ * the row moved on, and the image the screen shows has to be the one actually
+ * stored.
+ */
+async function imageRefused(
+  env: RouteContext["env"],
+  member: Member,
+  recipe: Recipe,
+  message: string,
+  status: number,
+): Promise<Response> {
+  const [ingredients, row] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    imageRow(env.DB, member.householdId, recipe.id),
+  ]);
+
+  return page(
+    `Muokkaa: ${recipe.title}`,
+    html`<p class="refused">${message}</p>
+      ${editorForm({ ...recipe, imageKey: row?.image_key ?? null }, ingredients)}`,
+    "recipes",
+    status,
+  );
+}
+
+function seeEditor(recipeId: number): Response {
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/recipes/${recipeId}/edit` },
+  });
 }
 
 // ---------------------------------------------------------------- rendering
@@ -212,8 +382,41 @@ function editorForm(
     ? String(attempted.form.get("yield") ?? "")
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
+  const hasPicture = recipe.imageKey !== null;
 
   return html`<h1>Muokkaa reseptiä</h1>
+    <section class="recipe-image-editor">
+      <h2>Kuva</h2>
+      ${recipeImage(recipe)}
+      <form
+        method="post"
+        action="/recipes/${recipe.id}/image"
+        enctype="multipart/form-data"
+        class="stacked"
+        id="recipe-image-form"
+        data-editor="/recipes/${recipe.id}/edit"
+      >
+        <label for="recipe-image">
+          ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
+        </label>
+        <input
+          id="recipe-image"
+          name="image"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          required
+        />
+        <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
+        <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
+      </form>
+      ${hasPicture
+        ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
+            <button type="submit" class="danger">Poista kuva</button>
+          </form>`
+        : ""}
+    </section>
+    ${raw(`<script>${SHRINK_ISLAND}</script>`)}
+
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <input type="hidden" name="lineCount" value="${rows.length}" />
       <input type="hidden" name="revision" value="${revision}" />

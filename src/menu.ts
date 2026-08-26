@@ -23,6 +23,8 @@ export interface PlannedBatch {
   id: number;
   recipeId: number;
   title: string;
+  /** The recipe's picture, so a planned meal can show what it will be. */
+  imageKey: string | null;
   portions: number;
   occurrences: BatchOccurrence[];
   startDate: string;
@@ -33,6 +35,7 @@ interface BatchRow {
   id: number;
   recipe_id: number;
   title: string;
+  image_key: string | null;
   portions: number;
   date: string;
   slot: Slot;
@@ -54,6 +57,7 @@ const BATCH_SELECT = `WITH spans AS (
                              planned_batch.recipe_id,
                              planned_batch.portions,
                              recipe.title,
+                             recipe.image_key,
                              batch_occurrence.date,
                              batch_occurrence.slot,
                              spans.start_date,
@@ -119,6 +123,7 @@ function groupBatches(rows: BatchRow[]): PlannedBatch[] {
         id: row.id,
         recipeId: row.recipe_id,
         title: row.title,
+        imageKey: row.image_key,
         portions: row.portions,
         occurrences: [],
         startDate: row.start_date,

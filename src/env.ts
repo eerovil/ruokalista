@@ -4,6 +4,7 @@
  */
 export interface Env {
   DB: D1Database;
+  RECIPE_IMAGES: R2Bucket;
 
   /**
    * Signs the session cookie. Set as a Worker secret in production and in
