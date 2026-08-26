@@ -44,6 +44,7 @@ import {
   apiDeleteRecipeImage,
   apiPutRecipeImage,
   apiRecipeImage,
+  apiRecipeImageStatus,
 } from "./recipe-images.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
@@ -104,6 +105,7 @@ const router = new Router()
   .get("/api/recipes/:id/image", requireMember(apiRecipeImage))
   .put("/api/recipes/:id/image", requireMember(apiPutRecipeImage))
   .delete("/api/recipes/:id/image", requireMember(apiDeleteRecipeImage))
+  .get("/api/recipes/:id/image/status", requireMember(apiRecipeImageStatus))
   .get("/ingredients", requireMemberScreen(ingredientsScreen))
   .post("/ingredients/:id/rename", requireMemberScreen(renameForm))
   .patch("/api/ingredients/:id", requireMember(apiRename))

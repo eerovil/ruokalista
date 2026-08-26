@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import zlib from "node:zlib";
 
+import { openMore } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -296,5 +297,132 @@ test.describe("the bulk API", () => {
 
     // Signed out is refused too.
     expect((await request.get(IMAGE_URL)).status()).toBe(401);
+  });
+});
+
+test.describe("freshness", () => {
+  /**
+   * The walk the generator will take: a recipe with no picture, a generated one
+   * recorded against the recipe it was made from, and the same picture once
+   * somebody changed what the dish is made of.
+   *
+   * The fingerprint's own rules are checked in `dev/check-recipe-fingerprint.ts`,
+   * where a change can be made one field at a time. This is the round trip
+   * through R2, the database and the editor.
+   */
+
+  const STATUS_URL = `/api/recipes/${RECIPE}/image/status`;
+
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+    // Earlier tests in this file leave pictures behind, and every case here
+    // starts from a recipe that has none.
+    await context.request.delete(IMAGE_URL);
+  });
+
+  test("missing, then fresh, then stale when the ingredients change", async ({
+    page,
+  }) => {
+    const status = async () => (await page.request.get(STATUS_URL)).json();
+
+    const none = await status();
+    expect(none.status).toBe("missing");
+    expect(none.origin).toBe(null);
+
+    // What a generator does when it comes back with what it made.
+    const put = await page.request.put(
+      `${IMAGE_URL}?origin=generated&model=test-model`,
+      { headers: { "content-type": "image/png" }, data: png(600, 400, [200, 110, 60]) },
+    );
+    expect(put.status()).toBe(204);
+
+    const generated = await status();
+    expect(generated.status).toBe("fresh");
+    expect(generated.origin).toBe("generated");
+    expect(generated.generatedBy).toBe("test-model");
+    expect(generated.imageFingerprint).toBe(generated.recipeFingerprint);
+    expect(generated.generatedAt).not.toBe(null);
+
+    // Change how much of the first ingredient the dish uses.
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    const amount = page.locator(".line").first().locator("input[name$=quantity]").first();
+    const was = await amount.inputValue();
+    await amount.fill("3");
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
+
+    const stale = await status();
+    expect(stale.status).toBe("stale");
+    // The picture is untouched; only the recipe moved under it.
+    expect(stale.imageFingerprint).toBe(generated.imageFingerprint);
+    expect(stale.recipeFingerprint).not.toBe(generated.recipeFingerprint);
+
+    // Putting the amount back is the dish it was, so the picture is right again.
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    await page.locator(".line").first().locator("input[name$=quantity]").first().fill(was);
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
+
+    const again = await status();
+    expect(again.recipeFingerprint).toBe(generated.recipeFingerprint);
+    expect(again.status).toBe("fresh");
+
+    await page.request.delete(IMAGE_URL);
+    expect((await status()).status).toBe("missing");
+  });
+
+  test("reordering the lines is not a change to the dish", async ({ page }) => {
+    await page.request.put(`${IMAGE_URL}?origin=generated`, {
+      headers: { "content-type": "image/png" },
+      data: png(600, 400, [200, 110, 60]),
+    });
+    expect((await (await page.request.get(STATUS_URL)).json()).status).toBe("fresh");
+
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    await openMore(page.locator(".line").nth(0));
+    await openMore(page.locator(".line").nth(1));
+    const positions = page.locator(".line input[name$=position]");
+    await positions.nth(0).fill("2");
+    await positions.nth(1).fill("1");
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
+
+    // Same food, written in a different order.
+    expect((await (await page.request.get(STATUS_URL)).json()).status).toBe("fresh");
+    await page.request.delete(IMAGE_URL);
+  });
+
+  test("a picture somebody uploaded is never called stale", async ({ page }) => {
+    // No origin stated is an upload, which is what the editor and every #89
+    // caller do.
+    await page.request.put(IMAGE_URL, {
+      headers: { "content-type": "image/png" },
+      data: png(600, 400, [200, 110, 60]),
+    });
+
+    const manual = await (await page.request.get(STATUS_URL)).json();
+    expect(manual.status).toBe("fresh");
+    expect(manual.origin).toBe("manual");
+    expect(manual.imageFingerprint).toBe(null);
+
+    await page.goto(`/recipes/${RECIPE}/edit`);
+    await page.locator("#title").fill("Aivan toinen ruoka");
+    await page.locator(".line").first().locator("input[name$=quantity]").first().fill("9");
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
+
+    // Manually managed until somebody replaces or removes it, so nothing here
+    // queues it for a paid regeneration.
+    expect((await (await page.request.get(STATUS_URL)).json()).status).toBe("fresh");
+    await page.request.delete(IMAGE_URL);
+  });
+
+  test("the status of another household's recipe is a 404", async ({ request }) => {
+    const neighbour = sessionCookie(2);
+    const refused = await request.get(STATUS_URL, {
+      headers: { cookie: `${neighbour.name}=${neighbour.value}` },
+    });
+    expect(refused.status()).toBe(404);
+    expect((await request.get(STATUS_URL)).status()).toBe(401);
   });
 });
