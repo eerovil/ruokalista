@@ -424,7 +424,7 @@ const STYLES = `
     color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
     font-weight: 600;
   }
-  /* A fixed height rather than an aspect-ratio: the same band is there whether
+  /* A height in CSS rather than an aspect-ratio: the same band is there whether
      the recipe has a picture or not, so nothing shifts as you scroll, and old
      Safari — which has no aspect-ratio — gets the same layout as everything
      else. */
@@ -434,6 +434,21 @@ const STYLES = `
   }
   .recipe-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .recipe-image.is-empty { border: 1px dashed var(--edge); }
+  /* The main picture on a screen that is about one dish. The generator makes
+     square pictures with the food deliberately inside the frame, so cropping
+     one into an 11rem strip throws most of it away (issue #116). This band is
+     4:3 of the phone's own width — taller than the strip, still not the whole
+     screen — and the picture is contained inside it rather than cropped to
+     fill it. A vw height with a max-height rather than an aspect-ratio, so
+     there is one rule and no fallback branch for old Safari. The cap stops a
+     portrait
+     upload making the page absurdly tall. Any letterboxing shows the surface
+     colour the band already has, so it reads as a frame. */
+  .recipe-image.is-hero { height: 75vw; max-height: 22rem; }
+  .recipe-image.is-hero img { object-fit: contain; object-position: center; }
+  /* A recipe with no picture keeps the short band: an empty dashed box has
+     nothing to show, so there is no reason to give it more of the screen. */
+  .recipe-image.is-hero.is-empty { height: 11rem; }
   /* The same picture at row size. It never flexes, so a long title cannot
      squeeze it, and it crops rather than squashing: a recipe photograph is not
      a shape we get to choose. */

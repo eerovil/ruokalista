@@ -40,3 +40,4 @@ Regenerate after a change that alters a screen:
 | `34-admin-recipe-images-done.png` | Proposed same screen after the browser cut a sheet and stored the crops |
 | `32-generated-images.png` | Recipe list with every row pictured from one contact sheet |
 | `33-generated-recipe.png` | One recipe with its picture from that sheet |
+| `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
