@@ -664,6 +664,25 @@ test.describe("signed in as an admin", () => {
     });
   });
 
+  test("a Google identifier that is not one, refused", async ({ page }) => {
+    // What a `sub` may be is Google's contract and not this app's habit — see
+    // `src/google.ts::isGoogleSub`. Holding the form to it is what keeps the
+    // value a removed member's row is parked on out of anyone's reach, and it
+    // catches the ordinary slip too: a name typed into the identifier field.
+    await page.goto("/admin/households/1");
+    await page.locator("#add-name").fill("Matti Meikäläinen");
+    await page.locator("#add-email").fill("matti@example.com");
+    await page.locator("#add-sub").fill("Matti Meikäläinen");
+    await page.getByRole("button", { name: "Lisää jäsen" }).click();
+    await expect(page.locator(".refused")).toContainText(
+      "ei ole kelvollinen Google-tunniste",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/47-admin-member-sub-refused.png`,
+      fullPage: true,
+    });
+  });
+
   test("choosing which recipes get a picture", async ({ page }) => {
     // A household in the middle of things, which is the only state this screen
     // is interesting in: one recipe with no picture, one with a picture
