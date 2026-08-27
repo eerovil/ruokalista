@@ -80,6 +80,22 @@ test("intake stays unavailable without the stream decoder", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
 });
 
+test("intake stays unavailable without streamed responses", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Response", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+});
+
 test("an empty intake is refused without leaving the screen", async ({ page }) => {
   await page.goto("/intake");
   await page.getByRole("button", { name: "Jäsennä" }).click();

@@ -489,6 +489,7 @@ export function streamDraft(
 
           // A JSON body has no room for an in-band error, so the stream is torn
           // down instead. The browser still has what the member typed.
+          importFailureMessage(cause);
           controller.error(cause);
           return;
         }

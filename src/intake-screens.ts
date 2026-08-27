@@ -67,7 +67,14 @@ const STREAMING_ISLAND = `
   var status = document.getElementById('status');
   var photoHelp = document.getElementById('photo-help');
   var chosenList = document.getElementById('chosen');
-  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise || !window.ReadableStream || !window.TextDecoder) return;
+  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise || !window.Response || !window.ReadableStream || !window.TextDecoder) return;
+
+  try {
+    var streamProbe = new window.Response(new window.ReadableStream()).body;
+    if (!streamProbe || !streamProbe.getReader) return;
+  } catch (error) {
+    return;
+  }
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
