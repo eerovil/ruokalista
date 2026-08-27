@@ -92,27 +92,20 @@ export class RetryableStructuringError extends Error {}
 /** How many times one import calls the model before it gives up. */
 const ATTEMPTS = 2;
 
+/** One newline-delimited record in the streamed draft protocol (#146, #153). */
+export type DraftStreamRecord =
+  | { type: "delta"; text: string }
+  | { type: "restart" }
+  | { type: "complete" }
+  | { type: "failed" };
+
 /**
- * What a streamed draft's body says between attempts (#146).
- *
- * By the time a cut-off answer is recognisable, its bytes have already left the
- * Worker — nothing can be un-sent. So the stream says out loud what became of
- * each attempt instead, and the browser trusts only what a `complete` marker
- * closes. That is what keeps a truncated attempt out of `/intake/correct`.
- *
- * The body is therefore no longer JSON itself. Only the island reads it, and it
- * hands on the marker-free text. No newlines and no backslashes in these: the
- * island is a template literal, so a backslash would be eaten before the
- * browser saw it.
+ * Frame one stream event as an NDJSON record. Draft text lives inside a JSON
+ * string, so pasted newlines or protocol-looking words cannot become records.
  */
-export const STREAM_MARKERS = {
-  /** Everything streamed so far is dead. A fresh attempt starts after this. */
-  restart: "<<<intake:restart>>>",
-  /** What precedes this is a whole draft that already parsed on the server. */
-  complete: "<<<intake:complete>>>",
-  /** Every attempt failed. Nothing in the body is usable. */
-  failed: "<<<intake:failed>>>",
-} as const;
+export function encodeDraftStreamRecord(record: DraftStreamRecord): string {
+  return `${JSON.stringify(record)}\n`;
+}
 
 const nullable = (type: string) => ({
   anyOf: [{ type }, { type: "null" }],
@@ -422,7 +415,7 @@ function textDelta(event: { type: string; delta?: unknown }): string | null {
  * It gives the streaming path the error tolerance the plain path has had all
  * along in `structureDraftWithRetry`: a cut-off or unparseable answer is
  * retried once, and either way the browser is told which it got. The two
- * attempts are separated by a `restart` marker, so their JSON cannot be read
+ * attempts are separated by a `restart` record, so their JSON cannot be read
  * as one draft however the bytes happen to be chunked.
  */
 export function draftStream(
@@ -433,14 +426,15 @@ export function draftStream(
 
   return new ReadableStream({
     async start(controller) {
-      const emit = (text: string) => controller.enqueue(encoder.encode(text));
+      const emit = (record: DraftStreamRecord) =>
+        controller.enqueue(encoder.encode(encodeDraftStreamRecord(record)));
 
       for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
-        if (attempt > 0) emit(STREAM_MARKERS.restart);
+        if (attempt > 0) emit({ type: "restart" });
 
         try {
           await runAttempt(startAttempt(), source, emit);
-          emit(STREAM_MARKERS.complete);
+          emit({ type: "complete" });
           controller.close();
           return;
         } catch (cause) {
@@ -454,9 +448,9 @@ export function draftStream(
           }));
           if (retry) continue;
 
-          // The stream is closed rather than torn down: a marker the browser
-          // can read is what stops it handing a half-draft to /intake/correct.
-          emit(STREAM_MARKERS.failed);
+          // The stream is closed rather than torn down: a terminal record the
+          // browser can read stops it handing a half-draft to /intake/correct.
+          emit({ type: "failed" });
           controller.close();
           return;
         }
@@ -468,12 +462,12 @@ export function draftStream(
 /**
  * Stream one model attempt through to the browser, then check it the way
  * `structureDraft` checks a non-streamed one. Throwing here means the bytes
- * already sent are worthless, which is what the caller's markers announce.
+ * already sent are worthless, which is what the caller's records announce.
  */
 async function runAttempt(
   stream: DraftAttemptStream,
   source: IntakeSource,
-  emit: (text: string) => void,
+  emit: (record: DraftStreamRecord) => void,
 ): Promise<void> {
   let text = "";
   let response: Awaited<ReturnType<DraftAttemptStream["finalMessage"]>>;
@@ -483,7 +477,7 @@ async function runAttempt(
       const delta = textDelta(event);
       if (delta === null) continue;
       text += delta;
-      emit(delta);
+      emit({ type: "delta", text: delta });
     }
 
     response = await stream.finalMessage();

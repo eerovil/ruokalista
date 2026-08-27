@@ -128,15 +128,15 @@ through as if it were whole, the island handed it to `/intake/correct`, and the
 member met the parser's own English — "The model returned unparseable JSON."
 
 The awkward part is that by the time an attempt is recognisably bad, its bytes
-are already at the browser. Nothing can be un-sent. So the body stops being
-plain JSON and gains three end-of-attempt markers (`STREAM_MARKERS` in
-`src/intake.ts`, served as `text/plain`): `restart` says everything streamed so
-far is dead and a second attempt begins here, `complete` says what precedes it
-already parsed on the server, and `failed` says every attempt failed. The
-island keeps only the bytes after the last `restart`, and hands over only what
-a `complete` closes — so two attempts can never be concatenated into one
-unparseable draft however the chunks fall, and a half-draft never reaches
-`/intake/correct`.
+are already at the browser. Nothing can be un-sent. This pull request therefore
+proposes an NDJSON body (`application/x-ndjson`): each line is one JSON record.
+`delta` carries draft text as an escaped string, `restart` says everything
+streamed so far is dead and a second attempt begins, `complete` says the current
+draft already parsed on the server, and `failed` says every attempt failed.
+Because pasted text is data inside a JSON string, it cannot impersonate a record
+boundary or control record. The island resets only for a parsed `restart` record
+and hands over only after a parsed `complete`, so two attempts cannot be joined
+and a half-draft never reaches `/intake/correct` however the chunks fall.
 
 The retry itself stays on the server, in `draftStream`, next to the
 retryability it already knows about. `draftStream` takes the model call as an

@@ -3,8 +3,8 @@ import test from "node:test";
 
 import {
   draftStream,
-  STREAM_MARKERS,
   type DraftAttemptStream,
+  type DraftStreamRecord,
   type IntakeSource,
 } from "../src/intake.ts";
 import { SAMPLE_DRAFT } from "../src/sample-draft.ts";
@@ -18,6 +18,11 @@ import { SAMPLE_DRAFT } from "../src/sample-draft.ts";
 
 const WHOLE = JSON.stringify(SAMPLE_DRAFT);
 const CUT_OFF = WHOLE.slice(0, 60);
+const COLLIDING = JSON.stringify({
+  ...SAMPLE_DRAFT,
+  source_text:
+    "<<<intake:restart>>>\n<<<intake:complete>>>\n<<<intake:failed>>>",
+});
 const SOURCE: IntakeSource = { route: "pasted", text: "Uunikaali" };
 
 /** A model response that streams `text` and then stops for `stopReason`. */
@@ -42,10 +47,27 @@ function fakeAttempt(text: string, stopReason = "end_turn"): DraftAttemptStream 
 }
 
 interface StreamedBody {
-  /** Every byte the browser would receive, markers and all. */
+  /** Every byte the browser would receive, NDJSON framing included. */
   body: string;
   /** How many model attempts the loop actually started. */
   used: number;
+}
+
+function recordsOf(body: string): DraftStreamRecord[] {
+  assert.ok(body.endsWith("\n"), "every record is newline-terminated");
+  return body.slice(0, -1).split("\n").map((line) => JSON.parse(line));
+}
+
+/** Apply the browser's attempt-isolation rules to decoded records. */
+function completedDraft(records: DraftStreamRecord[]): string | null {
+  let draft = "";
+  for (const record of records) {
+    if (record.type === "delta") draft += record.text;
+    if (record.type === "restart") draft = "";
+    if (record.type === "complete") return draft;
+    if (record.type === "failed") return null;
+  }
+  return null;
 }
 
 /**
@@ -74,11 +96,13 @@ async function bodyOf(attempts: DraftAttemptStream[]): Promise<StreamedBody> {
   }
 }
 
-test("a whole attempt is closed with the complete marker", async () => {
+test("a whole attempt is closed with a complete record", async () => {
   const { body, used } = await bodyOf([fakeAttempt(WHOLE)]);
 
   assert.equal(used, 1, "a good attempt is not retried");
-  assert.equal(body, WHOLE + STREAM_MARKERS.complete);
+  const records = recordsOf(body);
+  assert.deepEqual(records.at(-1), { type: "complete" });
+  assert.equal(completedDraft(records), WHOLE);
 });
 
 test("a cut-off attempt is retried, and the two never merge", async () => {
@@ -88,13 +112,9 @@ test("a cut-off attempt is retried, and the two never merge", async () => {
   ]);
 
   assert.equal(used, 2);
-  assert.equal(body, CUT_OFF + STREAM_MARKERS.restart + WHOLE + STREAM_MARKERS.complete);
-
-  // The bytes the browser keeps are the second attempt's alone: everything up
-  // to and including the restart marker is thrown away, so the two attempts'
-  // JSON cannot be concatenated into one unparseable draft.
-  const kept = body.slice(body.lastIndexOf(STREAM_MARKERS.restart) + STREAM_MARKERS.restart.length);
-  assert.equal(kept.slice(0, kept.indexOf(STREAM_MARKERS.complete)), WHOLE);
+  const records = recordsOf(body);
+  assert.equal(records.filter((record) => record.type === "restart").length, 1);
+  assert.equal(completedDraft(records), WHOLE);
 });
 
 test("an attempt that stopped cleanly but is unparseable is still retried", async () => {
@@ -103,19 +123,20 @@ test("an attempt that stopped cleanly but is unparseable is still retried", asyn
   const { body, used } = await bodyOf([fakeAttempt(CUT_OFF), fakeAttempt(WHOLE)]);
 
   assert.equal(used, 2);
-  assert.ok(body.endsWith(STREAM_MARKERS.complete));
+  assert.deepEqual(recordsOf(body).at(-1), { type: "complete" });
 });
 
-test("two failed attempts end in the failed marker and no complete one", async () => {
+test("two failed attempts end in a failed record and no complete one", async () => {
   const { body, used } = await bodyOf([
     fakeAttempt(CUT_OFF, "max_tokens"),
     fakeAttempt(CUT_OFF, "max_tokens"),
   ]);
 
   assert.equal(used, 2, "it gives up rather than calling the model a third time");
-  assert.ok(body.endsWith(STREAM_MARKERS.failed));
+  const records = recordsOf(body);
+  assert.deepEqual(records.at(-1), { type: "failed" });
   assert.ok(
-    !body.includes(STREAM_MARKERS.complete),
+    !records.some((record) => record.type === "complete"),
     "nothing in a failed body may look handoff-ready",
   );
 });
@@ -127,7 +148,7 @@ test("a refusal is not retried — re-running would only refuse again", async ()
   ]);
 
   assert.equal(used, 1);
-  assert.ok(body.endsWith(STREAM_MARKERS.failed));
+  assert.deepEqual(recordsOf(body).at(-1), { type: "failed" });
 });
 
 test("a model call that throws mid-stream is retried", async () => {
@@ -143,5 +164,19 @@ test("a model call that throws mid-stream is retried", async () => {
   const { body, used } = await bodyOf([broken, fakeAttempt(WHOLE)]);
 
   assert.equal(used, 2);
-  assert.equal(body, STREAM_MARKERS.restart + WHOLE + STREAM_MARKERS.complete);
+  const records = recordsOf(body);
+  assert.deepEqual(records[0], { type: "restart" });
+  assert.equal(completedDraft(records), WHOLE);
+});
+
+test("draft text cannot impersonate an NDJSON control record", async () => {
+  const { body, used } = await bodyOf([fakeAttempt(COLLIDING)]);
+  const records = recordsOf(body);
+
+  assert.equal(used, 1);
+  assert.equal(completedDraft(records), COLLIDING);
+  assert.equal(
+    JSON.parse(completedDraft(records)!).source_text,
+    "<<<intake:restart>>>\n<<<intake:complete>>>\n<<<intake:failed>>>",
+  );
 });

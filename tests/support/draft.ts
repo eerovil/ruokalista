@@ -6,9 +6,10 @@ import type { Page } from "@playwright/test";
  * by CI cannot drift apart.
  */
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
-import { STREAM_MARKERS } from "../../src/intake.ts";
-
-export { STREAM_MARKERS };
+import {
+  encodeDraftStreamRecord,
+  type DraftStreamRecord,
+} from "../../src/intake.ts";
 
 export { SAMPLE_DRAFT as DRAFT_FIXTURE };
 const DRAFT_FIXTURE = SAMPLE_DRAFT;
@@ -86,12 +87,22 @@ export async function stubStructuring(
   page: Page,
   draft: unknown = DRAFT_FIXTURE,
 ): Promise<StubbedCall[]> {
-  return stubStreamBody(page, JSON.stringify(draft) + STREAM_MARKERS.complete);
+  return stubStreamBody(page, streamRecordBody(
+    { type: "delta", text: JSON.stringify(draft) },
+    { type: "complete" },
+  ));
 }
 
 /**
- * Answer the same route with a body written out marker by marker, which is how
- * a cut-off attempt and a retry are tested without the model (#146). Everything
+ * Encode complete NDJSON records exactly as the Worker does.
+ */
+export function streamRecordBody(...records: DraftStreamRecord[]): string {
+  return records.map(encodeDraftStreamRecord).join("");
+}
+
+/**
+ * Answer the same route with a record stream, which is how a cut-off attempt
+ * and a retry are tested without the model (#146). Everything
  * the island rejects is expressed here rather than in an assertion, so a test
  * can hand it exactly what a truncated stream looks like on the wire.
  */
@@ -106,7 +117,7 @@ export async function stubStreamBody(
 
     await route.fulfill({
       status: 200,
-      contentType: "text/plain; charset=utf-8",
+      contentType: "application/x-ndjson; charset=utf-8",
       body,
     });
   });

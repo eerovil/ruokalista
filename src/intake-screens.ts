@@ -6,7 +6,6 @@ import {
   draftFromJson,
   streamDraft,
   structureDraftWithRetry,
-  STREAM_MARKERS,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
@@ -63,21 +62,7 @@ const STREAMING_ISLAND = `
   var status = document.getElementById('status');
   var LONG_EDGE = 1500;
 
-  // What the server says about each attempt (#146). Only text a COMPLETE marker
-  // closes is a whole draft; anything else is a failed attempt and is dropped
-  // rather than handed to /intake/correct, which is where a cut-off answer used
-  // to surface as "The model returned unparseable JSON."
-  var RESTART = ${JSON.stringify(STREAM_MARKERS.restart)};
-  var COMPLETE = ${JSON.stringify(STREAM_MARKERS.complete)};
   var FAILED_TEXT = 'malli ei saanut reseptiä valmiiksi. Liittämäsi teksti on tallessa — kokeile uudelleen.';
-
-  // The server retries once and marks where the second attempt begins. Only the
-  // bytes after the last such mark belong to the attempt in hand, so the two
-  // attempts can never be read as one draft.
-  function currentAttempt(all) {
-    var at = all.lastIndexOf(RESTART);
-    return at < 0 ? all : all.slice(at + RESTART.length);
-  }
 
   // What the household is told while the model works. The draft arrives as
   // JSON, and showing raw JSON to somebody importing a recipe is showing them
@@ -167,30 +152,75 @@ const STREAMING_ISLAND = `
           status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
           var decoder = new TextDecoder();
-          var all = '';
+          var LF = String.fromCharCode(10);
+          var pending = '';
+          var draft = '';
+          var completed = null;
           var retried = false;
-          return (function pump() {
-            return reader.read().then(function (chunk) {
-              if (chunk.done) return all;
-              all += decoder.decode(chunk.value, { stream: true });
-              if (!retried && all.indexOf(RESTART) >= 0) {
+
+          // Each line is one JSON record. Draft bytes live in an escaped string,
+          // so pasted text cannot impersonate restart or completion framing.
+          function accept(line) {
+            var record;
+            try {
+              record = JSON.parse(line);
+            } catch (_error) {
+              throw new Error(FAILED_TEXT);
+            }
+
+            if (completed !== null || !record || typeof record.type !== 'string') {
+              throw new Error(FAILED_TEXT);
+            }
+            if (record.type === 'delta' && typeof record.text === 'string') {
+              draft += record.text;
+              progress.textContent = summarise(draft);
+              return;
+            }
+            if (record.type === 'restart') {
+              draft = '';
+              if (!retried) {
                 retried = true;
                 status.textContent = 'Ensimmäinen yritys katkesi — yritetään uudelleen…';
               }
-              progress.textContent = summarise(currentAttempt(all));
+              return;
+            }
+            if (record.type === 'complete') {
+              completed = draft;
+              return;
+            }
+            throw new Error(FAILED_TEXT);
+          }
+
+          function acceptCompleteLines() {
+            var end = pending.indexOf(LF);
+            while (end >= 0) {
+              var line = pending.slice(0, end);
+              pending = pending.slice(end + 1);
+              if (line) accept(line);
+              end = pending.indexOf(LF);
+            }
+          }
+
+          return (function pump() {
+            return reader.read().then(function (chunk) {
+              if (chunk.done) {
+                pending += decoder.decode();
+                acceptCompleteLines();
+                // Every record ends in a newline. Leftovers mean the transport
+                // ended mid-record, so no draft is safe to hand over.
+                if (pending || completed === null) throw new Error(FAILED_TEXT);
+                return completed;
+              }
+              pending += decoder.decode(chunk.value, { stream: true });
+              acceptCompleteLines();
               return pump();
             });
           })();
         });
       })
-      .then(function (all) {
-        var attempt = currentAttempt(all);
-        var end = attempt.indexOf(COMPLETE);
-        // No COMPLETE means the server gave up, or the stream died on the way.
-        // Either way there is no draft here, only the beginning of one.
-        if (end < 0) throw new Error(FAILED_TEXT);
+      .then(function (draft) {
         status.textContent = 'Valmis — avataan tarkistus.';
-        handOver(attempt.slice(0, end), file ? 'photographed' : 'pasted', text);
+        handOver(draft, file ? 'photographed' : 'pasted', text);
       })
       .catch(function (error) {
         status.textContent = 'Jäsennys epäonnistui: ' + error.message;
@@ -317,8 +347,8 @@ export async function structureScreen(
  * through. The browser accumulates it and hands it back to /intake/correct,
  * which keeps the correction screen server-rendered.
  *
- * The body is the draft's JSON plus the attempt markers in `STREAM_MARKERS`,
- * so it is not itself JSON and does not claim to be. Only the island reads it.
+ * The body is newline-delimited JSON: text deltas plus restart, complete or
+ * failed records. Only the island reads it.
  */
 export async function structureStream(
   { env, request }: RouteContext,
@@ -355,7 +385,7 @@ export async function structureStream(
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
       // Nothing between here and the browser should hold bytes back.
       "Cache-Control": "no-store",
       "X-Accel-Buffering": "no",

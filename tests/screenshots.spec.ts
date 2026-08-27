@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { AGENTDECK_BATCH } from "./support/batch";
 import {
   DUPLICATE_AMOUNT_DRAFT,
-  STREAM_MARKERS,
+  streamRecordBody,
   stubStreamBody,
   stubStructuring,
   TRUNCATED_ATTEMPT,
@@ -454,10 +454,12 @@ test.describe("signed in", () => {
     // reporting "The model returned unparseable JSON."
     await stubStreamBody(
       page,
-      TRUNCATED_ATTEMPT +
-        STREAM_MARKERS.restart +
-        TRUNCATED_ATTEMPT +
-        STREAM_MARKERS.failed,
+      streamRecordBody(
+        { type: "delta", text: TRUNCATED_ATTEMPT },
+        { type: "restart" },
+        { type: "delta", text: TRUNCATED_ATTEMPT },
+        { type: "failed" },
+      ),
     );
 
     await page.goto("/intake");

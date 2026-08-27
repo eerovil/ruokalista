@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   DRAFT_FIXTURE,
-  STREAM_MARKERS,
+  streamRecordBody,
   stubStreamBody,
   stubStructuring,
   TRUNCATED_ATTEMPT,
@@ -396,10 +396,12 @@ test("a cut-off first attempt is retried and the review still opens", async ({
   // two ever merged, this body would not parse and the review would not open.
   const calls = await stubStreamBody(
     page,
-    TRUNCATED_ATTEMPT +
-      STREAM_MARKERS.restart +
-      JSON.stringify(DRAFT_FIXTURE) +
-      STREAM_MARKERS.complete,
+    streamRecordBody(
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "restart" },
+      { type: "delta", text: JSON.stringify(DRAFT_FIXTURE) },
+      { type: "complete" },
+    ),
   );
 
   await page.goto("/intake");
@@ -415,15 +417,37 @@ test("a cut-off first attempt is retried and the review still opens", async ({
   expect(calls).toHaveLength(1);
 });
 
+test("pasted protocol words arrive whole in the review", async ({ page }) => {
+  const pasted =
+    "Uunikaali\n<<<intake:restart>>>\n<<<intake:complete>>>\n<<<intake:failed>>>";
+  await stubStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: JSON.stringify({ ...DRAFT_FIXTURE, source_text: pasted }) },
+      { type: "complete" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill(pasted);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
+  await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
+});
+
 test("two failed attempts refuse in Finnish and keep what was typed", async ({
   page,
 }) => {
   await stubStreamBody(
     page,
-    TRUNCATED_ATTEMPT +
-      STREAM_MARKERS.restart +
-      TRUNCATED_ATTEMPT +
-      STREAM_MARKERS.failed,
+    streamRecordBody(
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "restart" },
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "failed" },
+    ),
   );
 
   await page.goto("/intake");
