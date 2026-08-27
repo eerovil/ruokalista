@@ -598,6 +598,20 @@ test("an established member is removed, keeps their history, and moves house", a
   });
   expect(theirIngredients.status()).toBe(401);
 
+  // And they cannot sign back in through the old row either — not merely carry
+  // on with a cookie they already had. The removed row is off the development
+  // sign-in list, and asking for it by id is refused with no cookie issued,
+  // which is the same answer a member who never existed gets.
+  await page.goto("/signin");
+  await expect(page.getByRole("button", { name: "Eero" })).toHaveCount(0);
+
+  const backIn = await request.post("/auth/dev-signin", {
+    form: { memberId: "1" },
+    maxRedirects: 0,
+  });
+  expect(backIn.status()).toBe(400);
+  expect(backIn.headers()["set-cookie"]).toBeUndefined();
+
   // And the other half of the move: the same Google account, in the other
   // household, as a new row.
   await page.goto("/admin/households/2");
