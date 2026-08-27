@@ -4,10 +4,12 @@ import test from "node:test";
 import {
   decodeDraftRefs,
   encodeDraftRefs,
+  lineForRef,
   mentionResolves,
   parseStepRefs,
   resolveMentions,
   serializeStepRefs,
+  type RefLine,
   type StepIngredientRef,
 } from "../src/ingredient-refs.ts";
 
@@ -24,11 +26,37 @@ const ref = (
   ingredientId: number,
   matchedText: string,
   approxPosition: number,
-): StepIngredientRef => ({ ingredientId, matchedText, approxPosition });
+  linePosition: number = ingredientId,
+): StepIngredientRef => ({
+  ingredientId,
+  linePosition,
+  matchedText,
+  approxPosition,
+});
+
+/**
+ * The recipe these references would make sense against: one line each, sitting
+ * exactly where the reference says it is. Tests about *which line* a reference
+ * finds pass their own list instead.
+ */
+function linesFrom(refs: StepIngredientRef[]): RefLine[] {
+  const lines = new Map<number, RefLine>();
+  for (const one of refs) {
+    lines.set(one.linePosition, {
+      position: one.linePosition,
+      ingredientId: one.ingredientId,
+    });
+  }
+  return [...lines.values()];
+}
 
 /** The linked words, in order, as `id:text`. */
-function mentions(text: string, refs: StepIngredientRef[]): string[] {
-  return resolveMentions(text, refs)
+function mentions(
+  text: string,
+  refs: StepIngredientRef[],
+  lines: RefLine[] = linesFrom(refs),
+): string[] {
+  return resolveMentions(text, refs, lines)
     .filter((segment) => segment.kind === "mention")
     .map((segment) =>
       segment.kind === "mention"
@@ -39,10 +67,8 @@ function mentions(text: string, refs: StepIngredientRef[]): string[] {
 
 test("the segments put the text back together exactly", () => {
   const text = "Lisää tomaatit ja crème fraîche ja keitä muutama minuutti.";
-  const segments = resolveMentions(text, [
-    ref(1, "tomaatit", 6),
-    ref(2, "crème fraîche", 18),
-  ]);
+  const twoRefs = [ref(1, "tomaatit", 6), ref(2, "crème fraîche", 18)];
+  const segments = resolveMentions(text, twoRefs, linesFrom(twoRefs));
 
   assert.equal(segments.map((segment) => segment.text).join(""), text);
   assert.deepEqual(mentions(text, [ref(1, "tomaatit", 6), ref(2, "crème fraîche", 18)]), [
@@ -63,7 +89,7 @@ test("the occurrence nearest the recorded position wins", () => {
   const text = "Kuullota sipuli, lisää sipuli ja paista.";
   assert.deepEqual(mentions(text, [ref(1, "sipuli", 23)]), ["1:sipuli"]);
 
-  const segments = resolveMentions(text, [ref(1, "sipuli", 23)]);
+  const segments = resolveMentions(text, [ref(1, "sipuli", 23)], linesFrom([ref(1, "sipuli", 23)]));
   // The second one, not the first: the text before it is the whole first
   // clause, and the text after it is only what follows the second.
   assert.equal(segments[0]?.text, "Kuullota sipuli, lisää ");
@@ -72,9 +98,10 @@ test("the occurrence nearest the recorded position wins", () => {
 test("wording that is no longer in the step is left unlinked", () => {
   const text = "Lisää kasvikset ja keitä.";
   assert.deepEqual(mentions(text, [ref(1, "tomaatit", 6)]), []);
-  assert.deepEqual(resolveMentions(text, [ref(1, "tomaatit", 6)]), [
-    { kind: "text", text },
-  ]);
+  assert.deepEqual(
+    resolveMentions(text, [ref(1, "tomaatit", 6)], linesFrom([ref(1, "tomaatit", 6)])),
+    [{ kind: "text", text }],
+  );
 });
 
 test("a word that only contains the wording is not a match", () => {
@@ -125,10 +152,8 @@ test("case is folded, so a sentence-initial mention still matches", () => {
 test("two references landing on the same words keep only one", () => {
   const text = "Lisää crème fraîche.";
   // A stale reference to "crème" overlapping a live one to "crème fraîche".
-  const segments = resolveMentions(text, [
-    ref(1, "crème fraîche", 6),
-    ref(2, "crème", 6),
-  ]);
+  const overlapping = [ref(1, "crème fraîche", 6), ref(2, "crème", 6)];
+  const segments = resolveMentions(text, overlapping, linesFrom(overlapping));
   assert.deepEqual(
     segments.filter((segment) => segment.kind === "mention").length,
     1,
@@ -140,6 +165,75 @@ test("an empty or blank matched text never links anything", () => {
   assert.deepEqual(mentions("Lisää suola.", [ref(1, "", 0)]), []);
   assert.equal(mentionResolves("Lisää suola.", "   "), false);
   assert.equal(mentionResolves("Lisää suola.", "suola"), true);
+});
+
+/**
+ * A recipe may list one ingredient twice, at two amounts, for two stages of the
+ * cooking. Nothing in the schema stops it and nothing should — so a mention has
+ * to name a *line*, not an ingredient, or the second mention would show the
+ * first line's figure and read as an instruction rather than as a broken link.
+ */
+test("two lines of the same ingredient keep their own mentions apart", () => {
+  // Salt at position 2 and again at position 4.
+  const lines: RefLine[] = [
+    { position: 1, ingredientId: 9 },
+    { position: 2, ingredientId: 7 },
+    { position: 3, ingredientId: 8 },
+    { position: 4, ingredientId: 7 },
+  ];
+
+  assert.deepEqual(lineForRef({ ingredientId: 7, linePosition: 2 }, lines), {
+    position: 2,
+    ingredientId: 7,
+  });
+  assert.deepEqual(lineForRef({ ingredientId: 7, linePosition: 4 }, lines), {
+    position: 4,
+    ingredientId: 7,
+  });
+
+  // And through the resolver, which is what the screen actually calls.
+  const segments = resolveMentions(
+    "Suolaa taikina ja suolaa kastike.",
+    [ref(7, "Suolaa", 0, 2), ref(7, "suolaa", 17, 4)],
+    lines,
+  );
+  const linked = segments.filter((segment) => segment.kind === "mention");
+  assert.deepEqual(
+    linked.map((segment) =>
+      segment.kind === "mention" ? segment.linePosition : 0,
+    ),
+    [2, 4],
+  );
+});
+
+test("reordering keeps a mention of an ingredient listed only once", () => {
+  // The line moved from position 3 to position 1. There is no second candidate,
+  // so which line was meant is not in doubt and the mention survives.
+  const lines: RefLine[] = [
+    { position: 1, ingredientId: 7 },
+    { position: 2, ingredientId: 9 },
+  ];
+  assert.deepEqual(lineForRef({ ingredientId: 7, linePosition: 3 }, lines), {
+    position: 1,
+    ingredientId: 7,
+  });
+});
+
+test("an ambiguous reference resolves to nothing rather than guessing", () => {
+  const lines: RefLine[] = [
+    { position: 1, ingredientId: 7 },
+    { position: 2, ingredientId: 7 },
+  ];
+  // The recorded position now holds a different ingredient — or nothing at all
+  // — and two lines could be meant. Picking one would be a confident lie.
+  assert.equal(lineForRef({ ingredientId: 7, linePosition: 5 }, lines), null);
+  assert.deepEqual(
+    mentions("Lisää suola.", [ref(7, "suola", 6, 5)], lines),
+    [],
+  );
+
+  // An ingredient no longer on the recipe at all is the same answer.
+  assert.equal(lineForRef({ ingredientId: 99, linePosition: 1 }, lines), null);
 });
 
 test("the saved column round-trips, and an empty list is NULL", () => {
@@ -155,15 +249,25 @@ test("a malformed column reads as no references rather than throwing", () => {
   assert.deepEqual(parseStepRefs("not json at all"), []);
   assert.deepEqual(parseStepRefs('{"ingredientId":1}'), []);
   assert.deepEqual(
-    parseStepRefs('[{"ingredientId":0,"matchedText":"x","approxPosition":1}]'),
+    parseStepRefs('[{"ingredientId":0,"linePosition":1,"matchedText":"x","approxPosition":1}]'),
     [],
   );
   assert.deepEqual(
-    parseStepRefs('[{"ingredientId":1,"matchedText":"","approxPosition":1}]'),
+    parseStepRefs('[{"ingredientId":1,"linePosition":1,"matchedText":"","approxPosition":1}]'),
     [],
   );
   assert.deepEqual(
-    parseStepRefs('[{"ingredientId":1,"matchedText":"x","approxPosition":-1}]'),
+    parseStepRefs('[{"ingredientId":1,"linePosition":1,"matchedText":"x","approxPosition":-1}]'),
+    [],
+  );
+  // A reference that cannot say which line it means is not a reference. The
+  // column ships with this change, so there is no older shape to accept.
+  assert.deepEqual(
+    parseStepRefs('[{"ingredientId":1,"matchedText":"x","approxPosition":1}]'),
+    [],
+  );
+  assert.deepEqual(
+    parseStepRefs('[{"ingredientId":1,"linePosition":0,"matchedText":"x","approxPosition":1}]'),
     [],
   );
 });

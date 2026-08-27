@@ -425,10 +425,11 @@ function sourceWorthShowing(line: RecipeLine, factor: number | null): boolean {
  */
 function stepText(
   step: RecipeStep,
+  recipe: Recipe,
   amounts: Map<number, string>,
   idPrefix: string,
 ): Raw {
-  const segments = resolveMentions(step.text, step.refs);
+  const segments = resolveMentions(step.text, step.refs, recipe.lines);
   if (segments.every((segment) => segment.kind === "text")) {
     return html`${step.text}`;
   }
@@ -436,7 +437,7 @@ function stepText(
   return html`${segments.map((segment, index) => {
     if (segment.kind === "text") return html`${segment.text}`;
 
-    const amount = amounts.get(segment.ingredientId) ?? "";
+    const amount = amounts.get(segment.linePosition) ?? "";
     if (amount === "") return html`${segment.text}`;
 
     const id = `${idPrefix}-${index}`;
@@ -450,19 +451,24 @@ function stepText(
   })}`;
 }
 
-/** Every amount this recipe's own lines can offer a mention, already scaled. */
-function amountsByIngredient(
+/**
+ * Every amount this recipe's own lines can offer a mention, already scaled and
+ * keyed by the line's position.
+ *
+ * By position and not by ingredient: a recipe may list the same ingredient
+ * twice with different amounts, and a mention names one of those lines rather
+ * than the ingredient in general. `resolveMentions` has already decided which
+ * line each mention means.
+ */
+function amountsByLine(
   recipe: Recipe,
   factor: number | null,
 ): Map<number, string> {
   const amounts = new Map<number, string>();
 
   for (const line of recipe.lines) {
-    // The first line wins. A recipe listing one ingredient twice is rare, and
-    // showing the first amount beats showing a total nobody wrote down.
-    if (amounts.has(line.ingredientId)) continue;
     amounts.set(
-      line.ingredientId,
+      line.position,
       formatMeasurement(scaleMeasurement(line, factor)),
     );
   }
@@ -486,7 +492,7 @@ function body(
 
   // Every line of this recipe, not only the ones this phase renders: a step
   // done after the parts still mentions an ingredient listed before them.
-  const amounts = amountsByIngredient(recipe, factor);
+  const amounts = amountsByLine(recipe, factor);
 
   return html`${lines.length === 0
       ? ""
@@ -511,7 +517,7 @@ function body(
           <ol class="steps">
             ${steps.map(
               (step, index) => html`<li>
-                ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
+                ${stepText(step, recipe, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
           </ol>`}`;

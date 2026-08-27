@@ -33,10 +33,65 @@ export const MAX_REFS_PER_STEP = 12;
 export interface StepIngredientRef {
   /** The `ingredient` row this mention means. */
   ingredientId: number;
+  /**
+   * Which of the recipe's own lines it means, by that line's position.
+   *
+   * The ingredient id alone is not an answer. Nothing stops a recipe listing
+   * the same ingredient twice — salt at two stages, oil for frying and oil for
+   * the dressing — and the two lines carry different amounts. Resolving a
+   * mention to "the first line with that ingredient" would put the frying oil's
+   * figure behind a word about the dressing: not a link that failed, a link
+   * that is confidently wrong, in a sentence somebody is cooking from.
+   *
+   * The position rather than `ingredient_line.id`, because the id is not stable
+   * here: `replaceRecipe` deletes a recipe's lines and inserts them again on
+   * every save, so every id changes each time anybody edits. `(recipe_id,
+   * position)` is unique in the schema, is what the editor's position boxes
+   * move, and survives that round-trip.
+   */
+  linePosition: number;
   /** The wording the step actually used — "tomaatit", not "tomaatti". */
   matchedText: string;
   /** Roughly where it sat, used only to choose between repeats. */
   approxPosition: number;
+}
+
+/** The little a line has to say about itself for a reference to find it. */
+export interface RefLine {
+  /** Its position in its own recipe, as `ingredient_line.position` holds it. */
+  position: number;
+  ingredientId: number;
+}
+
+/**
+ * Which of a recipe's lines a reference means, or null when that cannot be
+ * answered safely.
+ *
+ * Three steps, and the last one is the point:
+ *
+ * 1. **The line at that position, if it still holds that ingredient.** The
+ *    ordinary case, and the one that keeps two mentions of the same ingredient
+ *    apart.
+ * 2. **Otherwise, the only line with that ingredient, if there is only one.**
+ *    Reordering a recipe renumbers its lines, and a mention of an ingredient
+ *    that appears once is not ambiguous however the list is shuffled. Breaking
+ *    those on every reorder would make the feature feel unreliable for no gain.
+ * 3. **Otherwise nothing.** Several lines carry the ingredient and the position
+ *    no longer agrees with any of them, so which one was meant is genuinely
+ *    unknown — and a guess here is the failure this whole design exists to
+ *    avoid. The mention reads as plain text instead.
+ */
+export function lineForRef(
+  ref: Pick<StepIngredientRef, "ingredientId" | "linePosition">,
+  lines: readonly RefLine[],
+): RefLine | null {
+  const atPosition = lines.find((line) => line.position === ref.linePosition);
+  if (atPosition !== undefined && atPosition.ingredientId === ref.ingredientId) {
+    return atPosition;
+  }
+
+  const carrying = lines.filter((line) => line.ingredientId === ref.ingredientId);
+  return carrying.length === 1 ? (carrying[0] as RefLine) : null;
 }
 
 /** A reference before the ingredients exist: the draft line's own index. */
@@ -67,7 +122,13 @@ export interface DraftIngredientRef {
 /** One piece of a step's text: plain wording, or a linked mention. */
 export type StepSegment =
   | { kind: "text"; text: string }
-  | { kind: "mention"; text: string; ingredientId: number };
+  | {
+      kind: "mention";
+      text: string;
+      ingredientId: number;
+      /** The line whose amount this mention reveals, by its position. */
+      linePosition: number;
+    };
 
 /**
  * Split a step's text into plain runs and linked mentions.
@@ -79,18 +140,24 @@ export type StepSegment =
  * same occurrence.
  *
  * Anything that cannot be placed safely is simply not linked. A reference whose
- * wording has been edited away, an empty one, and one that would overlap a
- * mention already placed all fall back to plain text, because linking the wrong
- * word is worse than linking no word.
+ * wording has been edited away, an empty one, one that would overlap a mention
+ * already placed, and one whose line `lineForRef` cannot pin down all fall back
+ * to plain text, because linking the wrong word is worse than linking no word.
+ *
+ * `lines` is the recipe's own ingredient lines — the recipe the step belongs
+ * to, so a part's step sees a part's lines. It is passed in rather than looked
+ * up because this module knows nothing about D1 and is the better for it.
  */
 export function resolveMentions(
   text: string,
   refs: readonly StepIngredientRef[],
+  lines: readonly RefLine[],
 ): StepSegment[] {
   interface Placed {
     start: number;
     length: number;
     ingredientId: number;
+    linePosition: number;
   }
 
   const placed: Placed[] = [];
@@ -98,6 +165,9 @@ export function resolveMentions(
   for (const ref of refs.slice(0, MAX_REFS_PER_STEP)) {
     const needle = ref.matchedText;
     if (needle === "") continue;
+
+    const line = lineForRef(ref, lines);
+    if (line === null) continue;
 
     const occurrences = occurrencesOf(text, needle);
     if (occurrences.length === 0) continue;
@@ -118,6 +188,7 @@ export function resolveMentions(
       start: best,
       length: needle.length,
       ingredientId: ref.ingredientId,
+      linePosition: line.position,
     };
 
     // Two references landing on the same words means at least one of them is
@@ -145,6 +216,7 @@ export function resolveMentions(
       kind: "mention",
       text: text.slice(mention.start, mention.start + mention.length),
       ingredientId: mention.ingredientId,
+      linePosition: mention.linePosition,
     });
     cursor = mention.start + mention.length;
   }
@@ -271,10 +343,17 @@ export function parseStepRefs(raw: unknown): StepIngredientRef[] {
     if (typeof entry !== "object" || entry === null) continue;
     const ref = entry as Record<string, unknown>;
     const ingredientId = ref["ingredientId"];
+    const linePosition = ref["linePosition"];
     const matchedText = ref["matchedText"];
     const approxPosition = ref["approxPosition"];
 
     if (!Number.isSafeInteger(ingredientId) || (ingredientId as number) <= 0) {
+      continue;
+    }
+    // Required, not optional. The column ships with this change and nothing is
+    // deployed, so there is no older shape to keep working — and a reference
+    // that cannot say which line it means is exactly the one worth losing.
+    if (!Number.isSafeInteger(linePosition) || (linePosition as number) <= 0) {
       continue;
     }
     if (typeof matchedText !== "string" || matchedText.trim() === "") continue;
@@ -284,6 +363,7 @@ export function parseStepRefs(raw: unknown): StepIngredientRef[] {
 
     refs.push({
       ingredientId: ingredientId as number,
+      linePosition: linePosition as number,
       matchedText,
       approxPosition: approxPosition as number,
     });
@@ -300,6 +380,7 @@ export function serializeStepRefs(
   return JSON.stringify(
     refs.slice(0, MAX_REFS_PER_STEP).map((ref) => ({
       ingredientId: ref.ingredientId,
+      linePosition: ref.linePosition,
       matchedText: ref.matchedText,
       approxPosition: ref.approxPosition,
     })),

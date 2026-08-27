@@ -105,8 +105,17 @@ stale a single existing picture.
 
 `migrations/0008_step_ingredient_refs.sql` (issue #120, proposed here) adds one
 nullable `recipe_step.ingredient_refs` column holding a small JSON array of
-`{ingredientId, matchedText, approxPosition}`. NULL and `"[]"` both mean "this
-step links nothing", which is what every existing row is.
+`{ingredientId, linePosition, matchedText, approxPosition}`. NULL and `"[]"`
+both mean "this step links nothing", which is what every existing row is.
+
+`linePosition` is the `ingredient_line.position` the reference means, not
+`ingredient_line.id`. There is no uniqueness on `(recipe_id, ingredient_id)` —
+a recipe listing one ingredient twice at two amounts is an ordinary shape — so
+the ingredient id alone would not say which line a mention meant. The row id
+would, but it is not stable: `replaceRecipe` deletes a recipe's lines and
+inserts them again on every edit, so every id changes each save.
+`ingredient_line_order` already makes `(recipe_id, position)` unique, and the
+position is what the editor's own controls move.
 
 A column rather than a table, on purpose: a reference has no identity of its
 own, is only ever read with the step it belongs to, and a new table would drag

@@ -2,7 +2,10 @@
 -- cook can reveal an amount without leaving the sentence.
 --
 -- One nullable column, holding a small JSON array of
--- {"ingredientId","matchedText","approxPosition"} objects. Deliberately not a
+-- {"ingredientId","linePosition","matchedText","approxPosition"} objects.
+-- linePosition names one of the recipe's own ingredient_line rows, because a
+-- recipe may list one ingredient twice at two amounts and the id alone would
+-- not say which was meant. Deliberately not a
 -- table: a reference has no identity of its own, it is only ever read with the
 -- step it belongs to, and a new table would mean the six-file backup/restore
 -- lockstep for something that is a detail of one row.

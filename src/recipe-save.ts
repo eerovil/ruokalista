@@ -252,10 +252,16 @@ function childrenOf(
   const belongs = (name: string | null) => (name?.trim() || null) === section;
   const phaseFor = (phase: RecipePhase) => section === null ? phase : null;
 
+  // This recipe row's own lines, in the order they are about to be written, so
+  // a line's position is its place in here plus one. A step's reference is
+  // stored against that position, which is what tells two mentions of the same
+  // ingredient apart later.
+  const ownLines = lines.filter((entry) => belongs(entry.line.section));
+
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
     .forEach((step, index) => {
-      const refs = serializeStepRefs(resolveStepRefs(step, lines, belongs));
+      const refs = serializeStepRefs(resolveStepRefs(step, lines, ownLines));
 
       if (guard === undefined) {
         statements.push(
@@ -297,8 +303,7 @@ function childrenOf(
       }
     });
 
-  lines
-    .filter((entry) => belongs(entry.line.section))
+  ownLines
     .forEach((entry, index) => {
       const line = entry.line;
       if (guard === undefined) {
@@ -380,20 +385,31 @@ function childrenOf(
  * `expectedIngredientId` is null on an import, where no id existed to expect,
  * and such a reference is never dropped on this account.
  *
+ * What gets stored is the ingredient **and** the position the line will hold,
+ * because a recipe may list one ingredient twice — salt at two stages, with two
+ * amounts — and an ingredient id alone would let a mention of the second one
+ * reveal the first one's figure.
+ *
  * Two mentions of the same ingredient in one step are both kept: they are
  * different words in different places, and each toggles on its own.
  */
 function resolveStepRefs(
   step: StepToSave,
   lines: ResolvedLine[],
-  belongs: (section: string | null) => boolean,
+  ownLines: ResolvedLine[],
 ): StepIngredientRef[] {
   const refs: StepIngredientRef[] = [];
 
   for (const ref of step.refs) {
     const target = lines[ref.lineIndex];
     if (target === undefined) continue;
-    if (!belongs(target.line.section)) continue;
+
+    // Where this line will sit once written. Not being in `ownLines` at all is
+    // the cross-part case: the line went to a different recipe row than the
+    // step did.
+    const position = ownLines.indexOf(target) + 1;
+    if (position === 0) continue;
+
     if (
       ref.expectedIngredientId !== null &&
       ref.expectedIngredientId !== target.ingredientId
@@ -403,6 +419,7 @@ function resolveStepRefs(
 
     refs.push({
       ingredientId: target.ingredientId,
+      linePosition: position,
       matchedText: ref.matchedText,
       approxPosition: ref.approxPosition,
     });
