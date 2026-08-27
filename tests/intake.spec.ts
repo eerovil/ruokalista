@@ -41,6 +41,38 @@ test("intake requires JavaScript instead of posting a plain fallback", async ({
   await context.close();
 });
 
+test("pasted text works without the photo resize API", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "createImageBitmap", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  await stubStructuring(page);
+
+  await page.goto("/intake");
+
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.locator("#photo")).toBeDisabled();
+  await expect(page.locator("#photo-help")).toHaveText(
+    "Kuvan tuonti ei ole käytettävissä tässä selaimessa.",
+  );
+
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+});
+
+test("an empty intake is refused without leaving the screen", async ({ page }) => {
+  await page.goto("/intake");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page).toHaveURL(/\/intake$/);
+  await expect(page.locator("#status")).toHaveText(
+    "Liitä ensin reseptin teksti tai valitse kuva.",
+  );
+});
+
 test("pasting text streams a draft and opens the correction screen", async ({
   page,
 }) => {

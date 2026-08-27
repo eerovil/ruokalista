@@ -56,12 +56,17 @@ const STREAMING_ISLAND = `
   var form = document.getElementById('intake');
   var progress = document.getElementById('progress');
   var status = document.getElementById('status');
-  if (!form || !progress || !status || !window.fetch || !window.ReadableStream || !window.createImageBitmap) return;
+  var photoHelp = document.getElementById('photo-help');
+  if (!form || !progress || !status || !photoHelp || !window.fetch || !window.ReadableStream) return;
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
   button.disabled = false;
   status.textContent = '';
+  if (!window.createImageBitmap) {
+    form.photo.disabled = true;
+    photoHelp.textContent = 'Kuvan tuonti ei ole käytettävissä tässä selaimessa.';
+  }
   var LONG_EDGE = 1500;
 
   // What the household is told while the model works. The draft arrives as
@@ -98,7 +103,7 @@ const STREAMING_ISLAND = `
   }
 
   function shrink(file) {
-    return createImageBitmap(file).then(function (bitmap) {
+    return window.createImageBitmap(file).then(function (bitmap) {
       var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
       var canvas = document.createElement('canvas');
       canvas.width = Math.round(bitmap.width * scale);
@@ -127,9 +132,11 @@ const STREAMING_ISLAND = `
   form.addEventListener('submit', function (event) {
     var file = form.photo.files[0];
     var text = form.sourceText.value.trim();
-    if (!file && !text) return;
-
     event.preventDefault();
+    if (!file && !text) {
+      status.textContent = 'Liitä ensin reseptin teksti tai valitse kuva.';
+      return;
+    }
     button.disabled = true;
     status.textContent = file ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
     progress.hidden = false;
@@ -222,7 +229,7 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
 
       <label for="photo">…tai ota tai valitse kuva painetusta sivusta</label>
       <input id="photo" name="photo" type="file" accept="image/*" />
-      <p class="empty">
+      <p class="empty" id="photo-help">
         Kuva pienennetään selaimessa ja luetaan kerran. Sitä ei tallenneta
         minnekään — talteen jää vain sivulta luettu teksti.
       </p>
