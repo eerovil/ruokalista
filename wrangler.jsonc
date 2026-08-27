@@ -28,10 +28,16 @@
       "GOOGLE_CLIENT_SECRET",
       "ANTHROPIC_API_KEY",
       "BACKUP_GITHUB_TOKEN",
-      "S_OSTOSLISTA_API_URL",
-      "S_OSTOSLISTA_API_TOKEN",
-      "S_OSTOSLISTA_HOUSEHOLD_ID"
+      "SOSTOSLISTA_API_TOKEN",
+      "SOSTOSLISTA_HOUSEHOLD_ID"
     ]
+  },
+
+  // The shopping-list service this app can push items to. Not a secret — the
+  // bearer token for it is SOSTOSLISTA_API_TOKEN above. The household gate is
+  // configured separately so this capability is never enabled app-wide.
+  "vars": {
+    "SOSTOSLISTA_SERVICE_URL": "https://s-ostoslista-worker.eerovil.workers.dev"
   },
 
   // Nightly offsite backup. Cron Triggers use UTC.

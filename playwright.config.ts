@@ -85,7 +85,7 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
-      command: `npx wrangler dev --ip 127.0.0.1 --port ${browserPort} --var S_OSTOSLISTA_API_URL:${sOstoslistaOrigin} --var S_OSTOSLISTA_API_TOKEN:test-s-ostoslista-token --var S_OSTOSLISTA_HOUSEHOLD_ID:1`,
+      command: `npx wrangler dev --ip 127.0.0.1 --port ${browserPort} --var SOSTOSLISTA_SERVICE_URL:${sOstoslistaOrigin} --var SOSTOSLISTA_API_TOKEN:test-s-ostoslista-token --var SOSTOSLISTA_HOUSEHOLD_ID:1`,
       url: `${browserOrigin}/health`,
       reuseExistingServer: true,
       timeout: 120_000,

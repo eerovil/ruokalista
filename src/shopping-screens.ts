@@ -688,15 +688,15 @@ function selectedBuyItem(
 }
 
 function externalClient(env: RouteContext["env"], member: Member): SOstoslistaClient | null {
-  const householdId = Number(env.S_OSTOSLISTA_HOUSEHOLD_ID);
+  const householdId = Number(env.SOSTOSLISTA_HOUSEHOLD_ID);
   if (!Number.isSafeInteger(householdId) || householdId !== member.householdId) {
     return null;
   }
-  if (!env.S_OSTOSLISTA_API_URL || !env.S_OSTOSLISTA_API_TOKEN) return null;
+  if (!env.SOSTOSLISTA_SERVICE_URL || !env.SOSTOSLISTA_API_TOKEN) return null;
   try {
     return new SOstoslistaClient(
-      env.S_OSTOSLISTA_API_URL,
-      env.S_OSTOSLISTA_API_TOKEN,
+      env.SOSTOSLISTA_SERVICE_URL,
+      env.SOSTOSLISTA_API_TOKEN,
     );
   } catch (error) {
     console.error("S-ostoslista configuration is invalid", error);

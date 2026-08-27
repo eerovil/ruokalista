@@ -48,22 +48,39 @@ actually deploying — it prints the bindings table (e.g.
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.
 
-The S-ostoslista integration proposed by #147 adds three required Worker
-secrets/config values: `S_OSTOSLISTA_API_URL` is the private sync Worker's base
-URL, `S_OSTOSLISTA_API_TOKEN` is its bearer token, and
-`S_OSTOSLISTA_HOUSEHOLD_ID` is the one Ruokalista household allowed to see or
-use the integration. The remote service must have product search enabled before
-this is useful. Set all three before merging the proposal: `main` deploys
-immediately, and leaving them unset deliberately hides every integration route
-and control rather than exposing a half-configured action.
+## The shopping-list service
 
-The bearer token is not an S-ryhmä/AppSync credential and does not expose the
-phone's underlying identity token. Its blast radius is still the configured
-household's real shopping list: the service accepts authenticated reads and
-writes for its bound list, and its five-minute sync propagates those writes to
-the list used by the phone. A leaked token can therefore read and modify that
-shopping list through the service. Keep it as a Worker secret, and rotate the
-token on both sides if it is exposed.
+`SOSTOSLISTA_API_TOKEN` is the bearer secret of **s-ostoslista-worker**
+(`https://s-ostoslista-worker.eerovil.workers.dev`, repo
+`eerovil/s-ostoslista-client`) — a separate Worker that keeps a D1 copy of one
+S-ryhmä shopping list in two-way sync with the S-ostoslista phone app, on a
+five-minute cron. It lets this app put things on that real list.
+
+It is not a direct S-ryhmä/AppSync credential and does not expose the phone's
+underlying identity token. Its blast radius is still the bound real shopping
+list: the service accepts authenticated reads and writes for that list, and its
+five-minute sync propagates those writes to the list used by the phone. A
+leaked token can therefore read and modify the shopping list through the
+service. Keep it as a Worker secret, and rotate it on both sides if exposed.
+
+`scripts/save-ostoslista-token.sh` stores it the same way as the Anthropic key —
+`.dev.vars` for local development, a Worker secret for the deployed app — and
+then checks it against the service's `/status`, printing only the bound list id
+and item count.
+
+The service's URL is `SOSTOSLISTA_SERVICE_URL`, a plain var in `wrangler.jsonc`
+rather than a secret. Its API is `GET /products?q=` to search the shop's
+catalogue, `POST /items {"ean"}` or `{"note"}` to add, and
+`DELETE /items?ean=`/`?note=` to remove; product images come from
+`https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which needs no
+auth. Its README documents the rest.
+
+The integration proposed by #147 also requires
+`SOSTOSLISTA_HOUSEHOLD_ID`, the one Ruokalista household allowed to see or use
+it. The remote service must have product search enabled before this is useful.
+Set the token and household gate before merging the proposal: `main` deploys
+immediately, and leaving either unset deliberately hides every integration
+route and control rather than exposing a half-configured action.
 
 Local browser tests do not use those credentials. Playwright starts a small
 contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
