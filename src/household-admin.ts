@@ -155,10 +155,11 @@ export async function removeMemberForm(
   const id = Number(ctx.params["id"]);
   const memberId = Number(ctx.params["memberId"]);
 
-  // No "not yourself" check here on purpose. `removeMember` refuses to delete
-  // any admin's row, and only an admin can reach this route — so the caller's
-  // own row is already covered, by a rule that also covers the other admin the
-  // caller is not.
+  // Removal takes the household away, not the person's history — see
+  // `households.ts::removeMember`. No "not yourself" check here on purpose:
+  // `removeMember` refuses any admin's row, and only an admin can reach this
+  // route, so the caller's own row is already covered by a rule that also
+  // covers the other admin the caller is not.
   return withRefusal(ctx, member, id, { scope: `member-${memberId}` }, () =>
     removeMember(ctx.env.DB, id, memberId),
   );
@@ -287,6 +288,11 @@ function householdBody(
     </form>
 
     <h2>Jäsenet</h2>
+    <p class="empty">
+      Poistaminen vie pääsyn talouteen, ei sitä mitä henkilö on tehnyt: reseptit,
+      ainekset ja suunnitelmat jäävät paikoilleen hänen nimissään. Sama
+      Google-tunniste voidaan poiston jälkeen lisätä toiseen talouteen.
+    </p>
     ${members.length === 0
       ? html`<p class="empty">
           Taloudessa ei ole jäseniä. Ilman jäsentä siihen ei pääse kukaan.

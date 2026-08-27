@@ -136,6 +136,39 @@ foodstuff — and never by name.
 explicit column, not a role system — never inferred from email, display name,
 request origin, or anything the client says.
 
+## Leaving a household
+
+`migrations/0009_member_removed.sql`, proposed for #127, adds `member.removed_at`
+and `member.removed_google_sub`. Removing somebody from a household does not
+delete their `member` row, and this is the reason why: four columns record a
+member as having made something — `ingredient.created_by`,
+`recipe.created_by` and `.updated_by`, `planned_batch.created_by`,
+`pantry_entry.added_by` — and `src/recipes.ts` joins `member` on
+`recipe.created_by` to print who wrote a recipe. A DELETE would break a foreign
+key, or take the recipe off the list.
+
+So removal is a stamp. `removed_at` is set, and the person's real Google `sub`
+moves to `removed_google_sub` while the live `google_sub` is rewritten to
+`removed:<id>`. Two things follow, and both are the point:
+
+- Every lookup that turns a request into a member — `findMemberById`,
+  `findMemberByGoogleSub`, `allMembers` in `src/members.ts` — filters
+  `removed_at IS NULL`, so neither a Google account nor a session cookie already
+  in a browser opens the household any more.
+- `google_sub` is UNIQUE across the whole table, so handing it back is what lets
+  the same person be added to another household. That is the second half of a
+  move, which #127 defines as a removal followed by an addition.
+
+Rewriting the live column rather than making the UNIQUE index conditional is
+deliberate: four tables reference `member`, and rebuilding it against the live
+database to relax one constraint is not worth it. Google's `sub` is a decimal
+string, so `removed:<id>` cannot collide with a real one, and
+`src/households.ts` refuses a sub in that shape as input anyway.
+
+This is a column addition, so the backup lockstep below does not move: backup
+captures `SELECT *` and restore builds its INSERT from the row's own keys, so
+both carry the new columns without a change.
+
 ## Backup and restore: the manifest lockstep rule
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot

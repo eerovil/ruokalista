@@ -785,3 +785,41 @@ async function putSheetOnInput(page: Page): Promise<void> {
     buffer: readFileSync(new URL("./fixtures/contact-sheet.png", import.meta.url)),
   });
 }
+
+/**
+ * Last in the file on purpose: it removes the member every describe above signs
+ * in as. What it is evidence of is the point of #127's removal — the household
+ * loses the person, and keeps everything the person made.
+ */
+test.describe("removing an established member", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(3)]);
+  });
+
+  test("the household loses them, the recipes keep their name", async ({
+    page,
+  }) => {
+    await page.goto("/admin/households/1");
+    const row = page.locator("details.rename").filter({ hasText: "Eero" });
+    await row.locator("summary").click();
+    await row.getByRole("button", { name: "Poista taloudesta" }).click();
+
+    // Removed, with no refusal — this is the case the first attempt blocked.
+    await expect(page.locator(".refused")).toHaveCount(0);
+    await expect(
+      page.locator("details.rename").filter({ hasText: "Eero" }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: `${SHOTS}/45-admin-household-after-removal.png`,
+      fullPage: true,
+    });
+
+    // And the recipes they wrote are still on the list, still theirs.
+    await page.goto("/recipes");
+    await expect(page.locator(".recipes").first()).toContainText("Eero");
+    await page.screenshot({
+      path: `${SHOTS}/46-recipes-after-removal.png`,
+      fullPage: true,
+    });
+  });
+});

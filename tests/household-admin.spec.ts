@@ -144,11 +144,15 @@ test("an admin adds, edits and removes a member of another household", async ({
   await expect(page.locator("details.rename")).toHaveCount(1);
 });
 
-test("a member who has made something is not removed under the household's feet", async ({
+test("a member who has made things is removed, and what they made stays", async ({
   page,
+  request,
 }) => {
-  // Seed member 2 created household 2's ingredient. Deleting the row would
-  // break what it points at, so the screen says so instead.
+  // Seed member 2 owns household 2's ingredient. The first attempt at this
+  // screen refused to remove anybody in that position, which is almost every
+  // real member — and #127's only move is a removal followed by an addition, so
+  // that refusal blocked the move too. Removal now takes the household away and
+  // leaves the history where it is.
   await signIn(page, 3);
   await page.goto("/admin/households/2");
 
@@ -156,50 +160,66 @@ test("a member who has made something is not removed under the household's feet"
   await row.locator("summary").click();
   await row.getByRole("button", { name: "Poista taloudesta" }).click();
 
-  await expect(page.locator(".refused")).toContainText("ei voi poistaa");
-  await expect(page.locator("details.rename")).toHaveCount(1);
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(page.getByText("Taloudessa ei ole jäseniä")).toBeVisible();
+  // The household survives its last member leaving.
+  await expect(page.getByRole("heading", { name: "Naapuri" })).toBeVisible();
 });
 
-test("a cupboard entry counts as something made, too", async ({
-  page,
+test("a removed member's own session no longer opens the household", async ({
   request,
 }) => {
-  // The removal check has to name every table with a REFERENCES member(id)
-  // column, and `pantry_entry.added_by` (#125) is the newest. Forgetting one
-  // turns a Finnish refusal back into a constraint error, so the trap gets its
-  // own test rather than a comment.
+  // Not only the Google match: a cookie already in somebody's browser names a
+  // member id, so the id lookup has to refuse them too.
+  const week = await request.get("/", {
+    headers: { Cookie: cookieHeader(2) },
+    maxRedirects: 0,
+  });
+  expect(week.status()).toBe(302);
+  expect(week.headers()["location"]).toBe("/signin");
+
+  const api = await request.get("/api/ingredients", {
+    headers: { Cookie: cookieHeader(2) },
+  });
+  expect(api.status()).toBe(401);
+});
+
+test("the removed member's Google sub is free for another household", async ({
+  page,
+}) => {
+  // The second half of a move. Their old sub was UNIQUE across the table, so
+  // this is the check that removal really handed it back.
   await signIn(page, 3);
-  await page.goto("/admin/households/2");
-  await page.locator("#add-name").fill("Kaappaaja");
-  await page.locator("#add-sub").fill("sub-kaappaaja");
+  await page.goto("/admin/households/1");
+  await page.locator("#add-name").fill("Naapuri");
+  await page.locator("#add-sub").fill("dev-seed-naapuri");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
 
-  const memberId = await memberIdOf(page, "Kaappaaja");
+  await expect(page.locator(".refused")).toHaveCount(0);
+  const moved = page.locator("details.rename").filter({ hasText: "Naapuri" });
+  await expect(moved).toHaveCount(1);
 
-  // Ingredient 6 is household 2's own, so this is that household's cupboard.
-  const stocked = await request.post("/ostoslista/kaappi", {
-    headers: { Cookie: cookieHeader(memberId) },
-    maxRedirects: 0,
-    form: { aines: "6" },
-  });
-  expect(stocked.status()).toBe(303);
+  // A new row in the new household, not the old one reparented.
+  const memberId = await memberIdOf(page, "Naapuri");
+  expect(memberId).toBeGreaterThan(3);
 
-  const row = page.locator("details.rename").filter({ hasText: "Kaappaaja" });
-  await row.locator("summary").click();
-  await row.getByRole("button", { name: "Poista taloudesta" }).click();
-  await expect(page.locator(".refused")).toContainText("ei voi poistaa");
-
-  // Put household 2 back to one member for the tests that follow.
-  await request.post("/ostoslista/kaappi", {
-    headers: { Cookie: cookieHeader(memberId) },
-    maxRedirects: 0,
-    form: { aines: "6", toiminto: "poista" },
-  });
-  const removed = await request.post(
-    `/admin/households/2/members/${memberId}/delete`,
-    { headers: { Cookie: cookieHeader(3) }, maxRedirects: 0 },
+  // And they can sign in, into household 1 now.
+  await moved.locator("summary").click();
+  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue(
+    "dev-seed-naapuri",
   );
-  expect(removed.status()).toBe(303);
+});
+
+test("the sub a removed row parks on cannot be typed in", async ({ page }) => {
+  await signIn(page, 3);
+  await page.goto("/admin/households/1");
+  await page.locator("#add-name").fill("Väärennös");
+  await page.locator("#add-sub").fill("removed:2");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+
+  await expect(page.locator(".refused")).toContainText(
+    "ei ole kelvollinen Google-tunniste",
+  );
 });
 
 test("an admin's own row cannot be removed here", async ({ page }) => {
@@ -362,7 +382,9 @@ test("a member with no name and a member with no sub are both refused", async ({
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
   await expect(page.locator(".refused")).toContainText("Google-tunniste");
 
-  await expect(page.locator("details.rename")).toHaveCount(1);
+  // Neither refusal let a half-filled member through. Household 2 is empty by
+  // this point in the file — its one seeded member was removed above.
+  await expect(page.locator("details.rename")).toHaveCount(0);
 });
 
 test("the screen offers no transfer, no household delete and no admin control", async ({
@@ -507,6 +529,94 @@ test("the ordinary product still shows nobody another household", async ({
 
   await expect(page.getByText("naapurin suola")).toHaveCount(0);
   await expect(page.getByText("valkokaali")).toBeVisible();
+});
+
+/**
+ * The acceptance criterion the first attempt missed, end to end, and last in
+ * the file because it removes the member almost every other spec signs in as.
+ *
+ * Member 1 is as established as this seed gets: household 1's ingredients,
+ * recipes and planned batches are all theirs. Removing them has to leave every
+ * one of those where it is — the recipe list even prints their name, because it
+ * joins `member` on `recipe.created_by` — while taking away the household.
+ */
+test("an established member is removed, keeps their history, and moves house", async ({
+  page,
+  request,
+}) => {
+  // A planned batch of their own, so the removal crosses all four tables that
+  // record who made a row.
+  const planned = await request.post("/api/batches", {
+    headers: { Cookie: cookieHeader(1) },
+    data: { recipeId: 1, date: "2026-11-02", slot: "lunch", portions: 4 },
+  });
+  expect(planned.status()).toBe(201);
+
+  // Before: their name is on the recipe list.
+  await signIn(page, 3);
+  await page.goto("/recipes");
+  await expect(page.getByText("Kaalilaatikko")).toBeVisible();
+  await expect(page.locator(".recipes").first()).toContainText("Eero");
+
+  await page.goto("/admin/households/1");
+  const row = page.locator("details.rename").filter({ hasText: "Eero" });
+  await row.locator("summary").click();
+  await row.getByRole("button", { name: "Poista taloudesta" }).click();
+
+  // Removed, with no refusal and no member row left for them.
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(
+    page.locator("details.rename").filter({ hasText: "Eero" }),
+  ).toHaveCount(0);
+
+  // The household's content is untouched, and still attributed to them — which
+  // a DELETE could not have managed, because that join would have dropped the
+  // recipe off the list entirely.
+  await page.goto("/recipes");
+  await expect(page.getByText("Kaalilaatikko")).toBeVisible();
+  await expect(page.locator(".recipes").first()).toContainText("Eero");
+
+  await page.goto("/ingredients");
+  await expect(page.getByText("valkokaali")).toBeVisible();
+
+  const menu = await request.get("/api/menu?from=2026-11-02&to=2026-11-02", {
+    headers: { Cookie: cookieHeader(3) },
+  });
+  expect(menu.status()).toBe(200);
+  expect(JSON.stringify(await menu.json())).toContain("Kaalilaatikko");
+
+  // They, however, are out — by the cookie they already had, not only by Google.
+  const week = await request.get("/", {
+    headers: { Cookie: cookieHeader(1) },
+    maxRedirects: 0,
+  });
+  expect(week.status()).toBe(302);
+  expect(week.headers()["location"]).toBe("/signin");
+
+  const theirIngredients = await request.get("/api/ingredients", {
+    headers: { Cookie: cookieHeader(1) },
+  });
+  expect(theirIngredients.status()).toBe(401);
+
+  // And the other half of the move: the same Google account, in the other
+  // household, as a new row.
+  await page.goto("/admin/households/2");
+  await page.locator("#add-name").fill("Eero");
+  await page.locator("#add-sub").fill("dev-seed-koti");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  await expect(page.locator(".refused")).toHaveCount(0);
+
+  const movedId = await memberIdOf(page, "Eero");
+  expect(movedId).not.toBe(1);
+
+  // Signed in there, they see household 2's ingredient and none of household 1's.
+  const nowNeighbour = await request.get("/api/ingredients", {
+    headers: { Cookie: cookieHeader(movedId) },
+  });
+  expect(nowNeighbour.status()).toBe(200);
+  const names = JSON.stringify(await nowNeighbour.json());
+  expect(names).toContain("naapurin suola");
+  expect(names).not.toContain("valkokaali");
 });
 
 /**

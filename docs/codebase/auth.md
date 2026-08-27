@@ -132,17 +132,25 @@ Three things the proposal deliberately cannot do, all from #127:
   addition, which leaves two visible actions instead of one silent reparenting.
 - **There is no household delete.**
 
-Removing a member is the operation with a real failure mode: `member.id` is what
-`ingredient`, `recipe` (twice), `planned_batch` and `pantry_entry` record as
-having created a row. `removeMember` counts those first and refuses in Finnish,
-naming how many rows are in the way, rather than letting D1 answer with a
-constraint error. There is no separate "not yourself" rule: the admin-row guard
-above already refuses every admin's row, and only an admin reaches these routes.
+Removing a member takes away the household, not the person's history. The
+proposal does not delete the `member` row: four columns record a member as
+having made something, and the recipe list joins `member` to print who wrote a
+recipe, so a DELETE would either break a foreign key or take the recipe off the
+screen. Instead `removeMember` stamps `removed_at` and hands the Google `sub`
+back, and `src/members.ts` stops turning either that account or an
+already-issued session cookie into a member. See
+[data-model](docs/codebase/data-model.md) for the columns and why the live
+`google_sub` is rewritten rather than the UNIQUE index relaxed.
 
-A new table with a `REFERENCES member(id)` column has to be added to that count,
-or the refusal turns back into a 500. `tests/household-admin.spec.ts` covers the
-cupboard case specifically, because `pantry_entry.added_by` is the one that was
-already nearly missed.
+The first version of this proposal instead refused to remove anybody who had
+created a row. It reads as the safe choice and is not: nearly every real member
+has made something, so it blocked removal for exactly the people the tool
+manages — and with it the only move there is, since a move is a removal
+followed by an addition. That is the trap to remember if this ever gets
+rewritten.
+
+There is no separate "not yourself" rule either: the admin-row guard above
+already refuses every admin's row, and only an admin reaches these routes.
 
 `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` and any migration
 are full-tier files (see `docs/codebase/testing.md`) — no focused spec covers

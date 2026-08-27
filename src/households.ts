@@ -63,13 +63,28 @@ interface HouseholdMemberRow {
 const HOUSEHOLD_MEMBER_COLUMNS =
   "id, household_id, display_name, email, google_sub, is_admin" as const;
 
+/**
+ * A removed member is still in the table — see `removeMember` — so every read
+ * and every write on this screen asks for the ones who are still in.
+ */
+const STILL_A_MEMBER = "removed_at IS NULL" as const;
+
+/**
+ * What a removed member's `google_sub` becomes, so the real one is free for
+ * another household. Google's `sub` is a decimal string, so this shape can
+ * never collide with one; `memberFields` refuses it as input all the same,
+ * because "can never happen" is cheaper to enforce than to rely on.
+ */
+const REMOVED_SUB = "'removed:' || id" as const;
+const REMOVED_SUB_PREFIX = "removed:" as const;
+
 /** Every household there is, with how many people are in it. */
 export async function allHouseholds(db: D1Database): Promise<Household[]> {
   const { results } = await db
     .prepare(
       `SELECT h.id, h.name, count(m.id) AS member_count
          FROM household h
-         LEFT JOIN member m ON m.household_id = h.id
+         LEFT JOIN member m ON m.household_id = h.id AND m.removed_at IS NULL
         GROUP BY h.id
         ORDER BY h.id`,
     )
@@ -88,7 +103,7 @@ export async function findHousehold(
     .prepare(
       `SELECT h.id, h.name, count(m.id) AS member_count
          FROM household h
-         LEFT JOIN member m ON m.household_id = h.id
+         LEFT JOIN member m ON m.household_id = h.id AND m.removed_at IS NULL
         WHERE h.id = ?
         GROUP BY h.id`,
     )
@@ -105,7 +120,7 @@ export async function membersOfHousehold(
   const { results } = await db
     .prepare(
       `SELECT ${HOUSEHOLD_MEMBER_COLUMNS} FROM member
-        WHERE household_id = ? ORDER BY id`,
+        WHERE household_id = ? AND ${STILL_A_MEMBER} ORDER BY id`,
     )
     .bind(householdId)
     .all<HouseholdMemberRow>();
@@ -209,18 +224,28 @@ export async function updateMember(
 }
 
 /**
- * Removing somebody is the half of "move" that can fail, because a member is
- * what four other tables record as having created a row. Deleting one of those
- * members would either break a foreign key or, worse, take the household's
- * recipes with it — so this counts first and says what is in the way, in
- * Finnish, rather than letting D1 answer with a constraint error.
+ * Removing somebody takes away the household, not the person's history.
  *
- * The count below has to name every table with a `REFERENCES member(id)`
- * column, so a new table that records who made a row belongs in it — the
- * newest is `pantry_entry.added_by` (#125). Forgetting one turns a refusal
- * back into a constraint error, which is a 500 rather than a sentence.
+ * A member is what four tables record as having made a row — `ingredient`,
+ * `recipe` (twice), `planned_batch`, `pantry_entry` — and the recipe list and
+ * recipe screen join `member` to print that name. So DELETE was never the right
+ * verb here: for anybody who has actually used the app it either breaks a
+ * foreign key or takes their recipes off the screen with them.
  *
- * An admin's row is not removable here at all — see `adminRowGuard`.
+ * The first attempt at #127 refused to remove such a member at all. That reads
+ * as safe and is not: nearly every real member has made something, so it blocked
+ * removal for exactly the people this tool manages — and with it the only move
+ * there is, since #127 defines a move as removing somebody here and adding them
+ * there.
+ *
+ * So this stamps `removed_at` and hands back the Google sub, keeping the real
+ * one in `removed_google_sub`. The row stays and keeps attributing what it made;
+ * what stops is entry — `src/members.ts` will not turn a cookie or a Google
+ * account into a removed member, so an already-open session does not survive it
+ * either. And the freed sub can be added to another household, which is the rest
+ * of the move.
+ *
+ * An admin's row is still not removable here at all — see `adminRowGuard`.
  */
 export async function removeMember(
   db: D1Database,
@@ -228,35 +253,23 @@ export async function removeMember(
   memberId: number,
 ): Promise<HouseholdMember> {
   const row = await memberRowOf(db, householdId, memberId);
-  const member = toHouseholdMember(row);
 
   if (row.is_admin === 1) {
     throw new HouseholdRefused(adminRowGuard(row.display_name, "delete"));
   }
 
-  const authored = await db
-    .prepare(
-      `SELECT
-         (SELECT count(*) FROM ingredient    WHERE created_by = ?1) +
-         (SELECT count(*) FROM recipe        WHERE created_by = ?1 OR updated_by = ?1) +
-         (SELECT count(*) FROM planned_batch WHERE created_by = ?1) +
-         (SELECT count(*) FROM pantry_entry  WHERE added_by   = ?1) AS rows_made`,
-    )
-    .bind(memberId)
-    .first<{ rows_made: number }>();
-
-  if (authored !== null && authored.rows_made > 0) {
-    throw new HouseholdRefused(
-      `${member.displayName} on tehnyt talouteen sisältöä (${authored.rows_made} riviä), joten häntä ei voi poistaa. Sisältö katoaisi mukana.`,
-    );
-  }
-
   await db
-    .prepare("DELETE FROM member WHERE id = ? AND household_id = ?")
+    .prepare(
+      `UPDATE member
+          SET removed_at = datetime('now'),
+              removed_google_sub = google_sub,
+              google_sub = ${REMOVED_SUB}
+        WHERE id = ? AND household_id = ? AND removed_at IS NULL`,
+    )
     .bind(memberId, householdId)
     .run();
 
-  return member;
+  return toHouseholdMember(row);
 }
 
 /**
@@ -300,7 +313,7 @@ async function memberRowOf(
     ? await db
         .prepare(
           `SELECT ${HOUSEHOLD_MEMBER_COLUMNS} FROM member
-            WHERE id = ? AND household_id = ?`,
+            WHERE id = ? AND household_id = ? AND ${STILL_A_MEMBER}`,
         )
         .bind(memberId, householdId)
         .first<HouseholdMemberRow>()
@@ -331,11 +344,18 @@ async function memberFields(
     );
   }
 
+  // The shape `removeMember` parks a removed member's row on. Google never
+  // issues one, so this cannot be a real person's sub — and letting it be typed
+  // in would put a live member where the removed ones are.
+  if (googleSub.startsWith(REMOVED_SUB_PREFIX)) {
+    throw new HouseholdRefused("Tämä ei ole kelvollinen Google-tunniste.");
+  }
+
   const clash = await db
     .prepare(
       `SELECT m.id, h.name AS household_name FROM member m
          JOIN household h ON h.id = m.household_id
-        WHERE m.google_sub = ?`,
+        WHERE m.google_sub = ? AND m.${STILL_A_MEMBER}`,
     )
     .bind(googleSub)
     .first<{ id: number; household_name: string }>();

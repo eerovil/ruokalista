@@ -50,3 +50,5 @@ Regenerate after a change that alters a screen:
 | `42-admin-households.png` | Proposed household list, including the household this admin does not belong to |
 | `43-admin-household.png` | Proposed household detail: the name, the members, and one member row opened for editing |
 | `44-admin-member-refused.png` | Proposed refusal when an admin's Google sub is repointed — admin travels with the sub, so this stays an operator action |
+| `45-admin-household-after-removal.png` | Proposed household after an established member is removed — no refusal, and the household stands |
+| `46-recipes-after-removal.png` | Proposed recipe list after that removal: the recipes are still there and still credited to the person who wrote them |
