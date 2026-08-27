@@ -6,7 +6,10 @@ How the repo verifies itself: the pure-module check tier, the browser suite, CI,
 
 `npm run check` runs `dev/*.ts` under node's own test runner — no test framework
 as a dependency. `dev/` is outside the Worker's tsconfig on purpose: node's
-globals clash with the Workers ones.
+globals clash with the Workers ones. Most checks are pure-module tests;
+`dev/check-local-d1.ts` is the deliberate exception that runs Wrangler against
+an isolated temporary persistence directory to prove the browser bootstrap can
+migrate an empty database and then run again safely.
 
 `dev/check-batch-intake.ts` is a good template for this tier: it tests
 `remainingBundle`/`saveRecipesSequentially` from `src/batch-save.ts` directly
@@ -85,19 +88,16 @@ actually excludes it, so it currently runs as part of any full
 runs the typecheck, the checks and the spec that covers what it touched, and
 lets CI run everything; a change nobody can draw a blast radius around runs the
 lot locally first. `docs/agents/verification.md` says which is which, and which
-spec covers what. The suite also fills its own blanks in `.dev.vars`
-(`tests/support/dev-vars.ts`) so a fresh checkout does not fail two auth specs
-for want of Google values and have to be run twice — only blank keys are
-filled, a real Google client id already present is left alone, and
-`ANTHROPIC_API_KEY` is never touched. `ensureDevVars` only fills *missing keys
-in an existing file*, though — it does not create the file, so a brand-new
-worktree (untracked files aren't carried into `git worktree`, and it also has
-no `node_modules` yet) needs `.dev.vars` copied in and
-`./scripts/node.sh npm install` run before the suite or the typecheck can
-start. Running the full suite without CI's placeholder Google credentials
-fails nearly every spec with a "missing required secrets" webServer warning
-that reads like broad code breakage but is only the environment — check that
-warning line before treating a red full run as a regression.
+spec covers what. `tests/support/dev-vars.ts::ensureDevVars()` creates
+`.dev.vars` when it is missing and fills only blank `SESSION_SECRET` and Google
+keys; a real Google client id is left alone, and `ANTHROPIC_API_KEY` is never
+touched. This change makes the suite prepare the other half of its local
+environment before `wrangler dev` starts:
+`tests/support/local-d1.ts::ensureLocalD1()` applies the repository's D1
+migrations to this worktree's local persistence. The new bootstrap establishes
+only the schema; every spec's existing reseed remains responsible for fixture
+data and isolation. A brand-new worktree still has no `node_modules`, so run
+`./scripts/node.sh npm install` before the suite or typecheck can start.
 
 `playwright.config.ts` reads `PLAYWRIGHT_PORT` (default 8787) for the port both
 `wrangler dev` and the browser suite bind to. Two ruokalista agent sessions in

@@ -1,11 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
 import { ensureDevVars } from "./tests/support/dev-vars.ts";
+import { ensureLocalD1 } from "./tests/support/local-d1.ts";
 
 // Before anything starts, and deliberately not in a globalSetup: the `wrangler
 // dev` below reads .dev.vars as it boots, so the values have to be on disk
 // before this config is even handed back.
 ensureDevVars();
+ensureLocalD1();
 
 const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
 if (!Number.isInteger(browserPort) || browserPort < 1 || browserPort > 65_535) {
