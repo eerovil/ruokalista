@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, type Raw } from "./html.ts";
+import { html, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
   resolveMentions,
@@ -540,6 +540,7 @@ export function recipeImage(
 
 function recipeBody(recipe: Recipe, portions: number | null): Raw {
   const factor = scaleFactor(recipe.yieldPortions, portions);
+  const canRevealAmounts = hasRevealableMention(recipe, factor);
 
   return html`${recipeImage(recipe)}
     <h1>${recipe.title}</h1>
@@ -554,6 +555,17 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
           ? `${recipe.yieldPortions} annosta`
           : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
     </p>
+
+    ${canRevealAmounts
+      ? html`<input
+            type="checkbox"
+            id="reveal-all-amounts"
+            class="reveal-all"
+          /><label for="reveal-all-amounts" class="reveal-all-label"
+            ><span class="reveal-all-show">Näytä kaikki määrät</span
+            ><span class="reveal-all-hide">Piilota määrät</span></label
+          >`
+      : ""}
 
     ${recipe.parts.length === 0
       ? body(recipe, factor)
@@ -579,10 +591,27 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
 
     ${keepAwake()}
     ${MENTION_STYLE}
+    ${canRevealAmounts ? html`<script>${raw(REVEAL_ALL_ISLAND)}</script>` : ""}
 
     <p class="recipe-edit">
       <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
     </p>`;
+}
+
+/** Whether this dish or any of its parts has an amount the toggle can reveal. */
+function hasRevealableMention(recipe: Recipe, factor: number | null): boolean {
+  const amounts = amountsByIngredient(recipe.lines, factor);
+  const thisRecipeHasOne = recipe.steps.some((step) =>
+    resolveMentions(step.text, step.refs).some(
+      (segment) =>
+        segment.kind === "mention" &&
+        (amounts.get(segment.ingredientId) ?? "") !== "",
+    )
+  );
+
+  return thisRecipeHasOne || recipe.parts.some(
+    (part) => hasRevealableMention(part, factor),
+  );
 }
 
 /**
@@ -599,9 +628,23 @@ const MENTION_STYLE = html`<style>
   .mention { display: inline; }
   /* Off-screen rather than display:none — a hidden control cannot be focused,
      and this one is how a keyboard reaches the amount. */
-  .mention-toggle {
+  .mention-toggle, .reveal-all {
     position: absolute; width: 1px; height: 1px;
     margin: 0; padding: 0; opacity: 0; pointer-events: none;
+  }
+  .reveal-all-label {
+    display: inline-flex; align-items: center; min-height: var(--tap-compact);
+    padding: 0 .75rem; margin: 0 0 .65rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: var(--radius);
+    background: var(--surface); font-weight: 600;
+  }
+  .reveal-all-hide { display: none; }
+  .reveal-all:checked + .reveal-all-label .reveal-all-show { display: none; }
+  .reveal-all:checked + .reveal-all-label .reveal-all-hide { display: inline; }
+  /* Plain :focus is deliberate: older Safari predates :focus-visible, and a
+     keyboard user still needs to see where this off-screen checkbox is. */
+  .reveal-all:focus + .reveal-all-label {
+    outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .mention > label {
     display: inline; cursor: pointer;
@@ -613,11 +656,45 @@ const MENTION_STYLE = html`<style>
     color: var(--accent); margin-right: .3em;
   }
   .mention-toggle:not(:checked) + label .mention-amount { display: none; }
+  .reveal-all:checked ~ * .mention-toggle:not(:checked) + label .mention-amount {
+    display: inline;
+  }
   .mention-toggle:checked + label { text-decoration: none; }
   .mention-toggle:focus-visible + label {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;
   }
 </style>`;
+
+/* Deliberately ES5 syntax: this string reaches browsers without transpilation. */
+const REVEAL_ALL_ISLAND = `
+(function () {
+  var revealAll = document.getElementById('reveal-all-amounts');
+  if (
+    !revealAll ||
+    typeof revealAll.addEventListener !== 'function' ||
+    typeof document.querySelectorAll !== 'function'
+  ) return;
+
+  var mentions = document.querySelectorAll('.mention-toggle');
+  if (
+    mentions.length === 0 ||
+    typeof mentions[0].addEventListener !== 'function'
+  ) return;
+
+  revealAll.addEventListener('change', function () {
+    for (var index = 0; index < mentions.length; index += 1) {
+      mentions[index].checked = revealAll.checked;
+    }
+  });
+
+  function mentionChanged() {
+    if (revealAll.checked && !this.checked) revealAll.checked = false;
+  }
+
+  for (var index = 0; index < mentions.length; index += 1) {
+    mentions[index].addEventListener('change', mentionChanged);
+  }
+}());`;
 
 async function loadRequested(
   db: D1Database,

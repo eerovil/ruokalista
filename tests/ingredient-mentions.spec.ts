@@ -40,6 +40,20 @@ function mention(
     .filter({ has: page.locator(".mention-word", { hasText: word }) });
 }
 
+async function expectAllMentionAmounts(
+  page: import("@playwright/test").Page,
+  visible: boolean,
+) {
+  const amounts = page.locator(".mention-amount");
+  const count = await amounts.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await (visible
+      ? expect(amounts.nth(index)).toBeVisible()
+      : expect(amounts.nth(index)).toBeHidden());
+  }
+}
+
 test("a mention starts closed and opens on a tap", async ({ page }) => {
   await page.goto("/recipes/1");
 
@@ -76,6 +90,103 @@ test("tapping again hides it, and mentions toggle independently", async ({
   await kaali.locator("label").click();
   await expect(kaali.locator(".mention-amount")).toBeHidden();
   await expect(oljy.locator(".mention-amount")).toBeVisible();
+});
+
+test("one keyboard toggle reveals and then truly hides every amount", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  // Hide-all must clear state that predates the global control too.
+  const kaali = mention(page, "kaali");
+  await kaali.locator("label").click();
+  await expect(kaali.locator(".mention-amount")).toBeVisible();
+
+  const revealAllByName = page.getByRole("checkbox", {
+    name: "Näytä kaikki määrät",
+  });
+  const revealAll = page.locator(".reveal-all");
+  await revealAllByName.focus();
+  await expect(revealAll).toBeFocused();
+  await expect(page.locator(".reveal-all-label")).toHaveCSS(
+    "outline-style",
+    "solid",
+  );
+  await revealAll.press("Space");
+  await expectAllMentionAmounts(page, true);
+  await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
+
+  // An individual tap remains visible behavior: it drops the global layer,
+  // hides this mention and leaves the other checked mentions alone.
+  const oljy = mention(page, "öljyssä");
+  await kaali.locator("label").click();
+  await expect(revealAll).not.toBeChecked();
+  await expect(kaali.locator(".mention-amount")).toBeHidden();
+  await expect(oljy.locator(".mention-amount")).toBeVisible();
+  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+    .toBeVisible();
+
+  // The master can still set everything again and then truly clear it all.
+  await revealAll.press("Space");
+  await expectAllMentionAmounts(page, true);
+  await revealAll.press("Space");
+  await expect(revealAll).not.toBeChecked();
+  await expectAllMentionAmounts(page, false);
+  await expect(page.locator(".mention-toggle:checked")).toHaveCount(0);
+  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+    .toBeVisible();
+});
+
+test("one toggle covers a multipart dish and survives back-forward restore", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3");
+
+  const revealAllByName = page.getByRole("checkbox", {
+    name: "Näytä kaikki määrät",
+  });
+  const revealAll = page.locator(".reveal-all");
+  await expect(revealAllByName).toBeVisible();
+  await page.locator(".reveal-all-label").click();
+  await expect(revealAll).toBeChecked();
+  const partAmounts = page.locator(".part .mention-amount");
+  expect(await partAmounts.count()).toBeGreaterThan(0);
+  for (let index = 0; index < await partAmounts.count(); index += 1) {
+    await expect(partAmounts.nth(index)).toBeVisible();
+  }
+  await expect(page.locator(".reveal-all")).toHaveCount(1);
+
+  await page.goto("/recipes");
+  await page.goBack();
+  await expect(page.locator(".reveal-all")).toBeChecked();
+  await expect(page.locator(".part .mention-amount")).toBeVisible();
+});
+
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("the recipe-wide toggle still reveals and hides every amount", async ({
+    page,
+  }) => {
+    await page.goto("/recipes/1");
+
+    const revealAllByName = page.getByRole("checkbox", {
+      name: "Näytä kaikki määrät",
+    });
+    const revealAll = page.locator(".reveal-all");
+    await expect(revealAllByName).toBeVisible();
+    await page.locator(".reveal-all-label").click();
+    await expect(revealAll).toBeChecked();
+    await expectAllMentionAmounts(page, true);
+
+    await page.locator(".reveal-all-label").click();
+    await expect(revealAll).not.toBeChecked();
+    await expectAllMentionAmounts(page, false);
+
+    const kaali = mention(page, "kaali");
+    await kaali.locator("label").click();
+    await expect(kaali.locator(".mention-amount")).toBeVisible();
+  });
 });
 
 test("the revealed amount is this meal's, not the page's", async ({ page }) => {
