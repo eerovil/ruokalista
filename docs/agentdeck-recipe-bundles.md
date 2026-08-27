@@ -58,6 +58,12 @@ Generation contract:
 - Use named `section` values only for real parts of a dish. For a multipart
   dish, parent-level content has `before_parts` or `after_parts`; content inside
   a named part has a null phase. A plain recipe has null sections and phases.
+- `ingredient_refs` on a step is optional (issue #120): a list of
+  `{"line": <index into this recipe's lines>, "matched_text": "<the wording the
+  step used>", "approx_position": <roughly where it starts>}` marking the words
+  that name an ingredient. Never put an amount in `matched_text`, never point at
+  a line in a different `section`, and leave the field out entirely rather than
+  guess. A bundle without it is still a valid bundle.
 - Before handoff, self-check unique titles, verbatim source lines, sections and
   phases, realistic quantities, null ingredient IDs, and obvious near-duplicate
   recipes in the batch.

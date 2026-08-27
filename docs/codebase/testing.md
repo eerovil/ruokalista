@@ -104,7 +104,20 @@ warning line before treating a red full run as a regression.
 different worktrees both defaulting to 8787 share local D1 state and produce
 `ERR_CONNECTION_REFUSED` and D1-lock-flavoured failures that look like code
 bugs but are port/database contention — set `PLAYWRIGHT_PORT` to a scratch
-value in one of them. On a cold worktree, `wrangler dev`'s first boot inside
+value in one of them.
+
+Until this pull request, setting it did nothing: `scripts/playwright.sh` runs
+the suite in a container and forwarded only `HOME` and `CI`, so the variable
+never reached `playwright.config.ts` and both worktrees still bound 8787.
+Because `webServer.reuseExistingServer` is `true`, the second suite to start
+did not fail — it quietly attached to the *other* worktree's `wrangler dev`,
+testing that worktree's code against that worktree's database. The symptom was
+a full suite failing over a hundred assertions in specs the change never
+touched, with `connect ECONNREFUSED 127.0.0.1:8787` in the middle of it, which
+reads like broad breakage rather than like two containers sharing a port. This
+pull request forwards `PLAYWRIGHT_PORT` and `PLAYWRIGHT_WALKTHROUGH` into the
+container so the documented remedy works. **If a full run fails widely, check
+the port in the error against the one you set before reading the diff.** On a cold worktree, `wrangler dev`'s first boot inside
 the Playwright container can also exceed the config's 120s
 `webServer.timeout` even though it would have come up fine; if so, start
 `wrangler dev` detached, poll `/health` until it answers, then run
@@ -141,6 +154,11 @@ the app answering.
   by screen too (editor: `"Tallenna muutokset"`, intake review:
   `"Tallenna resepti"`) — grep existing specs for a button-name locator before
   assuming one carries over from another screen.
+- A recipe step's linked ingredient amounts sit in the markup with
+  `display: none` on them until they are tapped (issue #120), so they are in
+  `textContent` and therefore in a plain `toContainText`. Assert a step's
+  wording with `{ useInnerText: true }`, which is what a person actually sees;
+  `tests/intake.spec.ts`'s reordering test is the worked example.
 - Don't assert on a behaviour a feature doesn't actually own — an "etag
   changes on regeneration" test built on a content-based-etag assumption was
   testing content-hashing behaviour the etag never promised, and was reworked

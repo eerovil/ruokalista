@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { stubStructuring } from "./support/draft";
+import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
 import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -174,6 +174,61 @@ test.describe("signed in", () => {
     await page.goto("/recipes/1");
     await expect(page.locator(".lines li").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/05-recipe.png`, fullPage: true });
+  });
+
+  /**
+   * Issue #120's whole surface, in two pictures: the method as it reads by
+   * default, and the same method with two of its ingredients tapped open.
+   * Cooking for eight rather than four, so the revealed figures are visibly
+   * this meal's and not the page's.
+   */
+  test("ingredient amounts revealed in the method", async ({ page }) => {
+    await page.goto("/recipes/1?portions=8");
+    const kaali = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: "kaali" }) });
+    const vesi = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: "vesi" }) });
+
+    await expect(kaali.locator(".mention-amount")).toBeHidden();
+    await page.screenshot({
+      path: `${SHOTS}/38-step-mentions-closed.png`,
+      fullPage: true,
+    });
+
+    await kaali.locator("label").click();
+    await vesi.locator("label").click();
+    await expect(kaali.locator(".mention-amount")).toBeVisible();
+    await expect(vesi.locator(".mention-amount")).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/39-step-mentions-open.png`,
+      fullPage: true,
+    });
+  });
+
+  test("a duplicated ingredient reveals all its amounts", async ({ page }) => {
+    await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
+    await page.goto("/intake");
+    await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Tallenna resepti" }).click();
+    await expect(page).toHaveURL(/\/recipes\/\d+$/);
+    const recipe = page.url();
+
+    const oil = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: /^öljyssä$/ }) });
+    await oil.locator("label").click();
+    await expect(oil.locator(".mention-amount")).toBeVisible();
+    await expect(oil.locator(".mention-amount")).toHaveText("2 rkl / 1 dl");
+    await page.screenshot({
+      path: `${SHOTS}/40-step-mention-all-amounts.png`,
+      fullPage: true,
+    });
+
+    await page.goto(`${recipe}/delete`);
+    await page.getByRole("button", { name: "Poista lopullisesti" }).click();
   });
 
   test("a recipe with a picture, and the editor that put it there", async ({

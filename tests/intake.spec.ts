@@ -62,6 +62,25 @@ test("a draft that needs nothing saves in one tap", async ({ page }) => {
   expect(body.ingredients.map((i) => i.name)).toContain("hunaja");
 });
 
+test("the ingredients a step names arrive on the saved recipe", async ({
+  page,
+}) => {
+  await stubStructuring(page);
+  await pasteAndStructure(page);
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  // The draft pointed at its own ingredient lines by index; saving turned those
+  // into ingredient ids, including for the line whose ingredient the save had
+  // to create. Nothing about the amount travelled with them (issue #120).
+  const kaali = page
+    .locator(".steps .mention")
+    .filter({ has: page.locator(".mention-word", { hasText: "kaali" }) });
+  await expect(kaali.locator(".mention-amount")).toBeHidden();
+  await kaali.locator("label").click();
+  await expect(kaali.locator(".mention-amount")).toHaveText("½ (500 g)");
+});
+
 test("the review reads as the recipe it will become", async ({ page }) => {
   await stubStructuring(page);
   await pasteAndStructure(page);
@@ -328,9 +347,15 @@ test("steps can be reordered before saving", async ({ page }) => {
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
+  // `useInnerText`, because a step now carries each linked ingredient's amount
+  // in the markup with `display: none` on it until it is tapped (issue #120).
+  // Nobody reads it, nothing copies it and no screen reader announces it, but
+  // it is in `textContent` — so a step's wording is asserted as rendered.
   const steps = page.locator("ol li");
-  await expect(steps.nth(0)).toContainText("Lisää vesi");
-  await expect(steps.nth(1)).toContainText("Kuullota kaali");
+  await expect(steps.nth(0)).toContainText("Lisää vesi", { useInnerText: true });
+  await expect(steps.nth(1)).toContainText("Kuullota kaali", {
+    useInnerText: true,
+  });
 });
 
 test("the sample draft opens the review without calling anything", async ({
