@@ -13,6 +13,15 @@ import {
 } from "./batch-intake-screens.ts";
 import type { Env } from "./env.ts";
 import {
+  addMemberForm,
+  createHouseholdForm,
+  editMemberForm,
+  householdListScreen,
+  householdScreen,
+  removeMemberForm,
+  renameHouseholdForm,
+} from "./household-admin.ts";
+import {
   apiRename,
   ingredientsScreen,
   renameForm,
@@ -158,6 +167,16 @@ const router = new Router()
   .get("/intake/batch", requireAdminScreen(batchIntakeScreen))
   .post("/intake/batch/review", requireAdminScreen(reviewBatchScreen))
   .post("/intake/batch/import", requireAdminScreen(importBatchScreen))
+  .get("/admin/households", requireAdminScreen(householdListScreen))
+  .post("/admin/households", requireAdminScreen(createHouseholdForm))
+  .get("/admin/households/:id", requireAdminScreen(householdScreen))
+  .post("/admin/households/:id/name", requireAdminScreen(renameHouseholdForm))
+  .post("/admin/households/:id/members", requireAdminScreen(addMemberForm))
+  .post("/admin/households/:id/members/:memberId", requireAdminScreen(editMemberForm))
+  .post(
+    "/admin/households/:id/members/:memberId/delete",
+    requireAdminScreen(removeMemberForm),
+  )
   .get("/admin/recipe-images", requireAdminScreen(recipeImageAdminScreen))
   .get("/admin/recipe-images/confirm", requireAdminScreen(recipeImageConfirmScreen))
   .get("/admin/recipe-images/split.js", requireAdminScreen(recipeImageSplitter))

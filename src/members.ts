@@ -28,13 +28,26 @@ interface MemberRow {
 const MEMBER_COLUMNS =
   "id, household_id, display_name, email, is_admin" as const;
 
+/**
+ * A member removed from their household by the admin screen (#127) keeps their
+ * row, because four tables record them as having made something and the recipe
+ * screen prints their name. What they lose is entry — so every lookup that
+ * turns a request into a member asks this, and nothing here is a "just hide
+ * them from a list" filter.
+ *
+ * It has to be on the id lookup and not only on the Google one: a session
+ * cookie already in a browser names a member id, and would otherwise still
+ * open the household somebody was just removed from.
+ */
+const STILL_A_MEMBER = "removed_at IS NULL" as const;
+
 export async function findMemberById(
   db: D1Database,
   id: number,
 ): Promise<Member | null> {
   const row = await db
     .prepare(
-      `SELECT ${MEMBER_COLUMNS} FROM member WHERE id = ?`,
+      `SELECT ${MEMBER_COLUMNS} FROM member WHERE id = ? AND ${STILL_A_MEMBER}`,
     )
     .bind(id)
     .first<MemberRow>();
@@ -55,7 +68,8 @@ export async function findMemberByGoogleSub(
 ): Promise<Member | null> {
   const row = await db
     .prepare(
-      `SELECT ${MEMBER_COLUMNS} FROM member WHERE google_sub = ?`,
+      `SELECT ${MEMBER_COLUMNS} FROM member
+        WHERE google_sub = ? AND ${STILL_A_MEMBER}`,
     )
     .bind(googleSub)
     .first<MemberRow>();
@@ -72,7 +86,8 @@ export async function findMemberByGoogleSub(
 export async function allMembers(db: D1Database): Promise<Member[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${MEMBER_COLUMNS} FROM member ORDER BY id`,
+      `SELECT ${MEMBER_COLUMNS} FROM member
+        WHERE ${STILL_A_MEMBER} ORDER BY id`,
     )
     .all<MemberRow>();
 

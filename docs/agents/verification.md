@@ -51,6 +51,7 @@ Which spec covers what, roughly:
 | choosing recipes, the copied prompt, cutting a sheet in the browser | `recipe-image-admin.spec.ts` |
 | sign-in, sessions, the development shortcut | `auth.spec.ts` |
 | the admin gate, the admin screen | `admin.spec.ts` |
+| households and their members, admin-side | `household-admin.spec.ts` |
 | the shell, the tabs, navigation | `shell.spec.ts` |
 | escaping, ownership, refusals | `hardening.spec.ts` |
 | keeping the screen awake | `keep-awake.spec.ts`, `keep-awake-legacy.spec.ts` |

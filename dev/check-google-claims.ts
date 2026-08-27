@@ -59,6 +59,15 @@ test("refuses a token with no subject", () => {
   assert.equal(readIdentity(token, CLIENT_ID, NOW), null);
 });
 
+test("refuses a subject outside Google's own contract for one", () => {
+  // Not pedantry: this is what makes "accepted sub" a bounded set, which is
+  // what lets #127 park a removed member on a value none of them can equal.
+  // See `isGoogleSub` and `dev/check-google-sub.ts`.
+  for (const sub of ["x".repeat(256), "ääkkösiä", "—removed:2"]) {
+    assert.equal(readIdentity(idToken({ ...valid, sub }), CLIENT_ID, NOW), null);
+  }
+});
+
 test("refuses malformed tokens", () => {
   assert.equal(readIdentity("not-a-jwt", CLIENT_ID, NOW), null);
   assert.equal(readIdentity("a.b.c", CLIENT_ID, NOW), null);

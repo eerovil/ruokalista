@@ -28,6 +28,34 @@ export interface GoogleCredentials {
   clientSecret: string;
 }
 
+/**
+ * Everything Google promises about a `sub`, and nothing more.
+ *
+ * OpenID Connect's Google profile says the subject identifier is "always a
+ * case-sensitive ASCII string, never exceeding 255 ASCII characters in length"
+ * — https://developers.google.com/identity/openid-connect/openid-connect. That
+ * is the whole contract. Real subs happen to look like decimal numbers today,
+ * but Google does not promise that, so nothing may be built on it: #127's first
+ * answer reserved `removed:<id>` on exactly that belief, and `removed:2` is a
+ * legal account id under the contract above.
+ *
+ * So the contract is written down once, here, where a sub enters the app.
+ * `readIdentity` holds a token to it, and `src/households.ts` holds an
+ * operator's typing to the same one — which is what makes it possible to park a
+ * removed member's row on a value no accepted sub can ever equal.
+ */
+const GOOGLE_SUB_MAX_LENGTH = 255;
+
+export function isGoogleSub(value: string): boolean {
+  if (value === "" || value.length > GOOGLE_SUB_MAX_LENGTH) return false;
+
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) > 0x7f) return false;
+  }
+
+  return true;
+}
+
 /** Where to send the browser to start sign-in. */
 export function authorizeUrl(
   clientId: string,
@@ -96,7 +124,7 @@ export function readIdentity(
   if (typeof iss !== "string" || !ISSUERS.includes(iss)) return null;
   if (aud !== clientId) return null;
   if (typeof exp !== "number" || exp <= nowSeconds) return null;
-  if (typeof sub !== "string" || sub === "") return null;
+  if (typeof sub !== "string" || !isGoogleSub(sub)) return null;
 
   return {
     sub,

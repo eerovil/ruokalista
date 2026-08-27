@@ -91,7 +91,12 @@ export function requireAdminScreen(handler: MemberHandler): Handler {
   );
 }
 
-function adminNotFound(member: Member): Response {
+/**
+ * Exported because an admin screen asked for a household that is not there has
+ * to answer exactly the way the gate does — the same page, the same 404 — so an
+ * invented id and an ordinary member's probe are indistinguishable.
+ */
+export function adminNotFound(member: Member): Response {
   return page(
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>

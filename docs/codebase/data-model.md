@@ -160,6 +160,61 @@ foodstuff — and never by name.
 explicit column, not a role system — never inferred from email, display name,
 request origin, or anything the client says.
 
+## Leaving a household
+
+`migrations/0009_member_removed.sql`, added for #127, adds `member.removed_at`
+and `member.removed_google_sub`. Removing somebody from a household does not
+delete their `member` row, and this is the reason why: four columns record a
+member as having made something — `ingredient.created_by`,
+`recipe.created_by` and `.updated_by`, `planned_batch.created_by`,
+`pantry_entry.added_by` — and `src/recipes.ts` joins `member` on
+`recipe.created_by` to print who wrote a recipe. A DELETE would break a foreign
+key, or take the recipe off the list.
+
+So removal is a stamp. `removed_at` is set, and the person's real Google `sub`
+moves to `removed_google_sub` while the live `google_sub` is rewritten to a
+tombstone. Two things follow, and both are the point:
+
+- Every lookup that turns a request into a member — `findMemberById`,
+  `findMemberByGoogleSub`, `allMembers` in `src/members.ts` — filters
+  `removed_at IS NULL`, so neither a Google account nor a session cookie already
+  in a browser opens the household any more.
+- `google_sub` is UNIQUE across the whole table, so handing it back is what lets
+  the same person be added to another household. That is the second half of a
+  move, which #127 defines as a removal followed by an addition.
+
+Rewriting the live column rather than making the UNIQUE index conditional is
+deliberate: four tables reference `member`, and rebuilding it against the live
+database to relax one constraint is not worth it.
+
+What that tombstone may be matters more than it looks, and 0009 got it wrong.
+It parked a removed row on `removed:<id>`, reasoning that a Google `sub` is a
+decimal string and so could never look like that. Google promises no such
+thing: its contract is any case-sensitive ASCII string of up to 255 characters
+(https://developers.google.com/identity/openid-connect/openid-connect), so
+`removed:2` is a legal account id. Reserving that shape shut a real person
+holding it out of the admin screen, and left them a parked row to collide with
+on the UNIQUE column.
+
+`migrations/0010_removed_member_tombstone.sql`, proposed as the fix, moves the
+tombstone outside that contract instead of carving a corner out of it: U+2014 EM
+DASH followed by the member id, which is not ASCII and so is not a `sub` at all.
+It also rewrites any row 0009 already parked, matching on `removed_at IS NOT
+NULL` as well as the text so that a live member whose real sub reads
+`removed:<their id>` is left alone.
+
+The proposal writes the contract itself down once, in
+`src/google.ts::isGoogleSub`, and holds both ends to it — sign-in
+(`readIdentity`) and the admin form (`src/households.ts::memberFields`). That is
+what makes the guarantee a guarantee: because the tombstone is not ASCII, no
+value either end accepts can equal one, and the reasoning rests on Google's
+contract rather than on a habit of Google's. `dev/check-google-sub.ts` is the
+regression.
+
+This is a column addition, so the backup lockstep below does not move: backup
+captures `SELECT *` and restore builds its INSERT from the row's own keys, so
+both carry the new columns without a change.
+
 ## Backup and restore: the manifest lockstep rule
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot

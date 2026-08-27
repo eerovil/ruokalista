@@ -95,6 +95,75 @@ both sides.
 `MEMBER_COLUMNS` would silently omit `is_admin` and make every member look
 non-admin.
 
+### Managing households and members (#127, proposed)
+
+This pull request proposes the first admin tool that deliberately crosses a
+household boundary: `Householdit` on `/admin`, which lists every household in
+the database and opens one for editing — its name, its members, and adding,
+editing or removing a member.
+
+Until now membership was a hand-written INSERT against production, because the
+only way to learn somebody's Google `sub` is to read it off the sign-in wall.
+This proposes doing that job in the app, by the one member the app already
+distinguishes.
+
+The crossing is confined to `src/households.ts`, and that is the whole of the
+containment. Nothing in that module takes a viewer's `household_id`, nothing
+outside it reads another household, and every route that reaches it is wrapped
+in `requireAdminScreen`. The household-scoped query pattern everywhere else is
+unchanged — `tests/household-admin.spec.ts` ends by checking that member 1 still
+cannot see household 2's ingredient.
+
+Three things the proposal deliberately cannot do, all from #127:
+
+- **It cannot move admin around.** Granting admin stays `scripts/set-admin.sh`;
+  a screen that could make more admins is the role system #94 refused to build.
+  Leaving `is_admin` off the form is not enough for that, and this is the trap
+  the proposal was reviewed for. Sign-in matches a member on `google_sub` and
+  then reads `is_admin` off that same row, so repointing an admin's row at a
+  different Google account would hand that account admin, and deleting the row
+  would take admin away — neither of which is a form field. So
+  `src/households.ts::adminRowGuard` reads `is_admin` internally and refuses
+  both: on an admin's row, `google_sub` is not editable and the row is not
+  removable. Name and email stay editable, because neither decides who the row
+  is. `is_admin` never leaves that module, never reaches the markup and is never
+  a form field.
+- **There is no "move to another household".** A move is a removal and an
+  addition, which leaves two visible actions instead of one silent reparenting.
+- **There is no household delete.**
+
+Removing a member takes away the household, not the person's history. The
+proposal does not delete the `member` row: four columns record a member as
+having made something, and the recipe list joins `member` to print who wrote a
+recipe, so a DELETE would either break a foreign key or take the recipe off the
+screen. Instead `removeMember` stamps `removed_at` and hands the Google `sub`
+back, and `src/members.ts` stops turning either that account or an
+already-issued session cookie into a member. See
+[data-model](docs/codebase/data-model.md) for the columns and why the live
+`google_sub` is rewritten rather than the UNIQUE index relaxed.
+
+That rewrite is why a follow-up proposal also writes down what a Google `sub`
+may be. It adds `src/google.ts::isGoogleSub`, holding a sub to Google's
+documented contract — a case-sensitive ASCII string of at most 255 characters —
+and has `readIdentity` refuse a token whose subject is outside it, as does the
+admin form. Nothing narrower than that: subs look like decimal numbers today,
+but Google does not promise it, and the first version of the removal leaned on
+the habit by reserving `removed:<id>` for parked rows. `removed:2` is a legal
+account id, so that reservation locked a real person out of the screen. The
+proposal moves the tombstone outside the contract instead of inside it, so no
+accepted sub can equal one. See
+[data-model](docs/codebase/data-model.md).
+
+The first version of this proposal instead refused to remove anybody who had
+created a row. It reads as the safe choice and is not: nearly every real member
+has made something, so it blocked removal for exactly the people the tool
+manages — and with it the only move there is, since a move is a removal
+followed by an addition. That is the trap to remember if this ever gets
+rewritten.
+
+There is no separate "not yourself" rule either: the admin-row guard above
+already refuses every admin's row, and only an admin reaches these routes.
+
 `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` and any migration
 are full-tier files (see `docs/codebase/testing.md`) — no focused spec covers
 them, so a change here should run the whole browser suite, not just

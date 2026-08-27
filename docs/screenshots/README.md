@@ -50,4 +50,10 @@ Regenerate after a change that alters a screen:
 | `40-step-mention-all-amounts.png` | Proposed duplicated ingredient mention showing every distinct stated amount inline |
 | `40-shopping-pantry.png` | Proposed shopping list split in two: Ostettavat, then a Löytyy section keeping the cupboard's staples and their amounts |
 | `41-pantry.png` | Proposed cupboard page: only what the household keeps in, each with the way to say it ran out |
+| `42-admin-households.png` | Proposed household list, including the household this admin does not belong to |
+| `43-admin-household.png` | Proposed household detail: the name, the members, and one member row opened for editing |
+| `44-admin-member-refused.png` | Proposed refusal when an admin's Google sub is repointed — admin travels with the sub, so this stays an operator action |
+| `45-admin-household-after-removal.png` | Proposed household after an established member is removed — no refusal, and the household stands |
+| `46-recipes-after-removal.png` | Proposed recipe list after that removal: the recipes are still there and still credited to the person who wrote them |
+| `47-admin-member-sub-refused.png` | Proposed refusal of something that is not a Google identifier — the contract the removed-member tombstone is kept outside of |
 | `47-editor-remove-mentioned.png` | Proposed refusal when a removed ingredient is still named by a step, with the step quoted and the forced-removal escape hatch |
