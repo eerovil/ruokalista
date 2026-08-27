@@ -83,7 +83,9 @@ test("intake stays unavailable without the stream decoder", async ({ page }) => 
 test("intake stays unavailable without streamed responses", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "Response", {
-      value: undefined,
+      value: function ResponseWithoutBody() {
+        return { body: null };
+      },
       configurable: true,
     });
   });
