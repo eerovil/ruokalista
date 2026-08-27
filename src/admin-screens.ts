@@ -36,6 +36,17 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
           </a>
         </li>
         <li>
+          <a href="/admin/households">
+            <span class="recipes-text">
+              Householdit
+              <span class="meta">
+                Katso ja hallitse kaikkia talouksia ja niiden jäseniä. Täältä
+                lisätään uusi jäsen ilman käsin kirjoitettua SQL:ää.
+              </span>
+            </span>
+          </a>
+        </li>
+        <li>
           <a href="/intake/batch">
             <span class="recipes-text">
               Tuo AgentDeck-reseptejä

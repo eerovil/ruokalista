@@ -102,7 +102,7 @@ test("the week no longer carries an admin link of its own", async ({
   await expect(page.locator("main").getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
 });
 
-test("the panel lists both admin tools", async ({ context, page }) => {
+test("the panel lists every admin tool", async ({ context, page }) => {
   await context.addCookies([sessionCookie(3)]);
   await page.goto("/admin");
 
@@ -113,6 +113,9 @@ test("the panel lists both admin tools", async ({ context, page }) => {
   await expect(page.getByRole("link", { name: /Reseptikuvat/ })).toContainText(
     "hallitse niiden kuvia",
   );
+  await expect(
+    page.getByRole("link", { name: /Householdit/ }),
+  ).toHaveAttribute("href", "/admin/households");
   await expect(
     page.getByRole("link", { name: /Tuo AgentDeck-reseptejä/ }),
   ).toHaveAttribute("href", "/intake/batch");

@@ -615,6 +615,46 @@ test.describe("signed in as an admin", () => {
     await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
   });
 
+  test("every household, and one of them open", async ({ page }) => {
+    await page.goto("/admin/households");
+    await expect(page.getByRole("heading", { name: "Householdit" })).toBeVisible();
+    // Both seeded households, including the one this admin is not in — that
+    // crossing is the whole point of the screen.
+    await expect(page.getByRole("link", { name: /Naapuri/ })).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/42-admin-households.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("link", { name: /Koti/ }).click();
+    // A member row opened, because a list of closed rows says nothing about
+    // what the screen is for.
+    await page.locator("details.rename").first().locator("summary").click();
+    await expect(page.locator("#member-1-sub")).toHaveValue("dev-seed-koti");
+    await page.screenshot({
+      path: `${SHOTS}/43-admin-household.png`,
+      fullPage: true,
+    });
+  });
+
+  test("an admin's row refusing to be repointed", async ({ page }) => {
+    // The guard that keeps admin an operator action: sign-in matches on
+    // google_sub, so changing an admin's would hand admin to another Google
+    // account. Member 3 is the seed's admin.
+    await page.goto("/admin/households/1");
+    const row = page.locator("details.rename").filter({ hasText: "Ylläpitäjä" });
+    await row.locator("summary").click();
+    await page.locator("#member-3-sub").fill("jonkun-muun-google-tili");
+    await row.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page.locator(".refused")).toContainText(
+      "Google-tunnistettaan ei voi vaihtaa",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/44-admin-member-refused.png`,
+      fullPage: true,
+    });
+  });
+
   test("choosing which recipes get a picture", async ({ page }) => {
     // A household in the middle of things, which is the only state this screen
     // is interesting in: one recipe with no picture, one with a picture
@@ -800,3 +840,41 @@ async function putSheetOnInput(page: Page): Promise<void> {
     buffer: readFileSync(new URL("./fixtures/contact-sheet.png", import.meta.url)),
   });
 }
+
+/**
+ * Last in the file on purpose: it removes the member every describe above signs
+ * in as. What it is evidence of is the point of #127's removal — the household
+ * loses the person, and keeps everything the person made.
+ */
+test.describe("removing an established member", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(3)]);
+  });
+
+  test("the household loses them, the recipes keep their name", async ({
+    page,
+  }) => {
+    await page.goto("/admin/households/1");
+    const row = page.locator("details.rename").filter({ hasText: "Eero" });
+    await row.locator("summary").click();
+    await row.getByRole("button", { name: "Poista taloudesta" }).click();
+
+    // Removed, with no refusal — this is the case the first attempt blocked.
+    await expect(page.locator(".refused")).toHaveCount(0);
+    await expect(
+      page.locator("details.rename").filter({ hasText: "Eero" }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: `${SHOTS}/45-admin-household-after-removal.png`,
+      fullPage: true,
+    });
+
+    // And the recipes they wrote are still on the list, still theirs.
+    await page.goto("/recipes");
+    await expect(page.locator(".recipes").first()).toContainText("Eero");
+    await page.screenshot({
+      path: `${SHOTS}/46-recipes-after-removal.png`,
+      fullPage: true,
+    });
+  });
+});
