@@ -640,7 +640,9 @@ const MENTION_STYLE = html`<style>
   .reveal-all-hide { display: none; }
   .reveal-all:checked + .reveal-all-label .reveal-all-show { display: none; }
   .reveal-all:checked + .reveal-all-label .reveal-all-hide { display: inline; }
-  .reveal-all:focus-visible + .reveal-all-label {
+  /* Plain :focus is deliberate: older Safari predates :focus-visible, and a
+     keyboard user still needs to see where this off-screen checkbox is. */
+  .reveal-all:focus + .reveal-all-label {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .mention > label {

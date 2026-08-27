@@ -103,6 +103,10 @@ test("one keyboard toggle layers every amount over individual choices", async ({
   const revealAll = page.locator(".reveal-all");
   await revealAllByName.focus();
   await expect(revealAll).toBeFocused();
+  await expect(page.locator(".reveal-all-label")).toHaveCSS(
+    "outline-style",
+    "solid",
+  );
   await revealAll.press("Space");
   await expectAllMentionAmounts(page, true);
   await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
