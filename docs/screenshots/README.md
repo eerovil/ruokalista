@@ -23,7 +23,7 @@ Regenerate after a change that alters a screen:
 | `08-correct.png` | Check and correct, with the new ingredient marked |
 | `09-gate-refused.png` | The approval gate refusing a save |
 | `10-recipes-search.png` | Search results |
-| `11-editor.png` | The recipe editor, with source text read-only below |
+| `11-editor.png` | The recipe editor: proposed compact ingredient rows and the always-visible `+ Lisää aines` |
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
 | `14-scaled.png` | The same lasagne planned for 8, amounts rounded for a kitchen |
@@ -50,3 +50,4 @@ Regenerate after a change that alters a screen:
 | `40-step-mention-all-amounts.png` | Proposed duplicated ingredient mention showing every distinct stated amount inline |
 | `40-shopping-pantry.png` | Proposed shopping list split in two: Ostettavat, then a Löytyy section keeping the cupboard's staples and their amounts |
 | `41-pantry.png` | Proposed cupboard page: only what the household keeps in, each with the way to say it ran out |
+| `47-editor-remove-mentioned.png` | Proposed refusal when a removed ingredient is still named by a step, with the step quoted and the forced-removal escape hatch |

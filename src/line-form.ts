@@ -67,6 +67,23 @@ export interface LineRowOptions {
   sections?: boolean;
   /** Show cooking phase for content belonging to a multipart dish itself. */
   phases?: boolean;
+  /**
+   * The recipe editor's row (issue #128): the ingredient, the amount's number
+   * and the remove box on the row itself, and everything else — the unit
+   * included — one tap down.
+   *
+   * Off by default, so the intake correction screen keeps the row it has. The
+   * two screens are asking different questions: intake is checking a whole
+   * import line by line against the text it came from, and the editor is
+   * changing one thing about a recipe that is already right.
+   */
+  compact?: boolean;
+  /**
+   * Put the cursor on this row's ingredient picker. Used after `+ Lisää aines`,
+   * which re-renders the whole screen, so that the browser scrolls to the new
+   * row instead of dropping the member back at the top of a long form.
+   */
+  autofocusRow?: number;
 }
 
 /**
@@ -78,15 +95,25 @@ export interface LineRowOptions {
  * They are revealed rather than removed, and revealed *by default* whenever any
  * of them already carries a value, so a recipe that genuinely uses one is never
  * quietly hiding it — including on a re-render after a refusal.
+ *
+ * The unit is deliberately not one of them even on a compact row, where it does
+ * sit behind the disclosure: almost every line has a unit, so counting it would
+ * open every row and there would be nothing compact left.
  */
-function hasUncommonValues(values: LineFormValues, index: number): boolean {
+function hasUncommonValues(
+  values: LineFormValues,
+  index: number,
+  compact: boolean,
+): boolean {
   return (
     values.quantityMax.trim() !== "" ||
     values.altQuantity.trim() !== "" ||
     values.altUnit.trim() !== "" ||
     values.section.trim() !== "" ||
     values.phase.trim() !== "" ||
-    values.remove ||
+    // A compact row keeps its remove box in the open, so a ticked one is not a
+    // reason to unfold anything.
+    (!compact && values.remove) ||
     // A position that has been moved off its natural place is a decision
     // somebody made, so it shows.
     (values.position.trim() !== "" &&
@@ -107,54 +134,77 @@ export function lineRow(
   const needsAnswer =
     values.ingredientChoice === "" && proposedName !== "";
   const isNew = needsAnswer || values.ingredientChoice === "new";
-  const expanded = hasUncommonValues(values, index);
+  const compact = options.compact === true;
+  const expanded = hasUncommonValues(values, index, compact);
 
-  return html`<li class="${isNew ? "line is-new" : "line"}">
+  const picker = html`<select
+    name="line.${index}.ingredient"
+    aria-label="Aines"
+    ${options.autofocusRow === index ? "autofocus" : ""}
+  >
+    <option value="" ${values.ingredientChoice === "" ? "selected" : ""}>
+      ${needsAnswer ? "— vastaa tähän —" : "— valitse aines —"}
+    </option>
+    <option value="new" ${values.ingredientChoice === "new" ? "selected" : ""}>
+      ${proposedName === ""
+        ? "Luo uusi aines"
+        : `Hyväksy uutena: ${proposedName}`}
+    </option>
+    ${ingredients.map(
+      (ingredient) => html`<option
+        value="${ingredient.id}"
+        ${values.ingredientChoice === String(ingredient.id) ? "selected" : ""}
+      >
+        ${ingredient.name}
+      </option>`,
+    )}
+  </select>`;
+
+  const quantityBox = html`<input
+    name="line.${index}.quantity"
+    inputmode="decimal"
+    value="${values.quantity}"
+    aria-label="Määrä"
+    placeholder="Määrä"
+    class="qty"
+  />`;
+
+  const removeBox = html`<label class="remove">
+    <input
+      type="checkbox"
+      name="line.${index}.remove"
+      ${values.remove ? "checked" : ""}
+    />
+    Poista
+  </label>`;
+
+  return html`<li class="${lineClass(isNew, compact)}">
     ${isNew
       ? html`<span class="badge is-decision"
           >${needsAnswer ? "Vastaa: uusi aines?" : "Uusi aines"}</span
         >`
       : ""}
 
-    <!-- The common path: how much, of what. Everything else is one tap down. -->
-    <div class="amounts">
-      <input
-        name="line.${index}.quantity"
-        inputmode="decimal"
-        value="${values.quantity}"
-        aria-label="Määrä"
-        placeholder="Määrä"
-        class="qty"
-      />
-      <input
-        name="line.${index}.unit"
-        value="${values.unit}"
-        aria-label="Yksikkö"
-        placeholder="Yksikkö"
-        class="unit"
-      />
-    </div>
+    ${compact
+      ? // Issue #128: which ingredient, how much of it, and away with it. Those
+        // are the three things somebody opens a saved recipe to change, so they
+        // are the whole row and the unit goes down with the rest.
+        html`<div class="line-main">
+          ${picker} ${quantityBox} ${removeBox}
+        </div>`
+      : // The common path: how much, of what. Everything else is one tap down.
+        html`<div class="amounts">
+            ${quantityBox}
+            <input
+              name="line.${index}.unit"
+              value="${values.unit}"
+              aria-label="Yksikkö"
+              placeholder="Yksikkö"
+              class="unit"
+            />
+          </div>
 
-    <select name="line.${index}.ingredient" aria-label="Aines">
-      <option value="" ${values.ingredientChoice === "" ? "selected" : ""}>
-        ${needsAnswer ? "— vastaa tähän —" : "— valitse aines —"}
-      </option>
-      <option value="new" ${values.ingredientChoice === "new" ? "selected" : ""}>
-        ${proposedName === ""
-          ? "Luo uusi aines"
-          : `Hyväksy uutena: ${proposedName}`}
-      </option>
-      ${ingredients.map(
-        (ingredient) => html`<option
-          value="${ingredient.id}"
-          ${values.ingredientChoice === String(ingredient.id)
-            ? "selected"
-            : ""}
-        >
-          ${ingredient.name}
-        </option>`,
-      )}
-    </select>
+          ${picker}`}
 
     <!-- The proposed name only earns its place while the line is asking to
          create one. Otherwise it rides along below with the rest. -->
@@ -171,7 +221,7 @@ export function lineRow(
       ? ""
       : html`<input type="hidden" name="line.${index}.note" value="${values.note}" />`}
 
-    ${values.sourceLine === ""
+    ${values.sourceLine === "" || compact
       ? ""
       : html`<span class="source">${values.sourceLine}</span>`}
 
@@ -179,9 +229,12 @@ export function lineRow(
          shows no placeholder, so grouping these behind a disclosure without
          labels would leave a column of naked numbers. -->
     <details class="line-more" ${expanded ? "open" : ""}>
-      <summary>Lisätiedot</summary>
+      <summary>${compact ? "Lisää asetuksia" : "Lisätiedot"}</summary>
 
       <div class="more-fields">
+        ${compact
+          ? field(`line.${index}.unit`, "Yksikkö", values.unit)
+          : ""}
         ${options.reorderable
           ? field(
               `line.${index}.position`,
@@ -223,16 +276,24 @@ export function lineRow(
         ${field(`line.${index}.source`, "Lähderivi", values.sourceLine)}
       </div>
 
-      <label class="remove">
-        <input
-          type="checkbox"
-          name="line.${index}.remove"
-          ${values.remove ? "checked" : ""}
-        />
-        Poista rivi
-      </label>
+      ${compact
+        ? ""
+        : html`<label class="remove">
+            <input
+              type="checkbox"
+              name="line.${index}.remove"
+              ${values.remove ? "checked" : ""}
+            />
+            Poista rivi
+          </label>`}
     </details>
   </li>`;
+}
+
+function lineClass(isNew: boolean, compact: boolean): string {
+  return ["line", isNew ? "is-new" : "", compact ? "is-compact" : ""]
+    .filter((name) => name !== "")
+    .join(" ");
 }
 
 /** One labelled field. The name doubles as the id, which is already unique. */
@@ -264,6 +325,12 @@ function field(
  * Which rows are spare is not remembered between requests — it is read back off
  * the values, as "everything after the last row anybody put anything in". A
  * spare somebody filled in and had refused is therefore a real row again.
+ *
+ * A compact list (the recipe editor, issue #128) has no spares at all. Every row
+ * on screen is a row somebody meant, and the list ends in a plain
+ * `+ Lisää aines` button that asks the server for exactly one more. That button
+ * submits rather than scripting the row in, so it works on the same browsers
+ * everything else here does.
  */
 export function lineRows(
   rows: Array<DraftLine | LineFormValues>,
@@ -273,6 +340,15 @@ export function lineRows(
   const values = rows.map((row, index) =>
     isLineFormValues(row) ? row : lineValuesFromDraft(row, index),
   );
+
+  if (options.compact === true) {
+    return html`<ol class="edit-lines">
+        ${values.map((row, index) => lineRow(row, index, ingredients, options))}
+      </ol>
+      <p class="add-line">
+        <button type="submit" name="addLine" value="1">+ Lisää aines</button>
+      </p>`;
+  }
 
   let realCount = 0;
   for (let i = 0; i < values.length; i++) {

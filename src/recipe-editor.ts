@@ -4,21 +4,22 @@ import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
-  emptyLine,
   FormRefused,
   lineCountForRendering,
   lineRows,
   lineValuesFromForm,
+  MAX_LINES,
   phaseSelect,
   readLineCount,
   readLines,
   readSteps,
   readWhole,
-  SPARE_LINES,
   stepValuesForRendering,
+  stepValuesFromForm,
   type LineFormValues,
   type StepFormValues,
 } from "./line-form.ts";
+import { removalConflicts, type RemovalConflict } from "./line-removal.ts";
 import type { Member } from "./members.ts";
 import {
   deleteImagesForRecipeTree,
@@ -47,6 +48,24 @@ interface EditorAttempt {
   form: FormData;
   lineCount: number;
   revision: number;
+  /** Put the cursor here, so `+ Lisää aines` lands on the row it just made. */
+  autofocusRow?: number;
+  /** Removals the steps still argue with (issue #128). */
+  conflicts?: RemovalConflict[];
+}
+
+/**
+ * A removal refused because a step still mentions the ingredient. It carries
+ * what to show, because the answer is not a sentence — it is the sentences.
+ */
+class MentionedRemoval extends FormRefused {
+  constructor(readonly conflicts: RemovalConflict[]) {
+    super(
+      conflicts.length === 1
+        ? `${conflicts[0]?.name} esiintyy vielä valmistusohjeessa, joten sitä ei poistettu.`
+        : "Osa poistettavista aineksista esiintyy vielä valmistusohjeessa, joten niitä ei poistettu.",
+    );
+  }
 }
 
 /**
@@ -156,9 +175,17 @@ export async function saveEditForm(
 
   const form = await request.formData();
 
+  // `+ Lisää aines` is a submit, not a script, so it arrives here. It is not a
+  // save: nothing is validated, nothing is written, and the form comes back with
+  // one more row and everything typed so far still in it.
+  if (form.get("addLine") !== null) {
+    return addedLine(env, member, recipe, form);
+  }
+
   try {
     const expectedRevision = readRevision(form.get("revision"));
     const lineCount = readLineCount(form.get("lineCount"));
+    await guardRemovals(env, member, form, lineCount);
 
     await replaceRecipe(env.DB, member, recipe.id, expectedRevision, {
       title: String(form.get("title") ?? ""),
@@ -192,6 +219,8 @@ export async function saveEditForm(
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
+          conflicts:
+            error instanceof MentionedRemoval ? error.conflicts : undefined,
         })}`,
       "recipes",
       member,
@@ -203,6 +232,72 @@ export async function saveEditForm(
     status: 303,
     headers: { Location: `/recipes/${recipe.id}` },
   });
+}
+
+/**
+ * One more ingredient row, and the cursor in it.
+ *
+ * The form is re-rendered from what was submitted rather than from the stored
+ * recipe, so a member who has already retyped three amounts does not lose them
+ * for wanting a fourth line.
+ */
+async function addedLine(
+  env: RouteContext["env"],
+  member: Member,
+  recipe: Recipe,
+  form: FormData,
+): Promise<Response> {
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const lineCount = lineCountForRendering(form);
+  const revision = revisionForRendering(form, recipe.revision);
+
+  if (lineCount >= MAX_LINES) {
+    return page(
+      `Muokkaa: ${recipe.title}`,
+      html`<p class="refused">Ainesrivejä voi olla enintään ${MAX_LINES}.</p>
+        ${editorForm(recipe, ingredients, { form, lineCount, revision })}`,
+      "recipes",
+      member,
+      400,
+    );
+  }
+
+  return page(
+    `Muokkaa: ${recipe.title}`,
+    editorForm(recipe, ingredients, {
+      form,
+      lineCount: lineCount + 1,
+      revision,
+      autofocusRow: lineCount,
+    }),
+    "recipes",
+    member,
+  );
+}
+
+/**
+ * Refuse a removal the preparation steps still contradict, unless the member
+ * has deliberately said `Poista silti`.
+ *
+ * The ingredient list is only read when something is actually being removed, so
+ * an ordinary save still costs one query fewer.
+ */
+async function guardRemovals(
+  env: RouteContext["env"],
+  member: Member,
+  form: FormData,
+  lineCount: number,
+): Promise<void> {
+  if (form.get("forceRemove") !== null) return;
+
+  const rows = Array.from({ length: lineCount }, (_, index) =>
+    lineValuesFromForm(form, index),
+  );
+  if (!rows.some((row) => row.remove)) return;
+
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const conflicts = removalConflicts(rows, stepValuesFromForm(form), ingredients);
+  if (conflicts.length > 0) throw new MentionedRemoval(conflicts);
 }
 
 /**
@@ -337,8 +432,9 @@ function editorForm(
     ? Array.from({ length: attempted.lineCount }, (_, index) =>
         lineValuesFromForm(attempted.form, index),
       )
-    : [
-        ...recipe.lines.map((line) => ({
+    : // No blank spares: `+ Lisää aines` at the end of the list asks for one
+      // row when one is wanted (issue #128).
+      recipe.lines.map((line) => ({
           quantity: line.quantity,
           quantityMax: line.quantityMax,
           unit: line.unit,
@@ -353,9 +449,7 @@ function editorForm(
           phase: line.phase,
           // A note is about an import, not about a saved recipe.
           note: null,
-        } satisfies DraftLine)),
-        ...Array.from({ length: SPARE_LINES }, emptyLine),
-      ];
+        } satisfies DraftLine));
 
   // A saved mention names an ingredient, but the form talks in row indexes.
   // Any row carrying that ingredient is enough: the screen reveals every
@@ -452,6 +546,20 @@ function editorForm(
     ${raw(`<script>${SHRINK_ISLAND}</script>`)}
 
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
+      <!-- The browser submits a form through its *first* submit button when
+           somebody presses Enter in a text field, and the first one on this
+           form is now the add-an-ingredient one. This copy of the save button
+           is here so
+           that Enter still saves. Hidden from the accessibility tree and out of
+           the tab order, because it is the same button as the one at the end. -->
+      <button
+        type="submit"
+        class="default-submit"
+        tabindex="-1"
+        aria-hidden="true"
+      >
+        Tallenna muutokset
+      </button>
       <input type="hidden" name="lineCount" value="${rows.length}" />
       <input type="hidden" name="revision" value="${revision}" />
 
@@ -469,9 +577,14 @@ function editorForm(
 
       <h2>Ainekset</h2>
       ${lineRows(rows, ingredients, {
+        compact: true,
         reorderable: true,
         phases: recipe.parts.length > 0,
+        ...(attempted?.autofocusRow === undefined
+          ? {}
+          : { autofocusRow: attempted.autofocusRow }),
       })}
+      ${mentionedRemovals(attempted?.conflicts ?? [])}
 
       <h2>Valmistus</h2>
       <ol class="edit-steps">
@@ -507,6 +620,51 @@ function editorForm(
     <p class="recipe-delete">
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
     </p>`;
+}
+
+/**
+ * Why a removal did not happen, and where to go and fix it.
+ *
+ * It sits between the ingredients and the steps because that is the direction
+ * it is pointing: the ingredient row is right, the sentence below is what has to
+ * change. The forcing button is inside this block rather than beside the save
+ * button, so it can never be the one somebody presses by habit.
+ */
+function mentionedRemovals(conflicts: RemovalConflict[]): Raw {
+  if (conflicts.length === 0) return raw("");
+
+  return html`<section class="line-conflicts">
+    <h3>Aines on vielä valmistusohjeessa</h3>
+    <p>
+      Korjaa tai poista alla olevat kohdat valmistusohjeesta ja tallenna
+      uudelleen — sen jälkeen poisto onnistuu tavalliseen tapaan.
+    </p>
+    <ul class="plain">
+      ${conflicts.map(
+        (conflict) => html`<li>
+          <strong>${conflict.name}</strong>
+          <ol class="mention-steps">
+            ${conflict.steps.map(
+              (step) => html`<li>
+                <span class="step-number">Vaihe ${step.number}</span>
+                <span class="step-text">${step.text}</span>
+                <span class="empty">Linkitetty: ${step.mentions.join(", ")}</span>
+              </li>`,
+            )}
+          </ol>
+        </li>`,
+      )}
+    </ul>
+    <p class="force-remove">
+      <button type="submit" name="forceRemove" value="1" class="danger">
+        Poista silti
+      </button>
+      <span class="empty">
+        Viimeinen keino: valmistusohjeeseen jää tällöin aines, jota reseptissä ei
+        enää ole.
+      </span>
+    </p>
+  </section>`;
 }
 
 /**
