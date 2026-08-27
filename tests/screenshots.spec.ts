@@ -227,6 +227,59 @@ test.describe("signed in", () => {
     await page.request.delete("/api/recipes/1/image");
   });
 
+  /**
+   * Issue #116, on a phone: the square, part-transparent picture the generator
+   * actually produces, shown on the recipe screen. The shot is the evidence
+   * that the dish is whole rather than cropped into a strip, that the
+   * transparent corners sit on the ordinary surface colour, and that the title
+   * and ingredients still start right underneath it.
+   */
+  test("a square generated picture on the recipe screen", async ({ page }) => {
+    const square = await page.evaluate(() => {
+      const el = document.createElement("canvas");
+      el.width = 512;
+      el.height = 512;
+      const ctx = el.getContext("2d");
+      if (ctx === null) return "";
+      // Transparent everywhere the dish is not — exactly what a cut cell is.
+      ctx.fillStyle = "#c8703c";
+      ctx.beginPath();
+      ctx.arc(256, 256, 240, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f2e2cf";
+      ctx.beginPath();
+      ctx.arc(256, 256, 180, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#7d3f1d";
+      for (let at = 0; at < 6; at += 1) {
+        const angle = (at / 6) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(256 + Math.cos(angle) * 110, 256 + Math.sin(angle) * 110, 34, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return el.toDataURL("image/png").split(",")[1] ?? "";
+    });
+
+    await page.request.put("/api/recipes/1/image", {
+      headers: { "content-type": "image/png" },
+      data: Buffer.from(square, "base64"),
+    });
+
+    await page.goto("/recipes/1");
+    const hero = page.locator(".recipe-image.is-hero img");
+    await expect(hero).toBeVisible();
+    // The intended state, asserted before the shutter: the whole square is
+    // drawn inside the band rather than cropped to fill it.
+    await expect(hero).toHaveCSS("object-fit", "contain");
+    await expect(hero).toHaveJSProperty("naturalWidth", 512);
+    await page.screenshot({
+      path: `${SHOTS}/35-recipe-image-square.png`,
+      fullPage: true,
+    });
+
+    await page.request.delete("/api/recipes/1/image");
+  });
+
   test("older iPad keep-awake confirmation", async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "wakeLock", {

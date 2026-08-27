@@ -432,8 +432,12 @@ export interface Pictured {
  *
  * Two sizes, because a list row and a recipe screen want very different
  * pictures out of the same object: `hero` is the band above a title, `thumb`
- * is the square that sits at the start of a row. Both crop rather than
- * squash — a recipe photograph is not a shape we control.
+ * is the square that sits at the start of a row. They differ in what they do
+ * with a picture that is not the band's shape. A `thumb` crops to fill its
+ * square — a row of them has to line up, and a squashed dish is worse than a
+ * cropped one. A `hero` is shown whole inside its band, because the screen is
+ * about that one dish and the generator already framed it (issue #116); the
+ * two carry different classes so a change to one cannot reach the other.
  *
  * Read-only on purpose. Uploading happens in the editor and nowhere else, so
  * no screen that calls this offers a control.
@@ -442,7 +446,8 @@ export function recipeImage(
   recipe: Pictured,
   size: "hero" | "thumb" = "hero",
 ): Raw {
-  const shape = size === "thumb" ? "recipe-image is-thumb" : "recipe-image";
+  const shape =
+    size === "thumb" ? "recipe-image is-thumb" : "recipe-image is-hero";
   return recipe.imageKey === null
     ? html`<div class="${shape} is-empty" aria-hidden="true"></div>`
     : html`<div class="${shape}">

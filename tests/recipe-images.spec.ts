@@ -128,6 +128,62 @@ test.describe("the recipe screen", () => {
     await expect(page.locator("input[type=file]")).toHaveCount(0);
   });
 
+  /**
+   * Issue #116: the hero used to be an 11rem strip filled by `object-fit:
+   * cover`, which threw most of a square generated picture away. This asserts
+   * the geometry rather than the CSS: scale the picture's own dimensions into
+   * the band the way `contain` does, and every pixel of it has to fit.
+   */
+  test("the whole picture fits inside the hero, uncropped", async ({ page }) => {
+    await page.request.put(IMAGE_URL, {
+      headers: { "content-type": "image/png" },
+      data: png(512, 512, [200, 110, 60]),
+    });
+
+    await page.goto(`/recipes/${RECIPE}`);
+    const hero = page.locator(".recipe-image.is-hero");
+    await expect(hero).toBeVisible();
+    const shown = hero.locator("img");
+    await expect(shown).toBeVisible();
+
+    const band = await hero.boundingBox();
+    const natural = await shown.evaluate((img) => ({
+      width: (img as HTMLImageElement).naturalWidth,
+      height: (img as HTMLImageElement).naturalHeight,
+    }));
+    expect(natural.width).toBe(512);
+
+    // Taller than the old strip, and still not the whole phone.
+    const viewport = page.viewportSize();
+    expect(band?.height ?? 0).toBeGreaterThan(176);
+    expect(band?.height ?? 0).toBeLessThan((viewport?.height ?? 0) * 0.75);
+    // And no wider than the page it sits on.
+    expect(band?.width ?? 0).toBeLessThanOrEqual(viewport?.width ?? 0);
+
+    const scale = Math.min(
+      (band?.width ?? 0) / natural.width,
+      (band?.height ?? 0) / natural.height,
+    );
+    expect(natural.width * scale).toBeLessThanOrEqual((band?.width ?? 0) + 1);
+    expect(natural.height * scale).toBeLessThanOrEqual((band?.height ?? 0) + 1);
+
+    // The picture really is drawn whole rather than cropped to fill.
+    await expect(shown).toHaveCSS("object-fit", "contain");
+
+    // The title still follows immediately underneath.
+    const title = await page.locator("h1").boundingBox();
+    expect(title?.y ?? 0).toBeGreaterThan((band?.y ?? 0) + (band?.height ?? 0) - 1);
+
+    // The compact rows are a different case and still crop.
+    await page.goto("/recipes");
+    const thumb = page.locator(".recipes .recipe-image.is-thumb img").first();
+    await expect(thumb).toBeVisible();
+    await expect(thumb).toHaveCSS("object-fit", "cover");
+    await expect(page.locator(".recipes .recipe-image.is-hero")).toHaveCount(0);
+
+    await page.request.delete(IMAGE_URL);
+  });
+
   test("no screen but the editor offers an upload", async ({ page }) => {
     for (const url of ["/recipes", `/recipes/${RECIPE}`, "/?week=2026-10-05"]) {
       await page.goto(url);
