@@ -106,27 +106,13 @@ refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trail
 every recipe; `lineRows` decides which rows are spare by reading the values, as
 "everything after the last row anybody put anything in".
 
-Intake has two paths on purpose. Without JavaScript the form posts to `/intake`
-and the answer arrives as one whole page. With it, the island in
-`src/intake-screens.ts` streams from `/api/intake/structure` so bytes never stop
+Intake requires JavaScript. This pull request proposes removing the plain
+`POST /intake` fallback: the form has no server action and its submit button is
+disabled until the island in `src/intake-screens.ts` finds the browser features
+it needs. The island streams from `/api/intake/structure` so bytes never stop
 flowing, then hands the finished draft to `/intake/correct` — which keeps the
 correction screen server-rendered rather than built in the browser. The camera
-route needs the island either way: downscaling a photograph is a canvas job.
-
-**Both paths call the model the same way.** This pull request proposes that the
-plain form post stream too and collect the result server-side
-(`structureDraftWith` in `src/intake.ts`), rather than asking for a whole
-message at once. It has to: the Anthropic SDK refuses a non-streaming request
-whose `max_tokens` implies more than ten minutes of work — about 21,300 tokens
-— and `MAX_TOKENS` is 128000, so `messages.create` threw before anything left
-the Worker and the no-JavaScript import failed every time (issue #152). Raising
-`MAX_TOKENS` (#149, #151) is what walked into that ceiling. With one request
-shape there is one limit rather than two that have to be held apart by hand;
-`dev/check-intake-streaming.ts` runs the pasted path against a stand-in client
-and fails if the non-streaming call comes back. What the plain path still does
-not get is Cloudflare's proxy timeout being held off — nothing flows to the
-browser until the draft is complete — which is the older reason the island
-exists.
+route also needs the island because downscaling a photograph is a canvas job.
 
 Intake's progress is counted, not dumped: the island reads the streaming JSON
 and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note

@@ -18,6 +18,29 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
+test("intake requires JavaScript instead of posting a plain fallback", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  await context.addCookies([sessionCookie(1)]);
+  const page = await context.newPage();
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.locator("#intake")).not.toHaveAttribute("action", /.+/);
+
+  const response = await context.request.post("/intake", {
+    form: { sourceText: "Uunikaali" },
+  });
+  expect(response.status()).toBe(405);
+
+  await context.close();
+});
+
 test("pasting text streams a draft and opens the correction screen", async ({
   page,
 }) => {

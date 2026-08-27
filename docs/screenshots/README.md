@@ -65,5 +65,4 @@ Regenerate after a change that alters a screen:
 | `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
 | `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
 | `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |
-| `57-intake-no-js-refused.png` | The bug in #152 as a browser without JavaScript met it: the SDK's English sentence about streaming, in a Finnish product |
-| `58-intake-no-js-review.png` | Proposed same import going through: a real model call over the plain form post, landing on the review screen |
+| `57-intake-requires-javascript.png` | Proposed intake without JavaScript: the requirement is stated in Finnish and structuring stays unavailable |

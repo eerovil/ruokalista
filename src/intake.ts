@@ -27,14 +27,8 @@ const MODEL = "claude-sonnet-5";
  */
 const EFFORT = "medium" as const;
 
-/**
- * The ceiling on a draft's output tokens, shared by both intake paths.
- *
- * It is far above what the SDK allows a non-streaming call to ask for — roughly
- * 21,300 tokens, past which `messages.create` throws rather than sending
- * anything — so every model call here streams. See `structureDraftWith`.
- */
-export const MAX_TOKENS = 128000;
+/** The ceiling on the streamed model call's output tokens. */
+const MAX_TOKENS = 128000;
 
 export interface DraftLine {
   quantity: number | null;
@@ -304,96 +298,6 @@ function userContent(source: IntakeSource) {
 function keptSourceText(source: IntakeSource, transcribed: unknown): string {
   if (source.route === "pasted") return source.text;
   return typeof transcribed === "string" ? transcribed : "";
-}
-
-/**
- * What `structureDraft` needs of the SDK: one streamed model call, awaited to
- * completion. Narrower than `Anthropic` so a check can hand in a stand-in and
- * exercise the whole path without spending anything on the key.
- */
-export interface DraftModelClient {
-  messages: {
-    stream(body: ModelRequest): { finalMessage(): Promise<ModelResponse> };
-  };
-}
-
-type ModelRequest = ReturnType<typeof requestFor>;
-
-interface ModelResponse {
-  content: Array<{ type: string; text?: string }>;
-  stop_reason: string | null;
-  usage: unknown;
-  model: string;
-}
-
-/**
- * Run the model over source text and return a draft. Nothing is written to D1
- * here — a failed import leaves no trace, which is why there is no draft table.
- */
-export async function structureDraft(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  return structureDraftWith(anthropic(env), source, ingredients);
-}
-
-/**
- * The same call against a given client. Both intake paths stream, and this one
- * collects the stream server-side rather than sending it on: the SDK refuses a
- * non-streaming request whose `max_tokens` implies more than ten minutes of
- * work, and MAX_TOKENS is far above that ceiling. `messages.create` therefore
- * threw before anything left the Worker, which broke the plain form post — the
- * path a browser without JavaScript takes (issue #152). Streaming here keeps
- * one request shape and one limit for both paths instead of two that have to
- * be held apart by hand.
- */
-export async function structureDraftWith(
-  client: DraftModelClient,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  let response: ModelResponse;
-  try {
-    response = await client.messages
-      .stream({ ...requestFor(source, ingredients) })
-      .finalMessage();
-  } catch (cause) {
-    throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
-  }
-
-  logImportUsage(recipeTitle(response.content), response.usage);
-
-  if (response.stop_reason === "refusal") {
-    throw new Error("The model declined to structure this text.");
-  }
-  if (response.stop_reason === "max_tokens") {
-    throw new RetryableStructuringError("The draft was cut off.");
-  }
-
-  const text = response.content
-    .filter((block) => block.type === "text")
-    .map((block) => (block as { text: string }).text)
-    .join("");
-
-  // Structured outputs constrain the shape, so this should not fail — but the
-  // draft is a human's afternoon either way, so a bad one is retried rather
-  // than shown.
-  return draftFromJson(text, source, response.model);
-}
-
-/** Runs the model, retrying a retryable failure once before anyone sees it. */
-export async function structureDraftWithRetry(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  try {
-    return await structureDraft(env, source, ingredients);
-  } catch (error) {
-    if (!(error instanceof RetryableStructuringError)) throw error;
-    return structureDraft(env, source, ingredients);
-  }
 }
 
 /**
