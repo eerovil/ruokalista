@@ -112,8 +112,6 @@ export const DRAFT_SCHEMA = {
               { type: "null" },
             ],
           },
-          // Issue #120: which words in `text` name which of this draft's own
-          // ingredient lines. A pointer and the wording, never an amount.
           ingredient_refs: {
             type: "array",
             maxItems: MAX_REFS_PER_STEP,
@@ -176,11 +174,6 @@ export const DRAFT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/**
- * Extra standing rules for a photographed page. There is no given text, so
- * source_text becomes the model's own transcription — and that transcription is
- * what gets kept forever as the record of what arrived.
- */
 const PHOTOGRAPHED_RULES = `
 Kuvatun sivun lisäsäännöt:
 
@@ -197,7 +190,6 @@ Kuvatun sivun lisäsäännöt:
   sijaan että täydentäisit sen arvauksella.
 `;
 
-/** The standing rules, from docs/spec.md's intake flow. */
 function systemPrompt(
   ingredients: IngredientSummary[],
   route: IntakeSource["route"],
@@ -264,7 +256,6 @@ Talouden hyväksytyt ainekset (id, nimi):
 ${list || "(ei vielä yhtään)"}`;
 }
 
-/** What the model is handed: a block of text, or a photograph of a page. */
 function userContent(source: IntakeSource) {
   if (source.route === "pasted") {
     return source.text;
@@ -283,20 +274,11 @@ function userContent(source: IntakeSource) {
   ];
 }
 
-/**
- * The text a draft's source_text should hold: for a paste, exactly what
- * arrived; for a photograph, the model's transcription, since nothing else
- * records what was on the page.
- */
 function keptSourceText(source: IntakeSource, transcribed: unknown): string {
   if (source.route === "pasted") return source.text;
   return typeof transcribed === "string" ? transcribed : "";
 }
 
-/**
- * Run the model over source text and return a draft. Nothing is written to D1
- * here — a failed import leaves no trace, which is why there is no draft table.
- */
 export async function structureDraft(
   env: Env,
   source: IntakeSource,
@@ -327,13 +309,9 @@ export async function structureDraft(
     .map((block) => (block as { text: string }).text)
     .join("");
 
-  // Structured outputs constrain the shape, so this should not fail — but the
-  // draft is a human's afternoon either way, so a bad one is retried rather
-  // than shown.
   return draftFromJson(text, source, response.model);
 }
 
-/** Runs the model, retrying a retryable failure once before anyone sees it. */
 export async function structureDraftWithRetry(
   env: Env,
   source: IntakeSource,
@@ -347,13 +325,6 @@ export async function structureDraftWithRetry(
   }
 }
 
-/**
- * The draft as a stream of bytes.
- *
- * Bytes never stop flowing, so Cloudflare's ~125 s proxy cutoff never fires —
- * this is the whole reason the stack is Workers (#7). It also makes a slow
- * import feel like progress rather than a hang.
- */
 export function streamDraft(
   env: Env,
   source: IntakeSource,
@@ -386,15 +357,12 @@ export function streamDraft(
 
         controller.close();
       } catch (cause) {
-        // A JSON body has no room for an in-band error, so the stream is torn
-        // down instead. The browser still has what the member typed.
         controller.error(cause);
       }
     },
   });
 }
 
-/** Record the cost-bearing part of a completed model response. */
 export function logImportUsage(title: string | null, usage: unknown): void {
   console.log(JSON.stringify({
     event: "intake.model_usage",
@@ -420,7 +388,6 @@ function recipeTitle(
   }
 }
 
-/** Parse a draft the browser streamed and handed back. */
 export function draftFromJson(
   text: string,
   source: IntakeSource,
@@ -437,11 +404,6 @@ export function draftFromJson(
   return toDraft(raw, source, model);
 }
 
-/**
- * Enforce the same wire contract for every producer of a draft. Structured
- * model output is constrained by DRAFT_SCHEMA, but browser handoff and
- * AgentDeck bundles are still untrusted JSON by the time they reach here.
- */
 function assertDraftWire(raw: unknown): void {
   const draft = objectWithKeys(raw, "draft", [
     "title",
@@ -460,8 +422,6 @@ function assertDraftWire(raw: unknown): void {
       rawStep,
       `steps[${index}]`,
       ["text", "section", "phase"],
-      // Optional: a bundle written before issue #120 links no ingredients, and
-      // refusing it would break every draft AgentDeck has already generated.
       ["ingredient_refs"],
     );
     requireString(step["text"], `steps[${index}].text`);
@@ -493,9 +453,7 @@ function assertDraftWire(raw: unknown): void {
     const altQuantity = line["alt_quantity"];
     const altUnit = textOrNull(line["alt_unit"]);
     if ((altQuantity === null) !== (altUnit === null)) {
-      invalid(
-        `lines[${index}].alt_quantity and alt_unit must both be set or both be null`,
-      );
+      invalid(`lines[${index}].alt_quantity and alt_unit must both be set or both be null`);
     }
     if (altQuantity !== null && line["quantity"] === null) {
       invalid(`lines[${index}].alternative measurement requires quantity`);
@@ -551,14 +509,6 @@ function requireWholeOrNull(value: unknown, label: string): void {
   }
 }
 
-/**
- * A step's ingredient references, if it carries any. The shape is checked
- * strictly, like every other field — but *which* line a reference points at and
- * whether its wording is really in the step are settled in `toDraft`, where the
- * rest of the draft is in hand, and a reference that fails there is dropped
- * rather than refused. A mislinked word is a small loss; refusing the whole
- * import over one would not be.
- */
 function requireStepRefs(value: unknown, label: string): void {
   if (value === undefined || value === null) return;
   if (!Array.isArray(value)) invalid(`${label} must be an array`);
@@ -649,14 +599,6 @@ function toDraftStep(raw: unknown, lines: DraftLine[]): DraftStep {
   };
 }
 
-/**
- * The step's ingredient references, keeping only the ones that are safe to act
- * on. A reference is dropped, never refused, when it points past the end of the
- * ingredient list, when it points into a different part of the dish than the
- * step itself, or when the wording it claims to have matched is not in the step
- * at all. Every one of those is a producer having got something slightly wrong,
- * and the recipe is worth more than the link.
- */
 function toDraftRefs(
   raw: unknown,
   text: string,
@@ -670,13 +612,10 @@ function toDraftRefs(
   for (const entry of raw.slice(0, MAX_REFS_PER_STEP)) {
     const ref = (entry ?? {}) as Record<string, unknown>;
     const lineIndex = wholeOrNull(ref["line"]);
-    const matchedText =
-      typeof ref["matched_text"] === "string" ? ref["matched_text"] : "";
+    const matchedText = typeof ref["matched_text"] === "string" ? ref["matched_text"] : "";
     const approxPosition = wholeOrNull(ref["approx_position"]);
 
-    if (lineIndex === null || lineIndex < 0 || lineIndex >= lines.length) {
-      continue;
-    }
+    if (lineIndex === null || lineIndex < 0 || lineIndex >= lines.length) continue;
     if ((lines[lineIndex]?.section ?? null) !== section) continue;
     if (!mentionResolves(text, matchedText)) continue;
 
@@ -684,8 +623,6 @@ function toDraftRefs(
       lineIndex,
       matchedText,
       approxPosition: Math.max(0, approxPosition ?? 0),
-      // An import has no ingredient to expect: the line this points at may not
-      // be a row in the household's list until the save creates one.
       expectedIngredientId: null,
     });
   }
@@ -700,8 +637,6 @@ function toDraftLine(raw: unknown): DraftLine {
   const altQuantity = numberOrNull(line["alt_quantity"]);
   const altUnit = textOrNull(line["alt_unit"]);
 
-  // The schema's two rules, enforced again here: a second measurement is both
-  // halves or neither, and never stands alone.
   const altPairIsWhole = altQuantity !== null && altUnit !== null;
 
   return {
