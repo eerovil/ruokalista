@@ -134,13 +134,14 @@ export async function editorScreen(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
   return page(
     `Muokkaa: ${recipe.title}`,
     editorForm(recipe, ingredients),
     "recipes",
+    member,
   );
 }
 
@@ -150,7 +151,7 @@ export async function saveEditForm(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   const form = await request.formData();
 
@@ -174,7 +175,7 @@ export async function saveEditForm(
     }
 
     const latest = await load(env.DB, member, params["id"]);
-    if (latest === null) return notFound();
+    if (latest === null) return notFound(member);
 
     const stale = error instanceof StaleRecipe;
     const ingredients = await ingredientsFor(env.DB, member.householdId);
@@ -192,6 +193,7 @@ export async function saveEditForm(
             : revisionForRendering(form, recipe.revision),
         })}`,
       "recipes",
+      member,
       stale ? 409 : 400,
     );
   }
@@ -212,10 +214,10 @@ export async function deleteRecipeForm(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
-  if (onMenu > 0) return stillPlanned(recipe, onMenu);
+  if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
 
   await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
   await deleteRecipeTree(env.DB, member.householdId, recipe.id);
@@ -253,7 +255,7 @@ export async function uploadRecipeImageForm(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   const form = await request.formData();
   const entry = form.get("image");
@@ -281,7 +283,7 @@ export async function deleteRecipeImageForm(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   await removeRecipeImage(env, member.householdId, recipe.id, recipe.imageKey);
   return seeEditor(recipe.id);
@@ -311,6 +313,7 @@ async function imageRefused(
     html`<p class="refused">${message}</p>
       ${editorForm({ ...recipe, imageKey: row?.image_key ?? null }, ingredients)}`,
     "recipes",
+    member,
     status,
   );
 }
@@ -485,10 +488,10 @@ export async function confirmDeleteScreen(
   member: Member,
 ): Promise<Response> {
   const recipe = await load(env.DB, member, params["id"]);
-  if (recipe === null) return notFound();
+  if (recipe === null) return notFound(member);
 
   const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
-  if (onMenu > 0) return stillPlanned(recipe, onMenu);
+  if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
 
   return page(
     `Poista: ${recipe.title}`,
@@ -510,10 +513,11 @@ export async function confirmDeleteScreen(
       </form>
       <p><a href="/recipes/${recipe.id}">Peruuta</a></p>`,
     "recipes",
+    member,
   );
 }
 
-function stillPlanned(recipe: Recipe, onMenu: number): Response {
+function stillPlanned(member: Member, recipe: Recipe, onMenu: number): Response {
   return page(
     "Ei voi poistaa",
     html`<h1>Ei voi poistaa</h1>
@@ -523,16 +527,18 @@ function stillPlanned(recipe: Recipe, onMenu: number): Response {
       </p>
       <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
     "recipes",
+    member,
     409,
   );
 }
 
-function notFound(): Response {
+function notFound(member: Member): Response {
   return page(
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>
       <p class="empty">Tätä reseptiä ei ole.</p>`,
     "recipes",
+    member,
     404,
   );
 }

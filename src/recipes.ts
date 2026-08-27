@@ -318,6 +318,7 @@ export async function recipeListScreen(
             )}
           </ul>`}`,
     "recipes",
+    member,
   );
 }
 
@@ -334,6 +335,7 @@ export async function recipeScreen(
       html`<h1>Ei löytynyt</h1>
         <p class="empty">Tätä reseptiä ei ole.</p>`,
       "recipes",
+      member,
       404,
     );
   }
@@ -342,7 +344,7 @@ export async function recipeScreen(
   const asked = Number(url.searchParams.get("portions"));
   const portions = Number.isSafeInteger(asked) && asked > 0 ? asked : null;
 
-  return page(recipe.title, recipeBody(recipe, portions), "recipes");
+  return page(recipe.title, recipeBody(recipe, portions), "recipes", member);
 }
 
 /**

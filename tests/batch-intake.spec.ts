@@ -6,9 +6,12 @@ import { AGENTDECK_BATCH, batchCopy } from "./support/batch";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
+// Member 3, because #106 moves the batch import behind the admin gate. Member 1
+// is in the same household, so nothing else about these bundles changes — what
+// an ordinary member gets from these routes is `tests/admin.spec.ts`' business.
 test.beforeEach(async ({ context }) => {
   reseed();
-  await context.addCookies([sessionCookie(1)]);
+  await context.addCookies([sessionCookie(3)]);
 });
 
 test("imports plain and multipart drafts through the shared save path", async ({ page }) => {

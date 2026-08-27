@@ -207,7 +207,10 @@ function sampleDraftForm(): Raw {
 }
 
 /** `GET /intake` */
-export function intakeScreen({ url }: RouteContext): Response {
+export function intakeScreen(
+  { url }: RouteContext,
+  member: Member,
+): Response {
   return page(
     "Lisää resepti",
     html`<h1>Lisää resepti</h1>
@@ -233,14 +236,13 @@ export function intakeScreen({ url }: RouteContext): Response {
       <p id="status" class="status" aria-live="polite"></p>
       <p id="progress" class="progress" aria-live="polite" hidden></p>
 
-      <p><a href="/intake/batch">Tuo AgentDeckin tekemä reseptinippu</a></p>
-
       ${isLocalOrigin(url) ? sampleDraftForm() : ""}
 
       <script>
         ${raw(STREAMING_ISLAND)}
       </script>`,
     "intake",
+    member,
   );
 }
 
@@ -253,7 +255,7 @@ export async function structureScreen(
   const sourceText = String(form.get("sourceText") ?? "").trim();
 
   if (sourceText === "") {
-    return failed("Liitä ensin reseptin teksti.", "");
+    return failed(member, "Liitä ensin reseptin teksti.", "");
   }
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
@@ -267,13 +269,14 @@ export async function structureScreen(
     );
   } catch (error) {
     // The member's text is handed back rather than thrown away.
-    return failed(String((error as Error).message ?? error), sourceText);
+    return failed(member, String((error as Error).message ?? error), sourceText);
   }
 
   return page(
     "Tarkista resepti",
     correctionForm(draft, ingredients, "pasted"),
     "intake",
+    member,
   );
 }
 
@@ -349,9 +352,10 @@ export async function correctScreen(
       "Tarkista resepti",
       correctionForm(draft, ingredients, route),
       "intake",
+      member,
     );
   } catch (error) {
-    return failed(String((error as Error).message ?? error), pasted);
+    return failed(member, String((error as Error).message ?? error), pasted);
   }
 }
 
@@ -393,6 +397,7 @@ export async function saveScreen(
       html`<p class="refused">${error.message}</p>
         ${correctionFormFromSubmission(form, ingredients)}`,
       "intake",
+      member,
       400,
     );
   }
@@ -713,7 +718,7 @@ function renderCorrection(
     </form>`;
 }
 
-function failed(message: string, sourceText: string): Response {
+function failed(member: Member, message: string, sourceText: string): Response {
   return page(
     "Jäsennys epäonnistui",
     html`<h1>Jäsennys epäonnistui</h1>
@@ -723,6 +728,7 @@ function failed(message: string, sourceText: string): Response {
         <button type="submit">Yritä uudelleen</button>
       </form>`,
     "intake",
+    member,
     400,
   );
 }

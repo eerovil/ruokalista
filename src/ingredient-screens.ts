@@ -19,7 +19,7 @@ export async function ingredientsScreen(
   { env }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  return page("Ainekset", await ingredientList(env.DB, member, null), "ingredients");
+  return page("Ainekset", await ingredientList(env.DB, member, null), "ingredients", member);
 }
 
 /** `POST /ingredients/:id/rename` */
@@ -42,6 +42,7 @@ export async function renameForm(
       "Ainekset",
       await ingredientList(env.DB, member, error.message),
       "ingredients",
+      member,
       400,
     );
   }

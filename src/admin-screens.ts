@@ -3,14 +3,19 @@ import type { Member } from "./members.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
- * The admin surface, which is deliberately almost empty. What #94 ships is the
- * boundary, not the tools behind it — the first one that needs it is the recipe
- * image generation in #96 — so this screen exists to be the place those land
- * and to be something the gate can be proved against.
+ * The admin surface. #94 shipped the boundary and one nearly empty screen
+ * behind it; #106 proposes that this screen become the *only* way an admin tool
+ * is found. So it is a list of tools, one row each, and adding the next one is
+ * adding a row here rather than a link to somewhere an ordinary member looks.
  *
- * Everything here is behind `requireAdminScreen`. There is nothing on it that
- * an ordinary member would be shown a censored version of: the whole screen is
- * either yours or, as far as you can tell, not there.
+ * It is reached from the account button in the shell, which shows the entry
+ * only to an admin. That is courtesy, not the boundary: everything here and
+ * everything it links to is behind `requireAdminScreen`, so an ordinary member
+ * is told the route is not there whether or not they saw a link.
+ *
+ * There is nothing on this screen that an ordinary member would be shown a
+ * censored version of: the whole screen is either yours or, as far as you can
+ * tell, not there.
  */
 
 /** `GET /admin` */
@@ -24,8 +29,19 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
             <span class="recipes-text">
               Reseptikuvat
               <span class="meta">
-                Katso mistä resepteistä kuva puuttuu tai on vanhentunut, ja luo
-                ne enintään 16 reseptin erissä.
+                Katso mistä resepteistä kuva puuttuu tai on vanhentunut, ja
+                hallitse niiden kuvia.
+              </span>
+            </span>
+          </a>
+        </li>
+        <li>
+          <a href="/intake/batch">
+            <span class="recipes-text">
+              Tuo AgentDeck-reseptejä
+              <span class="meta">
+                Tarkista AgentDeckin tekemä JSON-nippu ja tallenna se
+                kokonaisuutena. Ei kutsu jäsentävää mallia.
               </span>
             </span>
           </a>
@@ -36,6 +52,7 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
         tietokantaan, samoin kuin jäsenyyskin.
       </p>`,
     "week",
+    member,
   );
 }
 

@@ -59,14 +59,6 @@ export async function weekScreen(
         <a href="/">Tämä viikko</a>
         <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
       </nav>
-      ${
-        // The one way into the admin surface, and the only screen that mentions
-        // it. An ordinary member is not shown it — but that is tidiness, not
-        // security: /admin refuses them whether they saw a link or not.
-        member.isAdmin
-          ? html`<p class="admin-entry"><a href="/admin">Ylläpito</a></p>`
-          : ""
-      }
       <style>
         .week-days .day {
           display: grid;
@@ -132,6 +124,7 @@ export async function weekScreen(
         style="--rail-count:${Math.max(1, laneCount)};--rail-width:${railWidth}rem"
       >${days.map((date) => dayCard(date, batches, date === now, laneById))}</div>`,
     "week",
+    member,
   );
 }
 
@@ -323,9 +316,9 @@ export async function plannedBatchScreen(
     member.householdId,
     Number(params["id"]),
   );
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   const recipes = await recipeSummaries(env.DB, member.householdId, "");
-  return page(batch.title, batchActions(batch, null, recipes), "week");
+  return page(batch.title, batchActions(batch, null, recipes), "week", member);
 }
 
 function batchActions(
@@ -389,10 +382,10 @@ export async function coverageScreen(
     member.householdId,
     Number(params["id"]),
   );
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   const asked = url.searchParams.get("week") ?? "";
   const monday = mondayOf(isDate(asked) ? asked : batch.startDate);
-  return page(batch.title, coverageEditor(batch, monday, null), "week");
+  return page(batch.title, coverageEditor(batch, monday, null), "week", member);
 }
 
 function coverageEditor(
@@ -444,11 +437,12 @@ function coverageEditor(
 const rawChecked = raw("checked");
 const rawSelected = raw("selected");
 
-function batchNotFound(): Response {
+function batchNotFound(member: Member): Response {
   return page(
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1><p class="empty">Tätä ruokaerää ei ole ruokalistalla.</p><p><a href="/">Takaisin viikkoon</a></p>`,
     "week",
+    member,
     404,
   );
 }
@@ -465,6 +459,7 @@ export async function pickerScreen(
       "Ei löytynyt",
       html`<h1>Ei löytynyt</h1><p class="empty">Tuntematon päivä tai ateria.</p>`,
       "week",
+      member,
       404,
     );
   }
@@ -493,6 +488,7 @@ export async function pickerScreen(
           )}</ul>`}
       <p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
     "week",
+    member,
   );
 }
 
@@ -511,7 +507,7 @@ export async function addBatchForm(
     });
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
-    return refused(error.message, isDate(date) ? date : today());
+    return refused(member, error.message, isDate(date) ? date : today());
   }
   return backToWeek(date);
 }
@@ -522,7 +518,7 @@ export async function changeBatchPortionsForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   try {
     await changePortions(env.DB, member, batch.id, Number(form.get("portions")));
   } catch (error) {
@@ -535,6 +531,7 @@ export async function changeBatchPortionsForm(
         portions: String(form.get("portions") ?? ""),
       }, recipes),
       "week",
+      member,
       400,
     );
   }
@@ -547,12 +544,12 @@ export async function changeBatchRecipeForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   try {
     await changeRecipe(env.DB, member, batch.id, Number(form.get("recipeId")));
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
-    return refused(error.message, batch.startDate);
+    return refused(member, error.message, batch.startDate);
   }
   return new Response(null, {
     status: 303,
@@ -566,7 +563,7 @@ export async function coverageForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   const monday = mondayOf(
     isDate(String(form.get("week") ?? ""))
       ? String(form.get("week"))
@@ -581,6 +578,7 @@ export async function coverageForm(
       batch.title,
       coverageEditor({ ...batch, occurrences: proposed }, monday, error.message),
       "week",
+      member,
       400,
     );
   }
@@ -595,7 +593,7 @@ export async function removeBatchForm(
   member: Member,
 ): Promise<Response> {
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound();
+  if (batch === null) return batchNotFound(member);
   await removePlannedBatch(env.DB, member, batch.id);
   return backToWeek(batch.startDate);
 }
@@ -614,11 +612,12 @@ function backToWeek(date: string): Response {
   return new Response(null, { status: 303, headers: { Location: `/?week=${week}` } });
 }
 
-function refused(message: string, date: string): Response {
+function refused(member: Member, message: string, date: string): Response {
   return page(
     "Ei onnistunut",
     html`<h1>Ei onnistunut</h1><p class="refused">${message}</p><p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
     "week",
+    member,
     400,
   );
 }

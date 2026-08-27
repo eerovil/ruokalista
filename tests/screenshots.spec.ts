@@ -324,50 +324,6 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/08-correct.png`, fullPage: true });
   });
 
-  test("AgentDeck batch review", async ({ page }) => {
-    await page.goto("/intake/batch");
-    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(AGENTDECK_BATCH));
-    await page.getByRole("button", { name: "Tarkista nippu" }).click();
-    await expect(page.locator(".batch-previews details")).toHaveCount(2);
-    await expect(page.locator(".batch-ingredients")).toContainText("kikherne");
-    await page.locator(".batch-previews details").first().evaluate((details) => {
-      (details as HTMLDetailsElement).open = true;
-    });
-    await expect(page.locator(".batch-previews details").first()).toHaveAttribute("open", "");
-    await page.screenshot({
-      path: `${SHOTS}/20-agentdeck-batch-review.png`,
-      fullPage: true,
-    });
-  });
-
-  test("AgentDeck stale ingredient review", async ({ page }) => {
-    const bundle = structuredClone(AGENTDECK_BATCH);
-    bundle.recipes = [bundle.recipes[0]];
-    await page.goto("/intake/batch");
-    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(bundle));
-    await page.getByRole("button", { name: "Tarkista nippu" }).click();
-    await page.locator('select[data-proposed-index="0"]').selectOption({
-      label: "Käytä olemassa olevaa: vesi",
-    });
-    await page.request.post("/ingredients/5/rename", {
-      form: { name: "kikherne" },
-    });
-    await page.getByRole("button", { name: "Tuo 1 reseptiä" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Tarkista reseptinippu uudelleen" }),
-    ).toBeVisible();
-    await expect(page.locator(".refused")).toContainText(
-      "Talouden ainekset muuttuivat tarkistamisen jälkeen",
-    );
-    await page.screenshot({
-      path: `${SHOTS}/21-agentdeck-stale-review.png`,
-      fullPage: true,
-    });
-    await page.request.post("/ingredients/5/rename", {
-      form: { name: "ananas" },
-    });
-  });
-
   test("the approval gate refusing", async ({ page }) => {
     await stubStructuring(page);
     await page.goto("/intake");
@@ -431,8 +387,10 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
   });
 
-  test("the week as an ordinary member sees it", async ({ page }) => {
+  test("the account menu as an ordinary member sees it", async ({ page }) => {
     await page.goto("/?week=2026-10-05");
+    await page.getByRole("button", { name: "Tili" }).click();
+    await expect(page.getByRole("button", { name: "Kirjaudu ulos" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
     await page.screenshot({
       path: `${SHOTS}/28-week-not-admin.png`,
@@ -446,8 +404,11 @@ test.describe("signed in as an admin", () => {
     await context.addCookies([sessionCookie(3)]);
   });
 
-  test("the week, with the way into the admin surface", async ({ page }) => {
+  test("the account menu, with the way into the admin surface", async ({
+    page,
+  }) => {
     await page.goto("/?week=2026-10-05");
+    await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
     await page.screenshot({
       path: `${SHOTS}/29-week-admin.png`,
@@ -455,6 +416,49 @@ test.describe("signed in as an admin", () => {
     });
   });
 
+  test("AgentDeck batch review", async ({ page }) => {
+    await page.goto("/intake/batch");
+    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(AGENTDECK_BATCH));
+    await page.getByRole("button", { name: "Tarkista nippu" }).click();
+    await expect(page.locator(".batch-previews details")).toHaveCount(2);
+    await expect(page.locator(".batch-ingredients")).toContainText("kikherne");
+    await page.locator(".batch-previews details").first().evaluate((details) => {
+      (details as HTMLDetailsElement).open = true;
+    });
+    await expect(page.locator(".batch-previews details").first()).toHaveAttribute("open", "");
+    await page.screenshot({
+      path: `${SHOTS}/20-agentdeck-batch-review.png`,
+      fullPage: true,
+    });
+  });
+
+  test("AgentDeck stale ingredient review", async ({ page }) => {
+    const bundle = structuredClone(AGENTDECK_BATCH);
+    bundle.recipes = [bundle.recipes[0]];
+    await page.goto("/intake/batch");
+    await page.getByLabel("…tai JSON tekstinä").fill(JSON.stringify(bundle));
+    await page.getByRole("button", { name: "Tarkista nippu" }).click();
+    await page.locator('select[data-proposed-index="0"]').selectOption({
+      label: "Käytä olemassa olevaa: vesi",
+    });
+    await page.request.post("/ingredients/5/rename", {
+      form: { name: "kikherne" },
+    });
+    await page.getByRole("button", { name: "Tuo 1 reseptiä" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tarkista reseptinippu uudelleen" }),
+    ).toBeVisible();
+    await expect(page.locator(".refused")).toContainText(
+      "Talouden ainekset muuttuivat tarkistamisen jälkeen",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/21-agentdeck-stale-review.png`,
+      fullPage: true,
+    });
+    await page.request.post("/ingredients/5/rename", {
+      form: { name: "ananas" },
+    });
+  });
   test("the admin screen", async ({ page }) => {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: "Ylläpito" })).toBeVisible();
