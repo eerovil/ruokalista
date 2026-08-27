@@ -1,55 +1,70 @@
-import { MAX_CELLS } from "./contact-sheet.ts";
+import splitterBundle from "./generated/recipe-image-split.ts";
+import { GRID, MAX_CELLS, OUTPUT_EDGE } from "./contact-sheet.ts";
 import { html, page, type Raw } from "./html.ts";
 import {
   imageStatus,
   type ImageOrigin,
   type ImageStatus,
 } from "./image-freshness.ts";
+import {
+  dishBrief,
+  GENERATED_BY,
+  sheetPrompt,
+  type DishBrief,
+} from "./image-generation.ts";
 import type { Member } from "./members.ts";
-import { isLocalOrigin } from "./public-origin.ts";
 import {
   recipeFingerprint,
   type FingerprintLine,
 } from "./recipe-fingerprint.ts";
-import {
-  runImageBatch,
-  type BatchOutcome,
-  type CellReport,
-} from "./recipe-image-batch.ts";
-import { recipeImage } from "./recipes.ts";
-import type { RouteContext } from "./router.ts";
+import { findRecipe, recipeImage } from "./recipes.ts";
+import type { Handler, RouteContext } from "./router.ts";
 
 /**
- * The admin screen that decides which recipes get a generated picture.
+ * The admin screen that decides which recipes get a generated picture, and
+ * hands the drawing of it to a person.
  *
- * #96 built the generator and #95 built the freshness calculation; neither of
- * them can say *which* recipes need one, and asking that question was the point
- * of both. This is the screen that asks it, and it is the only place in the app
- * from which money can be spent by a person rather than by a script.
- *
- * Three screens, three plain form posts, and nothing that needs JavaScript:
+ * #95 works out whether a picture still shows its recipe and #96 built the
+ * splitter; this is the screen that asks which recipes need one and then gets
+ * it done. Two screens, both plain GETs:
  *
  *   1. `GET /admin/recipe-images` — every dish and what its picture is.
- *   2. `GET /admin/recipe-images/confirm` — the exact recipes about to be
- *      drawn, in the order they will take cells. Still free.
- *   3. `POST /admin/recipe-images/generate` — the paid request, and the report.
+ *   2. `GET /admin/recipe-images/confirm` — the batch, the prompt to copy, and
+ *      the field to bring the finished sheet back to.
  *
- * Opening any screen but the third buys nothing, and the third is only ever
- * reached by somebody pressing a button that says what it costs. There is no
- * regeneration on save, no queue and no schedule: a picture is bought when an
- * admin asks for one and at no other time.
+ * **Nothing here spends money and nothing here calls an image API.** #96 had a
+ * paid OpenAI route; #111 removed it, because it could not work: the Workers
+ * Free plan gives a request 10 ms of CPU and cutting one sheet needs over a
+ * second, so the one live attempt ran 178 seconds, was killed with
+ * `exceededResources`, and threw away the sheet it had just bought. See
+ * `docs/adr/0005-the-worker-does-no-pixel-work.md`.
  *
- * The batch itself is #96's, unchanged — including its cap of sixteen recipes
- * to a sheet. Seventeen candidates are therefore two visits to this screen
- * rather than one silent pair of paid requests, which is the whole reason the
- * cap is visible in the wording rather than only in the validation.
+ * What replaced it is the workflow the household was going to end up with
+ * anyway: copy the prompt, draw the sheet in whichever image tool you like, and
+ * bring the file back. The cutting then happens **in the admin's browser**, from
+ * the same `contact-sheet.ts` this Worker imports, bundled by
+ * `npm run generate:client`. Each crop is stored through
+ * `PUT /api/recipes/:id/image?origin=generated&fingerprint=…&model=…`, which is
+ * #89's bulk route with #95's provenance — no new endpoint, and the freshness
+ * bookkeeping is the code that was already there.
+ *
+ * So the Worker's whole part in a batch is: list the recipes, write the prompt,
+ * state each recipe's fingerprint, and then answer sixteen ordinary image PUTs.
+ * None of that is pixel work.
+ *
+ * The second screen needs JavaScript, and is the only screen in the app that
+ * does. It says so, and its button is rendered disabled until the bundle turns
+ * it on. That is a deliberate exception to the standing rule in #65: cutting a
+ * PNG apart is not something a server on this plan can do at all, and the image
+ * manager is not a screen anybody uses on a fifteen-year-old iPad.
  */
 
-/** How a batch's cost is described. Tokens, because a price would go stale. */
-const COST_NOTE =
-  "Yksi erä on yksi maksullinen kuvapyyntö: enintään 16 reseptiä samalta " +
-  "arkilta. Mitattuna yksi arkki maksoi noin 7 000 kuvatokenia — suuruusluokka, " +
-  "ei lasku, sillä hinta tokenia kohti on OpenAI:n hinnastossa.";
+/** What the flow costs, which is nothing, and what it needs from a person. */
+const FLOW_NOTE =
+  `Yhdelle arkille mahtuu ${MAX_CELLS} reseptiä ${GRID}×${GRID} -ruudukkona. ` +
+  "Ruokalista kirjoittaa kehotteen ja leikkaa valmiin arkin selaimessasi — " +
+  "kuvan piirtäminen tapahtuu itse valitsemassasi työkalussa, eikä tämä " +
+  "sovellus lähetä mitään maksullista pyyntöä.";
 
 /** One dish, and what its picture is. */
 export interface ImageCandidate {
@@ -60,6 +75,15 @@ export interface ImageCandidate {
   /** Where the picture came from, or null when there is none. */
   origin: ImageOrigin | null;
   generatedAt: string | null;
+  /**
+   * What the recipe's content hashes to right now.
+   *
+   * Computed for the freshness verdict anyway, and carried out to the screen
+   * because the browser has to state it when it stores a crop: it is the recipe
+   * the picture was actually drawn from, and the gap between reading this list
+   * and uploading is however long the admin spent in another tool.
+   */
+  fingerprint: string;
 }
 
 /** `GET /admin/recipe-images` */
@@ -72,12 +96,12 @@ export async function recipeImageAdminScreen(
 }
 
 /**
- * `GET /admin/recipe-images/confirm` — the recipes about to be drawn, named.
+ * `GET /admin/recipe-images/confirm` — the batch, the prompt, and the sheet.
  *
- * A GET on purpose. It renders what the next screen will spend money on, and a
- * screen that can be refreshed, bookmarked and reached with the back button
- * without a browser asking about resubmission is a safer place to stand while
- * reading a list one is about to pay for.
+ * A GET on purpose, and more so than when this screen only confirmed a paid
+ * request: the admin leaves it, goes off to draw a sheet somewhere else, and
+ * comes back. A screen that can be refreshed, bookmarked and reached with the
+ * back button is the only sane place to stand while doing that.
  */
 export async function recipeImageConfirmScreen(
   { env, url }: RouteContext,
@@ -90,72 +114,44 @@ export async function recipeImageConfirmScreen(
     return page("Reseptikuvat", listBody(candidates, chosen), "week", member, 400);
   }
 
-  return page("Vahvista kuvien luonti", confirmBody(chosen), "week", member);
-}
-
-/**
- * `POST /admin/recipe-images/generate` — the one paid action.
- *
- * The manifest is the posted order, cell 1 first, which is the same contract
- * `POST /api/admin/recipe-images/generate` keeps; the hidden fields on the
- * confirmation screen are written in that order and nothing here sorts them.
- *
- * The response is rendered rather than redirected to. A batch's report is the
- * only record of what happened to each recipe — three stored, one refused
- * because somebody uploaded a picture in the meantime — and post-then-redirect
- * would have to either throw that away or stash it somewhere to be read once.
- */
-export async function recipeImageGenerateForm(
-  ctx: RouteContext,
-  member: Member,
-): Promise<Response> {
-  const form = await ctx.request.formData();
-  const candidates = await imageCandidates(ctx.env.DB, member.householdId);
-  const chosen = chooseFrom(candidates, form.getAll("id").map(String));
-
-  if (typeof chosen === "string") {
-    return page("Reseptikuvat", listBody(candidates, chosen), "week", member, 400);
+  const dishes = await briefsFor(env.DB, member.householdId, chosen);
+  if (dishes === null) {
+    return page(
+      "Reseptikuvat",
+      listBody(candidates, "Valinnassa oli resepti, jota ei enää ole."),
+      "week",
+      member,
+      409,
+    );
   }
 
-  const outcome = await runImageBatch(
-    ctx,
-    member,
-    chosen.map((candidate) => candidate.id),
-    suppliedSheet(ctx, form),
-  );
-
-  // Read the statuses back rather than reasoning about them: the admin is here
-  // to see which recipes became fresh, and the answer to that is in the rows
-  // the batch just wrote, not in what the batch believes it wrote.
-  const after = await imageCandidates(ctx.env.DB, member.householdId);
-
   return page(
-    "Kuvien luonti",
-    resultBody(outcome, chosen, after),
+    "Luo reseptikuvat",
+    confirmBody(chosen, sheetPrompt(dishes)),
     "week",
     member,
-    outcome.kind === "refused" ? outcome.status : 200,
   );
 }
 
 /**
- * The development escape hatch, exactly the one `POST /api/admin/…/generate`
- * already has: a sheet supplied instead of bought, gated on the address the
- * browser reached rather than on any flag. It is what lets the browser suite
- * walk this whole screen — the selection, the confirmation, the split, the
- * commit and the refreshed statuses — without ever calling OpenAI.
+ * `GET /admin/recipe-images/split.js` — the committed browser bundle.
  *
- * A deployed Worker is only ever addressed by a public hostname, so no secret
- * and no configuration turns this on live.
+ * Behind the admin wall like everything else on this screen. Not because the
+ * code is secret — it is in the repository — but because there is one rule for
+ * these routes and carving out an exception for the one that happens to be
+ * harmless is how a boundary starts to leak.
  */
-function suppliedSheet(
-  { url }: RouteContext,
-  form: FormData,
-): string | undefined {
-  if (!isLocalOrigin(url)) return undefined;
-  const supplied = form.get("sheetBase64");
-  return typeof supplied === "string" && supplied.length > 0 ? supplied : undefined;
-}
+export const recipeImageSplitter: Handler = () =>
+  new Response(splitterBundle, {
+    headers: {
+      // Revalidate every time: the bundle changes when the splitter does, and a
+      // stale cached copy of the crop rules would cut sheets by rules nobody is
+      // reading any more. It is 13 kB.
+      "Cache-Control": "no-cache",
+      "Content-Type": "text/javascript; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 
 // ---------------------------------------------------------------- selection
 
@@ -207,11 +203,10 @@ function listBody(candidates: readonly ImageCandidate[], error: string | null): 
 
   return html`<h1>Reseptikuvat</h1>
     ${error === null ? "" : html`<p class="image-error">${error}</p>`}
-    <p class="empty">${COST_NOTE}</p>
+    <p class="empty">${FLOW_NOTE}</p>
     ${waiting.length === 0
       ? html`<p class="empty">
-          Jokaisella reseptillä on ajan tasalla oleva kuva. Tältä sivulta ei
-          lähde pyyntöjä ennen kuin joku painaa nappia.
+          Jokaisella reseptillä on ajan tasalla oleva kuva.
         </p>`
       : html`<form class="stacked" method="get" action="/admin/recipe-images/confirm">
           <h2>Kuvaa vailla (${waiting.length})</h2>
@@ -222,7 +217,7 @@ function listBody(candidates: readonly ImageCandidate[], error: string | null): 
               </p>`
             : ""}
           ${pickList(waiting, MAX_CELLS)}
-          <button type="submit" class="primary">Katso erä ennen luontia</button>
+          <button type="submit" class="primary">Jatka kehotteeseen</button>
         </form>`}
     ${rest.length === 0 ? "" : currentSection(rest)}
     <p class="recipe-edit"><a href="/admin">Takaisin ylläpitoon</a></p>
@@ -232,16 +227,17 @@ function listBody(candidates: readonly ImageCandidate[], error: string | null): 
 /**
  * The pictures that are current, behind a disclosure and with their own form.
  *
- * Regenerating one of these is a real thing to want — a style version moved, or
- * the picture is simply poor — but it is not the job this screen is for, and a
+ * Redoing one of these is a real thing to want — a style version moved, or the
+ * picture is simply poor — but it is not the job this screen is for, and a
  * fresh recipe sitting in the same list with the same checkbox is one mis-click
- * away from being paid for. So: closed by default, nothing preselected, its own
+ * away from being replaced. So: closed by default, nothing preselected, its own
  * button, and its own words.
  *
  * A picture somebody uploaded is listed but has no checkbox at all. #95 calls
- * those manually managed, and replacing one is the editor's job — this screen
- * spending money to overwrite a photograph a person chose is exactly what that
- * rule exists to prevent.
+ * those manually managed: replacing a photograph a person chose is the editor's
+ * job, and a bulk screen quietly overwriting one is what that rule exists to
+ * prevent. That the batch is free now does not change it — their picture is
+ * still theirs.
  */
 function currentSection(current: readonly ImageCandidate[]): Raw {
   const generated = current.filter((candidate) => candidate.origin === "generated");
@@ -253,9 +249,7 @@ function currentSection(current: readonly ImageCandidate[]): Raw {
       ? ""
       : html`<form class="stacked" method="get" action="/admin/recipe-images/confirm">
           ${pickList(generated, 0)}
-          <button type="submit" class="quiet">
-            Luo valituille uudelleen (maksullinen)
-          </button>
+          <button type="submit" class="quiet">Luo valituille uudelleen</button>
         </form>`}
     ${manual.length === 0
       ? ""
@@ -301,17 +295,34 @@ function pickList(candidates: readonly ImageCandidate[], preselect: number): Raw
   </ul>`;
 }
 
-function confirmBody(chosen: readonly ImageCandidate[]): Raw {
+/**
+ * The working screen: copy the prompt, draw the sheet, bring it back.
+ *
+ * The prompt sits in a read-only textarea rather than a `<pre>` because copying
+ * it is the point, and a textarea can be selected and copied with the keyboard
+ * on every browser — which is what the Copy button degrades to. `readonly`
+ * rather than `disabled` keeps it selectable while saying it is not to be
+ * edited; editing it would change nothing anyway, since the prompt is never
+ * posted back. Only the sheet comes back.
+ *
+ * The manifest carries each recipe's id and fingerprint as data attributes,
+ * because that is what the browser needs to store a crop: which recipe the cell
+ * belongs to, and which version of the recipe the picture is of. It is also
+ * what an admin checks the drawn sheet against before cutting it — position is
+ * the whole mapping, so a sheet whose cells came back in another order would
+ * put pictures on the wrong recipes and nothing downstream could tell.
+ */
+function confirmBody(chosen: readonly ImageCandidate[], prompt: string): Raw {
   const current = chosen.filter((candidate) => candidate.status === "fresh");
 
-  return html`<h1>Vahvista kuvien luonti</h1>
+  return html`<h1>Luo reseptikuvat</h1>
     <p>
       ${chosen.length === 1
         ? "Yksi resepti saa uuden kuvan."
         : `${chosen.length} reseptiä saa uuden kuvan.`}
       Ne piirretään yhdelle arkille tässä järjestyksessä.
     </p>
-    <p class="empty">${COST_NOTE}</p>
+    <p class="empty">${FLOW_NOTE}</p>
     ${current.length === 0
       ? ""
       : html`<p class="image-error">
@@ -320,85 +331,62 @@ function confirmBody(chosen: readonly ImageCandidate[]): Raw {
             : `${current.length} valitun reseptin kuva on jo ajan tasalla.`}
           Vanha kuva korvataan.
         </p>`}
-    <ol class="image-manifest">
+
+    <h2>1. Kopioi kehote</h2>
+    <p class="empty">
+      Vie kehote haluamaasi kuvageneraattoriin. Älä muuta ruudukon muotoa: aina
+      ${GRID}×${GRID} ruutua, läpinäkyvä tausta, ei tekstiä. Ruudun paikka on
+      ainoa asia, joka kertoo minkä reseptin kuva se on.
+    </p>
+    <textarea id="sheet-prompt" class="sheet-prompt" rows="14" readonly>${prompt}</textarea>
+    <p><button type="button" class="button" id="copy-prompt">Kopioi kehote</button></p>
+
+    <h2>2. Tarkista ruutujärjestys</h2>
+    <p class="empty">
+      Ruudut luetaan vasemmalta oikealle ja sitten alaspäin. Ruutu 1 on listan
+      ensimmäinen resepti.
+    </p>
+    <ol class="image-manifest" id="split-manifest">
       ${chosen.map(
-        (candidate) => html`<li>
+        (candidate) => html`<li
+          data-recipe-id="${candidate.id}"
+          data-fingerprint="${candidate.fingerprint}"
+          data-expected-image-key="${candidate.imageKey ?? ""}"
+          data-title="${candidate.title}"
+        >
           <span class="image-row">
             ${recipeImage(candidate, "thumb")}
             <span class="recipes-text">
               ${candidate.title}
-              <span class="meta">${statusLabel(candidate)}</span>
+              <span class="meta" data-cell-status>${statusLabel(candidate)}</span>
             </span>
           </span>
         </li>`,
       )}
     </ol>
-    <form class="stacked" method="post" action="/admin/recipe-images/generate" id="generate">
-      ${chosen.map(
-        (candidate) => html`<input type="hidden" name="id" value="${candidate.id}" />`,
-      )}
-      <button type="submit" class="primary" id="generate-submit">
-        Luo kuvat nyt (1 maksullinen pyyntö)
+
+    <h2>3. Leikkaa arkki ja tallenna kuvat</h2>
+    <p class="empty">
+      Arkin pitää olla PNG, jonka tausta on läpinäkyvä — juuri läpinäkyvyydestä
+      annokset erotellaan toisistaan. Moni kuvageneraattori litistää
+      läpinäkyvyyden, ja sellainen arkki hylätään. Leikkaaminen tapahtuu tässä
+      selaimessa, ja jokainen kuva tallennetaan ${OUTPUT_EDGE} kuvapisteen
+      neliönä. Jos arkkia ei voi leikata turvallisesti, mitään ei tallenneta.
+    </p>
+    <form class="stacked" id="split-form" data-model="${GENERATED_BY}">
+      <label for="sheet">Valmis arkki</label>
+      <input type="file" id="sheet" name="sheet" accept="image/png" />
+      <button type="submit" class="primary" id="split-submit" disabled>
+        Leikkaa arkki ja tallenna kuvat
       </button>
     </form>
-    <p class="recipe-edit"><a href="/admin/recipe-images">Peruuta</a></p>
-    ${GUARD_SCRIPT}
-    ${LIST_STYLE}`;
-}
-
-/**
- * What the batch did, recipe by recipe.
- *
- * Every recipe that was asked for appears, whatever happened to it — a report
- * that listed only the successes would leave an admin to work out from the
- * count which one did not come back. The statuses are the ones read from the
- * database afterwards, so a recipe shown as fresh here is fresh.
- */
-function resultBody(
-  outcome: BatchOutcome,
-  chosen: readonly ImageCandidate[],
-  after: readonly ImageCandidate[],
-): Raw {
-  if (outcome.kind === "refused") {
-    return html`<h1>Kuvia ei luotu</h1>
-      <p class="image-error">Erä ei lähtenyt: ${outcome.english}</p>
-      <p class="empty">
-        Mitään ei muutettu, joten reseptit ovat yhä valittavissa uudelleen.
-      </p>
-      <p><a class="button" href="/admin/recipe-images">Takaisin listaan</a></p>
-      ${LIST_STYLE}`;
-  }
-
-  const cells: readonly CellReport[] = outcome.cells;
-  const stored = outcome.kind === "stored" ? outcome.stored : 0;
-
-  return html`<h1>${stored === 0 ? "Kuvia ei luotu" : "Kuvat luotu"}</h1>
-    ${outcome.kind === "rejected"
-      ? html`<p class="image-error">
-          Arkkia ei voitu leikata turvallisesti, joten mitään ei tallennettu.
-          Yritä uudelleen — se ostaa uuden arkin.
-        </p>`
-      : html`<p>
-          ${stored} / ${cells.length} reseptiä sai kuvan. Mallina
-          ${outcome.model}, tyyli ${outcome.styleVersion}.
-        </p>`}
-    <ul class="image-list">
-      ${cells.map((cell) => {
-        const now = after.find((candidate) => candidate.id === cell.recipeId);
-        return html`<li>
-          ${now === undefined ? "" : recipeImage(now, "thumb")}
-          <span class="recipes-text">
-            <a href="/recipes/${cell.recipeId}">${cell.title}</a>
-            <span class="meta">
-              ${cell.status === "stored"
-                ? `Kuva tallennettu · ${now === undefined ? "" : statusLabel(now)}`
-                : `Ei kuvaa: ${cell.reason ?? "syytä ei kerrottu"}`}
-            </span>
-          </span>
-        </li>`;
-      })}
-    </ul>
-    <p><a class="button" href="/admin/recipe-images">Takaisin listaan</a></p>
+    <p class="split-note split-quiet" id="split-note">
+      Tämä vaihe tarvitsee JavaScriptin: arkin leikkaaminen on kuvankäsittelyä,
+      johon palvelimen suoritinaika ei riitä.
+    </p>
+    <p class="recipe-edit"><a href="/admin/recipe-images">Takaisin listaan</a></p>
+    <script src="/admin/recipe-images/split.js" defer></script>
+    ${COPY_SCRIPT}
     ${LIST_STYLE}`;
 }
 
@@ -409,27 +397,59 @@ function statusLabel(candidate: ImageCandidate): string {
 }
 
 /**
- * One press, one batch. The button is disabled as the form goes, because a
- * second press during the minute a sheet takes to be drawn is a second paid
- * request for the same recipes.
+ * The Copy button, which is an enhancement and nothing more.
  *
- * Feature-detected and free to do nothing: without it the worst case is the
- * duplicate this prevents, not an unusable screen, and the server refuses
- * nothing on account of it. Note the *first* press still submits — the guard
- * runs during the submit it is guarding.
+ * Three levels, tried in order: the async clipboard API, the old
+ * `document.execCommand("copy")`, and — failing both — the text left selected
+ * so the admin can copy it with the keyboard. The prompt is visible and
+ * selectable whatever happens, so this can fail quietly.
+ *
+ * Inline and separate from the bundle on purpose: it is four lines of DOM work
+ * with no shared logic behind it, and it is the one part of this screen that
+ * still works on a browser too old to cut a sheet.
+ *
+ * A template literal, so no backslashes and no regular expressions in here.
  */
-const GUARD_SCRIPT = html`<script>
+const COPY_SCRIPT = html`<script>
   (function () {
-    var form = document.getElementById("generate");
-    if (!form || !form.addEventListener) return;
-    form.addEventListener("submit", function () {
-      var button = document.getElementById("generate-submit");
-      if (!button) return;
-      // Disabled after the browser has taken the click, so the post still goes.
-      setTimeout(function () {
-        button.disabled = true;
-        button.innerHTML = "Luodaan kuvia…";
-      }, 0);
+    var button = document.getElementById("copy-prompt");
+    var field = document.getElementById("sheet-prompt");
+    if (!button || !field || !button.addEventListener) return;
+
+    function finish(copied) {
+      button.innerHTML = copied ? "Kopioitu" : "Kopioi näppäimistöllä";
+    }
+
+    function fallback() {
+      var copied = false;
+      if (document.execCommand) {
+        try {
+          copied = document.execCommand("copy");
+        } catch (error) {
+          copied = false;
+        }
+      }
+      finish(copied);
+    }
+
+    button.addEventListener("click", function () {
+      // Selecting first: it is what the keyboard fallback needs, and it is
+      // harmless feedback when a copy does go through.
+      field.focus();
+      field.select();
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          navigator.clipboard.writeText(field.value).then(function () {
+            finish(true);
+          }, fallback);
+          return;
+        } catch (error) {
+          fallback();
+          return;
+        }
+      }
+      fallback();
     });
   })();
 </script>`;
@@ -456,10 +476,17 @@ const LIST_STYLE = html`<style>
     display: inline-flex; align-items: center; min-height: var(--tap-compact);
     cursor: pointer; color: var(--muted); font-size: .9rem;
   }
-  .image-error {
+  .image-error, .split-note {
     padding: .6rem .7rem; border-radius: var(--radius);
     background: var(--surface); color: var(--text); font-size: .9rem;
   }
+  /* A read-only field is not an input to fill in, so it does not read as one. */
+  .sheet-prompt {
+    width: 100%; font-family: monospace; font-size: .85rem; line-height: 1.4;
+    background: var(--surface); color: var(--text);
+  }
+  .split-done { color: var(--accent); }
+  .split-error { color: var(--text); font-weight: 600; }
 </style>`;
 
 // ------------------------------------------------------------------ queries
@@ -584,8 +611,38 @@ export async function imageCandidates(
       ),
       origin: row.image_key === null ? null : (row.image_origin ?? "manual"),
       generatedAt: row.image_generated_at,
+      fingerprint,
     });
   }
 
   return candidates;
+}
+
+/**
+ * The visual briefs the prompt is written from, in cell order.
+ *
+ * `dishBrief` needs a recipe's parts as well as its own lines — a lasagne looks
+ * like its meat sauce and its cheese sauce — so this is the one place that does
+ * pay for a `findRecipe` per recipe. It is sixteen reads at most, on a screen
+ * reached by pressing a button, rather than the whole list `imageCandidates`
+ * renders.
+ *
+ * Null when a chosen recipe has gone: it was on the list a moment ago, and
+ * building a prompt for a recipe that no longer exists would produce a sheet
+ * with a cell nothing can be stored into.
+ */
+async function briefsFor(
+  db: D1Database,
+  householdId: number,
+  chosen: readonly ImageCandidate[],
+): Promise<DishBrief[] | null> {
+  const dishes: DishBrief[] = [];
+
+  for (const candidate of chosen) {
+    const recipe = await findRecipe(db, householdId, candidate.id);
+    if (recipe === null) return null;
+    dishes.push(dishBrief(candidate.id, recipe));
+  }
+
+  return dishes;
 }

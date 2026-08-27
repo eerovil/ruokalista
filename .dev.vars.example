@@ -11,8 +11,3 @@ GOOGLE_CLIENT_SECRET=""
 
 # Structures pasted recipe text. Without it, intake says so and refuses.
 ANTHROPIC_API_KEY=""
-
-# Draws recipe pictures, sixteen to a contact sheet (#96). Admin-only and paid
-# per request. Without it, generation refuses and every other picture path —
-# including the manual upload — carries on working.
-OPENAI_API_KEY=""

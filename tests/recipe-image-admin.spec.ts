@@ -1,26 +1,31 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
-import { emptySheet, onePixelPng } from "./support/png";
+import { emptySheet, onePixelPng, opaqueSheet } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
- * The admin screen that decides which recipes get a generated picture.
+ * The admin screen that decides which recipes get a generated picture, and the
+ * browser-side split that gives them one.
  *
- * **No test here calls OpenAI, and none may.** Every paid submit below has the
- * committed contact sheet pushed into the form first, which a development
- * server accepts in place of buying one — the same bargain the JSON route
- * strikes in `recipe-image-batch.spec.ts`. A submit without it would spend real
- * money on every run of this suite, so that is the mistake to look for.
+ * **Nothing in this app calls an image API any more, and these tests hold that
+ * down.** #96 bought a 4x4 contact sheet from OpenAI inside the Worker; #111
+ * removed it, because on the Workers Free plan it could not finish — 10 ms of
+ * CPU a request against over a second of pixel work. Every test that cuts a
+ * sheet here fails the run if any request reaches `api.openai.com`, and the
+ * flow they drive is the real one: the committed fixture sheet goes onto the
+ * file input, the admin's browser cuts it with the bundled splitter, and each
+ * crop is stored through `PUT /api/recipes/:id/image`.
  *
- * The screen's own promise is that nothing before that submit costs anything,
- * and the tests that matter most here are the ones holding it: opening the list
- * and reading the confirmation leave every recipe exactly as it was.
+ * The screen's own promise is that nothing before pressing that button changes
+ * anything, and the tests that matter most are the ones holding it: opening the
+ * list and reading the prompt leave every recipe exactly as it was.
  */
 
-const SHEET = readFileSync(new URL("./fixtures/contact-sheet.png", import.meta.url))
-  .toString("base64");
+const SHEET_BYTES = readFileSync(
+  new URL("./fixtures/contact-sheet.png", import.meta.url),
+);
 
 const LIST = "/admin/recipe-images";
 
@@ -43,20 +48,32 @@ async function status(
 }
 
 /**
- * Press the paid button with the fixture sheet supplied, so the split, the
- * commit and the freshness bookkeeping are all real and only the model call is
- * skipped. The field is honoured on a development origin and nowhere else.
+ * Fail the test if anything reaches OpenAI.
+ *
+ * The removed route was a Worker-side `fetch`, which a browser cannot intercept
+ * — so this is not the whole proof on its own. What makes it complete is that
+ * the split now happens in this page: every request that could reach a provider
+ * is a request this context makes, and this sees all of them. The structural
+ * half of the proof is in `dev/check-image-generation.ts`, which asserts the
+ * module has no `fetch` in it at all.
  */
-async function generateWithFixtureSheet(page: Page): Promise<void> {
-  await page.locator("#generate").evaluate((form, sheet) => {
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = "sheetBase64";
-    input.value = sheet as string;
-    form.appendChild(input);
-  }, SHEET);
+async function refuseOpenAI(page: Page): Promise<string[]> {
+  const reached: string[] = [];
+  await page.route("**://api.openai.com/**", async (route) => {
+    reached.push(route.request().url());
+    await route.abort();
+  });
+  return reached;
+}
 
-  await page.getByRole("button", { name: /Luo kuvat nyt/ }).click();
+/** Put the committed sheet on the file input and cut it. */
+async function splitFixtureSheet(page: Page): Promise<void> {
+  await page.locator("#sheet").setInputFiles({
+    name: "contact-sheet.png",
+    mimeType: "image/png",
+    buffer: SHEET_BYTES,
+  });
+  await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
 }
 
 test.beforeEach(reseed);
@@ -73,19 +90,16 @@ test.describe("the gate", () => {
     await expect(page.getByRole("heading", { name: "Ei löytynyt" })).toBeVisible();
   });
 
-  test("an ordinary member cannot post the paid action either", async ({
+  test("an ordinary member gets neither the prompt nor the splitter", async ({
     request,
   }) => {
-    const response = await request.post(`${LIST}/generate`, {
-      headers: {
-        Cookie: cookie(1),
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      data: `id=1&sheetBase64=${encodeURIComponent(SHEET)}`,
-      maxRedirects: 0,
-    });
-
-    expect(response.status()).toBe(404);
+    for (const path of [`${LIST}/confirm?id=1`, `${LIST}/split.js`]) {
+      const response = await request.get(path, {
+        headers: { Cookie: cookie(1) },
+        maxRedirects: 0,
+      });
+      expect(response.status(), path).toBe(404);
+    }
 
     // And nothing happened, whatever the refusal said.
     const state = await request.get("/api/recipes/1/image/status", {
@@ -122,114 +136,24 @@ test.describe("the list", () => {
     }
     await expect(page.getByText("Ei kuvaa").first()).toBeVisible();
 
-    // The cap is stated where the money is spent, not only in the validation.
-    await expect(page.getByText(/enintään 16 reseptiä/)).toBeVisible();
+    // The batch size is stated on the screen, not only in the validation.
+    await expect(page.getByText(/16 reseptiä 4×4 -ruudukkona/)).toBeVisible();
   });
 
-  test("opening the list and the confirmation buys nothing", async ({
+  test("opening the list and the prompt changes nothing", async ({
     context,
     page,
   }) => {
     await context.addCookies([sessionCookie(3)]);
     await page.goto(LIST);
-    await page.getByRole("button", { name: "Katso erä ennen luontia" }).click();
+    await page.getByRole("button", { name: "Jatka kehotteeseen" }).click();
 
-    await expect(page.getByRole("heading", { name: "Vahvista kuvien luonti" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Luo reseptikuvat" })).toBeVisible();
 
-    // Two screens deep and every recipe is still exactly as it was. A paid
-    // request would have had to change one of these.
+    // Two screens deep and every recipe is still exactly as it was.
     for (const id of [1, 2, 3]) {
       expect((await status(page, id)).status).toBe("missing");
     }
-  });
-
-  test("the confirmation names the exact recipes, in cell order", async ({
-    context,
-    page,
-  }) => {
-    await context.addCookies([sessionCookie(3)]);
-    await page.goto(`${LIST}/confirm?id=3&id=1`);
-
-    const named = page.locator(".image-manifest li");
-    await expect(named).toHaveCount(2);
-    await expect(named.nth(0)).toContainText("Lasagne");
-    await expect(named.nth(1)).toContainText("Kaalilaatikko");
-
-    // The order that is shown is the order that is posted, because it is the
-    // order the sheet is cut in.
-    const hidden = page.locator("#generate input[name='id']");
-    await expect(hidden.nth(0)).toHaveValue("3");
-    await expect(hidden.nth(1)).toHaveValue("1");
-  });
-});
-
-test.describe("a batch", () => {
-  test("three recipes are generated and immediately read as fresh", async ({
-    context,
-    page,
-  }) => {
-    await context.addCookies([sessionCookie(3)]);
-    await page.goto(LIST);
-    await page.getByRole("button", { name: "Katso erä ennen luontia" }).click();
-    await generateWithFixtureSheet(page);
-
-    await expect(page.getByRole("heading", { name: "Kuvat luotu" })).toBeVisible();
-    await expect(page.getByText("3 / 3 reseptiä sai kuvan.")).toBeVisible();
-
-    // The report shows the pictures that were just written, and they load.
-    const shown = page.locator(".image-list .recipe-image img");
-    await expect(shown).toHaveCount(3);
-    await expect(shown.first()).not.toHaveJSProperty("naturalWidth", 0);
-
-    for (const id of [1, 2, 3]) {
-      const state = await status(page, id);
-      expect(state.status).toBe("fresh");
-      expect(state.origin).toBe("generated");
-    }
-  });
-
-  test("a generated picture leaves the list and can be redone deliberately", async ({
-    context,
-    page,
-  }) => {
-    await context.addCookies([sessionCookie(3)]);
-    await page.goto(`${LIST}/confirm?id=1`);
-    await generateWithFixtureSheet(page);
-
-    await page.goto(LIST);
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
-
-    // It is not gone, it is behind its own disclosure with its own button, and
-    // nothing in there is preselected.
-    const current = page.locator("details.image-current");
-    await expect(current).toContainText("Ajan tasalla olevat (1)");
-    await current.getByText("Ajan tasalla olevat (1)").click();
-    const box = current.locator("input[name='id']");
-    await expect(box).toHaveCount(1);
-    await expect(box).not.toBeChecked();
-    await expect(
-      current.getByRole("button", { name: /Luo valituille uudelleen/ }),
-    ).toBeVisible();
-  });
-
-  test("editing a recipe puts it back on the list as stale", async ({
-    context,
-    page,
-  }) => {
-    await context.addCookies([sessionCookie(3)]);
-    await page.goto(`${LIST}/confirm?id=1`);
-    await generateWithFixtureSheet(page);
-
-    await page.goto("/recipes/1/edit");
-    await page.locator("#title").fill("Kaalilaatikko ja perunat");
-    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
-    await expect(page).toHaveURL(/\/recipes\/1(\?|$)/);
-
-    await page.goto(LIST);
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
-    await expect(
-      page.getByText("Vanhentunut — resepti on muuttunut"),
-    ).toBeVisible();
   });
 
   test("a picture somebody uploaded is listed but never offered", async ({
@@ -253,8 +177,249 @@ test.describe("a batch", () => {
     await current.getByText(/Ajan tasalla olevat/).click();
     await expect(current.getByRole("heading", { name: "Itse lisätyt kuvat" })).toBeVisible();
     await expect(current).toContainText("Kaalilaatikko");
-    // Manually managed means this screen will not spend money on it.
+    // Manually managed means this screen will not overwrite it in bulk.
     await expect(current.locator("input[name='id']")).toHaveCount(0);
+  });
+});
+
+test.describe("the prompt", () => {
+  test("it is the shared prompt, and it names this batch's cells in order", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1&id=3`);
+
+    const prompt = await page.locator("#sheet-prompt").inputValue();
+
+    // The three load-bearing parts. The grid is what maps a cell back to a
+    // recipe, the gutters are what the splitter recovers with, and rendered
+    // text would be something to misread a positional mapping against.
+    expect(prompt).toContain("exactly 16 food illustrations");
+    expect(prompt).toContain("4-column by 4-row grid");
+    expect(prompt).toContain("no text, no numbers, no labels");
+    expect(prompt).toContain("generous fully transparent gutters");
+    expect(prompt).toContain("Cells 3 to 16 are unused");
+
+    // And the cells are this batch's recipes, in the chosen order, described
+    // from their own ingredients.
+    expect(prompt).toMatch(/Cell 1: Kaalilaatikko — .*kaali/);
+    expect(prompt).toMatch(/Cell 2: Lasagne —/);
+    expect(prompt).not.toContain("Cell 3:");
+  });
+
+  test("reordering the batch reorders the prompt and the manifest together", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=3&id=1`);
+
+    const prompt = await page.locator("#sheet-prompt").inputValue();
+    expect(prompt).toMatch(/Cell 1: Lasagne —/);
+    expect(prompt).toMatch(/Cell 2: Kaalilaatikko —/);
+
+    // The manifest says the same thing, because position is the whole mapping
+    // and this list is what the browser reads it from.
+    const named = page.locator("#split-manifest li");
+    await expect(named).toHaveCount(2);
+    await expect(named.nth(0)).toContainText("Lasagne");
+    await expect(named.nth(1)).toContainText("Kaalilaatikko");
+    await expect(named.nth(0)).toHaveAttribute("data-recipe-id", "3");
+    await expect(named.nth(1)).toHaveAttribute("data-recipe-id", "1");
+  });
+
+  test("each row carries the fingerprint the crop will be stored against", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    const row = page.locator("#split-manifest li").first();
+    const stated = await row.getAttribute("data-fingerprint");
+
+    // The same value #95's API reports for the recipe as it stands. This is
+    // what stops a crop being recorded against a recipe nobody read.
+    expect((await status(page, 1)).recipeFingerprint).toBe(stated);
+    expect(stated).toMatch(/^[0-9a-f]{16,}$/);
+    await expect(row).toHaveAttribute("data-expected-image-key", "");
+  });
+
+  test("the Copy button copies the prompt", async ({ context, page }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    await page.getByRole("button", { name: "Kopioi kehote" }).click();
+    await expect(page.getByRole("button", { name: "Kopioitu" })).toBeVisible();
+
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).toContain("4-column by 4-row grid");
+    expect(copied).toContain("Cell 1: Kaalilaatikko");
+  });
+
+  test("a rejected clipboard write falls back before reporting success", async ({
+    context,
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error("denied")) },
+      });
+      (window as unknown as { fallbackCopy?: boolean }).fallbackCopy = false;
+      document.execCommand = () => {
+        (window as unknown as { fallbackCopy?: boolean }).fallbackCopy = true;
+        return true;
+      };
+    });
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    await page.getByRole("button", { name: "Kopioi kehote" }).click();
+    await expect(page.getByRole("button", { name: "Kopioitu" })).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { fallbackCopy?: boolean }).fallbackCopy))
+      .toBe(true);
+  });
+});
+
+test.describe("cutting a sheet", () => {
+  test("three recipes get their pictures, and read as fresh", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    const reached = await refuseOpenAI(page);
+
+    await page.goto(LIST);
+    await page.getByRole("button", { name: "Jatka kehotteeseen" }).click();
+    await splitFixtureSheet(page);
+
+    await expect(page.locator("#split-note")).toContainText(
+      "3 / 3 reseptiä sai kuvan.",
+      { timeout: 30_000 },
+    );
+
+    for (const id of [1, 2, 3]) {
+      const state = await status(page, id);
+      expect(state.status).toBe("fresh");
+      expect(state.origin).toBe("generated");
+      // What actually drew it: a person supplied the sheet, under our style.
+      expect(state.generatedBy).toBe("supplied:manual/s1");
+      expect(state.generatedBy).not.toContain("openai");
+    }
+
+    // The whole point of #111: not one paid request was made.
+    expect(reached).toEqual([]);
+  });
+
+  test("a picture added after confirmation is not overwritten", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    // The manifest saw no picture. While the admin is away drawing the sheet,
+    // somebody chooses one manually through the ordinary upload path.
+    const uploaded = await page.request.put("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3), "content-type": "image/png" },
+      data: onePixelPng(),
+    });
+    expect(uploaded.status()).toBe(204);
+    const before = await page.request.get("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3) },
+    });
+    const chosenBytes = await before.body();
+
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("0 / 1", {
+      timeout: 30_000,
+    });
+    await expect(page.locator("[data-cell-status]")).toContainText(
+      "nykyinen kuva säilytettiin",
+    );
+
+    const state = await status(page, 1);
+    expect(state.origin).toBe("manual");
+    const after = await page.request.get("/api/recipes/1/image", {
+      headers: { Cookie: cookie(3) },
+    });
+    expect(await after.body()).toEqual(chosenBytes);
+  });
+
+  test("the stored crops are real pictures at the output size", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("1 / 1", {
+      timeout: 30_000,
+    });
+
+    // Fetched as an image and measured, rather than trusted because a 204 came
+    // back: the splitter runs in a browser now, and a crop that decoded to
+    // nothing would still have stored.
+    const size = await page.evaluate(async () => {
+      const image = new Image();
+      image.src = "/api/recipes/1/image";
+      await image.decode();
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    });
+    expect(size).toEqual({ width: 512, height: 512 });
+  });
+
+  test("a generated picture leaves the list and can be redone deliberately", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("1 / 1", {
+      timeout: 30_000,
+    });
+
+    await page.goto(LIST);
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
+
+    // It is not gone, it is behind its own disclosure with its own button, and
+    // nothing in there is preselected.
+    const current = page.locator("details.image-current");
+    await expect(current).toContainText("Ajan tasalla olevat (1)");
+    await current.getByText("Ajan tasalla olevat (1)").click();
+    const box = current.locator("input[name='id']");
+    await expect(box).toHaveCount(1);
+    await expect(box).not.toBeChecked();
+    await expect(
+      current.getByRole("button", { name: /Luo valituille uudelleen/ }),
+    ).toBeVisible();
+  });
+
+  test("editing a recipe puts it back on the list as stale", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("1 / 1", {
+      timeout: 30_000,
+    });
+
+    await page.goto("/recipes/1/edit");
+    await page.locator("#title").fill("Kaalilaatikko ja perunat");
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/1(\?|$)/);
+
+    await page.goto(LIST);
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
+    await expect(
+      page.getByText("Vanhentunut — resepti on muuttunut"),
+    ).toBeVisible();
   });
 });
 
@@ -263,19 +428,15 @@ test.describe("what it refuses", () => {
     request,
   }) => {
     const ids = Array.from({ length: 17 }, (_, at) => `id=${at + 1}`).join("&");
-    const response = await request.post(`${LIST}/generate`, {
-      headers: {
-        Cookie: cookie(3),
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      data: ids,
+    const response = await request.get(`${LIST}/confirm?${ids}`, {
+      headers: { Cookie: cookie(3) },
     });
 
     expect(response.status()).toBe(400);
     expect(await response.text()).toContain("Tee loput seuraavana eränä.");
   });
 
-  test("an empty selection is refused before anything is bought", async ({
+  test("an empty selection is refused before anything is drawn", async ({
     context,
     page,
   }) => {
@@ -286,31 +447,97 @@ test.describe("what it refuses", () => {
     await expect(page.getByText("Valitse ainakin yksi resepti.")).toBeVisible();
   });
 
-  test("a sheet that cannot be cut changes nothing and can be retried", async ({
+  test("a sheet that cannot be cut stores nothing and can be redone free", async ({
     context,
     page,
   }) => {
     await context.addCookies([sessionCookie(3)]);
     await page.goto(`${LIST}/confirm?id=1`);
 
-    // A transparent sheet with nothing drawn on it: bought, and worthless.
-    await page.locator("#generate").evaluate((form, sheet) => {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = "sheetBase64";
-      input.value = sheet as string;
-      form.appendChild(input);
-    }, emptySheet());
-    await page.getByRole("button", { name: /Luo kuvat nyt/ }).click();
+    // A transparent sheet with nothing drawn on it.
+    await page.locator("#sheet").setInputFiles({
+      name: "sheet.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(emptySheet(), "base64"),
+    });
+    await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
 
-    await expect(page.getByRole("heading", { name: "Kuvia ei luotu" })).toBeVisible();
-    await expect(page.getByText(/Arkkia ei voitu leikata/)).toBeVisible();
+    await expect(page.locator("#split-note")).toContainText(
+      /Arkkia ei voitu leikata/,
+      { timeout: 30_000 },
+    );
+    await expect(page.locator("#split-note")).toContainText(
+      "uusi yritys ei maksa mitään",
+    );
     expect((await status(page, 1)).status).toBe("missing");
 
-    // Retrying is just another request, and the recipe is still on the list.
-    await page.goto(`${LIST}/confirm?id=1`);
-    await generateWithFixtureSheet(page);
-    await expect(page.getByRole("heading", { name: "Kuvat luotu" })).toBeVisible();
+    // Trying again is just another file, and the recipe is still on the list.
+    await splitFixtureSheet(page);
+    await expect(page.locator("#split-note")).toContainText("1 / 1", {
+      timeout: 30_000,
+    });
     expect((await status(page, 1)).status).toBe("fresh");
+  });
+
+  test("a sheet with no transparency is refused, and says why", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1&id=2`);
+
+    // What a great many external image tools produce: the same drawing, exported
+    // onto an opaque background. There is deliberately no white-background
+    // fallback, because guessing which white pixels are plate would put half of
+    // somebody else's dinner on a recipe.
+    await page.locator("#sheet").setInputFiles({
+      name: "flattened.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(opaqueSheet(), "base64"),
+    });
+    await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
+
+    const note = page.locator("#split-note");
+    await expect(note).toContainText(/Arkkia ei voitu leikata/, { timeout: 30_000 });
+    // Transparency is named as the reason, rather than sixteen cells each
+    // complaining that they are joined to their neighbour.
+    await expect(note).toContainText(/läpinäkyv/);
+
+    for (const id of [1, 2]) {
+      expect((await status(page, id)).status).toBe("missing");
+    }
+  });
+
+  test("a file that is not a PNG is refused and nothing is touched", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    await page.locator("#sheet").setInputFiles({
+      name: "sheet.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("<!doctype html><title>not a sheet</title>"),
+    });
+    await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
+
+    await expect(page.locator("#split-note")).toContainText(
+      /Arkkia ei voitu lukea/,
+      { timeout: 30_000 },
+    );
+    expect((await status(page, 1)).status).toBe("missing");
+  });
+
+  test("no file chosen says so rather than doing nothing", async ({
+    context,
+    page,
+  }) => {
+    await context.addCookies([sessionCookie(3)]);
+    await page.goto(`${LIST}/confirm?id=1`);
+
+    await page.getByRole("button", { name: /Leikkaa arkki/ }).click();
+    await expect(page.locator("#split-note")).toContainText(/Valitse arkki/);
+    expect((await status(page, 1)).status).toBe("missing");
   });
 });

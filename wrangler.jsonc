@@ -27,11 +27,6 @@
       "GOOGLE_CLIENT_ID",
       "GOOGLE_CLIENT_SECRET",
       "ANTHROPIC_API_KEY",
-      // Draws recipe pictures (#96). Listed here for the same reason as the
-      // others: without the name in this block, local development does not
-      // expose it from .dev.vars at all, so the generator would refuse locally
-      // however carefully the key was put there.
-      "OPENAI_API_KEY",
       "BACKUP_GITHUB_TOKEN"
     ]
   },

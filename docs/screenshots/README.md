@@ -35,3 +35,8 @@ Regenerate after a change that alters a screen:
 | `28-week-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
 | `29-week-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
 | `30-admin.png` | Proposed admin panel: recipe image management and the AgentDeck import |
+| `32-admin-recipe-images.png` | Proposed picture list: missing, stale, current and manually added |
+| `33-admin-recipe-images-confirm.png` | Proposed prompt to copy, the numbered manifest, and the sheet upload |
+| `34-admin-recipe-images-done.png` | Proposed same screen after the browser cut a sheet and stored the crops |
+| `32-generated-images.png` | Recipe list with every row pictured from one contact sheet |
+| `33-generated-recipe.png` | One recipe with its picture from that sheet |

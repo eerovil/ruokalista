@@ -72,9 +72,8 @@ has to open it explicitly first, mirroring what a person does:
 `openDraftEditor(page)` for exactly that; a new spec touching those fields
 should use them rather than `.click()` on a hidden input. Two hand-built PNGs
 used across the image specs — `onePixelPng()` (the smallest real upload) and
-`emptySheet()` (a sheet the model wasted) — live in `tests/support/png.ts` so
-`recipe-image-batch.spec.ts` and `recipe-image-admin.spec.ts` can't drift into
-testing two different ideas of "empty". `tests/walkthrough.spec.ts` is a
+`emptySheet()` (a sheet with no artwork) — live in `tests/support/png.ts`.
+`tests/walkthrough.spec.ts` is a
 hand-walk of the whole product, not an assertion suite, and does not reseed on
 purpose — it is meant to be pointed at whatever the development database
 already holds; its own docstring says it is "kept out of `npm run check` and

@@ -1,27 +1,32 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { MAX_CELLS } from "../src/contact-sheet.ts";
-import type { Env } from "../src/env.ts";
 import {
   dishBrief,
-  generateContactSheet,
   GENERATED_BY,
-  GenerationError,
   sheetPrompt,
   STYLE_VERSION,
 } from "../src/image-generation.ts";
 import type { FingerprintRecipe } from "../src/recipe-fingerprint.ts";
 
 /**
- * The prompt and the brief, checked here rather than by calling the model.
+ * The prompt and the brief.
  *
- * Three things in the prompt are load-bearing, and all three are silent
- * failures if they break: a grid that stops being sixteen cells moves every
- * cell a recipe was mapped to, rendered text gives a positional mapping
- * something to be misread against, and a brief that lost a multipart dish's
- * parts describes an empty plate. None of those would make the request fail —
- * they would make it succeed and be wrong, having spent the money.
+ * Since #111 there is no image request to make: the prompt is copied by an
+ * admin into whichever image tool they like, and the sheet comes back as a
+ * file. That makes these checks more important rather than less. The prompt is
+ * now a *contract* between two things that never meet — the words a person
+ * pastes into some other tool, and the splitter that cuts what they bring back
+ * — and nothing at runtime can notice the two disagreeing.
+ *
+ * Three parts of it are load-bearing, and all three fail silently: a grid that
+ * stops being sixteen cells moves every cell a recipe was mapped to, rendered
+ * text gives a positional mapping something to be misread against, and a brief
+ * that lost a multipart dish's parts describes an empty plate. None of those
+ * would make anything error — they would produce a sheet that cut cleanly into
+ * pictures of the wrong dishes.
  */
 
 function line(ingredient: string) {
@@ -132,136 +137,42 @@ test("a batch bigger than a sheet is a programming error", () => {
   assert.throws(() => sheetPrompt([]), RangeError);
 });
 
-test("what gets stored names the provider, the model and the style version", () => {
-  assert.equal(GENERATED_BY, `openai:gpt-image-2/${STYLE_VERSION}`);
+/**
+ * What a stored picture records about where it came from.
+ *
+ * It used to name the provider and the model that were paid for the sheet.
+ * Nothing is paid now and nothing knows which tool the admin used, so what it
+ * records is the part that is true and useful: a person supplied the sheet,
+ * drawn to our prompt under this style version. The style version is the half
+ * that must not be hard-coded — it is what dates every picture in a household
+ * when the style text changes.
+ */
+test("what gets stored says a person supplied it, and under which style", () => {
+  assert.equal(GENERATED_BY, `supplied:manual/${STYLE_VERSION}`);
+  assert.ok(GENERATED_BY.endsWith(`/${STYLE_VERSION}`), GENERATED_BY);
+  assert.doesNotMatch(GENERATED_BY, /openai/);
 });
 
 /**
- * How a paid request fails, checked with the network replaced rather than
- * called. Every one of these has to come back as a `GenerationError` carrying
- * something a caller can read: the route turns it into a 502 and nothing is
- * stored, so a failure that arrived as a bare crash would be a 500 with no
- * explanation and the same amount of money spent.
+ * The removed half, asserted as removed.
+ *
+ * #96 called OpenAI from the Worker. #111 deleted that, because on the Workers
+ * Free plan it could not finish: 10 ms of CPU a request against well over a
+ * second of pixel work, which killed the one live attempt after 178 seconds and
+ * threw away the sheet it had bought. This module is the prompt and nothing
+ * else now, and this check is what notices if a request creeps back into it —
+ * a paid call nobody meant to add is not the kind of thing to find in a bill.
  */
-
-const DISHES = [dishBrief(1, recipe("Kaalilaatikko", ["kaali"]))];
-
-/** Run one generation against a canned reply. Restores `fetch` afterwards. */
-async function against(
-  reply: Response | (() => never),
-  env: Partial<Env> = { OPENAI_API_KEY: "test-key-not-a-real-one" },
-): Promise<unknown> {
-  const real = globalThis.fetch;
-  globalThis.fetch = (async () => {
-    if (typeof reply === "function") reply();
-    return reply;
-  }) as typeof fetch;
-  try {
-    return await generateContactSheet(env as Env, DISHES);
-  } finally {
-    globalThis.fetch = real;
-  }
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-test("without a key, nothing is requested and nothing is spent", async () => {
-  let called = false;
-  const real = globalThis.fetch;
-  globalThis.fetch = (async () => {
-    called = true;
-    return json({});
-  }) as typeof fetch;
-
-  try {
-    await assert.rejects(
-      () => generateContactSheet({} as Env, DISHES),
-      (error: unknown) => {
-        assert.ok(error instanceof GenerationError);
-        assert.match((error as Error).message, /not configured/);
-        return true;
-      },
-    );
-  } finally {
-    globalThis.fetch = real;
-  }
-
-  assert.equal(called, false, "a keyless deployment must not call out at all");
-});
-
-test("the provider's own explanation is passed on, and only that", async () => {
-  await assert.rejects(
-    () => against(json({ error: { message: "Your quota is exhausted." } }, 429)),
-    (error: unknown) => {
-      assert.ok(error instanceof GenerationError);
-      assert.match((error as Error).message, /answered 429/);
-      assert.match((error as Error).message, /quota is exhausted/);
-      // Not the key, and not the prompt.
-      assert.doesNotMatch((error as Error).message, /test-key/);
-      assert.doesNotMatch((error as Error).message, /Kaalilaatikko/);
-      return true;
-    },
+test("this module makes no network request of any kind", async () => {
+  const source = await readFile(
+    new URL("../src/image-generation.ts", import.meta.url),
+    "utf8",
   );
-});
 
-test("an error page instead of JSON does not become a crash", async () => {
-  await assert.rejects(
-    () => against(new Response("<html>502 Bad Gateway</html>", { status: 502 })),
-    /No explanation was given/,
-  );
-});
-
-test("a success that carries no image is a failure", async () => {
-  await assert.rejects(() => against(json({ data: [] })), /returned no image/);
-  await assert.rejects(() => against(json({})), /returned no image/);
-  await assert.rejects(() => against(json({ data: [{}] })), /returned no image/);
-});
-
-test("a reply that is not JSON at all is a failure", async () => {
-  await assert.rejects(
-    () => against(new Response("nonsense", { status: 200 })),
-    /not JSON/,
-  );
-});
-
-test("an image that is not base64 is a failure, not a mangled PNG", async () => {
-  await assert.rejects(
-    () => against(json({ data: [{ b64_json: "!!! not base64 !!!" }] })),
-    /cannot decode/,
-  );
-});
-
-test("a reply that declares more than we will read is refused unread", async () => {
-  const oversized = new Response("{}", {
-    status: 200,
-    headers: { "content-length": String(64 * 1024 * 1024) },
-  });
-  await assert.rejects(() => against(oversized), /more data than we will read/);
-});
-
-test("a request that never answers is a failure with a duration in it", async () => {
-  await assert.rejects(
-    () =>
-      against(() => {
-        const error = new Error("timed out");
-        error.name = "TimeoutError";
-        throw error;
-      }),
-    /no answer within 180 seconds/,
-  );
-});
-
-test("a network that is simply not there is a failure", async () => {
-  await assert.rejects(
-    () =>
-      against(() => {
-        throw new TypeError("fetch failed");
-      }),
-    /could not be made/,
-  );
+  assert.doesNotMatch(source, /fetch\(/);
+  assert.doesNotMatch(source, /api\.openai\.com/);
+  assert.doesNotMatch(source, /OPENAI_API_KEY/);
+  // And it needs no environment at all, which is the structural version of the
+  // same claim: a module that cannot see a key cannot spend one.
+  assert.doesNotMatch(source, /from "\.\/env\.ts"/);
 });

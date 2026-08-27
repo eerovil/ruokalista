@@ -28,9 +28,10 @@ import { decodePng, encodePng, PngError, type Raster } from "./png.ts";
  * -------------
  * Unpacking a 1,024 px sheet, flooding it and writing sixteen crops measured at
  * about 1.5 seconds of CPU on a development host, a fifth of that for one crop.
- * Well inside a Worker's budget, and spent once per paid request that itself
- * takes a minute. Worth knowing before anybody optimises the per-scanline filter
- * search in `png.ts`, which is where most of it goes.
+ * That is far outside this deployment's 10 ms Worker budget, which is why #111
+ * runs this shared module in the admin's browser. Worth knowing before anybody
+ * moves it back or optimises the per-scanline filter search in `png.ts`, where
+ * most of the time goes.
  */
 
 /** Four columns, four rows, sixteen cells. The contract, not a setting. */
@@ -96,9 +97,20 @@ export interface CellProblem {
   reason: string;
 }
 
+/**
+ * Why a whole sheet was refused before any cell was looked at. There is one
+ * such reason, and it is the one an external image tool is most likely to hit.
+ */
+export const NO_TRANSPARENCY =
+  "this sheet has no transparent pixels at all, so there is no background to " +
+  "tell the sixteen dishes apart by — the tool that made it has flattened the " +
+  "transparency, and a sheet drawn on white cannot be cut";
+
 export type SplitResult =
   | { ok: true; crops: Crop[]; sheet: { width: number; height: number } }
-  | { ok: false; problems: CellProblem[] };
+  /** The sheet is not a sheet. Nothing about individual cells was even asked. */
+  | { ok: false; kind: "sheet"; reason: string }
+  | { ok: false; kind: "cells"; problems: CellProblem[] };
 
 /**
  * Cut `count` pictures out of a contact sheet, or refuse the sheet.
@@ -116,7 +128,24 @@ export async function splitContactSheet(
     throw new RangeError(`A contact sheet holds 1 to ${MAX_CELLS} pictures.`);
   }
 
-  const sheet = padToGrid(await decodePng(bytes));
+  const decoded = await decodePng(bytes);
+
+  // Before anything else, and before padding — which adds transparent pixels of
+  // its own and would answer this question for us. A sheet with no transparency
+  // is one flat opaque rectangle: every dish on it is joined to every other by
+  // the background, so the flood fill below would find one enormous component
+  // and report sixteen cells as joined together. Saying *why* is far more use
+  // than sixteen identical complaints, and the cause is nearly always the same
+  // one — plenty of external image tools flatten transparency on export.
+  //
+  // There is deliberately no white-background fallback. Deciding which white
+  // pixels are plate and which are background is guesswork, and guessing wrong
+  // means a recipe gets a picture of half of somebody else's dinner.
+  if (!hasTransparency(decoded)) {
+    return { ok: false, kind: "sheet", reason: NO_TRANSPARENCY };
+  }
+
+  const sheet = padToGrid(decoded);
   const cellWidth = sheet.width / GRID;
   const cellHeight = sheet.height / GRID;
 
@@ -192,7 +221,7 @@ export async function splitContactSheet(
 
   if (problems.length > 0) {
     problems.sort((a, b) => a.cell - b.cell);
-    return { ok: false, problems };
+    return { ok: false, kind: "cells", problems };
   }
 
   const crops: Crop[] = [];
@@ -228,6 +257,18 @@ interface Component {
  * sheet whose cells are not whole pixels, and one column of transparency fixes
  * that without moving any artwork.
  */
+/**
+ * Whether any pixel on this sheet is see-through. One pass over the alpha
+ * channel, and it stops at the first one it finds — a real transparent sheet
+ * answers this within its first row of gutter.
+ */
+function hasTransparency({ data }: Raster): boolean {
+  for (let at = 3; at < data.length; at += 4) {
+    if (data[at]! < ALPHA_FLOOR) return true;
+  }
+  return false;
+}
+
 function padToGrid(raster: Raster): Raster {
   const width = raster.width + ((GRID - (raster.width % GRID)) % GRID);
   const height = raster.height + ((GRID - (raster.height % GRID)) % GRID);

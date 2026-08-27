@@ -1,0 +1,25 @@
+{
+  // The browser half of the app, which is one screen: the recipe-image splitter
+  // in src/client/. It gets its own tsconfig for the same reason dev/ is outside
+  // the main one — DOM globals and Workers globals disagree about `Response`,
+  // `fetch` and friends, and a single `types` list cannot hold both.
+  //
+  // It still compiles the *shared* modules it imports: contact-sheet.ts and
+  // png.ts are checked here against DOM types and in tsconfig.json against
+  // Workers types, so anything that only exists in one of the two is caught.
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/client/**/*.ts"]
+}

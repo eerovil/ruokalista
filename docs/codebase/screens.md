@@ -53,22 +53,19 @@ without transpilation, so write them for the oldest target they need to serve.
 
 ## The recipe-image admin screen
 
-`src/recipe-image-admin.ts` (issue #97, PR #105) is a three-screen, JS-free
-flow and the only place in the app from which money can be spent by a person
-rather than by a script:
+PR #115 proposes replacing #97's paid three-screen flow with an admin-only list
+and confirmation screen:
 
 1. `GET /admin/recipe-images` (`recipeImageAdminScreen`) — every dish and the
    freshness of its picture.
 2. `GET /admin/recipe-images/confirm` (`recipeImageConfirmScreen`) — the exact
-   recipes about to be drawn, in cell order. Still free.
-3. `POST /admin/recipe-images/generate` (`recipeImageGenerateForm`) — the one
-   paid request, rendered as a report rather than redirected to, because the
-   report of what happened to each recipe exists only once.
+   recipes in cell order, the shared prompt and the contact-sheet file input.
 
-`runImageBatch` (`src/recipe-image-batch.ts`) is the shared batch core, factored
-out so this form route and the JSON API (`docs/codebase/recipe-images.md`) run
-identical logic — same cap, same manifest order, same all-or-nothing sheet
-split — and differ only in response shape.
+The proposed confirmation screen deliberately requires modern JavaScript. It
+loads the committed browser bundle from an admin-gated route, cuts and validates
+the whole sheet before uploading any crop, then PUTs 512 px PNGs through the
+existing recipe-image API. The page says that JavaScript is required and leaves
+the action disabled until the bundle is ready.
 
 Selection UX worth reusing elsewhere: recipes missing or with a stale picture
 are checkboxes, preselected up to `MAX_CELLS`; recipes with a current picture
