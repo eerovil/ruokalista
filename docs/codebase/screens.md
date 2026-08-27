@@ -110,6 +110,21 @@ The proposal also moves `sourceWorthShowing` out of `src/recipes.ts` and into
 the same question the cooking view does — see
 [recipes](docs/codebase/recipes.md).
 
+Issue #147 proposes an opt-in S-ostoslista action on that same projection. It is
+shown only to the household named by server configuration. Every send
+recomputes the selected batches and `src/pantry.ts::splitByPantry` on the
+server, then sends only `Ostettavat`: a mapped ingredient goes by EAN, while an
+unmapped one becomes a note carrying the ingredient name and Ruokalista amount.
+No recipe amount becomes a package count.
+
+An opened buy row shows either the cached S-group product or that it will be a
+note. Product choice is a server-rendered search at `/ostoslista/tuote`.
+Selecting a result repeats the search before writing, so the browser cannot
+invent a product name, EAN, or image URL. Search and send failures render a
+Finnish refusal without changing the local mapping or computed list. The
+private service calls live in `src/s-ostoslista.ts`; no API token reaches the
+markup.
+
 ## The cupboard
 
 This pull request proposes `GET /kaappi` (`src/pantry-screens.ts`) and a

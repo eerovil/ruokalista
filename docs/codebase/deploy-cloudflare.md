@@ -48,6 +48,20 @@ actually deploying — it prints the bindings table (e.g.
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.
 
+The S-ostoslista integration proposed by #147 adds three required Worker
+secrets/config values: `S_OSTOSLISTA_API_URL` is the private sync Worker's base
+URL, `S_OSTOSLISTA_API_TOKEN` is its bearer token, and
+`S_OSTOSLISTA_HOUSEHOLD_ID` is the one Ruokalista household allowed to see or
+use the integration. The remote service must have product search enabled before
+this is useful. Set all three before merging the proposal: `main` deploys
+immediately, and leaving them unset deliberately hides every integration route
+and control rather than exposing a half-configured action.
+
+Local browser tests do not use those credentials. Playwright starts a small
+contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
+`--var` bindings to local Wrangler, so search/add/error coverage can never touch
+the real private list.
+
 ## Backups
 
 A Cron Trigger (`wrangler.jsonc`, `"17 2 * * *"`, UTC) calls the Worker's

@@ -25,6 +25,16 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
 
   /**
+   * Private S-ostoslista sync-service endpoint and bearer token. The household
+   * id is an explicit gate: product mappings live on the global ingredient,
+   * but this deliberately single-household integration must not become a
+   * capability every household receives by accident.
+   */
+  S_OSTOSLISTA_API_URL?: string;
+  S_OSTOSLISTA_API_TOKEN?: string;
+  S_OSTOSLISTA_HOUSEHOLD_ID?: string;
+
+  /**
    * Fine-grained PAT restricted to eerovil/ruokalista-backup with repository
    * Contents read/write. The nightly scheduled handler fails loudly without it.
    */

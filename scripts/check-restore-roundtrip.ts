@@ -33,7 +33,7 @@ try {
     "--persist-to",
     sourceState,
     "--command",
-    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1); INSERT INTO recipe_preference (id, household_id, recipe_id, default_portions, updated_at, updated_by) VALUES (1, 2, 1, 8, '2026-08-25 12:00:00', 2)",
+    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1); INSERT INTO recipe_preference (id, household_id, recipe_id, default_portions, updated_at, updated_by) VALUES (1, 2, 1, 8, '2026-08-25 12:00:00', 2); UPDATE ingredient SET ean = '6415712506032', external_product_name = 'Kotimaista rypsiöljy 500 ml', external_product_image_url = 'https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg' WHERE id = 1",
   ]);
 
   const snapshot = await captureSnapshot(sourceState);
@@ -69,6 +69,14 @@ try {
   }
   if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha") === undefined) {
     throw new Error("round-trip did not preserve household/member/ingredient relationships");
+  }
+  const mappedIngredient = target.ingredient.find((row) => row.id === 1);
+  if (
+    mappedIngredient?.ean !== "6415712506032" ||
+    mappedIngredient.external_product_name !== "Kotimaista rypsiöljy 500 ml" ||
+    typeof mappedIngredient.external_product_image_url !== "string"
+  ) {
+    throw new Error("round-trip did not preserve the external product mapping");
   }
   if (target.planned_batch[0]?.recipe_id !== 3 || target.planned_batch[0]?.portions !== 6) {
     throw new Error("round-trip did not preserve the planned batch");

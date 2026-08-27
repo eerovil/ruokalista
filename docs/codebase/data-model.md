@@ -249,6 +249,19 @@ recipe_id)` row holding the default portions the picker starts from.
 recipe; "we always make this for nine" is a fact about a kitchen, and putting it
 on the shared row would push the publisher's habit onto everyone who plans it.
 
+Issue #147 proposes three nullable columns on that global `ingredient` row:
+`ean`, `external_product_name`, and `external_product_image_url`. Together they
+cache the one S-group product selected for an ingredient. This deliberately
+does not add a provider or household mapping table: the integration is enabled
+for one server-configured household only, and that is the boundary that makes a
+global preference acceptable for this version.
+
+The three values are replaced together only after a fresh S-ostoslista product
+search confirms the submitted EAN. The image is a stable public CDN URL derived
+from that EAN rather than a temporary signed search result. As a column-only
+addition, the backup table manifest does not change; backup and restore already
+carry every column on an ingredient row.
+
 ### Rebuilding a table in a D1 migration
 
 Worth reading before writing another one. The plain SQLite rebuild does not work
