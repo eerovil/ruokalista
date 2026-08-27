@@ -57,6 +57,14 @@ this is useful. Set all three before merging the proposal: `main` deploys
 immediately, and leaving them unset deliberately hides every integration route
 and control rather than exposing a half-configured action.
 
+The bearer token is not an S-ryhmä/AppSync credential and does not expose the
+phone's underlying identity token. Its blast radius is still the configured
+household's real shopping list: the service accepts authenticated reads and
+writes for its bound list, and its five-minute sync propagates those writes to
+the list used by the phone. A leaked token can therefore read and modify that
+shopping list through the service. Keep it as a Worker secret, and rotate the
+token on both sides if it is exposed.
+
 Local browser tests do not use those credentials. Playwright starts a small
 contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
 `--var` bindings to local Wrangler, so search/add/error coverage can never touch
