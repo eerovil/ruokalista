@@ -117,7 +117,22 @@ test.describe("signed in", () => {
       "Lounas",
       "Päivällinen",
     ]);
-    const addLinks = tuesday.locator(".slot-actions");
+    await expect(tuesday.locator(".slot-actions a")).toHaveText([
+      "+ Lounas",
+      "+ Päivällinen",
+    ]);
+    const wednesday = page.locator(".day").nth(2);
+    await expect(wednesday.locator(".continuing-slots")).toHaveText(
+      "Lounas · Päivällinen",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/24-multi-day-batch.png`,
+      fullPage: true,
+    });
+
+    // A second, cropped shot for #138 rather than repurposing the one above:
+    // full-page, the fixed bottom tabs land across Tuesday's second row, and
+    // the covered days are the whole point of this one.
     await tuesday.evaluate((element) => {
       window.scrollTo(
         0,
@@ -126,13 +141,14 @@ test.describe("signed in", () => {
     });
     expect(await page.evaluate(() => window.pageYOffset)).toBeGreaterThan(0);
     await expect(tuesday.locator(".continuing-card")).toBeInViewport();
-    await expect(addLinks).toBeInViewport();
-    await page.screenshot({ path: `${SHOTS}/24-multi-day-batch.png` });
+    await expect(tuesday.locator(".slot-actions")).toBeInViewport();
+    await expect(wednesday.locator(".continuing-card")).toBeInViewport();
+    await page.screenshot({ path: `${SHOTS}/49-covered-days.png` });
   });
 
   /**
-   * The one screenshot deliberately not `fullPage`: what it is evidence of is
-   * where the viewport lands, and a full-page capture cannot show that.
+   * Deliberately not `fullPage`: what it is evidence of is where the viewport
+   * lands, and a full-page capture cannot show that.
    */
   test("an empty current week opens on today", async ({ page }) => {
     await page.goto("/");
