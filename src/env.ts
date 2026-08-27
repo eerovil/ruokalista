@@ -29,4 +29,16 @@ export interface Env {
    * Contents read/write. The nightly scheduled handler fails loudly without it.
    */
   BACKUP_GITHUB_TOKEN?: string;
+
+  /**
+   * Bearer token for the S-ostoslista sync service (see
+   * SOSTOSLISTA_SERVICE_URL), which puts things on the household's real
+   * S-ryhmä shopping list. Not an S-ryhmä credential: that service holds
+   * those. Optional in the type because a deployment without it must say the
+   * shopping list is not connected rather than crash.
+   */
+  SOSTOSLISTA_API_TOKEN?: string;
+
+  /** Where that service lives. A plain var, set in wrangler.jsonc. */
+  SOSTOSLISTA_SERVICE_URL?: string;
 }
