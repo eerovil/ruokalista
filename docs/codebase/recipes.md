@@ -87,7 +87,7 @@ says: 5 dl times 1⅓ reads 6½ dl, not 6,666. Small amounts keep quarters, larg
 ones go to halves and then whole numbers, weights go to the nearest 5 or 10 g.
 
 The recipe screen is cook-first (decision #37), so a source line is not repeated
-under every ingredient. `sourceWorthShowing` in `src/recipes.ts` surfaces it in
+under every ingredient. `sourceWorthShowing` surfaces it in
 exactly two cases: a line with **no stated amount**, because "hieman" and "maun
 mukaan" have no field to live in, and a line whose amount **the factor changed**,
 because the number on screen is no longer the number on the page. Ranges and
@@ -97,3 +97,8 @@ tap away.
 
 A recipe with no stated yield cannot be scaled and says so — there is nothing to
 scale *from*.
+
+That rule used to live in `src/recipes.ts`. Issue #123 proposes moving it to
+`src/scaling.ts`, unchanged: it is a question about what scaling changed, and
+the shopping list's breakdown has to ask it too. See
+[screens](docs/codebase/screens.md).

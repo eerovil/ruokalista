@@ -4,7 +4,11 @@ import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import { scaleFactor, scaleMeasurement } from "./scaling.ts";
+import {
+  scaleFactor,
+  scaleMeasurement,
+  sourceWorthShowing,
+} from "./scaling.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -345,38 +349,6 @@ export async function recipeScreen(
   const portions = Number.isSafeInteger(asked) && asked > 0 ? asked : null;
 
   return page(recipe.title, recipeBody(recipe, portions), "recipes", member);
-}
-
-/**
- * Whether this line's source wording earns a second line under it while
- * somebody is cooking.
- *
- * Repeating every source line turns the screen into a comparison view, and at
- * the hob fast legibility is worth more than maximum evidence. So the source
- * appears in exactly the two cases where the structured line is not the whole
- * truth:
- *
- *   - **No stated amount.** The fields have nowhere to put "hieman", "maun
- *     mukaan" or "tarvittaessa", so the qualifier only exists in the source.
- *     About a fifth of lines are like this.
- *   - **A scaled amount.** The number on the screen is no longer the number on
- *     the page, and the source line is what says so.
- *
- * Everything else — ranges, second measurements, plain amounts — round-trips
- * through the fields intact, so a copy underneath adds nothing to read.
- */
-function sourceWorthShowing(line: RecipeLine, factor: number | null): boolean {
-  if (line.quantity === null) {
-    // Nothing lost if the source line is just the ingredient again.
-    return line.sourceLine.trim() !== "" &&
-      line.sourceLine.trim().toLocaleLowerCase("fi") !==
-        line.ingredient.trim().toLocaleLowerCase("fi");
-  }
-
-  return (
-    formatMeasurement(scaleMeasurement(line, factor)) !==
-    formatMeasurement(line)
-  );
 }
 
 /** The ingredients and method of one recipe — a dish, or one of its parts. */

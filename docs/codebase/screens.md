@@ -61,6 +61,36 @@ its heading; and the mockup replaces the per-day add links with a single
 `+ Lisää ateria` button, which has no day or meal to hand `/picker`, so
 `+ Lounas` / `+ Päivällinen` stay per day.
 
+## The shopping list
+
+Issue #123 proposes `GET /ostoslista` (`src/shopping-screens.ts`), a fifth
+bottom tab and a computed view over what is already planned — no
+shopping-list table, no saved basket, no pantry or purchased state. The
+proposal keeps the whole selection in the query string: `valittu=1` marks that
+the member has actually chosen, and one `ateria=<batch id>` per ticked cooking.
+Without `valittu` the screen preselects everything cooked today through the
+next four days; with it, an empty selection means "I unticked everything",
+which is a thing a member is allowed to mean.
+
+That encoding is what keeps the screen a plain GET form with no JavaScript at
+all, which the browser-compatibility rule below asks for. The picker is a
+`<details>` that stays closed unless nothing is selected, and each ingredient
+row is its own `<details>` whose body names the contributing cookings.
+
+The arithmetic lives in `src/shopping.ts::shoppingList`, apart from the markup
+and tested directly in `dev/check-shopping.ts`. Three rules the proposal treats
+as fixed: a batch is one cooking however many meals it covers, so it is counted
+once; nothing converts between units, so two units of one ingredient read
+`5 dl + 2 rkl`; and a line whose source stated no amount keeps its place and
+says `määrä reseptin mukaan` rather than getting a number invented for it. A
+total is the sum of the *rounded* contributions, so the breakdown a member
+opens adds up to the number above it.
+
+The proposal also moves `sourceWorthShowing` out of `src/recipes.ts` and into
+`src/scaling.ts`, unchanged, because the shopping list's breakdown has to ask
+the same question the cooking view does — see
+[recipes](docs/codebase/recipes.md).
+
 ### Server-rendered inline script islands
 
 Three screens ship a hand-written `<script>` rather than a build step, and all

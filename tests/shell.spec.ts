@@ -26,9 +26,10 @@ test.describe("signed in", () => {
     await page.goto("/");
 
     const tabs = page.locator("nav.tabs a");
-    await expect(tabs).toHaveCount(4);
+    await expect(tabs).toHaveCount(5);
 
     for (const [label, heading] of [
+      ["Ostokset", "Ostoslista"],
       ["Reseptit", "Reseptit"],
       ["Lisää", "Lisää resepti"],
       ["Ainekset", "Ainekset"],
@@ -78,6 +79,7 @@ test.describe("signed in", () => {
   test("every signed-in screen wears the same shell", async ({ page }) => {
     const screens = [
       "/",
+      "/ostoslista",
       "/picker?date=2026-10-05&slot=lunch",
       "/recipes",
       "/recipes/1",
@@ -89,7 +91,7 @@ test.describe("signed in", () => {
 
     for (const path of screens) {
       await page.goto(path);
-      await expect(page.locator("nav.tabs a")).toHaveCount(4);
+      await expect(page.locator("nav.tabs a")).toHaveCount(5);
       await expect(page.locator("nav.tabs a[aria-current=page]")).toHaveCount(1);
       await expect(page.getByRole("button", { name: "Tili" })).toBeVisible();
       await expect(page.locator("body.has-tabs")).toHaveCount(1);
