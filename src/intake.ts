@@ -604,7 +604,7 @@ function anthropic(env: Env): Anthropic {
 function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
   return {
     model: MODEL,
-    max_tokens: 64000,
+    max_tokens: 128000,
     output_config: {
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },
