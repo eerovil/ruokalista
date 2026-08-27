@@ -14,6 +14,7 @@ import {
   isDate,
   mondayOf,
   shortDate,
+  shortDayName,
   weekFrom,
 } from "../src/dates.ts";
 
@@ -71,4 +72,12 @@ test("a date that only looks like one is refused", () => {
 test("dates read the way Finnish writes them", () => {
   assert.equal(shortDate("2026-08-25"), "25.8.");
   assert.equal(shortDate("2026-12-01"), "1.12.");
+});
+
+test("a weekday abbreviates the way a Finnish calendar does", () => {
+  // 2026-08-24 is a Monday, so this walks a whole week.
+  assert.deepEqual(
+    weekFrom("2026-08-24").map((date) => shortDayName(date)),
+    ["ma", "ti", "ke", "to", "pe", "la", "su"],
+  );
 });

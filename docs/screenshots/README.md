@@ -14,7 +14,7 @@ Regenerate after a change that alters a screen:
 | file | screen |
 | --- | --- |
 | `01-signin.png` | Sign-in — the one button |
-| `02-week.png` | Proposed batch timeline: cooking marker, continuation rail and final portion |
+| `02-week.png` | Proposed grouped week: one card per cooked batch, with the meals it covers |
 | `03-picker.png` | The recipe picker, reached from a slot |
 | `04-recipes.png` | The recipe list, newest first |
 | `05-recipe.png` | One recipe: every awkward line shape, source lines underneath |
@@ -32,6 +32,8 @@ Regenerate after a change that alters a screen:
 | `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
+| `24-multi-day-batch.png` | Proposed one card for a batch spanning three days beside a shorter one |
+| `27-week-today.png` | Proposed current week: today highlighted with its `Tänään` badge |
 | `28-week-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
 | `29-week-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
 | `30-admin.png` | Proposed admin panel: recipe image management and the AgentDeck import |
@@ -41,5 +43,7 @@ Regenerate after a change that alters a screen:
 | `32-generated-images.png` | Recipe list with every row pictured from one contact sheet |
 | `33-generated-recipe.png` | One recipe with its picture from that sheet |
 | `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
-| `36-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
-| `37-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |
+| `36-week-empty-today.png` | Proposed empty current week as it opens — the viewport lands on today, not Monday (not full-page, on purpose) |
+| `37-week-long-title.png` | Proposed long recipe name wrapping in the card head, beside the widest carried pill |
+| `38-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
+| `39-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |

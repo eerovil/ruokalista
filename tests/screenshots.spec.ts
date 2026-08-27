@@ -87,52 +87,62 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
   });
 
-  test("continuous overlapping rails", async ({ page }) => {
+  test("a batch spanning several days is one card", async ({ page }) => {
     const lunches = await createBatch(page, "2026-12-07", "lunch", 1);
     await setCoverage(page, lunches, [
       ["2026-12-07", "lunch"],
       ["2026-12-08", "dinner"],
       ["2026-12-09", "lunch"],
+      ["2026-12-09", "dinner"],
     ]);
     const dinners = await createBatch(page, "2026-12-07", "dinner", 2);
     await setCoverage(page, dinners, [
       ["2026-12-07", "dinner"],
-      ["2026-12-08", "dinner"],
-      ["2026-12-09", "dinner"],
+      ["2026-12-08", "lunch"],
     ]);
 
     await page.goto("/?week=2026-12-07");
-    await expect(page.locator(".batch-rail")).toHaveCount(6);
+    await expect(page.locator(".batch-card")).toHaveCount(2);
+    await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(2);
+    await expect(page.locator(".batch-when-day")).toHaveCount(5);
     await expect(page.locator(".batch-end")).toHaveCount(2);
     await page.screenshot({
-      path: `${SHOTS}/24-continuous-rails.png`,
+      path: `${SHOTS}/24-multi-day-batch.png`,
       fullPage: true,
     });
   });
 
-  test("lunches precede dinners within a day", async ({ page }) => {
-    const first = await createBatch(page, "2027-01-05", "lunch", 1);
-    await setCoverage(page, first, [
-      ["2027-01-05", "lunch"],
-      ["2027-01-05", "dinner"],
-    ]);
-    const second = await createBatch(page, "2027-01-05", "lunch", 2);
-    await setCoverage(page, second, [
-      ["2027-01-05", "lunch"],
-      ["2027-01-05", "dinner"],
+  /**
+   * The one screenshot deliberately not `fullPage`: what it is evidence of is
+   * where the viewport lands, and a full-page capture cannot show that.
+   */
+  test("an empty current week opens on today", async ({ page }) => {
+    await page.goto("/");
+    const today = page.locator(".day.is-today");
+    await expect(page.locator(".batch-card")).toHaveCount(0);
+    await expect(today).toBeInViewport();
+    await page.screenshot({ path: `${SHOTS}/36-week-empty-today.png` });
+  });
+
+  test("today in the current week", async ({ page }) => {
+    const now = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Helsinki",
+    }).format(new Date());
+    const tomorrow = new Date(`${now}T00:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const id = await createBatch(page, now, "lunch", 1);
+    await setCoverage(page, id, [
+      [now, "lunch"],
+      [now, "dinner"],
+      [tomorrow.toISOString().slice(0, 10), "lunch"],
     ]);
 
-    await page.goto("/?week=2027-01-04");
-    const tuesday = page.locator(".day").nth(1);
-    await expect(tuesday.locator(".entry-slot")).toHaveText([
-      "Lounas",
-      "Lounas",
-      "Päivällinen",
-      "Päivällinen",
-    ]);
-    await expect(tuesday.locator(".batch-rail")).toHaveCount(2);
+    await page.goto("/");
+    const today = page.locator(".day.is-today");
+    await expect(today.locator(".today-badge")).toHaveText("Tänään");
+    await expect(today.locator(".batch-card")).toHaveCount(1);
     await page.screenshot({
-      path: `${SHOTS}/27-week-slot-order.png`,
+      path: `${SHOTS}/27-week-today.png`,
       fullPage: true,
     });
   });
@@ -183,7 +193,7 @@ test.describe("signed in", () => {
 
     await expect(kaali.locator(".mention-amount")).toBeHidden();
     await page.screenshot({
-      path: `${SHOTS}/36-step-mentions-closed.png`,
+      path: `${SHOTS}/38-step-mentions-closed.png`,
       fullPage: true,
     });
 
@@ -192,7 +202,7 @@ test.describe("signed in", () => {
     await expect(kaali.locator(".mention-amount")).toBeVisible();
     await expect(vesi.locator(".mention-amount")).toBeVisible();
     await page.screenshot({
-      path: `${SHOTS}/37-step-mentions-open.png`,
+      path: `${SHOTS}/39-step-mentions-open.png`,
       fullPage: true,
     });
   });
@@ -570,6 +580,48 @@ test.describe("signed in as an admin", () => {
       512,
     );
     await page.screenshot({ path: `${SHOTS}/33-generated-recipe.png`, fullPage: true });
+  });
+});
+
+/**
+ * Last in the file on purpose: it renames a seeded recipe, and every shot
+ * above still expects the seed titles.
+ */
+test.describe("a long recipe name on a phone", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("wraps in the card head rather than being cut off", async ({ page }) => {
+    const longTitle =
+      "Uunissa paahdettu kasvispaistos ja tilliperunamuusi kermaviilikastikkeella";
+    await page.goto("/recipes/1/edit");
+    await page.locator("#title").fill(longTitle);
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page.getByRole("heading", { name: longTitle })).toBeVisible();
+
+    // A week of its own, so the shot holds only these two cards.
+    const cooked = await createBatch(page, "2027-03-01", "lunch", 1);
+    await setCoverage(page, cooked, [
+      ["2027-03-01", "lunch"],
+      ["2027-03-02", "lunch"],
+    ]);
+    const carried = await createBatch(page, "2027-02-28", "dinner", 1);
+    await setCoverage(page, carried, [
+      ["2027-02-28", "dinner"],
+      ["2027-03-01", "dinner"],
+    ]);
+
+    await page.goto("/?week=2027-03-01");
+    // Both pills are on screen and whole before the shot is taken.
+    await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+    await expect(page.locator(".batch-carried")).toHaveText(
+      "Kokattu 28.2. · 4 annosta",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/37-week-long-title.png`,
+      fullPage: true,
+    });
   });
 });
 

@@ -19,9 +19,51 @@ Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
 is the first thing to become unreadable on a phone in a bright kitchen. Controls
 are at least `--tap` tall, `--tap-compact` where a row would otherwise blow up.
 
+## The week
+
+Issue #119 proposes replacing the week's occurrence-per-row layout with one card
+per cooked batch. `src/week-screens.ts::weekScreen` groups by `PlannedBatch.id`
+— never by recipe title, so two cookings of the same dish stay two cards — and
+draws each batch once, in the day of its first occurrence inside the visible
+week (`anchorDate`). The card carries the recipe, `Kokataan · N annosta`, one
+row per covered day (`ma 7.12. · Lounas · Päivällinen`), and the batch's edge
+state: `Kokattu 6.12.` when the cooking happened before the visible week,
+`viimeinen annos` when it ends inside it, `jatkuu ensi viikolle` when it does
+not. The proposal deletes the left-hand rail #90 added, because a card that
+lists its own days no longer needs a line drawn beside it.
+
+The card's shape follows the mockup the issue's author attached to #119: a
+bordered `.batch-card` with the recipe, a round thumbnail and the portions pill
+(`.batch-start`, or `.batch-carried` when the cooking predates the visible
+week) in its head, then one hairline-separated row per covered day, each row
+laid out as weekday, date, meals, and a `jatkuu` pill pushed to the right on
+every row after the first.
+
+The head wraps rather than clips, which matters because the card hides its
+overflow and recipe titles have no length limit. Picture and title sit in one
+`.batch-head-main` group so they stay on the same line; that group is sized
+from its content, so the pill stays inline beside a short title and drops onto
+its own line beneath a long one, and `overflow-wrap: break-word` plus
+`min-width: 0` break a single unbroken Finnish compound instead of letting it
+run past the card's edge. `tests/week-grouping.spec.ts` guards it by comparing
+each card's `scrollWidth` with its `clientWidth`; a page-level overflow check
+cannot see inside a clipping card.
+
+The current day gets `.day.is-today`, `id="tanaan"` and a `Tänään` badge, and a
+floating `.to-today` chip offers the way back after scrolling elsewhere — the
+week nav keeps "Tämä viikko" on every week, as the mockup shows. A third inline
+island scrolls to today — see below.
+
+Two places where that mockup and the issue's own text disagree, resolved in
+favour of the text because it states both as acceptance criteria: the mockup
+draws only days that start something, while every one of the seven days keeps
+its heading; and the mockup replaces the per-day add links with a single
+`+ Lisää ateria` button, which has no day or meal to hand `/picker`, so
+`+ Lounas` / `+ Päivällinen` stay per day.
+
 ### Server-rendered inline script islands
 
-Two screens ship a hand-written `<script>` rather than a build step, and both
+Three screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
 
@@ -37,8 +79,16 @@ transpilation:
   request that resolves after the tab was already backgrounded, and
   `pagehide`/`pageshow` handlers stop and reacquire the lock across Safari's
   back-forward cache.
+- `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
+  whenever the week on screen is the current one, empty or not — seven day
+  headings and fourteen add links already outrun a phone, and an empty week is
+  exactly the one somebody opens in order to plan today. It runs once at parse
+  time, before anyone can have scrolled, so it cannot fight a member who is
+  already moving. It bails out on an explicit `#` anchor and on a scroll
+  position the browser restored, and a browser without `scrollIntoView` simply
+  opens at Monday as before.
 
-Both islands are written in ES5 (`var`, no arrow functions, no regular
+All three islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.
 
 ## Browser compatibility
