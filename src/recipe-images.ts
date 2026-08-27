@@ -72,7 +72,12 @@ export async function apiRecipeImage(
   const recipeId = parseRecipeId(params["id"]);
   if (recipeId === null) return problem(404, "No such recipe.");
 
-  const row = await imageRow(env.DB, member.householdId, recipeId);
+  // The one lookup on this module that is not owner-scoped: a published dish
+  // is readable by everybody, and a picture nobody else may fetch would show
+  // as a broken image on every screen that offers them the dish. Storing,
+  // removing and the freshness read stay on `imageRow` below, so widening this
+  // cannot widen a write.
+  const row = await readableImageRow(env.DB, member.householdId, recipeId);
   if (row === null || row.image_key === null) {
     return problem(404, "No image for that recipe.");
   }
@@ -438,6 +443,35 @@ export async function imageRow(
 ): Promise<ImageRow | null> {
   return db
     .prepare("SELECT image_key FROM recipe WHERE id = ? AND household_id = ?")
+    .bind(recipeId, householdId)
+    .first<ImageRow>();
+}
+
+/**
+ * The same row, in the scope that may *read* it: this household's recipe, any
+ * published dish, or a part of one.
+ *
+ * A part is never published on its own and never addressable on its own
+ * either, but it is the owner's row inside a dish everybody may read, so its
+ * picture is reachable through its published parent and no other way. This
+ * mirrors `recipes.ts::findReadableRecipe`; it is a separate query only
+ * because a picture needs one column rather than a whole recipe.
+ */
+async function readableImageRow(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<ImageRow | null> {
+  return db
+    .prepare(
+      `SELECT recipe.image_key
+         FROM recipe
+         LEFT JOIN recipe AS parent ON parent.id = recipe.parent_id
+        WHERE recipe.id = ?
+          AND (recipe.household_id = ?
+               OR recipe.published_at IS NOT NULL
+               OR parent.published_at IS NOT NULL)`,
+    )
     .bind(recipeId, householdId)
     .first<ImageRow>();
 }

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { onePixelPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -84,6 +85,62 @@ test("the other household cannot edit a published recipe", async ({ page }) => {
   expect(refused.status()).toBe(400);
   await page.goto("/recipes/1");
   await expect(page.locator(".shared-from")).toBeVisible();
+});
+
+test("a published recipe's picture is readable by the other household", async ({
+  page,
+}) => {
+  await signIn(page, 1);
+  // Koti's cabbage bake, its lasagne, that lasagne's meat sauce, and a recipe
+  // that stays private — every one of them with a picture, so what is being
+  // measured below is the scope and not whether an image exists.
+  for (const id of [1, 2, 3, 4]) {
+    const put = await page.request.put(`/api/recipes/${id}/image`, {
+      headers: { "content-type": "image/png" },
+      data: onePixelPng(),
+    });
+    expect(put.status()).toBe(204);
+  }
+  await publish(page, 1);
+  await publish(page, 3);
+
+  await signIn(page, 2);
+  // The published dish, and a part of a published dish — a part is never
+  // published on its own, but it is read through its parent, so its picture
+  // has to be reachable the same way.
+  expect((await page.request.get("/api/recipes/1/image")).status()).toBe(200);
+  expect((await page.request.get("/api/recipes/3/image")).status()).toBe(200);
+  expect((await page.request.get("/api/recipes/4/image")).status()).toBe(200);
+  // The private one is still a 404, not a picture.
+  expect((await page.request.get("/api/recipes/2/image")).status()).toBe(404);
+
+  // Widening the read did not widen a write: the picture of somebody else's
+  // published recipe is still theirs to change.
+  expect(
+    (
+      await page.request.put("/api/recipes/1/image", {
+        headers: { "content-type": "image/png" },
+        data: onePixelPng(),
+      })
+    ).status(),
+  ).toBe(404);
+  expect((await page.request.delete("/api/recipes/1/image")).status()).toBe(404);
+
+  // And it is a picture on the screen rather than a broken-image icon, both in
+  // the public list and on the recipe itself.
+  await page.goto("/recipes/julkiset");
+  const thumb = page
+    .locator(".recipes li", { hasText: "Kaalilaatikko" })
+    .locator(".recipe-image img");
+  await expect(thumb).toBeVisible();
+  await expect(thumb).toHaveJSProperty("complete", true);
+  await expect(thumb).not.toHaveJSProperty("naturalWidth", 0);
+
+  await page.goto("/recipes/1");
+  const hero = page.locator(".recipe-image.is-hero img");
+  await expect(hero).toBeVisible();
+  await expect(hero).toHaveJSProperty("complete", true);
+  await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
 });
 
 test("an unpublished recipe stays invisible to the other household", async ({

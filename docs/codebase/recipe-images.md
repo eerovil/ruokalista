@@ -45,6 +45,17 @@ changed. A long cache lifetime would be wrong here because the URL is stable
 across a replacement — same recipe id, different bytes — so a cached copy would
 keep showing the old picture.
 
+This PR proposes the one place a picture is not owner-scoped. Fetching one —
+`GET /api/recipes/:id/image` alone — would read through
+`recipe-images.ts::readableImageRow`, which answers for this household's
+recipe, any published dish, or a part of a published dish. Without it the
+public list, the picker and the shared recipe screen would all show a broken
+image to everybody but the owner, since those screens render the picture and
+the request behind it answered 404. Storing, removing, the freshness read and
+the editor keep using `imageRow` and stay owner-only, so the wider read cannot
+widen a write. A part is reachable only through a published parent; it is
+still never published, and never addressable, on its own.
+
 Normalizing happens in the browser: the editor's island shrinks the chosen
 picture to a long edge of 1,200 px and re-encodes it as JPEG before posting,
 the same canvas job as the intake camera route. A Worker cannot re-encode

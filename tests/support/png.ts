@@ -25,6 +25,35 @@ export function onePixelPng(): Buffer {
   ]);
 }
 
+/**
+ * A real, decodable PNG of a single flat colour, at whatever size is asked
+ * for. The size is the point: what a picture claims in its own header is what
+ * the server measures it by, and it is also how a test tells one uploaded
+ * picture from the one that replaced it.
+ */
+export function flatPng(
+  width: number,
+  height: number,
+  rgb: [number, number, number],
+): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3)]);
+  for (let x = 0; x < width; x += 1) row.set(rgb, 1 + x * 3);
+  const pixels = Buffer.concat(Array.from({ length: height }, () => row));
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(pixels)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 /** A transparent PNG with nothing drawn on it — a sheet the model wasted. */
 export function emptySheet(edge = 512): string {
   const ihdr = Buffer.alloc(13);

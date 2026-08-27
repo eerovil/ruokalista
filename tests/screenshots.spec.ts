@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { AGENTDECK_BATCH } from "./support/batch";
 import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
 import { addIngredientRow, openDraftEditor } from "./support/lines";
+import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -994,6 +995,15 @@ test.describe("public recipes", () => {
   }) => {
     await context.addCookies([sessionCookie(1)]);
 
+    // A picture on the dish about to be shared, so these shots show what the
+    // other household actually sees. Its image request is the one read that is
+    // not owner-scoped, and a broken picture here would be the symptom.
+    const pictured = await page.request.put("/api/recipes/1/image", {
+      headers: { "content-type": "image/png" },
+      data: flatPng(900, 600, [198, 122, 64]),
+    });
+    expect(pictured.status()).toBe(204);
+
     // Koti publishes two recipes from the list, in one go.
     await page.goto("/recipes");
     await page.getByLabel("Valitse Kaalilaatikko").check();
@@ -1031,6 +1041,10 @@ test.describe("public recipes", () => {
 
     await page.goto("/recipes/julkiset");
     await expect(page.locator(".recipes li")).toHaveCount(2);
+    // Somebody else's picture, actually loaded rather than a broken icon.
+    const thumb = page.locator(".recipes .recipe-image img").first();
+    await expect(thumb).toHaveJSProperty("complete", true);
+    await expect(thumb).not.toHaveJSProperty("naturalWidth", 0);
     await page.screenshot({
       path: `${SHOTS}/53-public-recipes.png`,
       fullPage: true,
@@ -1039,6 +1053,9 @@ test.describe("public recipes", () => {
     await page.goto("/recipes/1");
     await expect(page.locator(".shared-from")).toContainText("Koti");
     await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+    const hero = page.locator(".recipe-image.is-hero img");
+    await expect(hero).toHaveJSProperty("complete", true);
+    await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
     await page.screenshot({
       path: `${SHOTS}/54-public-recipe-read-only.png`,
       fullPage: true,

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
-import zlib from "node:zlib";
 
 import { openMore } from "./support/lines";
+import { flatPng as png } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -12,37 +12,9 @@ import { sessionCookie } from "./support/session";
  * The pictures here are built rather than committed, because what is being
  * checked is what the bytes say about themselves — the size a PNG declares in
  * its header, and the fact that HTML claiming to be a PNG is not one. A fixture
- * file would hide exactly that.
+ * file would hide exactly that. The builder lives in `support/png.ts` with the
+ * others, so two specs cannot drift into two different flat PNGs.
  */
-
-function chunk(type: string, body: Buffer): Buffer {
-  const head = Buffer.alloc(4);
-  head.writeUInt32BE(body.length);
-  const typed = Buffer.concat([Buffer.from(type, "ascii"), body]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(zlib.crc32(typed) >>> 0);
-  return Buffer.concat([head, typed, crc]);
-}
-
-/** A real, decodable PNG of a single flat colour. */
-function png(width: number, height: number, rgb: [number, number, number]): Buffer {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-
-  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3)]);
-  for (let x = 0; x < width; x += 1) row.set(rgb, 1 + x * 3);
-  const pixels = Buffer.concat(Array.from({ length: height }, () => row));
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
-    chunk("IDAT", zlib.deflateSync(pixels)),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-}
 
 const RECIPE = 1; // Kaalilaatikko, household 1.
 const IMAGE_URL = `/api/recipes/${RECIPE}/image`;
@@ -69,8 +41,10 @@ test.describe("the editor", () => {
     const shown = page.locator(".recipe-image img");
     await expect(shown).toBeVisible();
     await expect(shown).toHaveJSProperty("complete", true);
-    // Loaded, not a broken-image icon.
-    await expect(shown).not.toHaveJSProperty("naturalWidth", 0);
+    // Loaded, not a broken-image icon, and the picture that was chosen: both
+    // are under the shrink island's 1200-pixel edge, so each arrives at the
+    // size it was made.
+    await expect(shown).toHaveJSProperty("naturalWidth", 900);
 
     // Replacing swaps the picture rather than adding a second one.
     await page.setInputFiles("#recipe-image", {
@@ -80,6 +54,12 @@ test.describe("the editor", () => {
     });
     await page.locator("#recipe-image-form button[type=submit]").click();
     await expect(page.locator(".recipe-image img")).toHaveCount(1);
+    // The *new* picture, not the old one still on screen. The upload goes
+    // through the shrink island, so the reload after it is asynchronous — and
+    // a count of one was already true before that reload landed. Waiting for
+    // the new size is what makes the removal below act on the new page instead
+    // of racing a navigation that cancels it.
+    await expect(shown).toHaveJSProperty("naturalWidth", 400);
 
     await page.locator(".recipe-image-editor button.danger").click();
     await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
