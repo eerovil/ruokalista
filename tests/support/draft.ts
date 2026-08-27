@@ -125,6 +125,51 @@ export async function stubStreamBody(
   return calls;
 }
 
+/**
+ * Replace the streaming fetch with deliberately fragmented UTF-8 bytes. This
+ * exercises the island's decoder and record buffer rather than Playwright's
+ * normal one-shot route fulfilment.
+ */
+export async function stubFragmentedStreamBody(page: Page, body: string): Promise<void> {
+  await page.addInitScript((streamBody) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (!url.endsWith("/api/intake/structure")) return originalFetch(input, init);
+
+      const bytes = new TextEncoder().encode(streamBody);
+      const newline = bytes.indexOf(10);
+      let multibyte = -1;
+      for (let at = 0; at < bytes.length; at += 1) {
+        if (bytes[at]! >= 0xc0) {
+          multibyte = at + 1;
+          break;
+        }
+      }
+      const cuts = [0, 1, multibyte, newline, newline + 1, bytes.length]
+        .filter((at, index, all) => at >= 0 && at <= bytes.length && all.indexOf(at) === index)
+        .sort((left, right) => left - right);
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let at = 1; at < cuts.length; at += 1) {
+            controller.enqueue(bytes.slice(cuts[at - 1], cuts[at]));
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+      });
+    }) as typeof window.fetch;
+  }, body);
+}
+
 /** The bytes a stream carries when an attempt was cut off part-way. */
 export const TRUNCATED_ATTEMPT =
   '{"title":"Katkennut","yield_portions":4,"source_text":"Uunikaali","lines":[{"quantity":1,"unit":"dl"';

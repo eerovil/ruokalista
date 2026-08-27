@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import {
   DRAFT_FIXTURE,
   streamRecordBody,
+  stubFragmentedStreamBody,
   stubStreamBody,
   stubStructuring,
   TRUNCATED_ATTEMPT,
@@ -435,6 +436,26 @@ test("pasted protocol words arrive whole in the review", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
   await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
   await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
+});
+
+test("split NDJSON and UTF-8 chunks arrive whole in the review", async ({ page }) => {
+  const pasted = "Pöperö\n½ tl suolaa";
+  const draft = { ...DRAFT_FIXTURE, title: "Pöperö", source_text: pasted };
+  await stubFragmentedStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: JSON.stringify(draft) },
+      { type: "complete" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill(pasted);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.locator(".review-title")).toHaveText("Pöperö");
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
 });
 
 test("two failed attempts refuse in Finnish and keep what was typed", async ({
