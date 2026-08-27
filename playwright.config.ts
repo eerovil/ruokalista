@@ -14,6 +14,11 @@ if (!Number.isInteger(browserPort) || browserPort < 1 || browserPort > 65_535) {
   throw new Error("PLAYWRIGHT_PORT must be a valid TCP port.");
 }
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
+const sOstoslistaPort = browserPort + 1;
+if (sOstoslistaPort > 65_535) {
+  throw new Error("PLAYWRIGHT_PORT leaves no port for the S-ostoslista fixture.");
+}
+const sOstoslistaOrigin = `http://127.0.0.1:${sOstoslistaPort}`;
 const runWalkthrough = process.env["PLAYWRIGHT_WALKTHROUGH"] === "1";
 
 /**
@@ -70,12 +75,22 @@ export default defineConfig({
     },
   ],
 
-  webServer: {
-    command: `npx wrangler dev --ip 127.0.0.1 --port ${browserPort}`,
-    url: `${browserOrigin}/health`,
-    reuseExistingServer: true,
-    timeout: 120_000,
-    stdout: "ignore",
-    stderr: "pipe",
-  },
+  webServer: [
+    {
+      command: `S_OSTOSLISTA_TEST_PORT=${sOstoslistaPort} node --experimental-strip-types tests/support/s-ostoslista-server.ts`,
+      url: `${sOstoslistaOrigin}/health`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+    {
+      command: `npx wrangler dev --ip 127.0.0.1 --port ${browserPort} --var SOSTOSLISTA_SERVICE_URL:${sOstoslistaOrigin} --var SOSTOSLISTA_API_TOKEN:test-s-ostoslista-token --var SOSTOSLISTA_HOUSEHOLD_ID:1`,
+      url: `${browserOrigin}/health`,
+      reuseExistingServer: true,
+      timeout: 120_000,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  ],
 });

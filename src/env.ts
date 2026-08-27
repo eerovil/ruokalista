@@ -32,13 +32,20 @@ export interface Env {
 
   /**
    * Bearer token for the S-ostoslista sync service (see
-   * SOSTOSLISTA_SERVICE_URL), which puts things on the household's real
-   * S-ryhmä shopping list. Not an S-ryhmä credential: that service holds
-   * those. Optional in the type because a deployment without it must say the
-   * shopping list is not connected rather than crash.
+   * SOSTOSLISTA_SERVICE_URL), which can read and modify the bound household's
+   * real S-ryhmä shopping list. It cannot authenticate directly to AppSync or
+   * expose the phone's identity token. Optional in the type because a
+   * deployment without it must say the shopping list is not connected rather
+   * than crash.
    */
   SOSTOSLISTA_API_TOKEN?: string;
 
   /** Where that service lives. A plain var, set in wrangler.jsonc. */
   SOSTOSLISTA_SERVICE_URL?: string;
+
+  /**
+   * The one household allowed to use this integration. Product mappings live
+   * on global ingredients, so this gate must be explicit and server-side.
+   */
+  SOSTOSLISTA_HOUSEHOLD_ID?: string;
 }

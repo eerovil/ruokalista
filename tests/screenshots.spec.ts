@@ -563,9 +563,23 @@ test.describe("signed in", () => {
     );
     await page.screenshot({ path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
 
-    await page.locator(".shopping-picker > summary").click();
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
+    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+    const product = page.locator(".s-product-results > li", {
+      hasText: "Kotimaista rasvaton maito",
+    });
+    await expect(product).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/57-s-ostoslista-product-search.png`,
+      fullPage: true,
+    });
+
+    await page.goBack();
+    await milk.evaluate((details: HTMLDetailsElement) => {
+      details.open = true;
+    });
+    await page.locator(".shopping-picker > summary").click();
     await expect(milk.locator(".shopping-from li").first()).toBeVisible();
     await page.screenshot({
       path: `${SHOTS}/39-shopping-breakdown.png`,

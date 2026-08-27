@@ -11,3 +11,8 @@ GOOGLE_CLIENT_SECRET=""
 
 # Structures pasted recipe text. Without it, intake says so and refuses.
 ANTHROPIC_API_KEY=""
+
+# Private s-ostoslista-client Worker HTTP API. The token can read and modify the
+# bound real shopping list; both it and the one-household gate stay server-side.
+SOSTOSLISTA_API_TOKEN=""
+SOSTOSLISTA_HOUSEHOLD_ID=""

@@ -3,6 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
+const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
+const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${browserPort + 1}`;
+
 /**
  * The shopping list. Every date here is relative to today, because the screen's
  * whole behaviour — the fortnight it offers and the five days it preselects —
@@ -13,8 +16,9 @@ import { sessionCookie } from "./support/session";
  * behind by an earlier test would quietly change that count.
  */
 
-test.beforeEach(async ({ context }) => {
+test.beforeEach(async ({ context, request }) => {
   reseed();
+  expect((await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok()).toBe(true);
   await context.addCookies([sessionCookie(1)]);
 });
 
@@ -105,6 +109,33 @@ function row(page: Page, name: string) {
   return page.locator(".shopping-list > li", { hasText: name }).first();
 }
 
+async function chooseProduct(
+  page: Page,
+  ingredient: string,
+  product: string,
+): Promise<void> {
+  const item = row(page, ingredient);
+  await item.locator("summary").click();
+  await item.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+  const result = page.locator(".s-product-results > li", { hasText: product });
+  await expect(result).toBeVisible();
+  await result.getByRole("button", { name: "Valitse" }).click();
+}
+
+async function externalRequests(page: Page): Promise<
+  Array<{ method: string; path: string; body: Record<string, unknown> | null }>
+> {
+  const response = await page.request.get(`${S_OSTOSLISTA_FIXTURE}/_test/requests`);
+  expect(response.ok()).toBe(true);
+  return ((await response.json()) as {
+    requests: Array<{
+      method: string;
+      path: string;
+      body: Record<string, unknown> | null;
+    }>;
+  }).requests;
+}
+
 test("the list opens on the next five days' cookings", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
@@ -145,6 +176,159 @@ test("what the selected cookings add up to", async ({ page }) => {
   await expect(row(page, "jauheliha").locator(".shopping-total")).toHaveText(
     "400 g",
   );
+});
+
+test("an external product can be selected, persisted, and replaced", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  const milk = row(page, "maito");
+  await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+  await expect(milk.locator(".s-shopping-product-summary img")).toHaveAttribute(
+    "src",
+    /cdn\.s-cloud\.fi.*6415712506032/,
+  );
+
+  await page.reload();
+  await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+
+  const reloadedMilk = row(page, "maito");
+  await reloadedMilk.locator("summary").click();
+  await reloadedMilk.getByRole("button", { name: "Vaihda tuote" }).click();
+  await page.getByLabel("Haku").fill("kahvi");
+  await page.getByRole("button", { name: "Hae tuotteita" }).click();
+  await page
+    .locator(".s-product-results > li", { hasText: "Juhla Mokka" })
+    .getByRole("button", { name: "Valitse" })
+    .click();
+  await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+    "Juhla Mokka kahvi 500 g",
+  );
+});
+
+test("product selection preserves an explicit non-default meal selection", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  const futureLasagne = await createBatch(page, inDays(11), LASAGNE, 6);
+  await page.goto("/ostoslista");
+  await page.locator(".shopping-picker > summary").click();
+  const checked = page.locator(".shopping-meals input:checked");
+  for (let at = (await checked.count()) - 1; at >= 0; at -= 1) {
+    await checked.nth(at).uncheck();
+  }
+  await page.locator(`.shopping-meals input[value="${futureLasagne}"]`).check();
+  await page.getByRole("button", { name: "Päivitä lista" }).click();
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Ostoslista: Lasagne",
+  );
+  await expect(page.locator(".shopping-meals input:checked")).toHaveCount(1);
+  await expect(
+    page.locator(`.shopping-meals input[value="${futureLasagne}"]`),
+  ).toBeChecked();
+});
+
+test("a forged product result is refused and never persisted", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await milk.getByRole("button", { name: "Valitse tuote" }).click();
+
+  const result = page.locator(".s-product-results > li").first();
+  await result.locator('input[name="ean"]').evaluate((input: HTMLInputElement) => {
+    input.value = "0000000000000";
+  });
+  await result.getByRole("button", { name: "Valitse" }).click();
+  await expect(page.locator(".refused")).toContainText(
+    "Valittua tuotetta ei löytynyt uudesta hausta",
+  );
+
+  await page.goto("/ostoslista");
+  await row(page, "maito").locator("summary").click();
+  await expect(row(page, "maito").locator(".s-shopping-product.is-note")).toBeVisible();
+});
+
+test("a missing CDN image is hidden without breaking product choice", async ({ page }) => {
+  await page.route("**/6415712506032_kuva1.jpg", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+  );
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await milk.getByRole("button", { name: "Valitse tuote" }).click();
+
+  const result = page.locator(".s-product-results > li").first();
+  await expect(result).toBeVisible();
+  await expect(result.locator("img")).toBeHidden();
+  await expect(result.getByRole("button", { name: "Valitse" })).toBeEnabled();
+});
+
+test("sending uses stored EANs, note fallbacks, and excludes the pantry", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  const oil = row(page, "öljy");
+  await oil.locator("summary").click();
+  await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+
+  // Keep the local ingredient mapping, but clear the external call log and
+  // list so this send proves a stored EAN needs no second product search.
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const calls = await externalRequests(page);
+  expect(calls.some((call) => call.path.startsWith("/products"))).toBe(false);
+  const added = calls.filter((call) => call.method === "POST" && call.path === "/items");
+  expect(added.some((call) => call.body?.["ean"] === "6415712506032")).toBe(true);
+  expect(added.some((call) => call.body?.["note"] === "vesi — 2–3 l")).toBe(true);
+  expect(added.some((call) => String(call.body?.["note"] ?? "").startsWith("öljy"))).toBe(
+    false,
+  );
+  expect(added.every((call) => !("quantity" in (call.body ?? {})))).toBe(true);
+});
+
+test("an external outage refuses recoverably without replacing the list", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+
+  await expect(page.locator(".refused")).toContainText(
+    "S-ostoslistaan ei saatu lähetettyä kaikkea",
+  );
+  await expect(row(page, "maito")).toBeVisible();
+});
+
+test("a failed product search keeps the local ingredient unmapped", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista/tuote?aines=9&haku=virhe");
+  await expect(page.locator(".refused")).toContainText("tuotehakua ei saatu avattua");
+
+  await page.goto("/ostoslista");
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
 test("an ingredient opens to say where its total came from", async ({ page }) => {
@@ -262,6 +446,18 @@ test("another household's cookings are not on our list", async ({
   await neighbour.goto("/ostoslista");
   await expect(neighbour.locator(".shopping-meals li")).toHaveCount(0);
   await expect(neighbour.locator(".shopping-list")).toHaveCount(0);
+  await expect(neighbour.locator(".s-shopping-send")).toHaveCount(0);
+  expect(
+    (await neighbour.request.post("/ostoslista/laheta", { form: {} })).status(),
+  ).toBe(404);
+  expect(
+    (await neighbour.request.get("/ostoslista/tuote?aines=9&haku=maito")).status(),
+  ).toBe(404);
+  expect(
+    (await neighbour.request.post("/ostoslista/tuote", {
+      form: { aines: "9", haku: "maito", ean: "6415712506032" },
+    })).status(),
+  ).toBe(404);
 
   await context.close();
 });

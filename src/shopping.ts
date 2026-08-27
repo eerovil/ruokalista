@@ -41,6 +41,9 @@ export interface ShoppingLine extends Measurement {
   partTitle: string | null;
   ingredientId: number;
   ingredientName: string;
+  ean: string | null;
+  externalProductName: string | null;
+  externalProductImageUrl: string | null;
   sourceLine: string;
 }
 
@@ -67,6 +70,9 @@ export interface ShoppingItem {
   total: string;
   /** True when at least one contribution had no stated amount. */
   hasUnstated: boolean;
+  ean: string | null;
+  externalProductName: string | null;
+  externalProductImageUrl: string | null;
   contributions: ShoppingContribution[];
 }
 
@@ -89,7 +95,14 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
   for (const line of lines) {
     let item = items.get(line.ingredientId);
     if (item === undefined) {
-      item = { name: line.ingredientName, units: new Map(), contributions: [] };
+      item = {
+        name: line.ingredientName,
+        ean: line.ean,
+        externalProductName: line.externalProductName,
+        externalProductImageUrl: line.externalProductImageUrl,
+        units: new Map(),
+        contributions: [],
+      };
       items.set(line.ingredientId, item);
     }
 
@@ -135,6 +148,9 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
       name: item.name,
       total: totalText(item),
       hasUnstated: item.contributions.some((one) => one.amount === ""),
+      ean: item.ean,
+      externalProductName: item.externalProductName,
+      externalProductImageUrl: item.externalProductImageUrl,
       contributions: item.contributions,
     }))
     .sort((a, b) => a.name.localeCompare(b.name, "fi"));
@@ -149,6 +165,9 @@ interface RunningUnit {
 
 interface Building {
   name: string;
+  ean: string | null;
+  externalProductName: string | null;
+  externalProductImageUrl: string | null;
   units: Map<string, RunningUnit>;
   contributions: ShoppingContribution[];
 }
@@ -200,6 +219,9 @@ interface LineRow {
   alt_unit: string | null;
   ingredient_id: number;
   ingredient_name: string;
+  ean: string | null;
+  external_product_name: string | null;
+  external_product_image_url: string | null;
   source_line: string;
 }
 
@@ -243,6 +265,9 @@ export async function shoppingLinesFor(
               ingredient_line.alt_unit,
               ingredient.id AS ingredient_id,
               ingredient.name AS ingredient_name,
+              ingredient.ean,
+              ingredient.external_product_name,
+              ingredient.external_product_image_url,
               ingredient_line.source_line
          FROM planned_batch
          JOIN recipe AS dish
@@ -276,6 +301,32 @@ export async function shoppingLinesFor(
     altUnit: row.alt_unit,
     ingredientId: row.ingredient_id,
     ingredientName: row.ingredient_name,
+    ean: row.ean,
+    externalProductName: row.external_product_name,
+    externalProductImageUrl: row.external_product_image_url,
     sourceLine: row.source_line,
   }));
+}
+
+/**
+ * Replace one ingredient's preferred S-group product as one all-field write.
+ * The caller has already proved the ingredient is on this household's fresh
+ * `Ostettavat` projection and that the product came from a fresh search.
+ */
+export async function saveExternalProduct(
+  db: D1Database,
+  ingredientId: number,
+  product: { ean: string; name: string; imageUrl: string },
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE ingredient
+          SET ean = ?,
+              external_product_name = ?,
+              external_product_image_url = ?
+        WHERE id = ?`,
+    )
+    .bind(product.ean, product.name, product.imageUrl, ingredientId)
+    .run();
+  return (result.meta.changes ?? 0) === 1;
 }
