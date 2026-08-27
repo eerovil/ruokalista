@@ -73,10 +73,15 @@ test("a batch spanning three days is one card with three occurrence rows", async
   await expect(card).toHaveCount(1);
   await expect(card.locator(".entry-title")).toHaveText("Kaalilaatikko");
   await expect(card.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(card.locator(".batch-when-weekday")).toHaveText([
+    "ma",
+    "ti",
+    "ke",
+  ]);
   await expect(card.locator(".batch-when-date")).toHaveText([
-    "ma 7.12.",
-    "ti 8.12.",
-    "ke 9.12.",
+    "7.12.",
+    "8.12.",
+    "9.12.",
   ]);
   await expect(card.locator(".batch-when-slots")).toHaveText([
     "Lounas",
@@ -201,7 +206,7 @@ test("browsing another week neither marks nor jumps to a day", async ({
   await page.goto(`/?week=${MONDAY}`);
   await expect(page.locator(".day.is-today")).toHaveCount(0);
   await expect(page.locator("#tanaan")).toHaveCount(0);
-  await expect(page.locator("nav.weeks")).toContainText("Tämä viikko");
+  await expect(page.locator(".to-today")).toHaveCount(0);
   expect(await page.evaluate(() => window.pageYOffset)).toBe(0);
 });
 

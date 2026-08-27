@@ -189,10 +189,15 @@ test("one cooked batch continues through selected lunches", async ({ page }) => 
   await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
   await expect(page.locator(".batch-end")).toHaveText("viimeinen annos");
   await expect(page.locator(".batch-when-day")).toHaveCount(3);
+  await expect(page.locator(".batch-when-weekday")).toHaveText([
+    "ma",
+    "ti",
+    "ke",
+  ]);
   await expect(page.locator(".batch-when-date")).toHaveText([
-    "ma 2.11.",
-    "ti 3.11.",
-    "ke 4.11.",
+    "2.11.",
+    "3.11.",
+    "4.11.",
   ]);
   await expect(page.locator(".batch-when-slots")).toHaveText([
     "Lounas",
@@ -314,9 +319,10 @@ test("mixed coverage crosses a week boundary and projects into both weeks", asyn
   await expect(monday.locator(".batch-card")).toHaveCount(1);
   await expect(monday.locator(".batch-carried")).toHaveText("Kokattu 15.11. · 4 annosta");
   await expect(monday.locator(".batch-start")).toHaveCount(0);
+  await expect(monday.locator(".batch-when-weekday")).toHaveText(["ma", "ti"]);
   await expect(monday.locator(".batch-when-date")).toHaveText([
-    "ma 16.11.",
-    "ti 17.11.",
+    "16.11.",
+    "17.11.",
   ]);
   await expect(monday.locator(".batch-end")).toHaveText("viimeinen annos");
   await expect(page.locator(".day").nth(1).locator(".batch-card")).toHaveCount(0);

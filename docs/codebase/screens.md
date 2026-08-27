@@ -32,9 +32,24 @@ state: `Kokattu 6.12.` when the cooking happened before the visible week,
 not. The proposal deletes the left-hand rail #90 added, because a card that
 lists its own days no longer needs a line drawn beside it.
 
-The current day gets `.day.is-today`, `id="tanaan"`, and a `Tänään` badge, and
-the week nav's middle link becomes an in-page jump to it instead of "Tämä
-viikko". A third inline island scrolls to it — see below.
+The card's shape follows the mockup the issue's author attached to #119: a
+bordered `.batch-card` with the recipe, a round thumbnail and the portions pill
+(`.batch-start`, or `.batch-carried` when the cooking predates the visible
+week) in its head, then one hairline-separated row per covered day, each row
+laid out as weekday, date, meals, and a `jatkuu` pill pushed to the right on
+every row after the first.
+
+The current day gets `.day.is-today`, `id="tanaan"` and a `Tänään` badge, and a
+floating `.to-today` chip offers the way back after scrolling elsewhere — the
+week nav keeps "Tämä viikko" on every week, as the mockup shows. A third inline
+island scrolls to today — see below.
+
+Two places where that mockup and the issue's own text disagree, resolved in
+favour of the text because it states both as acceptance criteria: the mockup
+draws only days that start something, while every one of the seven days keeps
+its heading; and the mockup replaces the per-day add links with a single
+`+ Lisää ateria` button, which has no day or meal to hand `/picker`, so
+`+ Lounas` / `+ Päivällinen` stay per day.
 
 ### Server-rendered inline script islands
 

@@ -63,14 +63,15 @@ export async function weekScreen(
     html`<h1>Viikko</h1>
       <nav class="weeks">
         <a href="/?week=${addDays(monday, -7)}" rel="prev">← Edellinen</a>
-        ${isCurrentWeek
-          ? html`<a class="to-today" href="#tanaan">Tänään</a>`
-          : html`<a href="/">Tämä viikko</a>`}
+        <a href="/">Tämä viikko</a>
         <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
       </nav>
       <div class="week-days">
         ${days.map((date) => daySection(date, batches, date === now, monday, days[6]!))}
       </div>
+      ${isCurrentWeek
+        ? html`<a class="to-today" href="#tanaan">Tänään</a>`
+        : ""}
       ${isCurrentWeek ? SCROLL_TO_TODAY : ""}`,
     "week",
     member,
@@ -159,8 +160,9 @@ function slotOrder(occurrence: BatchOccurrence | null): number {
 }
 
 /**
- * One cooking. The head is the recipe and the way into every batch action; the
- * rows below are the meals this same pot covers, in order, across days.
+ * One cooking, as one card. The head is the recipe, the portions pill and the
+ * way into every batch action; the rows below it are the meals this same pot
+ * covers, in order, across days.
  */
 function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
   const days = occurrenceDays(batch);
@@ -171,14 +173,15 @@ function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
     <div class="entry"><a href="/batches/${batch.id}">
       ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
       <span class="entry-title">${batch.title}</span>
+      ${cookedInView
+        ? html`<span class="batch-start">Kokataan · ${batch.portions} annosta</span>`
+        : html`<span class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${batch.portions} annosta</span>`}
     </a></div>
-    ${cookedInView
-      ? html`<p class="batch-start">Kokataan · ${batch.portions} annosta</p>`
-      : html`<p class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${batch.portions} annosta</p>`}
     <ul class="batch-when">
       ${days.map(
         (day, index) => html`<li class="batch-when-day">
-          <span class="batch-when-date">${shortDayName(day.date)} ${shortDate(day.date)}</span>
+          <span class="batch-when-weekday">${shortDayName(day.date)}</span>
+          <span class="batch-when-date">${shortDate(day.date)}</span>
           <span class="batch-when-slots">${day.slots.map((slot) => SLOT_NAMES[slot]).join(" · ")}</span>
           ${index === 0 ? "" : html`<span class="batch-passes">jatkuu</span>`}
         </li>`,
@@ -186,7 +189,7 @@ function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
     </ul>
     ${finishesInView
       ? html`<p class="batch-end">viimeinen annos</p>`
-      : html`<p class="batch-passes batch-onward">jatkuu ensi viikolle</p>`}
+      : html`<p class="batch-onward">jatkuu ensi viikolle</p>`}
   </article>`;
 }
 

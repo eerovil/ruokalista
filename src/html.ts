@@ -264,24 +264,45 @@ const STYLES = `
     border-radius: .25rem; }
   .batch-cards { display: flex; flex-direction: column; gap: .5rem;
     margin: 0 0 .5rem; }
-  .batch-card { display: flex; flex-direction: column; gap: .25rem;
-    min-width: 0; padding: .35rem 0 .5rem; }
-  .batch-start, .batch-carried { margin: 0; font-size: .8rem; }
-  .batch-start { color: var(--accent); }
-  .batch-carried { color: var(--muted); }
-  .batch-when { display: flex; flex-direction: column; gap: .15rem;
-    margin: 0; padding: 0; list-style: none; }
-  .batch-when-day { display: flex; flex-wrap: wrap; align-items: baseline;
-    gap: .4rem; font-size: .8rem; }
-  .batch-when-date { min-width: 4.5rem; color: var(--fg);
+  /* One cooking reads as one card: head, then a hairline per covered day. */
+  .batch-card { min-width: 0; background: var(--surface);
+    border: 1px solid var(--edge); border-radius: var(--radius);
+    overflow: hidden; }
+  .batch-card .entry > a { gap: .6rem; padding: .6rem .7rem;
+    background: transparent; border-radius: 0; }
+  .batch-card .entry .recipe-image.is-thumb { width: 3rem; height: 3rem;
+    border-radius: 50%; }
+  .batch-start, .batch-carried { padding: .2rem .55rem;
+    font-size: .75rem; font-weight: 600; white-space: nowrap;
+    border-radius: 1rem; }
+  .batch-start { color: var(--accent-fg); background: var(--accent); }
+  .batch-carried { color: var(--accent); border: 1px solid var(--accent); }
+  .batch-when { display: block; margin: 0; padding: 0; list-style: none; }
+  .batch-when-day { display: flex; flex-wrap: wrap; align-items: center;
+    gap: .5rem; padding: .45rem .7rem; font-size: .85rem;
+    border-top: 1px solid var(--edge); }
+  .batch-when-weekday { min-width: 1.5rem; color: var(--fg);
     text-transform: capitalize; }
-  .batch-when-slots { color: var(--muted); }
-  .batch-passes, .batch-end { color: var(--muted); font-size: .75rem; }
-  .batch-passes { padding: .05rem .35rem; border: 1px solid var(--edge);
-    border-radius: .25rem; }
-  .batch-end, .batch-onward { margin: 0; }
-  .batch-end { align-self: flex-end; }
-  .batch-onward { align-self: flex-start; }
+  .batch-when-date { min-width: 3rem; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .batch-when-slots { flex: 1; min-width: 0; color: var(--fg); }
+  .batch-passes { margin-left: auto; padding: .1rem .45rem;
+    font-size: .7rem; color: var(--accent); white-space: nowrap;
+    border: 1px solid var(--accent); border-radius: 1rem; }
+  .batch-end, .batch-onward { margin: 0; padding: .35rem .7rem .45rem;
+    font-size: .75rem; color: var(--muted); }
+  .batch-end { text-align: right; }
+  /* Jump back to today after scrolling away — the week's one floating action. */
+  .to-today {
+    position: fixed; right: 1rem; z-index: 2;
+    bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1rem);
+    display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); padding: .4rem .9rem;
+    font-size: .85rem; font-weight: 600; text-decoration: none;
+    color: var(--accent); background: var(--bg);
+    border: 1px solid var(--accent); border-radius: 1.5rem;
+    box-shadow: 0 .25rem .75rem light-dark(rgba(0,0,0,.15), rgba(0,0,0,.55));
+  }
   .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem;
     border-top: 1px solid var(--edge); }
   .empty-slot, .add-more { display: inline-flex; align-items: center;
@@ -294,7 +315,7 @@ const STYLES = `
   }
   .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
   /* Today's own container is already --surface, so its cards need to lift. */
-  .day.is-today .entry > a { background: var(--bg); }
+  .day.is-today .batch-card { background: var(--bg); }
   .entry-title { flex: 1; }
   .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
