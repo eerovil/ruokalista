@@ -675,12 +675,25 @@ const REVEAL_ALL_ISLAND = `
     typeof document.querySelectorAll !== 'function'
   ) return;
 
+  var mentions = document.querySelectorAll('.mention-toggle');
+  if (
+    mentions.length === 0 ||
+    typeof mentions[0].addEventListener !== 'function'
+  ) return;
+
   revealAll.addEventListener('change', function () {
-    var mentions = document.querySelectorAll('.mention-toggle');
     for (var index = 0; index < mentions.length; index += 1) {
       mentions[index].checked = revealAll.checked;
     }
   });
+
+  function mentionChanged() {
+    if (revealAll.checked && !this.checked) revealAll.checked = false;
+  }
+
+  for (var index = 0; index < mentions.length; index += 1) {
+    mentions[index].addEventListener('change', mentionChanged);
+  }
 }());`;
 
 async function loadRequested(

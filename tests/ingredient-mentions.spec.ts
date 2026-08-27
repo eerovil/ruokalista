@@ -116,6 +116,19 @@ test("one keyboard toggle reveals and then truly hides every amount", async ({
   await expectAllMentionAmounts(page, true);
   await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
 
+  // An individual tap remains visible behavior: it drops the global layer,
+  // hides this mention and leaves the other checked mentions alone.
+  const oljy = mention(page, "öljyssä");
+  await kaali.locator("label").click();
+  await expect(revealAll).not.toBeChecked();
+  await expect(kaali.locator(".mention-amount")).toBeHidden();
+  await expect(oljy.locator(".mention-amount")).toBeVisible();
+  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+    .toBeVisible();
+
+  // The master can still set everything again and then truly clear it all.
+  await revealAll.press("Space");
+  await expectAllMentionAmounts(page, true);
   await revealAll.press("Space");
   await expect(revealAll).not.toBeChecked();
   await expectAllMentionAmounts(page, false);
