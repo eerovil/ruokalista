@@ -97,9 +97,14 @@ not bump `recipe.revision`, so saving an older open form would replace the new
 references. Apply it once with:
 
 ```sh
-./scripts/node.sh npx wrangler d1 execute ruokalista --remote \
+./scripts/node.sh --cloudflare npx wrangler d1 execute ruokalista --remote \
   --file .generated/ingredient-reference-backfill.sql
 ```
+
+`--cloudflare` is what loads the saved account credentials and forwards them
+into the container; without it wrangler cannot reach the account at all and
+says so. It is the same flag `push-google-secrets.sh` and `cloudflare-setup.sh`
+use, and nothing has to be exported by hand first.
 
 Production execution is a separate, deliberate operator step. This repository
 change does not run it.
