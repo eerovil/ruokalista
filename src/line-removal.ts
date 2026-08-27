@@ -71,34 +71,48 @@ export function removalConflicts(
 
   if (going.size === 0) return [];
 
-  const conflicts: RemovalConflict[] = [];
-
-  for (const [index, row] of going) {
-    const id = chosenIngredientId(row);
-    // Still on another row, so the sentence keeps its meaning and its amount.
-    if (id !== null && staying.has(id)) continue;
-
-    const mentioning: MentioningStep[] = [];
-
-    steps.forEach((step, place) => {
-      const words = decodeDraftRefs(step.refs)
-        .filter((ref) => pointsAtRow(ref.lineIndex, ref.expectedIngredientId, index, id))
-        // A link to wording the step no longer uses is already dead, and
-        // refusing over it would be a refusal nobody could clear.
-        .filter((ref) => mentionResolves(step.text, ref.matchedText))
-        .map((ref) => ref.matchedText);
-
-      if (words.length === 0) return;
-      mentioning.push({
-        number: place + 1,
-        text: step.text,
-        mentions: [...new Set(words)],
+  // Saved references identify the ingredient they were made against. Ask
+  // whether that identity survives the submitted form, not what a removed row
+  // was repointed to on the way out.
+  const orphanedIds = new Set<number>();
+  steps.forEach((step) => {
+    decodeDraftRefs(step.refs)
+      .filter((ref) => ref.expectedIngredientId !== null)
+      .filter((ref) => mentionResolves(step.text, ref.matchedText))
+      .forEach((ref) => {
+        const id = ref.expectedIngredientId;
+        if (id !== null && !staying.has(id)) orphanedIds.add(id);
       });
-    });
+  });
 
+  // Preserve the form's row order for ordinary removals. An identity that was
+  // hidden by repointing the removed row follows those known row identities.
+  const orderedIds: number[] = [];
+  for (const row of going.values()) {
+    const id = chosenIngredientId(row);
+    if (id !== null && orphanedIds.delete(id)) orderedIds.push(id);
+  }
+  orderedIds.push(...orphanedIds);
+
+  const conflicts = orderedIds.map((id) => ({
+    name: nameOf(id, ingredients),
+    steps: mentioningSteps(
+      steps,
+      (_lineIndex, expectedIngredientId) => expectedIngredientId === id,
+    ),
+  }));
+
+  // Imports can make links before an ingredient id exists. Only those links
+  // fall back to the removed row's index.
+  for (const [index, row] of going) {
+    const mentioning = mentioningSteps(
+      steps,
+      (lineIndex, expectedIngredientId) =>
+        expectedIngredientId === null && lineIndex === index,
+    );
     if (mentioning.length === 0) continue;
     conflicts.push({
-      name: nameOf(row, id, ingredients),
+      name: nameOf(chosenIngredientId(row), ingredients, row.newName),
       steps: mentioning,
     });
   }
@@ -106,20 +120,32 @@ export function removalConflicts(
   return conflicts;
 }
 
-/**
- * Whether a step's link is a link to the row being removed.
- *
- * The id is what actually identifies the ingredient; the row index is only the
- * fallback for an import's links, which were made before any id existed.
- */
-function pointsAtRow(
-  refLineIndex: number,
-  refIngredientId: number | null,
-  rowIndex: number,
-  rowIngredientId: number | null,
-): boolean {
-  if (refIngredientId !== null) return refIngredientId === rowIngredientId;
-  return refLineIndex === rowIndex;
+function mentioningSteps(
+  steps: readonly StepFormValues[],
+  pointsAtIngredient: (
+    lineIndex: number,
+    expectedIngredientId: number | null,
+  ) => boolean,
+): MentioningStep[] {
+  const mentioning: MentioningStep[] = [];
+
+  steps.forEach((step, place) => {
+    const words = decodeDraftRefs(step.refs)
+      .filter((ref) => pointsAtIngredient(ref.lineIndex, ref.expectedIngredientId))
+      // A link to wording the step no longer uses is already dead, and
+      // refusing over it would be a refusal nobody could clear.
+      .filter((ref) => mentionResolves(step.text, ref.matchedText))
+      .map((ref) => ref.matchedText);
+
+    if (words.length === 0) return;
+    mentioning.push({
+      number: place + 1,
+      text: step.text,
+      mentions: [...new Set(words)],
+    });
+  });
+
+  return mentioning;
 }
 
 function chosenIngredientId(row: LineFormValues): number | null {
@@ -128,14 +154,14 @@ function chosenIngredientId(row: LineFormValues): number | null {
 }
 
 function nameOf(
-  row: LineFormValues,
   id: number | null,
   ingredients: readonly NamedIngredient[],
+  proposed = "",
 ): string {
   if (id !== null) {
     const known = ingredients.find((ingredient) => ingredient.id === id);
     if (known !== undefined) return known.name;
   }
-  const proposed = row.newName.trim();
-  return proposed === "" ? "Aines" : proposed;
+  const name = proposed.trim();
+  return name === "" ? "Aines" : name;
 }

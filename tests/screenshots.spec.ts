@@ -445,11 +445,17 @@ test.describe("signed in", () => {
     });
     await page.locator(".line").nth(4).locator("input[name$=quantity]").fill("1");
 
-    // Sitruunaruoho is named by the last step, so removing it is refused.
-    await page.locator(".line").nth(3).locator("input[name$=remove]").check();
+    // The saved row is sitruunaruoho. Even if it is repointed on the same
+    // submit, removing it is refused because the last step still names the
+    // saved ingredient.
+    const linked = page.locator(".line").nth(3);
+    await linked.locator("select").selectOption({ label: "valkokaali" });
+    await linked.locator("input[name$=remove]").check();
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
     await expect(page.locator(".line-conflicts")).toContainText("Vaihe 3");
+    await expect(page.locator(".refused")).toContainText("sitruunaruoho");
+    await expect(linked.locator("select")).toHaveValue("3");
     await expect(page.getByRole("button", { name: "Poista silti" })).toBeVisible();
     await page.screenshot({
       path: `${SHOTS}/47-editor-remove-mentioned.png`,

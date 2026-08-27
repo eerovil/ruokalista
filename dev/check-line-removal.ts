@@ -115,6 +115,21 @@ test("another row carrying the same ingredient keeps the removal safe", () => {
   );
 });
 
+test("repointing and removing a linked row still guards the saved ingredient", () => {
+  const linked = step("Mausta sitruunaruoholla.", [
+    { lineIndex: 2, matchedText: "sitruunaruoholla", ingredientId: 4 },
+  ]);
+
+  const conflicts = removalConflicts(
+    [row("1"), row("3"), row("3", { remove: true })],
+    [linked],
+    INGREDIENTS,
+  );
+
+  assert.deepEqual(conflicts.map((one) => one.name), ["sitruunaruoho"]);
+  assert.deepEqual(conflicts[0]?.steps[0]?.mentions, ["sitruunaruoholla"]);
+});
+
 test("every mentioning step is named, not just the first", () => {
   const second = step("Mausta kaalilla uudelleen.", [
     { lineIndex: 2, matchedText: "kaalilla", ingredientId: 3 },

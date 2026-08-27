@@ -9,6 +9,10 @@ import { sessionCookie } from "./support/session";
 test.beforeAll(reseed);
 
 test.beforeEach(async ({ context }) => {
+  // Removing and adding ingredient rows rewrites the same seeded recipe from
+  // several directions, so each case starts from a genuinely fresh database
+  // rather than from whatever the case before it left behind.
+  reseed();
   await context.addCookies([sessionCookie(1)]);
 });
 
@@ -170,9 +174,6 @@ test("+ Lisää aines adds exactly one row and keeps what was typed", async ({
 test("removing an ingredient a step still mentions is refused, and says where", async ({
   page,
 }) => {
-  // The compact-add cases above deliberately changed this recipe. The removal
-  // scenarios share one fresh seed until one of them actually removes the row.
-  reseed();
   await page.goto("/recipes/1/edit");
   // Line 3 is sitruunaruoho, which step 3 names as "sitruunaruoholla".
   await page.locator(".line").nth(3).locator("input[name$=remove]").check();
@@ -186,6 +187,31 @@ test("removing an ingredient a step still mentions is refused, and says where", 
   // Nothing was saved: the recipe still has all four of its lines.
   await page.goto("/recipes/1");
   await expect(page.locator(".lines li")).toHaveCount(4);
+});
+
+test("repointing and removing a linked row still guards its saved ingredient", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+  const linked = page.locator(".line").nth(3);
+  await linked.locator("select").selectOption({ label: "valkokaali" });
+  await linked.locator("input[name$=remove]").check();
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page.locator(".refused")).toContainText("sitruunaruoho");
+  await expect(page.locator(".line-conflicts")).toContainText(
+    "Mausta sitruunaruoholla ja tarjoa.",
+  );
+  await expect(linked.locator("select")).toHaveValue("3");
+  await expect(linked.locator("input[name$=remove]")).toBeChecked();
+
+  await page.getByRole("button", { name: "Poista silti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+  await expect(page.locator(".lines li")).toHaveCount(3);
+  await expect(page.locator(".steps li").nth(2)).toContainText(
+    "sitruunaruoholla",
+    { useInnerText: true },
+  );
 });
 
 test("a removal goes through once the step no longer mentions the ingredient", async ({
@@ -210,9 +236,6 @@ test("a removal goes through once the step no longer mentions the ingredient", a
 });
 
 test("a removal can be forced past the warning", async ({ page }) => {
-  // The preceding test deliberately removed this linked line. This scenario
-  // needs the original link back, but the rest of the file can share one seed.
-  reseed();
   await page.goto("/recipes/1/edit");
   await page.locator(".line").nth(3).locator("input[name$=remove]").check();
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
@@ -233,9 +256,6 @@ test("a removal can be forced past the warning", async ({ page }) => {
 test("removing one of two rows for the same ingredient is not refused", async ({
   page,
 }) => {
-  // Forced removal above deliberately left the sentence without its linked
-  // line. Restore the one fixture this two-row scenario is about.
-  reseed();
   await page.goto("/recipes/1/edit");
   await addIngredientRow(page);
   const added = page.locator(".line").nth(4);
