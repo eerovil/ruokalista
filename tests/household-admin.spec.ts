@@ -211,15 +211,49 @@ test("the removed member's Google sub is free for another household", async ({
 });
 
 test("the sub a removed row parks on cannot be typed in", async ({ page }) => {
+  // The parked value is not ASCII, so it is not a Google sub, so the form will
+  // not take it — which is the only way a live member could land on top of a
+  // removed one. See `src/google.ts::isGoogleSub`.
   await signIn(page, 3);
   await page.goto("/admin/households/1");
   await page.locator("#add-name").fill("Väärennös");
-  await page.locator("#add-sub").fill("removed:2");
+  await page.locator("#add-sub").fill("—removed:2");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
 
   await expect(page.locator(".refused")).toContainText(
     "ei ole kelvollinen Google-tunniste",
   );
+});
+
+test("a Google sub that merely looks like a tombstone is an ordinary sub", async ({
+  page,
+}) => {
+  // The other half of the rule, and the bug it was written for. This screen
+  // used to reserve `removed:<id>` for removed rows on the belief that Google
+  // never issues a sub in that shape — Google promises no such thing, so
+  // somebody whose real account id is `removed:2` was locked out of the app by
+  // a naming convention. They are an ordinary member now.
+  await signIn(page, 3);
+  await page.goto("/admin/households/1");
+  await page.locator("#add-name").fill("Tuomas");
+  await page.locator("#add-sub").fill("removed:2");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+
+  await expect(page.locator(".refused")).toHaveCount(0);
+  const row = page.locator("details.rename").filter({ hasText: "Tuomas" });
+  await expect(row).toHaveCount(1);
+
+  const memberId = await memberIdOf(page, "Tuomas");
+  await row.locator("summary").click();
+  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue("removed:2");
+
+  // And they are not mistaken for a parked row: they can be removed, which
+  // parks them somewhere else again, and household 1 is as it was.
+  await row.getByRole("button", { name: "Poista taloudesta" }).click();
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(
+    page.locator("details.rename").filter({ hasText: "Tuomas" }),
+  ).toHaveCount(0);
 });
 
 test("an admin's own row cannot be removed here", async ({ page }) => {

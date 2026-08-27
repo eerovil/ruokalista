@@ -172,8 +172,8 @@ member as having made something — `ingredient.created_by`,
 key, or take the recipe off the list.
 
 So removal is a stamp. `removed_at` is set, and the person's real Google `sub`
-moves to `removed_google_sub` while the live `google_sub` is rewritten to
-`removed:<id>`. Two things follow, and both are the point:
+moves to `removed_google_sub` while the live `google_sub` is rewritten to a
+tombstone. Two things follow, and both are the point:
 
 - Every lookup that turns a request into a member — `findMemberById`,
   `findMemberByGoogleSub`, `allMembers` in `src/members.ts` — filters
@@ -185,9 +185,22 @@ moves to `removed_google_sub` while the live `google_sub` is rewritten to
 
 Rewriting the live column rather than making the UNIQUE index conditional is
 deliberate: four tables reference `member`, and rebuilding it against the live
-database to relax one constraint is not worth it. Google's `sub` is a decimal
-string, so `removed:<id>` cannot collide with a real one, and
-`src/households.ts` refuses a sub in that shape as input anyway.
+database to relax one constraint is not worth it.
+
+The tombstone is U+2014 EM DASH followed by the member id. The shape matters
+more than it looks, and the proposal's first version got it wrong: it parked a
+removed row on `removed:<id>`, reasoning that a Google `sub` is a decimal string
+and so could never look like that. Google promises no such thing. Its contract
+is any case-sensitive ASCII string of up to 255 characters, so `removed:2` is a
+legal account id — reserving that shape would have shut a real person out of the
+admin screen, and left a parked row for their sub to collide with on the UNIQUE
+column.
+
+`src/google.ts::isGoogleSub` now states that contract in one place, and both
+sign-in (`readIdentity`) and the admin form (`src/households.ts::memberFields`)
+are held to it. Because the tombstone is not ASCII, no value either of them
+accepts can equal it — the guarantee comes from the contract rather than from a
+habit of Google's. `dev/check-google-sub.ts` is the regression.
 
 This is a column addition, so the backup lockstep below does not move: backup
 captures `SELECT *` and restore builds its INSERT from the row's own keys, so
