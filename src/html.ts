@@ -411,6 +411,12 @@ const STYLES = `
   .rename[open] > summary::after { transform: rotate(90deg); }
   .rename form.inline { margin: .4rem 0 .6rem; }
   .rename form.inline input { width: auto; flex: 1; text-align: left; }
+  /* The same row for a member who cannot rename: no chevron, because nothing
+     opens, and no pointer, because nothing happens if they press it. */
+  .rename.is-readonly {
+    display: flex; align-items: baseline; gap: .75rem;
+    min-height: var(--tap); padding: .1rem 0;
+  }
   /* The cupboard's own screen: a short list of staples, each with the one
      thing there is to do to it. */
   .pantry li {

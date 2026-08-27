@@ -312,7 +312,9 @@ export async function deleteRecipeForm(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound(member);
 
-  const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
+  if (recipe.publishedAt !== null) return stillPublished(member, recipe);
+
+  const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
 
   await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
@@ -328,7 +330,11 @@ export async function apiDeleteRecipe(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return problem(404, "No such recipe.");
 
-  const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
+  if (recipe.publishedAt !== null) {
+    return problem(409, "That recipe is published. Unpublish it first.");
+  }
+
+  const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) {
     return problem(409, "That recipe or one of its parts is on the menu.");
   }
@@ -680,7 +686,9 @@ export async function confirmDeleteScreen(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound(member);
 
-  const onMenu = await countOnMenu(env.DB, member.householdId, recipe.id);
+  if (recipe.publishedAt !== null) return stillPublished(member, recipe);
+
+  const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
 
   return page(
@@ -722,6 +730,31 @@ function stillPlanned(member: Member, recipe: Recipe, onMenu: number): Response 
   );
 }
 
+/**
+ * Deleting a published recipe is refused outright, and the screen says which
+ * step comes first rather than only that it cannot be done.
+ *
+ * The order is not arbitrary. Unpublishing is where the "somebody else is
+ * cooking this on Thursday" check lives, so asking for it first means deletion
+ * inherits that protection instead of carrying a second copy of it that could
+ * drift.
+ */
+function stillPublished(member: Member, recipe: Recipe): Response {
+  return page(
+    "Ei voi poistaa",
+    html`<h1>Ei voi poistaa</h1>
+      <p class="refused">
+        ${recipe.title} on julkaistu, joten sitä ei voi poistaa. Poista ensin
+        julkaisu — se onnistuu, kun resepti ei ole toisten talouksien tulevilla
+        ruokalistoilla.
+      </p>
+      <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
+    "recipes",
+    member,
+    409,
+  );
+}
+
 function notFound(member: Member): Response {
   return page(
     "Ei löytynyt",
@@ -743,22 +776,28 @@ async function load(
   return findRecipe(db, member.householdId, id);
 }
 
-async function countOnMenu(
-  db: D1Database,
-  householdId: number,
-  recipeId: number,
-): Promise<number> {
+/**
+ * How many planned batches — anybody's — still name this recipe or one of its
+ * parts.
+ *
+ * Deliberately not scoped to the owning household since #143. A recipe that was
+ * published can be sitting on another household's *past* weeks, and a past week
+ * does not block unpublishing (see `src/recipe-publish.ts`) — so by the time a
+ * delete is attempted, the rows pointing at this recipe may well belong to
+ * somebody else. Deleting it anyway would break their week, and the foreign key
+ * with it. The reason this household cannot delete the recipe stays the same
+ * either way: it is still on a menu.
+ */
+async function countOnMenu(db: D1Database, recipeId: number): Promise<number> {
   const row = await db
     .prepare(
       `SELECT count(*) AS n
          FROM planned_batch
-        WHERE household_id = ?
-          AND recipe_id IN (
-            SELECT id FROM recipe
-             WHERE household_id = ? AND (id = ? OR parent_id = ?)
+        WHERE recipe_id IN (
+            SELECT id FROM recipe WHERE id = ? OR parent_id = ?
           )`,
     )
-    .bind(householdId, householdId, recipeId, recipeId)
+    .bind(recipeId, recipeId)
     .first<{ n: number }>();
 
   return row?.n ?? 0;

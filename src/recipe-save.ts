@@ -458,19 +458,21 @@ function ingredientStatements(
   guard?: RecipeGuard,
 ): D1PreparedStatement[] {
   return ingredients.map((ingredient) => {
+    // No household_id since #143: the dictionary is global. Coining a name is
+    // still an ordinary member's job — it is renaming and merging an existing
+    // one that became an admin operation, because those reach every household.
     if (guard === undefined) {
       return db
         .prepare(
-          `INSERT INTO ingredient (id, household_id, name, created_by)
-           VALUES (?, ?, ?, ?)`,
+          `INSERT INTO ingredient (id, name, created_by) VALUES (?, ?, ?)`,
         )
-        .bind(ingredient.id, member.householdId, ingredient.name, member.id);
+        .bind(ingredient.id, ingredient.name, member.id);
     }
 
     return db
       .prepare(
-        `INSERT INTO ingredient (id, household_id, name, created_by)
-         SELECT ?, ?, ?, ?
+        `INSERT INTO ingredient (id, name, created_by)
+         SELECT ?, ?, ?
           WHERE EXISTS (
             SELECT 1 FROM recipe
              WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -478,7 +480,6 @@ function ingredientStatements(
       )
       .bind(
         ingredient.id,
-        member.householdId,
         ingredient.name,
         member.id,
         guard.recipeId,

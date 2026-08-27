@@ -66,8 +66,10 @@ test("parts are not dishes, so they are not listed or plannable", async ({
   await expect(page.locator(".recipes li")).toHaveCount(3);
   await expect(page.locator(".recipes")).not.toContainText("Jauhelihakastike");
 
+  // Three of Koti's own dishes plus Naapuri's published one (#143) — and
+  // neither part of the lasagne, which is what this is really measuring.
   await page.goto("/picker?date=2026-12-07&slot=lunch");
-  await expect(page.locator(".pick li")).toHaveCount(3);
+  await expect(page.locator(".pick li")).toHaveCount(4);
   await expect(page.locator(".pick")).not.toContainText("Juustokastike");
 });
 

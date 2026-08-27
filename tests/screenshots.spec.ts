@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { AGENTDECK_BATCH } from "./support/batch";
 import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
 import { addIngredientRow, openDraftEditor } from "./support/lines";
+import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -973,6 +974,108 @@ test.describe("removing an established member", () => {
     await expect(page.locator(".recipes").first()).toContainText("Eero");
     await page.screenshot({
       path: `${SHOTS}/46-recipes-after-removal.png`,
+      fullPage: true,
+    });
+  });
+});
+
+/**
+ * Sharing between households (#143). Its own block because these need two
+ * households at the same time, and the seed's member 2 is the other one.
+ */
+test.describe("public recipes", () => {
+  // This file reseeds once, in `beforeAll`, and the block above it deliberately
+  // removes member 1 from their household. These shots sign in as that member,
+  // so they need the database put back first.
+  test.beforeEach(reseed);
+
+  test("publishing, the public section, and reading somebody else's", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // A picture on the dish about to be shared, so these shots show what the
+    // other household actually sees. Its image request is the one read that is
+    // not owner-scoped, and a broken picture here would be the symptom.
+    const pictured = await page.request.put("/api/recipes/1/image", {
+      headers: { "content-type": "image/png" },
+      data: flatPng(900, 600, [198, 122, 64]),
+    });
+    expect(pictured.status()).toBe(204);
+
+    // Koti publishes two recipes from the list, in one go.
+    await page.goto("/recipes");
+    await page.getByLabel("Valitse Kaalilaatikko").check();
+    await page.getByLabel("Valitse Lasagne").check();
+    await expect(page.getByLabel("Valitse Lasagne")).toBeChecked();
+    await page.screenshot({
+      path: `${SHOTS}/50-recipes-select-to-publish.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("button", { name: "Julkaise valitut" }).click();
+    await expect(page.locator(".badge.is-published")).toHaveCount(2);
+    await page.screenshot({
+      path: `${SHOTS}/51-recipes-published.png`,
+      fullPage: true,
+    });
+
+    // The owner's own view of a published recipe: the publish control, and the
+    // household's own default portions beside it.
+    await page.goto("/recipes/1");
+    await page.getByLabel("Oletusannokset").fill("9");
+    await page.locator(".portions-preference button").click();
+    await expect(page.getByLabel("Oletusannokset")).toHaveValue("9");
+    await expect(
+      page.getByRole("button", { name: "Poista julkaisu" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/52-recipe-owner-sharing.png`,
+      fullPage: true,
+    });
+
+    // Now Naapuri, who can read and plan it but not edit it.
+    await context.clearCookies();
+    await context.addCookies([sessionCookie(2)]);
+
+    await page.goto("/recipes/julkiset");
+    await expect(page.locator(".recipes li")).toHaveCount(2);
+    // Somebody else's picture, actually loaded rather than a broken icon.
+    const thumb = page.locator(".recipes .recipe-image img").first();
+    await expect(thumb).toHaveJSProperty("complete", true);
+    await expect(thumb).not.toHaveJSProperty("naturalWidth", 0);
+    await page.screenshot({
+      path: `${SHOTS}/53-public-recipes.png`,
+      fullPage: true,
+    });
+
+    await page.goto("/recipes/1");
+    await expect(page.locator(".shared-from")).toContainText("Koti");
+    await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+    const hero = page.locator(".recipe-image.is-hero img");
+    await expect(hero).toHaveJSProperty("complete", true);
+    await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
+    await page.screenshot({
+      path: `${SHOTS}/54-public-recipe-read-only.png`,
+      fullPage: true,
+    });
+
+    // Naapuri plans it, which is what puts the refusal below within reach.
+    await page.goto("/picker?date=2099-01-01&slot=dinner");
+    await page
+      .locator(".pick li", { hasText: "Kaalilaatikko" })
+      .getByRole("button", { name: "Lisää" })
+      .click();
+
+    // And Koti, trying to take it back while somebody is about to cook it.
+    await context.clearCookies();
+    await context.addCookies([sessionCookie(1)]);
+    await page.goto("/recipes/1");
+    await page.getByRole("button", { name: "Poista julkaisu" }).click();
+    await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
+    await page.screenshot({
+      path: `${SHOTS}/55-unpublish-refused.png`,
       fullPage: true,
     });
   });

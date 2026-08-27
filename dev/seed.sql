@@ -3,6 +3,7 @@
 -- Two households on purpose: household 2 exists so that anything leaking across
 -- the household_id filter shows up immediately in what household 1 can see.
 
+DELETE FROM recipe_preference;
 DELETE FROM pantry_entry;
 DELETE FROM batch_occurrence;
 DELETE FROM planned_batch;
@@ -26,17 +27,21 @@ INSERT INTO member (id, household_id, google_sub, display_name, email, is_admin)
   (2, 2, 'dev-seed-naapuri', 'Naapuri',     NULL,               0),
   (3, 1, 'dev-seed-admin',   'Ylläpitäjä',  NULL,               1);
 
-INSERT INTO ingredient (id, household_id, name, created_by) VALUES
-  (1, 1, 'öljy',           1),
-  (2, 1, 'vesi',           1),
-  (3, 1, 'valkokaali',     1),
-  (4, 1, 'sitruunaruoho',  1),
-  (5, 1, 'ananas',         1),  -- used by nothing, so its count must be 0
-  (6, 2, 'naapurin suola', 2),  -- household 2, must never appear for member 1
-  (7, 1, 'jauheliha',      1),
-  (8, 1, 'juusto',         1),
-  (9, 1, 'maito',          1),
-  (10, 1, 'lasagnelevy',   1);
+-- The dictionary is global since #143: one row per foodstuff for every
+-- household. `naapurin suola` is still here and is still household 2's doing,
+-- but it is now a name household 1 can see too — the drift a shared dictionary
+-- exists to make visible.
+INSERT INTO ingredient (id, name, created_by) VALUES
+  (1, 'öljy',           1),
+  (2, 'vesi',           1),
+  (3, 'valkokaali',     1),
+  (4, 'sitruunaruoho',  1),
+  (5, 'ananas',         1),  -- used by nothing, so its count must be 0
+  (6, 'naapurin suola', 2),  -- coined by household 2
+  (7, 'jauheliha',      1),
+  (8, 'juusto',         1),
+  (9, 'maito',          1),
+  (10, 'lasagnelevy',   1);
 
 INSERT INTO recipe
   (id, household_id, title, yield_portions, source_text, source_route, created_by, updated_by)
@@ -116,3 +121,34 @@ VALUES
   (4, 1, 400, NULL, 'g',  NULL, NULL, 7, '400 g jauhelihaa', NULL),
   (5, 1, 5,   NULL, 'dl', NULL, NULL, 9, '5 dl maitoa', NULL),
   (5, 2, 2,   NULL, 'dl', NULL, NULL, 8, '2 dl juustoa', NULL);
+
+-- Household 2's own recipe, already published (#143). It is here so that
+-- household 1 always has one real public recipe to look at: the public section,
+-- the picker and the shopping list all have a shared recipe to exercise without
+-- a test having to publish one first, and anything that quietly stops
+-- distinguishing "ours" from "theirs" shows up immediately.
+--
+-- It deliberately uses ingredients household 1 also uses (öljy, vesi) plus one
+-- household 2 coined (naapurin suola), which is the whole point of the global
+-- dictionary: the shopping list and the cupboard match on the same ids either
+-- way.
+INSERT INTO recipe
+  (id, household_id, title, yield_portions, source_text, source_route,
+   created_by, updated_by, published_at, published_by)
+VALUES
+  (6, 2, 'Naapurin uunikala', 4,
+   'Naapurin uunikala' || char(10) || '2 rkl öljyä' || char(10)
+     || '1 dl vettä' || char(10) || '1 tl suolaa',
+   'pasted', 2, 2, '2026-08-26 09:00:00', 2);
+
+INSERT INTO recipe_step (recipe_id, position, text, phase, ingredient_refs) VALUES
+  (6, 1, 'Voitele vuoka öljyllä.', NULL,
+   '[{"ingredientId":1,"matchedText":"öljyllä","approxPosition":14}]'),
+  (6, 2, 'Paista 200 asteessa 25 minuuttia.', NULL, NULL);
+
+INSERT INTO ingredient_line
+  (recipe_id, position, quantity, quantity_max, unit, alt_quantity, alt_unit, ingredient_id, source_line, phase)
+VALUES
+  (6, 1, 2, NULL, 'rkl', NULL, NULL, 1, '2 rkl öljyä', NULL),
+  (6, 2, 1, NULL, 'dl',  NULL, NULL, 2, '1 dl vettä', NULL),
+  (6, 3, 1, NULL, 'tl',  NULL, NULL, 6, '1 tl suolaa', NULL);

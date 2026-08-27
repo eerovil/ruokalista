@@ -52,6 +52,15 @@ stop at the happy path, it POSTs/GETs with fabricated `X-Admin` and
 `?memberId=3`) against an ordinary member's real cookie and asserts 404 on all
 of them.
 
+`tests/public-recipes.spec.ts` is the spec for sharing between households
+(#143), and it is the one to read before touching that boundary: it drives
+publishing through the screens rather than the database, and every case is
+really "does the wall hold in the one place it was deliberately opened". Three
+seed facts it leans on — member 1 is Koti's, member 2 is Naapuri's, and recipe 6
+(Naapurin uunikala) ships already published so the read-only side has something
+to read. That last one changes counts in specs that assert how many recipes a
+picker offers; `tests/parts.spec.ts` is the worked example.
+
 `retries: 0`, on purpose. The one flake this suite ever had turned out to be two
 real faults, and a retry would have kept both hidden.
 
@@ -159,6 +168,12 @@ the app answering.
   `textContent` and therefore in a plain `toContainText`. Assert a step's
   wording with `{ useInnerText: true }`, which is what a person actually sees;
   `tests/intake.spec.ts`'s reordering test is the worked example.
+- An assertion about household isolation has to pick something that is still
+  household-scoped. Several specs used to prove the wall with the ingredient
+  list; #143 made that dictionary global on purpose, and those assertions were
+  rewritten to use a recipe instead. If a test named "another household cannot
+  see X" starts failing, check whether X is still supposed to be private before
+  changing the code.
 - Don't assert on a behaviour a feature doesn't actually own — an "etag
   changes on regeneration" test built on a content-based-etag assumption was
   testing content-hashing behaviour the etag never promised, and was reworked

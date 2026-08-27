@@ -27,6 +27,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "batch_occurrence",
   // After ingredient and member: a pantry row points at both.
   "pantry_entry",
+  // After recipe, household and member: a preference points at all three.
+  "recipe_preference",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -239,10 +241,12 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
   uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
+  uniqueIntegerKey(snapshot.tables.recipe_preference, "id", "recipe_preference");
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
-  uniqueComposite(snapshot.tables.ingredient, ["household_id", "name"], "ingredient name");
+  // Global since #143: one canonical name across every household, not one per.
+  uniqueComposite(snapshot.tables.ingredient, ["name"], "ingredient name");
   uniqueComposite(
     snapshot.tables.batch_occurrence,
     ["batch_id", "date", "slot"],
@@ -253,12 +257,16 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     ["household_id", "ingredient_id"],
     "pantry entry",
   );
+  uniqueComposite(
+    snapshot.tables.recipe_preference,
+    ["household_id", "recipe_id"],
+    "recipe preference",
+  );
 
   for (const row of snapshot.tables.member) {
     requireReference(row, "household_id", householdIds, "member.household_id");
   }
   for (const row of snapshot.tables.ingredient) {
-    requireReference(row, "household_id", householdIds, "ingredient.household_id");
     requireReference(row, "created_by", memberIds, "ingredient.created_by");
   }
   for (const row of snapshot.tables.recipe) {
@@ -266,6 +274,10 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     requireReference(row, "created_by", memberIds, "recipe.created_by");
     requireReference(row, "updated_by", memberIds, "recipe.updated_by");
     if (row.parent_id !== null) requireReference(row, "parent_id", recipeIds, "recipe.parent_id");
+    // Null on every recipe that is not published, which is most of them.
+    if (row.published_by !== null && row.published_by !== undefined) {
+      requireReference(row, "published_by", memberIds, "recipe.published_by");
+    }
   }
   sortRecipesParentFirst(snapshot.tables.recipe);
   for (const row of snapshot.tables.recipe_step) {
@@ -287,6 +299,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     requireReference(row, "household_id", householdIds, "pantry_entry.household_id");
     requireReference(row, "ingredient_id", ingredientIds, "pantry_entry.ingredient_id");
     requireReference(row, "added_by", memberIds, "pantry_entry.added_by");
+  }
+  for (const row of snapshot.tables.recipe_preference) {
+    requireReference(row, "household_id", householdIds, "recipe_preference.household_id");
+    requireReference(row, "recipe_id", recipeIds, "recipe_preference.recipe_id");
+    requireReference(row, "updated_by", memberIds, "recipe_preference.updated_by");
   }
 }
 

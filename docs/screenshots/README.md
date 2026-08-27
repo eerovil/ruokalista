@@ -59,3 +59,9 @@ Regenerate after a change that alters a screen:
 | `47-editor-remove-mentioned.png` | Proposed refusal when a linked row is repointed and removed together but the step still names its saved ingredient, with the step quoted and the forced-removal escape hatch |
 | `48-step-mentions-all-open.png` | Proposed recipe-wide amount toggle with every ingredient amount revealed in the preparation sentences |
 | `49-covered-days.png` | Proposed covered days: two recipes continuing into Tuesday, one covering both of Wednesday's meals, `katettu` in each heading and both add links still there (not full-page, on purpose) |
+| `50-recipes-select-to-publish.png` | Proposed recipe list with two recipes selected for the bulk publish action |
+| `51-recipes-published.png` | Proposed same list afterwards: what was published says so on the row, and the action reports what happened |
+| `52-recipe-owner-sharing.png` | Proposed owner's view of a published recipe: this household's own default portions, and the control to take the publication back |
+| `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
+| `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
+| `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |

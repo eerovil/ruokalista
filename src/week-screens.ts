@@ -26,7 +26,12 @@ import {
   type PlannedBatch,
   type Slot,
 } from "./menu.ts";
-import { recipeImage, recipeSummaries, type RecipeSummary } from "./recipes.ts";
+import {
+  plannableRecipeSummaries,
+  recipeImage,
+  type RecipeSummary,
+} from "./recipes.ts";
+import { preferredPortions } from "./recipe-preference.ts";
 import type { RouteContext } from "./router.ts";
 
 const SLOT_NAMES: Record<Slot, string> = {
@@ -310,14 +315,15 @@ export async function plannedBatchScreen(
     Number(params["id"]),
   );
   if (batch === null) return batchNotFound(member);
-  const recipes = await recipeSummaries(env.DB, member.householdId, "");
-  return page(batch.title, batchActions(batch, null, recipes), "week", member);
+  const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
+  return page(batch.title, batchActions(batch, null, recipes, member.householdId), "week", member);
 }
 
 function batchActions(
   batch: PlannedBatch,
   refusal: { message: string; portions: string } | null,
   recipes: RecipeSummary[],
+  householdId: number,
 ): Raw {
   const portions = refusal?.portions ?? String(batch.portions);
   return html`<p class="meta entry-when">
@@ -344,7 +350,7 @@ function batchActions(
       <div class="portions-row">
         <select id="recipeId" name="recipeId">
           ${recipes.map(
-            (recipe) => html`<option value="${recipe.id}" ${recipe.id === batch.recipeId ? rawSelected : ""}>${recipe.title}</option>`,
+            (recipe) => html`<option value="${recipe.id}" ${recipe.id === batch.recipeId ? rawSelected : ""}>${recipe.householdId === householdId ? recipe.title : `${recipe.title} (${recipe.householdName})`}</option>`,
           )}
         </select>
         <button type="submit">Vaihda</button>
@@ -456,7 +462,14 @@ export async function pickerScreen(
       404,
     );
   }
-  const recipes = await recipeSummaries(env.DB, member.householdId, query);
+  const recipes = await plannableRecipeSummaries(env.DB, member.householdId, query);
+  // What this household cooks a recipe in, which is not what the recipe says
+  // and is not what its publisher cooks it in either (#143).
+  const preferred = await preferredPortions(
+    env.DB,
+    member.householdId,
+    recipes.map((recipe) => recipe.id),
+  );
   return page(
     "Valitse resepti",
     html`<h1>${SLOT_NAMES[slot]} ${shortDate(date)}</h1>
@@ -474,8 +487,8 @@ export async function pickerScreen(
               <input type="hidden" name="slot" value="${slot}" />
               <input type="hidden" name="recipeId" value="${recipe.id}" />
               ${recipeImage(recipe, "thumb")}
-              <span class="pick-title">${recipe.title}</span>
-              <input name="portions" inputmode="numeric" value="${recipe.yieldPortions ?? DEFAULT_PORTIONS}" aria-label="Annoksia" size="2" />
+              <span class="pick-title">${recipe.title}${recipe.householdId === member.householdId ? "" : html` <span class="meta">${recipe.householdName}</span>`}</span>
+              <input name="portions" inputmode="numeric" value="${preferred.get(recipe.id) ?? recipe.yieldPortions ?? DEFAULT_PORTIONS}" aria-label="Annoksia" size="2" />
               <button type="submit">Lisää</button>
             </form></li>`,
           )}</ul>`}
@@ -516,13 +529,13 @@ export async function changeBatchPortionsForm(
     await changePortions(env.DB, member, batch.id, Number(form.get("portions")));
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
-    const recipes = await recipeSummaries(env.DB, member.householdId, "");
+    const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
     return page(
       batch.title,
       batchActions(batch, {
         message: error.message,
         portions: String(form.get("portions") ?? ""),
-      }, recipes),
+      }, recipes, member.householdId),
       "week",
       member,
       400,

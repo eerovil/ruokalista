@@ -33,7 +33,7 @@ try {
     "--persist-to",
     sourceState,
     "--command",
-    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1)",
+    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1); INSERT INTO recipe_preference (id, household_id, recipe_id, default_portions, updated_at, updated_by) VALUES (1, 2, 1, 8, '2026-08-25 12:00:00', 2)",
   ]);
 
   const snapshot = await captureSnapshot(sourceState);
@@ -67,7 +67,7 @@ try {
   if (canonicalJson(parts) !== canonicalJson([["Jauhelihakastike", 1], ["Juustokastike", 2]])) {
     throw new Error("round-trip did not preserve multipart recipe relationships");
   }
-  if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha")?.household_id !== 1) {
+  if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha") === undefined) {
     throw new Error("round-trip did not preserve household/member/ingredient relationships");
   }
   if (target.planned_batch[0]?.recipe_id !== 3 || target.planned_batch[0]?.portions !== 6) {
@@ -86,6 +86,16 @@ try {
     pantry.quantity !== null
   ) {
     throw new Error("round-trip did not preserve the pantry entry");
+  }
+  // Household 2's own default for household 1's published recipe: the row that
+  // proves a preference is household-side and survives a restore that way (#143).
+  const preference = target.recipe_preference[0];
+  if (
+    preference?.household_id !== 2 ||
+    preference.recipe_id !== 1 ||
+    preference.default_portions !== 8
+  ) {
+    throw new Error("round-trip did not preserve the household recipe preference");
   }
 
   console.log(`restore round-trip ok: sha256=${snapshot.sha256}`);
