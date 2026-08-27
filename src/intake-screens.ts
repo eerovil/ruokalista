@@ -1,5 +1,6 @@
 import { problem } from "./auth.ts";
 import { html, page, raw, type Raw } from "./html.ts";
+import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
   draftFromJson,
@@ -420,6 +421,9 @@ function correctionForm(
     text: step.text,
     section: step.section ?? "",
     phase: step.phase ?? "",
+    // The draft already points at its own lines by index, and the form's rows
+    // are those lines in the same order, so this rides through untouched.
+    refs: encodeDraftRefs(step.refs),
   }));
 
   return renderCorrection(
@@ -707,6 +711,7 @@ function renderCorrection(
                 class="section"
               />
             </div>
+            <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
             <textarea name="step.${step.index}" rows="2">${step.text}</textarea>
             ${multipart && step.section.trim() === ""
               ? phaseSelect(`step.${step.index}.phase`, step.phase)

@@ -41,6 +41,7 @@ Which spec covers what, roughly:
 | the shopping list, ingredient aggregation | `shopping.spec.ts`, `dev/check-shopping.ts` |
 | the recipe screen, the list, the picker | `recipes.spec.ts` |
 | the editor, the line form | `editor.spec.ts` |
+| ingredient mentions in a step, tap to reveal an amount | `ingredient-mentions.spec.ts`, `dev/check-ingredient-refs.ts` |
 | portions, factors, rounding | `scaling.spec.ts` |
 | parts of a dish | `parts.spec.ts` |
 | import, the review screen, the streaming island | `intake.spec.ts`, `batch-intake.spec.ts` |

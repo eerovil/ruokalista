@@ -101,10 +101,34 @@ origin reads as `manual` too, since every row #89 ever wrote was a hand
 upload, and the migration is written so landing it does not retroactively
 stale a single existing picture.
 
+## Ingredients a step names
+
+`migrations/0008_step_ingredient_refs.sql` (issue #120, proposed here) adds one
+nullable `recipe_step.ingredient_refs` column holding a small JSON array of
+`{ingredientId, matchedText, approxPosition}`. NULL and `"[]"`
+both mean "this step links nothing", which is what every existing row is.
+
+The reference names an ingredient, not one line. A recipe may list the same
+ingredient several times at different amounts; revealing a mention shows every
+distinct stated amount from those rows. This avoids trusting an unverified model
+choice about which duplicate line a word meant. Blank amounts are omitted and
+identical amounts collapse.
+
+A column rather than a table, on purpose: a reference has no identity of its
+own, is only ever read with the step it belongs to, and a new table would drag
+in the six-file lockstep below for what is a detail of one row. Backup and
+restore need no change — `backup.ts` captures with `SELECT *` and `restore.ts`
+writes whatever columns a row carries.
+
+`src/ingredient-refs.ts::parseStepRefs` is the only reader, and it treats a
+malformed value as no references rather than throwing: a step whose links cannot
+be understood is still a step somebody has to cook from. See
+[recipes](docs/codebase/recipes.md) for what the column is for.
+
 ## The cupboard
 
-This pull request proposes `migrations/0008_pantry.sql` (#125): `pantry_entry`,
-one row per ingredient the household keeps in. A row means "we have enough of
+`migrations/0008_pantry.sql` (#125) adds `pantry_entry`, one row per ingredient
+the household keeps in. A row means "we have enough of
 this, treat it as unlimited"; no row means nothing is known and the ingredient
 is bought as normal. Running out is a delete, not a second kind of row.
 
@@ -174,8 +198,7 @@ both carry the new columns without a change.
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, and — as this pull
-request proposes — `pantry_entry`.
+`ingredient_line`, `planned_batch`, `batch_occurrence`, and `pantry_entry`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.

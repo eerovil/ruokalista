@@ -1,0 +1,13 @@
+-- Issue #120: a preparation step may point at ingredients it mentions, so the
+-- cook can reveal an amount without leaving the sentence.
+--
+-- One nullable column, holding a small JSON array of
+-- {"ingredientId","matchedText","approxPosition"} objects. Deliberately not a
+-- table: a reference has no identity of its own, it is only ever read with the
+-- step it belongs to, and a new table would mean the six-file backup/restore
+-- lockstep for something that is a detail of one row.
+--
+-- NULL and "[]" both mean "no ingredient was linked in this step", which is
+-- what every existing row is: the model has never been asked for these before,
+-- so nothing here changes how a saved recipe reads.
+ALTER TABLE recipe_step ADD COLUMN ingredient_refs TEXT;

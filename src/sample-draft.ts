@@ -18,8 +18,26 @@ export const SAMPLE_DRAFT = {
   source_text:
     "Uunikaali\n4 annosta\n½ dl öljyä\n1–1 ja ½ l vettä\n½ (500 g) valkokaali\nhieman sitruunaruohoa\n2 rkl hunajaa",
   steps: [
-    { text: "Kuullota kaali öljyssä.", section: null, phase: null },
-    { text: "Lisää vesi ja hauduta uunissa.", section: null, phase: null },
+    {
+      text: "Kuullota kaali öljyssä.",
+      section: null,
+      phase: null,
+      // Issue #120: both words name a line below, in the wording the step used
+      // — "kaali" for valkokaali, "öljyssä" for öljy. No amount here: the
+      // ingredient line stays the only place one lives.
+      ingredient_refs: [
+        { line: 2, matched_text: "kaali", approx_position: 10 },
+        { line: 0, matched_text: "öljyssä", approx_position: 16 },
+      ],
+    },
+    {
+      text: "Lisää vesi ja hauduta uunissa.",
+      section: null,
+      phase: null,
+      ingredient_refs: [
+        { line: 1, matched_text: "vesi", approx_position: 6 },
+      ],
+    },
   ],
   lines: [
     {
