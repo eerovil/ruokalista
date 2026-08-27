@@ -98,6 +98,51 @@ photo itself is never stored, only held in memory for the one model call. That
 also traces to decision #4: raw text is kept forever, images are discarded, so
 a photo import stays re-runnable but never re-readable.
 
+## Photographing a printed recipe (#156)
+
+Issue #156 proposes two changes to that route, and this pull request makes
+them: a recipe may be photographed **across several pages**, and the photograph
+may be **taken in the app** rather than fetched from the picture library.
+
+`IntakeSource`'s `photographed` arm carries `images: IntakeImage[]` rather than
+one base64 string, and the order of that array is the reading order of the
+printed recipe. Nothing between the browser and the model may sort or dedupe
+it. `MAX_IMAGES` (8) caps it, and the cap lives in `src/intake.ts` next to the
+type rather than in `DRAFT_SCHEMA` — a count keyword in the schema is the
+failure described at the top of this document, where every import stops at once.
+
+`userContent` announces each page with a short `Sivu 2/3:` line of its own
+before the picture. That labelling is not decoration: with several unlabelled
+images the model has no way to refer to "the second page", and the point of the
+whole change is that page two is page two. A **single** page is worded exactly
+as it was before pages were plural, so the one-photo import is not quietly a
+different prompt than the one that has been running.
+
+`MULTIPAGE_RULES` is added to the system prompt only when there is more than one
+page, and it says the one thing a spread can get catastrophically wrong: the
+pages are one recipe in the given order, not one recipe each, and an ingredient
+list on one page belongs to the steps on the other.
+`dev/check-intake-images.ts` asserts the page order, the labelling and which
+rules each shape of import gets — the parts of this that a real model call would
+otherwise be the only way to see, on a key with a small balance.
+
+On the screen (`src/intake-screens.ts`) there are now two file inputs: `camera`
+carries `capture="environment"`, and `photo` carries `multiple`. **Neither one
+holds the list of pages**, because neither one can — a camera capture replaces
+its input's single file every time, so a member shooting page two would lose
+page one. The island owns the list, both inputs only append to it, and each
+input is cleared after it is read so pressing the camera button again for an
+identical next shot still fires a `change`. The chosen pages are drawn as a
+numbered list with a thumbnail and a `Poista` button each, rebuilt whole on
+every change so the numbering always agrees with the list. Pages are downscaled
+one at a time rather than all at once: the order has to survive, and a phone
+decoding eight full-size photographs at the same time is how a tab gets killed.
+
+`readImages` in `src/intake-screens.ts` still accepts the older single-`image`
+body. Ruokalista is an installable PWA (#100), so a browser can be running a
+cached copy of yesterday's island, and its one-photo import must not become a
+400 overnight.
+
 ## Review, not correction
 
 Testing the deployed v1 found that 99% of imports need no change and 99% of

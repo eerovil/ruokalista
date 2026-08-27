@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
@@ -246,12 +246,63 @@ test("pointing a new line at an existing ingredient creates nothing", async ({
   expect(await ingredientNames(page)).toEqual(before);
 });
 
-test("photo intake allows taking or choosing an image", async ({ page }) => {
+/**
+ * Put a page into one of the two file inputs the way a phone would — the camera
+ * one replaces its single file, the library one can be given several at once.
+ * The text is drawn large so a person looking at a screenshot can tell the
+ * pages apart.
+ */
+async function choosePages(
+  page: Page,
+  inputId: "camera" | "photo",
+  pages: Array<{ text: string; width?: number; height?: number }>,
+): Promise<void> {
+  await page.evaluate(
+    async ({ inputId, pages }) => {
+      const transfer = new DataTransfer();
+
+      for (const spec of pages) {
+        const canvas = document.createElement("canvas");
+        canvas.width = spec.width ?? 800;
+        canvas.height = spec.height ?? 600;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#000000";
+        context.font = `${Math.round(canvas.height / 8)}px sans-serif`;
+        context.fillText(spec.text, 40, Math.round(canvas.height / 3));
+
+        const blob = await new Promise<Blob>((resolve) =>
+          canvas.toBlob((b) => resolve(b!), "image/png"),
+        );
+        transfer.items.add(
+          new File([blob], `${spec.text}.png`, { type: "image/png" }),
+        );
+      }
+
+      const input = document.getElementById(inputId) as HTMLInputElement;
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { inputId, pages },
+  );
+}
+
+test("intake offers both a camera and the picture library", async ({ page }) => {
   await page.goto("/intake");
 
-  const input = page.getByLabel("…tai ota tai valitse kuva painetusta sivusta");
-  await expect(input).toHaveAttribute("accept", "image/*");
-  expect(await input.getAttribute("capture")).toBeNull();
+  // Taking the photograph here is the point: no leaving the app for the camera
+  // app and coming back through the library.
+  const camera = page.getByLabel("…tai ota kuva painetusta sivusta");
+  await expect(camera).toHaveAttribute("accept", "image/*");
+  await expect(camera).toHaveAttribute("capture", "environment");
+  expect(await camera.getAttribute("multiple")).toBeNull();
+
+  // Choosing an existing picture stays, and now takes several at once.
+  const library = page.getByLabel("…tai valitse kuvia kuvakirjastosta");
+  await expect(library).toHaveAttribute("accept", "image/*");
+  await expect(library).toHaveAttribute("multiple", "");
+  expect(await library.getAttribute("capture")).toBeNull();
 });
 
 test("a photographed page is downscaled in the browser before it is sent", async ({
@@ -261,33 +312,15 @@ test("a photographed page is downscaled in the browser before it is sent", async
   await page.goto("/intake");
 
   // A page far larger than the long edge the client is supposed to enforce.
-  await page.evaluate(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 3000;
-    canvas.height = 2000;
-    const context = canvas.getContext("2d")!;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = "#000000";
-    context.font = "120px sans-serif";
-    context.fillText("Uunikaali", 120, 400);
-
-    const blob = await new Promise<Blob>((resolve) =>
-      canvas.toBlob((b) => resolve(b!), "image/png"),
-    );
-    const transfer = new DataTransfer();
-    transfer.items.add(new File([blob], "sivu.png", { type: "image/png" }));
-
-    const input = document.getElementById("photo") as HTMLInputElement;
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await choosePages(page, "photo", [
+    { text: "Uunikaali", width: 3000, height: 2000 },
+  ]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
   expect(calls).toHaveLength(1);
-  const sent = calls[0]!.body;
+  const sent = calls[0]!.body.images![0]!;
   expect(sent.mediaType).toBe("image/jpeg");
   expect(sent.image).toBeTruthy();
   // Re-encoded as JPEG, not passed through as the PNG that was chosen.
@@ -310,26 +343,151 @@ test("a photographed recipe keeps the model's transcription as its source", asyn
   await stubStructuring(page);
   await page.goto("/intake");
 
-  await page.evaluate(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 800;
-    canvas.height = 600;
-    canvas.getContext("2d")!.fillRect(0, 0, 10, 10);
-    const blob = await new Promise<Blob>((resolve) =>
-      canvas.toBlob((b) => resolve(b!), "image/png"),
-    );
-    const transfer = new DataTransfer();
-    transfer.items.add(new File([blob], "sivu.png", { type: "image/png" }));
-    const input = document.getElementById("photo") as HTMLInputElement;
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await choosePages(page, "photo", [{ text: "Uunikaali" }]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
   const kept = await page.locator('input[name="sourceText"]').inputValue();
   expect(kept).toBe(DRAFT_FIXTURE.source_text);
+});
+
+/**
+ * The case #156 exists for: a recipe printed across a spread. Two pages, one
+ * recipe, and the order they were added is the order the model reads them in.
+ */
+test("several pages make one recipe, in the order they were added", async ({
+  page,
+}) => {
+  const calls = await stubStructuring(page);
+  await page.goto("/intake");
+
+  await choosePages(page, "photo", [{ text: "Sivu A" }, { text: "Sivu B" }]);
+
+  await expect(page.locator("#chosen li")).toHaveCount(2);
+  await expect(page.locator("#chosen li .page-name")).toHaveText([
+    "Sivu 1",
+    "Sivu 2",
+  ]);
+
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+
+  // One call, not one per page — the pages are material for one recipe.
+  expect(calls).toHaveLength(1);
+  const images = calls[0]!.body.images!;
+  expect(images).toHaveLength(2);
+  expect(calls[0]!.body.image).toBeUndefined();
+
+  // And the order survived. Read the pages back and compare the pixels, rather
+  // than trusting that the list the browser built was the list it sent.
+  const words = await page.evaluate(async (sent) => {
+    const read = async (base64: string) => {
+      const response = await fetch(`data:image/jpeg;base64,${base64}`);
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+      // The two pages differ in how much ink they carry; that is enough to
+      // tell them apart without reading the text back.
+      const pixels = canvas.getContext("2d")!.getImageData(
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      ).data;
+      let dark = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i]! < 128) dark++;
+      }
+      return dark;
+    };
+
+    return Promise.all(sent.map((image) => read(image.image!)));
+  }, images);
+
+  expect(words[0]).toBeGreaterThan(0);
+  expect(words[1]).toBeGreaterThan(0);
+  expect(words[0]).not.toBe(words[1]);
+});
+
+test("camera shots and library pictures collect into the same recipe", async ({
+  page,
+}) => {
+  const calls = await stubStructuring(page);
+  await page.goto("/intake");
+
+  // A camera input holds one file at a time, so this is the sequence that
+  // used to lose everything but the last page.
+  await choosePages(page, "camera", [{ text: "Kamera 1" }]);
+  await choosePages(page, "camera", [{ text: "Kamera 2" }]);
+  await choosePages(page, "photo", [{ text: "Kirjasto" }]);
+
+  await expect(page.locator("#chosen li")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.body.images).toHaveLength(3);
+});
+
+test("a page can be dropped before the recipe is parsed", async ({ page }) => {
+  const calls = await stubStructuring(page);
+  await page.goto("/intake");
+
+  await choosePages(page, "photo", [
+    { text: "Sivu A" },
+    { text: "Sivu B" },
+    { text: "Sivu C" },
+  ]);
+  await expect(page.locator("#chosen li")).toHaveCount(3);
+
+  // Drop the middle page; the ones left renumber rather than leaving a gap.
+  await page.locator("#chosen li").nth(1).getByRole("button", { name: "Poista" }).click();
+
+  await expect(page.locator("#chosen li")).toHaveCount(2);
+  await expect(page.locator("#chosen li .page-name")).toHaveText([
+    "Sivu 1",
+    "Sivu 2",
+  ]);
+
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+
+  expect(calls[0]!.body.images).toHaveLength(2);
+});
+
+test("too many pages are refused before the model is called", async ({ page }) => {
+  await page.goto("/intake");
+
+  // Straight at the endpoint: the browser stops at the cap, but the cap that
+  // matters is the one no browser can talk past.
+  const response = await page.request.post("/api/intake/structure", {
+    data: {
+      images: Array.from({ length: 40 }, () => ({
+        image: "iVBORw0KGgo=",
+        mediaType: "image/jpeg",
+      })),
+    },
+  });
+
+  expect(response.status()).toBe(400);
+});
+
+test("a body carrying no usable picture is refused, not sent to the model", async ({
+  page,
+}) => {
+  await page.goto("/intake");
+
+  // An empty list and a list of nothing usable both mean "no picture", and the
+  // refusal has to happen here rather than as an empty model call.
+  for (const data of [{ images: [] }, { images: [{ mediaType: "image/jpeg" }] }]) {
+    const response = await page.request.post("/api/intake/structure", { data });
+
+    expect(response.status()).toBe(400);
+  }
 });
 
 test("steps can be reordered before saving", async ({ page }) => {

@@ -19,7 +19,7 @@ Regenerate after a change that alters a screen:
 | `04-recipes.png` | The recipe list, newest first |
 | `05-recipe.png` | One recipe: every awkward line shape, source lines underneath |
 | `06-recipe-no-yield.png` | A recipe with no yield, saying it cannot be scaled |
-| `07-intake.png` | Intake: paste a recipe, or photograph a page |
+| `07-intake.png` | Intake: paste a recipe, take a photograph of a page, or choose pictures of one |
 | `08-correct.png` | Check and correct, with the new ingredient marked |
 | `09-gate-refused.png` | The approval gate refusing a save |
 | `10-recipes-search.png` | Search results |
@@ -65,3 +65,4 @@ Regenerate after a change that alters a screen:
 | `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
 | `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
 | `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |
+| `56-intake-two-pages.png` | Proposed intake with a recipe printed across a spread: page one shot with the camera, page two picked from the library, both numbered in reading order and both bound for one recipe |

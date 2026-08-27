@@ -385,6 +385,17 @@ const STYLES = `
   .pick .recipe-image.is-thumb { width: 2.5rem; height: 2.5rem; }
   .entry .recipe-image.is-thumb { width: 2.25rem; height: 2.25rem; }
   .pick-title { flex: 1; }
+  .chosen { list-style: none; margin: .25rem 0 0; padding: 0; }
+  .chosen li {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .35rem 0; min-height: var(--tap-compact);
+    border-bottom: 1px solid var(--edge);
+  }
+  .chosen img {
+    width: 3rem; height: 3rem; object-fit: cover;
+    border-radius: var(--radius); background: var(--surface);
+  }
+  .chosen .page-name { flex: 1; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
   .progress {
     margin: .35rem 0 0; padding: .6rem .8rem;
