@@ -58,7 +58,7 @@ const STREAMING_ISLAND = `
   var progress = document.getElementById('progress');
   var status = document.getElementById('status');
   var photoHelp = document.getElementById('photo-help');
-  if (!form || !progress || !status || !photoHelp || !window.fetch || !window.ReadableStream) return;
+  if (!form || !progress || !status || !photoHelp || !window.fetch || !window.ReadableStream || !window.TextDecoder) return;
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
@@ -157,6 +157,9 @@ const STREAMING_ISLAND = `
           if (!response.ok) {
             return response.text().then(function (t) { throw new Error(t || response.status); });
           }
+          if (!response.body || !response.body.getReader) {
+            throw new Error('Streaming response unavailable');
+          }
           status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
           var decoder = new TextDecoder();
@@ -175,8 +178,8 @@ const STREAMING_ISLAND = `
         status.textContent = 'Valmis — avataan tarkistus.';
         handOver(draft, file ? 'photographed' : 'pasted', text);
       })
-      .catch(function (error) {
-        status.textContent = 'Jäsennys epäonnistui: ' + error.message;
+      .catch(function () {
+        status.textContent = 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
         button.disabled = false;
       });
   });

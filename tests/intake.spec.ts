@@ -63,6 +63,22 @@ test("pasted text works without the photo resize API", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 });
 
+test("intake stays unavailable without the stream decoder", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "TextDecoder", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+});
+
 test("an empty intake is refused without leaving the screen", async ({ page }) => {
   await page.goto("/intake");
   await page.getByRole("button", { name: "Jäsennä" }).click();
@@ -446,7 +462,10 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
   await page.getByRole("button", { name: "Jäsennä" }).click();
 
-  await expect(page.locator("#status")).toContainText("epäonnistui");
+  await expect(page.locator("#status")).toHaveText(
+    "Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.",
+  );
+  await expect(page.locator("#status")).not.toContainText("Kokeile myöhemmin");
   await expect(page.getByLabel("Liitä reseptin teksti")).toHaveValue(
     "Uunikaali\n½ dl öljyä",
   );
