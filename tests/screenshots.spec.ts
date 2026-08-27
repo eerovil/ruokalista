@@ -177,8 +177,8 @@ test.describe("signed in", () => {
   });
 
   /**
-   * Issue #120's whole surface, in two pictures: the method as it reads by
-   * default, and the same method with two of its ingredients tapped open.
+   * Issues #120 and #135's whole surface: the method as it reads by default,
+   * with two ingredients tapped open, and with the recipe-wide layer open.
    * Cooking for eight rather than four, so the revealed figures are visibly
    * this meal's and not the page's.
    */
@@ -203,6 +203,15 @@ test.describe("signed in", () => {
     await expect(vesi.locator(".mention-amount")).toBeVisible();
     await page.screenshot({
       path: `${SHOTS}/39-step-mentions-open.png`,
+      fullPage: true,
+    });
+
+    await page.locator(".reveal-all-label").click();
+    await expect(page.locator(".reveal-all")).toBeChecked();
+    await expect(page.locator(".mention-amount:visible")).toHaveCount(3);
+    await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/48-step-mentions-all-open.png`,
       fullPage: true,
     });
   });

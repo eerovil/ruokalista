@@ -56,3 +56,4 @@ Regenerate after a change that alters a screen:
 | `45-admin-household-after-removal.png` | Proposed household after an established member is removed — no refusal, and the household stands |
 | `46-recipes-after-removal.png` | Proposed recipe list after that removal: the recipes are still there and still credited to the person who wrote them |
 | `47-admin-member-sub-refused.png` | Proposed refusal of something that is not a Google identifier — the contract the removed-member tombstone is kept outside of |
+| `48-step-mentions-all-open.png` | Proposed recipe-wide amount toggle with every ingredient amount revealed in the preparation sentences |
