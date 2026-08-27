@@ -106,10 +106,28 @@ test.describe("signed in", () => {
     await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(2);
     await expect(page.locator(".batch-when-day")).toHaveCount(5);
     await expect(page.locator(".batch-end")).toHaveCount(2);
-    await page.screenshot({
-      path: `${SHOTS}/24-multi-day-batch.png`,
-      fullPage: true,
+    const tuesday = page.locator(".day").nth(1);
+    await expect(tuesday.locator(".covered-status")).toHaveText("✓ katettu");
+    await expect(tuesday.locator(".continuing-row")).toHaveCount(2);
+    await expect(tuesday.locator(".continuing-title")).toHaveText([
+      "Öljykastike",
+      "Kaalilaatikko",
+    ]);
+    await expect(tuesday.locator(".continuing-slots")).toHaveText([
+      "Lounas",
+      "Päivällinen",
+    ]);
+    const addLinks = tuesday.locator(".slot-actions");
+    await tuesday.evaluate((element) => {
+      window.scrollTo(
+        0,
+        element.getBoundingClientRect().top + window.pageYOffset - 80,
+      );
     });
+    expect(await page.evaluate(() => window.pageYOffset)).toBeGreaterThan(0);
+    await expect(tuesday.locator(".continuing-card")).toBeInViewport();
+    await expect(addLinks).toBeInViewport();
+    await page.screenshot({ path: `${SHOTS}/24-multi-day-batch.png` });
   });
 
   /**

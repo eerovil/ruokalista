@@ -262,6 +262,18 @@ const STYLES = `
   .today-badge { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
     text-transform: none; color: var(--accent-fg); background: var(--accent);
     border-radius: .25rem; }
+  .covered-status { margin-left: auto; font-size: .75rem; font-weight: 600;
+    text-transform: none; color: var(--accent); white-space: nowrap; }
+  .continuing-card { margin: 0 0 .5rem; padding: .15rem .7rem;
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: var(--radius); }
+  .continuing-row { display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: .2rem .75rem; padding: .45rem 0; }
+  .continuing-row + .continuing-row { border-top: 1px solid var(--edge); }
+  .continuing-title { flex: 1 1 12rem; min-width: 0; font-weight: 600;
+    overflow-wrap: break-word; }
+  .continuing-slots { flex: 0 0 auto; font-size: .8rem;
+    color: var(--muted); white-space: nowrap; }
   .batch-cards { display: flex; flex-direction: column; gap: .5rem;
     margin: 0 0 .5rem; }
   /* One cooking reads as one card: head, then a hairline per covered day. */
@@ -327,7 +339,8 @@ const STYLES = `
   }
   .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
   /* Today's own container is already --surface, so its cards need to lift. */
-  .day.is-today .batch-card { background: var(--bg); }
+  .day.is-today .batch-card,
+  .day.is-today .continuing-card { background: var(--bg); }
   .entry-title { flex: 1; }
   .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }

@@ -182,8 +182,8 @@ test("one cooked batch continues through selected lunches", async ({ page }) => 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Öljykastike");
   await page.getByRole("link", { name: "Takaisin viikkoon" }).click();
 
-  // One cooking, one card: three lunches, but the recipe is drawn once, in
-  // the day it is cooked, with the meals it covers listed inside it.
+  // One cooking, one full card: it stays in the day it is cooked, while later
+  // days receive compact summaries of what continues into them.
   await expect(page.locator(".batch-card")).toHaveCount(1);
   await expect(page.locator(".entry", { hasText: "Öljykastike" })).toHaveCount(1);
   await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
@@ -210,6 +210,16 @@ test("one cooked batch continues through selected lunches", async ({ page }) => 
   await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(1);
   await expect(page.locator(".day").nth(1).locator(".batch-card")).toHaveCount(0);
   await expect(page.locator(".day").nth(2).locator(".batch-card")).toHaveCount(0);
+  await expect(page.locator(".continuing-row")).toHaveCount(2);
+  await expect(page.locator(".continuing-title")).toHaveText([
+    "Öljykastike",
+    "Öljykastike",
+  ]);
+  await expect(page.locator(".continuing-slots")).toHaveText([
+    "Lounas",
+    "Lounas",
+  ]);
+  await expect(page.locator(".covered-status")).toHaveCount(0);
 });
 
 test("overlapping batches and same-recipe batches keep separate identity", async ({

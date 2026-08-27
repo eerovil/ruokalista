@@ -118,6 +118,10 @@ function daySection(
         slotOrder(firstOccurrenceOn(a, date)) -
           slotOrder(firstOccurrenceOn(b, date)) || a.id - b.id,
     );
+  const continuing = continuingRecipesOn(date, batches);
+  const isCovered = SLOTS.every((slot) =>
+    continuing.some((recipe) => recipe.slots.includes(slot)),
+  );
 
   return html`<section
     class="${isToday ? "day is-today" : "day"}"
@@ -126,7 +130,25 @@ function daySection(
     <h2>
       ${dayName(date)} <span class="meta">${shortDate(date)}</span>
       ${isToday ? html`<span class="today-badge">Tänään</span>` : ""}
+      ${isCovered
+        ? html`<span class="covered-status">✓ katettu</span>`
+        : ""}
     </h2>
+    ${continuing.length === 0
+      ? ""
+      : html`<ul class="continuing-card">
+          ${continuing.map(
+            (recipe) => html`<li
+              class="continuing-row"
+              data-recipe-id="${recipe.recipeId}"
+            >
+              <span class="continuing-title">${recipe.title}</span>
+              <span class="continuing-slots"
+                >${recipe.slots.map((slot) => SLOT_NAMES[slot]).join(" · ")}</span
+              >
+            </li>`,
+          )}
+        </ul>`}
     ${starting.length === 0
       ? ""
       : html`<div class="batch-cards">
@@ -139,6 +161,49 @@ function daySection(
 }
 
 const rawTodayId = raw('id="tanaan"');
+
+interface ContinuingRecipe {
+  recipeId: number;
+  title: string;
+  slots: Slot[];
+  firstBatchId: number;
+}
+
+/** Recipes cooked on an earlier visible day, once each for this date. */
+function continuingRecipesOn(
+  date: string,
+  batches: PlannedBatch[],
+): ContinuingRecipe[] {
+  const byRecipe = new Map<number, ContinuingRecipe>();
+
+  for (const batch of batches) {
+    if (anchorDate(batch) >= date) continue;
+    const occurrences = batch.occurrences.filter((item) => item.date === date);
+    if (occurrences.length === 0) continue;
+
+    const existing = byRecipe.get(batch.recipeId);
+    const recipe = existing ?? {
+      recipeId: batch.recipeId,
+      title: batch.title,
+      slots: [],
+      firstBatchId: batch.id,
+    };
+    for (const occurrence of occurrences) {
+      if (!recipe.slots.includes(occurrence.slot)) {
+        recipe.slots.push(occurrence.slot);
+      }
+    }
+    recipe.slots.sort((a, b) => SLOTS.indexOf(a) - SLOTS.indexOf(b));
+    recipe.firstBatchId = Math.min(recipe.firstBatchId, batch.id);
+    if (existing === undefined) byRecipe.set(batch.recipeId, recipe);
+  }
+
+  return [...byRecipe.values()].sort(
+    (a, b) =>
+      SLOTS.indexOf(a.slots[0]!) - SLOTS.indexOf(b.slots[0]!) ||
+      a.firstBatchId - b.firstBatchId,
+  );
+}
 
 /** The day this batch's card is drawn in: its first occurrence in view. */
 function anchorDate(batch: PlannedBatch): string {
