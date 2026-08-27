@@ -10,8 +10,10 @@ import {
   splitByPantry,
 } from "./pantry.ts";
 import type { RouteContext } from "./router.ts";
+import { SOstoslistaClient, type SOstoslistaProduct } from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
+  saveExternalProduct,
   shoppingLinesFor,
   shoppingList,
   type ShoppingItem,
@@ -58,10 +60,54 @@ const CHOICE = "ateria";
 const CHOSEN = "valittu";
 
 export async function shoppingScreen(
-  { env, url }: RouteContext,
+  ctx: RouteContext,
   member: Member,
   refused: string | null = null,
+  notice: string | null = null,
+  status = refused === null ? 200 : 400,
 ): Promise<Response> {
+  const { env, url } = ctx;
+  const state = await shoppingState(ctx, member);
+  const { cookings, selectedIds, selected, buy, atHome } = state;
+  const external = externalClient(env, member) !== null;
+  const heading = headingFor(selected);
+
+  return page(
+    heading,
+    html`<h1>${heading}</h1>
+      ${picker(cookings, selectedIds)}
+      ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
+      ${notice === null ? "" : html`<p class="shopping-sent">${notice}</p>`}
+      ${cookings.length === 0
+        ? html`<div class="nothing">
+            <p class="empty">Seuraavan kahden viikon aikana ei kokata mitään.</p>
+            <p><a class="button" href="/">Suunnittele viikko</a></p>
+          </div>`
+        : selected.length === 0
+          ? html`<p class="empty">
+              Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
+            </p>`
+          : html`${externalSendPanel(buy, selectedIds, external)}
+              ${sections(buy, atHome, selectedIds, external)}`}`,
+    "shopping",
+    member,
+    status,
+  );
+}
+
+interface ShoppingState {
+  cookings: PlannedBatch[];
+  selectedIds: Set<number>;
+  selected: PlannedBatch[];
+  buy: ShoppingItem[];
+  atHome: ShoppingItem[];
+}
+
+/** Recompute every mutation target from this household's current week + pantry. */
+async function shoppingState(
+  { env, url }: RouteContext,
+  member: Member,
+): Promise<ShoppingState> {
   const from = today();
   const to = addDays(from, WINDOW_DAYS - 1);
 
@@ -84,28 +130,140 @@ export async function shoppingScreen(
   // needs, it is just not part of what the trip has to buy. Both sections keep
   // the amounts and the breakdown #123 worked out (#125).
   const { buy, atHome } = splitByPantry(shoppingList(lines), inPantry);
+  return { cookings, selectedIds, selected, buy, atHome };
+}
 
-  const heading = headingFor(selected);
+/** `POST /ostoslista/laheta` — only the freshly recomputed `Ostettavat`. */
+export async function sendShoppingListForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
 
-  return page(
-    heading,
-    html`<h1>${heading}</h1>
-      ${picker(cookings, selectedIds)}
-      ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
-      ${cookings.length === 0
-        ? html`<div class="nothing">
-            <p class="empty">Seuraavan kahden viikon aikana ei kokata mitään.</p>
-            <p><a class="button" href="/">Suunnittele viikko</a></p>
-          </div>`
-        : selected.length === 0
-          ? html`<p class="empty">
-              Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
-            </p>`
-          : sections(buy, atHome, selectedIds)}`,
-    "shopping",
+  const form = await ctx.request.formData();
+  const selectedUrl = selectionUrl(form, ctx.url);
+  const stateCtx = { ...ctx, url: selectedUrl };
+  const { buy } = await shoppingState(stateCtx, member);
+  if (buy.length === 0) {
+    return shoppingScreen(
+      stateCtx,
+      member,
+      "Ostoslistalla ei ole lähetettäviä aineksia.",
+    );
+  }
+
+  let sent = 0;
+  try {
+    for (const item of buy) {
+      if (item.ean === null) {
+        await client.add({ note: `${item.name} — ${item.total}` });
+      } else {
+        // The selected EAN identifies the product. A recipe amount is not a
+        // package count, so no quantity is sent (#147's explicit boundary).
+        await client.add({ ean: item.ean });
+      }
+      sent += 1;
+    }
+  } catch (error) {
+    console.error("S-ostoslista send failed", error);
+    const progress = sent === 0
+      ? "Mitään ei lähetetty."
+      : `${sent}/${buy.length} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
+    return shoppingScreen(
+      stateCtx,
+      member,
+      `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`,
+      null,
+      502,
+    );
+  }
+
+  return shoppingScreen(
+    stateCtx,
     member,
-    refused === null ? 200 : 400,
+    null,
+    `${sent} ainesta lähetettiin S-ostoslistaan.`,
   );
+}
+
+/** `GET /ostoslista/tuote` — search and choose a product for one buy row. */
+export async function productSearchScreen(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
+  const state = await shoppingState(ctx, member);
+  const item = selectedBuyItem(state.buy, ctx.url.searchParams.get("aines"));
+  if (item === null) return new Response("Not found", { status: 404 });
+
+  const query = (ctx.url.searchParams.get("haku") ?? item.name).trim();
+  let products: SOstoslistaProduct[] = [];
+  let refused: string | null = null;
+  let status = 200;
+  try {
+    products = await client.search(query);
+  } catch (error) {
+    console.error("S-ostoslista product search failed", error);
+    refused = "S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.";
+    status = 502;
+  }
+  return productPage(member, item, state.selectedIds, query, products, refused, status);
+}
+
+/** Re-search on selection so product metadata is never trusted from the form. */
+export async function saveProductForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  const form = await ctx.request.formData();
+  const stateCtx = { ...ctx, url: productSelectionUrl(form, ctx.url) };
+  const state = await shoppingState(stateCtx, member);
+  const item = selectedBuyItem(state.buy, form.get("aines"));
+  if (item === null) return new Response("Not found", { status: 404 });
+
+  const query = String(form.get("haku") ?? "").trim();
+  const ean = String(form.get("ean") ?? "").trim();
+  let products: SOstoslistaProduct[];
+  try {
+    products = await client.search(query);
+  } catch (error) {
+    console.error("S-ostoslista product selection search failed", error);
+    return productPage(
+      member,
+      item,
+      state.selectedIds,
+      query,
+      [],
+      "Tuotetta ei voitu varmistaa S-ostoslistasta. Mitään ei tallennettu.",
+      502,
+    );
+  }
+
+  const selected = products.find((product) => product.ean === ean);
+  if (selected === undefined) {
+    return productPage(
+      member,
+      item,
+      state.selectedIds,
+      query,
+      products,
+      "Valittua tuotetta ei löytynyt uudesta hausta. Mitään ei tallennettu.",
+      400,
+    );
+  }
+  if (!(await saveExternalProduct(ctx.env.DB, item.ingredientId, selected))) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/ostoslista?${selectionQueryFromIds(state.selectedIds)}` },
+  });
 }
 
 /**
@@ -162,6 +320,34 @@ function selectionQuery(form: FormData): string {
     if (Number.isSafeInteger(id)) query.append(CHOICE, String(id));
   }
   return query.toString();
+}
+
+function selectionUrl(form: FormData, base: URL): URL {
+  return new URL(`/ostoslista?${selectionQuery(form)}`, base);
+}
+
+function productSelectionUrl(form: FormData, base: URL): URL {
+  const url = selectionUrl(form, base);
+  const ingredientId = Number(form.get("aines"));
+  if (Number.isSafeInteger(ingredientId)) {
+    url.searchParams.set("aines", String(ingredientId));
+  }
+  const query = String(form.get("haku") ?? "").trim();
+  if (query !== "") url.searchParams.set("haku", query);
+  return url;
+}
+
+function selectionQueryFromIds(selectedIds: Set<number>): string {
+  const query = new URLSearchParams({ [CHOSEN]: "1" });
+  for (const id of selectedIds) query.append(CHOICE, String(id));
+  return query.toString();
+}
+
+function selectionFields(selectedIds: Set<number>): Raw {
+  return html`<input type="hidden" name="${CHOSEN}" value="1" />
+    ${[...selectedIds].map(
+      (id) => html`<input type="hidden" name="${CHOICE}" value="${id}" />`,
+    )}`;
 }
 
 /**
@@ -267,22 +453,23 @@ function sections(
   buy: ShoppingItem[],
   atHome: ShoppingItem[],
   selectedIds: Set<number>,
+  external: boolean,
 ): Raw {
   // With nothing in the cupboard there is only one list, and a lone
   // "Ostettavat" heading under a heading that already says Ostoslista is a
   // word for its own sake.
-  if (atHome.length === 0) return itemList(buy, selectedIds, false);
+  if (atHome.length === 0) return itemList(buy, selectedIds, false, external);
 
   return html`<h2 class="shopping-section">Ostettavat</h2>
     ${buy.length === 0
       ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
-      : itemList(buy, selectedIds, false)}
+      : itemList(buy, selectedIds, false, external)}
     <h2 class="shopping-section">Löytyy</h2>
     <p class="empty">
       Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
       <a href="/kaappi">kaapissa</a>.
     </p>
-    ${itemList(atHome, selectedIds, true)}`;
+    ${itemList(atHome, selectedIds, true, external)}`;
 }
 
 /**
@@ -297,6 +484,7 @@ function itemList(
   items: ShoppingItem[],
   selectedIds: Set<number>,
   inPantry: boolean,
+  external: boolean,
 ): Raw {
   if (items.length === 0) {
     return html`<p class="empty">Valituissa aterioissa ei ole aineksia.</p>`;
@@ -331,11 +519,189 @@ function itemList(
               </li>`,
             )}
           </ul>
+          ${externalProductBlock(item, selectedIds, inPantry, external)}
           ${pantryButton(item, selectedIds, inPantry)}
         </details>
       </li>`,
     )}
   </ul>`;
+}
+
+function externalSendPanel(
+  buy: ShoppingItem[],
+  selectedIds: Set<number>,
+  external: boolean,
+): Raw {
+  if (!external || buy.length === 0) return html``;
+  const mapped = buy.filter((item) => item.ean !== null).length;
+  const notes = buy.length - mapped;
+  return html`<section class="s-shopping-send" aria-labelledby="s-shopping-title">
+    <h2 id="s-shopping-title">S-ostoslista</h2>
+    <p>
+      ${mapped} ${mapped === 1 ? "tuote" : "tuotetta"}${notes === 0
+        ? ""
+        : ` · ${notes} ${notes === 1 ? "muistutus" : "muistutusta"}`}
+    </p>
+    <form method="post" action="/ostoslista/laheta">
+      ${selectionFields(selectedIds)}
+      <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
+    </form>
+  </section>`;
+}
+
+function externalProductBlock(
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+  inPantry: boolean,
+  external: boolean,
+): Raw {
+  if (!external) return html``;
+
+  const mapped = item.ean !== null && item.externalProductName !== null;
+  if (inPantry) {
+    return mapped
+      ? productSummary(item)
+      : html``;
+  }
+
+  return html`<div class="s-shopping-product ${mapped ? "is-mapped" : "is-note"}">
+    ${mapped
+      ? productSummary(item)
+      : html`<div class="s-shopping-product-copy">
+          <strong>Muistutus</strong>
+          <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
+        </div>`}
+    <form method="get" action="/ostoslista/tuote" class="inline">
+      <input type="hidden" name="aines" value="${item.ingredientId}" />
+      <input type="hidden" name="haku" value="${item.name}" />
+      ${selectionFields(selectedIds)}
+      <button type="submit">${mapped ? "Vaihda tuote" : "Valitse tuote"}</button>
+    </form>
+  </div>`;
+}
+
+function productSummary(item: ShoppingItem): Raw {
+  return html`<div class="s-shopping-product-summary">
+    ${item.externalProductImageUrl === null
+      ? ""
+      : html`<img
+          src="${item.externalProductImageUrl}"
+          alt=""
+          width="64"
+          height="64"
+          loading="lazy"
+          onerror="this.hidden=true"
+        />`}
+    <span class="s-shopping-product-copy">
+      <strong>${item.externalProductName ?? item.ean}</strong>
+      <span class="meta">EAN ${item.ean}</span>
+    </span>
+  </div>`;
+}
+
+function productPage(
+  member: Member,
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+  query: string,
+  products: SOstoslistaProduct[],
+  refused: string | null,
+  status: number,
+): Response {
+  const back = `/ostoslista?${selectionQueryFromIds(selectedIds)}`;
+  return page(
+    `Valitse tuote: ${item.name}`,
+    html`<p><a href="${back}">← Takaisin ostoslistaan</a></p>
+      <h1>Valitse tuote: ${item.name}</h1>
+      ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
+      <form method="get" action="/ostoslista/tuote" class="stacked product-search-form">
+        <input type="hidden" name="aines" value="${item.ingredientId}" />
+        ${selectionFields(selectedIds)}
+        <label>
+          Haku
+          <input type="search" name="haku" value="${query}" required />
+        </label>
+        <button type="submit" class="primary">Hae tuotteita</button>
+      </form>
+      ${products.length === 0 && refused === null
+        ? html`<p class="empty">Haulla ei löytynyt tuotteita.</p>`
+        : productResults(item, selectedIds, query, products)}`,
+    "shopping",
+    member,
+    status,
+  );
+}
+
+function productResults(
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+  query: string,
+  products: SOstoslistaProduct[],
+): Raw {
+  return html`<ul class="s-product-results">
+    ${products.map(
+      (product) => html`<li>
+        <img
+          src="${product.imageUrl}"
+          alt=""
+          width="80"
+          height="80"
+          loading="lazy"
+          onerror="this.hidden=true"
+        />
+        <div class="s-product-result-copy">
+          <strong>${product.name}</strong>
+          <span class="meta">EAN ${product.ean}</span>
+          ${product.price === null
+            ? ""
+            : html`<span class="meta"
+                >${product.price.toLocaleString("fi-FI", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })} €${product.priceUnit === null
+                  ? ""
+                  : ` / ${product.priceUnit.toLocaleLowerCase("fi-FI")}`}</span
+              >`}
+          ${product.available === false
+            ? html`<span class="meta">Ei saatavilla valitussa kaupassa</span>`
+            : ""}
+        </div>
+        <form method="post" action="/ostoslista/tuote">
+          <input type="hidden" name="aines" value="${item.ingredientId}" />
+          <input type="hidden" name="haku" value="${query}" />
+          <input type="hidden" name="ean" value="${product.ean}" />
+          ${selectionFields(selectedIds)}
+          <button type="submit" class="primary">Valitse</button>
+        </form>
+      </li>`,
+    )}
+  </ul>`;
+}
+
+function selectedBuyItem(
+  buy: ShoppingItem[],
+  rawId: FormDataEntryValue | string | null,
+): ShoppingItem | null {
+  const ingredientId = Number(rawId);
+  if (!Number.isSafeInteger(ingredientId)) return null;
+  return buy.find((item) => item.ingredientId === ingredientId) ?? null;
+}
+
+function externalClient(env: RouteContext["env"], member: Member): SOstoslistaClient | null {
+  const householdId = Number(env.SOSTOSLISTA_HOUSEHOLD_ID);
+  if (!Number.isSafeInteger(householdId) || householdId !== member.householdId) {
+    return null;
+  }
+  if (!env.SOSTOSLISTA_SERVICE_URL || !env.SOSTOSLISTA_API_TOKEN) return null;
+  try {
+    return new SOstoslistaClient(
+      env.SOSTOSLISTA_SERVICE_URL,
+      env.SOSTOSLISTA_API_TOKEN,
+    );
+  } catch (error) {
+    console.error("S-ostoslista configuration is invalid", error);
+    return null;
+  }
 }
 
 /**

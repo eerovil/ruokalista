@@ -35,6 +35,7 @@ test("a valid snapshot passes checksum and relationship validation", async () =>
     parsed.tables.recipe.find((row) => row.id === 1)?.source_text,
     "Lasagne\n400 g jauhelihaa",
   );
+  assert.equal(parsed.tables.ingredient[0]?.ean, "6415712506032");
 });
 
 test("a corrupt checksum is rejected", async () => {
@@ -204,6 +205,10 @@ async function validSnapshot() {
         id: 1,
         household_id: 1,
         name: "jauheliha",
+        ean: "6415712506032",
+        external_product_name: "Kotimaista jauheliha 400 g",
+        external_product_image_url:
+          "https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg",
         created_at: "2026-08-25 00:00:00",
         created_by: 1,
       },

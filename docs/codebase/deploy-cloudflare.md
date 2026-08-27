@@ -44,6 +44,10 @@ briefly live without `SESSION_SECRET`, which is the 503 path, not an open one.
 actually deploying — it prints the bindings table (e.g.
 `env.RECIPE_IMAGES (ruokalista-recipe-images) R2 Bucket`) and exits.
 
+`SESSION_SECRET` is generated during setup and never stored anywhere, so a
+signed-in session on the live Worker cannot be forged from this host — the live
+signed-in path can only be exercised through a real browser sign-in.
+
 ## The shopping-list service
 
 `SOSTOSLISTA_API_TOKEN` is the bearer secret of **s-ostoslista-worker**
@@ -52,10 +56,12 @@ actually deploying — it prints the bindings table (e.g.
 S-ryhmä shopping list in two-way sync with the S-ostoslista phone app, on a
 five-minute cron. It lets this app put things on that real list.
 
-It is **not** an S-ryhmä credential. That service holds the app's AppSync key
-and the phone's identity token; ruokalista only ever holds a bearer token for
-the service's own API, so a leak here cannot touch S-ryhmä accounts and is
-rotated with one `wrangler secret put` on either side.
+It is not a direct S-ryhmä/AppSync credential and does not expose the phone's
+underlying identity token. Its blast radius is still the bound real shopping
+list: the service accepts authenticated reads and writes for that list, and its
+five-minute sync propagates those writes to the list used by the phone. A
+leaked token can therefore read and modify the shopping list through the
+service. Keep it as a Worker secret, and rotate it on both sides if exposed.
 
 `scripts/save-ostoslista-token.sh` stores it the same way as the Anthropic key —
 `.dev.vars` for local development, a Worker secret for the deployed app — and
@@ -69,9 +75,17 @@ catalogue, `POST /items {"ean"}` or `{"note"}` to add, and
 `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which needs no
 auth. Its README documents the rest.
 
-`SESSION_SECRET` is generated during setup and never stored anywhere, so a
-signed-in session on the live Worker cannot be forged from this host — the live
-signed-in path can only be exercised through a real browser sign-in.
+The integration proposed by #147 also requires
+`SOSTOSLISTA_HOUSEHOLD_ID`, the one Ruokalista household allowed to see or use
+it. The remote service must have product search enabled before this is useful.
+Set the token and household gate before merging the proposal: `main` deploys
+immediately, and leaving either unset deliberately hides every integration
+route and control rather than exposing a half-configured action.
+
+Local browser tests do not use those credentials. Playwright starts a small
+contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
+`--var` bindings to local Wrangler, so search/add/error coverage can never touch
+the real private list.
 
 ## Backups
 

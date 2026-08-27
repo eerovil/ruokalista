@@ -18,6 +18,9 @@ function line(overrides: Partial<ShoppingLine>): ShoppingLine {
     partTitle: null,
     ingredientId: 1,
     ingredientName: "öljy",
+    ean: null,
+    externalProductName: null,
+    externalProductImageUrl: null,
     quantity: null,
     quantityMax: null,
     unit: null,
@@ -41,6 +44,23 @@ test("the same unit is summed across batches", () => {
   assert.equal(items.length, 1);
   assert.equal(items[0]!.total, "5 dl");
   assert.equal(items[0]!.contributions.length, 2);
+});
+
+test("the canonical ingredient's external product follows its total", () => {
+  const items = shoppingList([
+    line({
+      ingredientName: "maito",
+      quantity: 5,
+      unit: "dl",
+      ean: "6415712506032",
+      externalProductName: "Kotimaista rasvaton maito 1 l",
+      externalProductImageUrl: "https://cdn.example/maito.jpg",
+    }),
+  ]);
+
+  assert.equal(items[0]!.ean, "6415712506032");
+  assert.equal(items[0]!.externalProductName, "Kotimaista rasvaton maito 1 l");
+  assert.equal(items[0]!.externalProductImageUrl, "https://cdn.example/maito.jpg");
 });
 
 test("different units stay a plus expression rather than converting", () => {

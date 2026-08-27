@@ -13,8 +13,9 @@
 # What the token is: the bearer secret of s-ostoslista-worker, a separate Worker
 # that keeps a D1 copy of one S-ryhmä shopping list in two-way sync with the
 # S-ostoslista app (github.com/eerovil/s-ostoslista-client). It lets ruokalista
-# put things on that list. It is *not* an S-ryhmä credential — the service holds
-# those, and ruokalista never sees them.
+# read and modify that list. It is *not* a direct S-ryhmä/AppSync credential and
+# does not expose the phone's identity token, but a leak still exposes the bound
+# real shopping list through this service.
 #
 set -euo pipefail
 
