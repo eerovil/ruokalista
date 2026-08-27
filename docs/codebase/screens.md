@@ -39,6 +39,16 @@ week) in its head, then one hairline-separated row per covered day, each row
 laid out as weekday, date, meals, and a `jatkuu` pill pushed to the right on
 every row after the first.
 
+The head wraps rather than clips, which matters because the card hides its
+overflow and recipe titles have no length limit. Picture and title sit in one
+`.batch-head-main` group so they stay on the same line; that group is sized
+from its content, so the pill stays inline beside a short title and drops onto
+its own line beneath a long one, and `overflow-wrap: break-word` plus
+`min-width: 0` break a single unbroken Finnish compound instead of letting it
+run past the card's edge. `tests/week-grouping.spec.ts` guards it by comparing
+each card's `scrollWidth` with its `clientWidth`; a page-level overflow check
+cannot see inside a clipping card.
+
 The current day gets `.day.is-today`, `id="tanaan"` and a `Tänään` badge, and a
 floating `.to-today` chip offers the way back after scrolling elsewhere — the
 week nav keeps "Tämä viikko" on every week, as the mockup shows. A third inline

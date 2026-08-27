@@ -171,8 +171,10 @@ function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
 
   return html`<article class="batch-card" data-batch-id="${batch.id}">
     <div class="entry"><a href="/batches/${batch.id}">
-      ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
-      <span class="entry-title">${batch.title}</span>
+      <span class="batch-head-main">
+        ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
+        <span class="entry-title">${batch.title}</span>
+      </span>
       ${cookedInView
         ? html`<span class="batch-start">Kokataan · ${batch.portions} annosta</span>`
         : html`<span class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${batch.portions} annosta</span>`}

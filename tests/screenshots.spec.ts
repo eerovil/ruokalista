@@ -552,6 +552,48 @@ test.describe("signed in as an admin", () => {
   });
 });
 
+/**
+ * Last in the file on purpose: it renames a seeded recipe, and every shot
+ * above still expects the seed titles.
+ */
+test.describe("a long recipe name on a phone", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("wraps in the card head rather than being cut off", async ({ page }) => {
+    const longTitle =
+      "Uunissa paahdettu kasvispaistos ja tilliperunamuusi kermaviilikastikkeella";
+    await page.goto("/recipes/1/edit");
+    await page.locator("#title").fill(longTitle);
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page.getByRole("heading", { name: longTitle })).toBeVisible();
+
+    // A week of its own, so the shot holds only these two cards.
+    const cooked = await createBatch(page, "2027-03-01", "lunch", 1);
+    await setCoverage(page, cooked, [
+      ["2027-03-01", "lunch"],
+      ["2027-03-02", "lunch"],
+    ]);
+    const carried = await createBatch(page, "2027-02-28", "dinner", 1);
+    await setCoverage(page, carried, [
+      ["2027-02-28", "dinner"],
+      ["2027-03-01", "dinner"],
+    ]);
+
+    await page.goto("/?week=2027-03-01");
+    // Both pills are on screen and whole before the shot is taken.
+    await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+    await expect(page.locator(".batch-carried")).toHaveText(
+      "Kokattu 28.2. · 4 annosta",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/37-week-long-title.png`,
+      fullPage: true,
+    });
+  });
+});
+
 async function createBatch(
   page: Page,
   date: string,

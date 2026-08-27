@@ -238,6 +238,81 @@ test("a week of grouped cards keeps usable phone-width cards", async ({
   expect(dimensions.cardWidth).toBeGreaterThanOrEqual(270);
 });
 
+/**
+ * Last in the file, because it renames a seeded recipe and the tests above
+ * still expect the seed titles.
+ *
+ * The card head is a flex row of a fixed thumbnail, the title and a portions
+ * pill, inside a card that clips what overflows it. A long Finnish compound
+ * beside the widest pill — the carried `Kokattu 6.12. · 4 annosta` — is what
+ * runs that row out of width, and the check has to be that nothing is cut off
+ * inside the card, not merely that the page does not scroll sideways.
+ */
+test("a long recipe name wraps in the card head instead of being cut off", async ({
+  page,
+}) => {
+  // One unbroken compound, which is the worst case: there is no space for the
+  // browser to wrap at, so only the card's own rules can keep it inside.
+  const longTitle = "Kesakurpitsalasagnetortillavuokakermaviilikastikkeella";
+  await page.goto("/recipes/1/edit");
+  await page.locator("#title").fill(longTitle);
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page.getByRole("heading", { name: longTitle })).toBeVisible();
+
+  // One cooked inside the week, one carried in from the previous Sunday —
+  // the carried pill is the widest thing the head ever has to hold.
+  const cooked = await createBatch(page, MONDAY, "lunch", 1);
+  await setCoverage(page, cooked, [
+    ["2026-12-07", "lunch"],
+    ["2026-12-08", "lunch"],
+  ]);
+  const carried = await createBatch(page, "2026-12-06", "dinner", 1);
+  await setCoverage(page, carried, [
+    ["2026-12-06", "dinner"],
+    ["2026-12-07", "dinner"],
+  ]);
+
+  await page.goto(`/?week=${MONDAY}`);
+  await expect(
+    page.locator(`.batch-card[data-batch-id="${carried}"] .batch-carried`),
+  ).toHaveText("Kokattu 6.12. · 4 annosta");
+
+  const overflow = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".batch-card")];
+    return cards.map((card) => {
+      const box = card.getBoundingClientRect();
+      const parts = [...card.querySelectorAll(".entry-title, .batch-start, .batch-carried, .batch-when-slots")];
+      return {
+        id: card.getAttribute("data-batch-id"),
+        // The card clips what does not fit, so its own content extent is the
+        // honest measure of whether anything was cut off.
+        clipped: card.scrollWidth - card.clientWidth,
+        // A single long word can also overflow its own box.
+        wordOverflow: Math.max(
+          ...parts.map((part) => part.scrollWidth - part.clientWidth),
+        ),
+        // And nothing may sit outside the card's right edge.
+        spill: Math.max(
+          ...parts.map((part) => part.getBoundingClientRect().right - box.right),
+        ),
+      };
+    });
+  });
+
+  expect(overflow.length).toBeGreaterThanOrEqual(2);
+  for (const card of overflow) {
+    expect(card.clipped, `card ${card.id} clips its own content`).toBeLessThanOrEqual(1);
+    expect(card.wordOverflow, `card ${card.id} overflows a child box`).toBeLessThanOrEqual(1);
+    expect(card.spill, `card ${card.id} spills past its right edge`).toBeLessThanOrEqual(1);
+  }
+
+  const page_ = await page.evaluate(() => ({
+    pageWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+  }));
+  expect(page_.pageWidth).toBeLessThanOrEqual(page_.viewportWidth);
+});
+
 function helsinkiToday(): string {
   return new Intl.DateTimeFormat("sv-SE", {
     timeZone: "Europe/Helsinki",

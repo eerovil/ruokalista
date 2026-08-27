@@ -268,11 +268,22 @@ const STYLES = `
   .batch-card { min-width: 0; background: var(--surface);
     border: 1px solid var(--edge); border-radius: var(--radius);
     overflow: hidden; }
-  .batch-card .entry > a { gap: .6rem; padding: .6rem .7rem;
-    background: transparent; border-radius: 0; }
-  .batch-card .entry .recipe-image.is-thumb { width: 3rem; height: 3rem;
-    border-radius: 50%; }
-  .batch-start, .batch-carried { padding: .2rem .55rem;
+  /* The head wraps rather than clipping: a long Finnish compound title beside
+     the wider carried pill runs a 360px row out of width, and a card that
+     hides its overflow would simply cut the name off. */
+  .batch-card .entry > a { flex-wrap: wrap; gap: .4rem .6rem;
+    padding: .6rem .7rem; background: transparent; border-radius: 0; }
+  .batch-card .entry .recipe-image.is-thumb { flex: none;
+    width: 3rem; height: 3rem; border-radius: 50%; }
+  /* Picture and name stay together on one line; only the pill wraps below.
+     A content-sized basis is what makes it wrap for a long name and stay
+     inline for a short one. (No backticks here — STYLES is a template
+     literal, so one would end the string.) */
+  .batch-head-main { display: flex; align-items: center; gap: .6rem;
+    flex: 1 1 auto; min-width: 0; }
+  .batch-card .entry-title { min-width: 0; overflow-wrap: break-word; }
+  .batch-start, .batch-carried { flex: none; margin-left: auto;
+    padding: .2rem .55rem;
     font-size: .75rem; font-weight: 600; white-space: nowrap;
     border-radius: 1rem; }
   .batch-start { color: var(--accent-fg); background: var(--accent); }
@@ -285,7 +296,8 @@ const STYLES = `
     text-transform: capitalize; }
   .batch-when-date { min-width: 3rem; color: var(--muted);
     font-variant-numeric: tabular-nums; }
-  .batch-when-slots { flex: 1; min-width: 0; color: var(--fg); }
+  .batch-when-slots { flex: 1 1 6rem; min-width: 0; color: var(--fg);
+    overflow-wrap: break-word; }
   .batch-passes { margin-left: auto; padding: .1rem .45rem;
     font-size: .7rem; color: var(--accent); white-space: nowrap;
     border: 1px solid var(--accent); border-radius: 1rem; }
