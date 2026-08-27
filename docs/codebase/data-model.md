@@ -162,7 +162,7 @@ request origin, or anything the client says.
 
 ## Leaving a household
 
-`migrations/0009_member_removed.sql`, proposed for #127, adds `member.removed_at`
+`migrations/0009_member_removed.sql`, added for #127, adds `member.removed_at`
 and `member.removed_google_sub`. Removing somebody from a household does not
 delete their `member` row, and this is the reason why: four columns record a
 member as having made something — `ingredient.created_by`,
@@ -187,20 +187,29 @@ Rewriting the live column rather than making the UNIQUE index conditional is
 deliberate: four tables reference `member`, and rebuilding it against the live
 database to relax one constraint is not worth it.
 
-The tombstone is U+2014 EM DASH followed by the member id. The shape matters
-more than it looks, and the proposal's first version got it wrong: it parked a
-removed row on `removed:<id>`, reasoning that a Google `sub` is a decimal string
-and so could never look like that. Google promises no such thing. Its contract
-is any case-sensitive ASCII string of up to 255 characters, so `removed:2` is a
-legal account id — reserving that shape would have shut a real person out of the
-admin screen, and left a parked row for their sub to collide with on the UNIQUE
-column.
+What that tombstone may be matters more than it looks, and 0009 got it wrong.
+It parked a removed row on `removed:<id>`, reasoning that a Google `sub` is a
+decimal string and so could never look like that. Google promises no such
+thing: its contract is any case-sensitive ASCII string of up to 255 characters
+(https://developers.google.com/identity/openid-connect/openid-connect), so
+`removed:2` is a legal account id. Reserving that shape shut a real person
+holding it out of the admin screen, and left them a parked row to collide with
+on the UNIQUE column.
 
-`src/google.ts::isGoogleSub` now states that contract in one place, and both
-sign-in (`readIdentity`) and the admin form (`src/households.ts::memberFields`)
-are held to it. Because the tombstone is not ASCII, no value either of them
-accepts can equal it — the guarantee comes from the contract rather than from a
-habit of Google's. `dev/check-google-sub.ts` is the regression.
+`migrations/0010_removed_member_tombstone.sql`, proposed as the fix, moves the
+tombstone outside that contract instead of carving a corner out of it: U+2014 EM
+DASH followed by the member id, which is not ASCII and so is not a `sub` at all.
+It also rewrites any row 0009 already parked, matching on `removed_at IS NOT
+NULL` as well as the text so that a live member whose real sub reads
+`removed:<their id>` is left alone.
+
+The proposal writes the contract itself down once, in
+`src/google.ts::isGoogleSub`, and holds both ends to it — sign-in
+(`readIdentity`) and the admin form (`src/households.ts::memberFields`). That is
+what makes the guarantee a guarantee: because the tombstone is not ASCII, no
+value either end accepts can equal one, and the reasoning rests on Google's
+contract rather than on a habit of Google's. `dev/check-google-sub.ts` is the
+regression.
 
 This is a column addition, so the backup lockstep below does not move: backup
 captures `SELECT *` and restore builds its INSERT from the row's own keys, so

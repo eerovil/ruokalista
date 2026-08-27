@@ -142,15 +142,17 @@ already-issued session cookie into a member. See
 [data-model](docs/codebase/data-model.md) for the columns and why the live
 `google_sub` is rewritten rather than the UNIQUE index relaxed.
 
-That rewrite is why the proposal also writes down what a Google `sub` may be.
-`src/google.ts::isGoogleSub` holds it to Google's documented contract — a
-case-sensitive ASCII string of at most 255 characters — and `readIdentity`
-refuses a token whose subject is outside it, as does the admin form. Nothing
-narrower: subs look like decimal numbers today, but Google does not promise
-that, and the first version of the removal leaned on the habit by reserving
-`removed:<id>` for parked rows. `removed:2` is a legal account id, so that
-reservation locked a real person out. The tombstone is outside the contract
-instead of inside it, so no accepted sub can ever equal one.
+That rewrite is why a follow-up proposal also writes down what a Google `sub`
+may be. It adds `src/google.ts::isGoogleSub`, holding a sub to Google's
+documented contract — a case-sensitive ASCII string of at most 255 characters —
+and has `readIdentity` refuse a token whose subject is outside it, as does the
+admin form. Nothing narrower than that: subs look like decimal numbers today,
+but Google does not promise it, and the first version of the removal leaned on
+the habit by reserving `removed:<id>` for parked rows. `removed:2` is a legal
+account id, so that reservation locked a real person out of the screen. The
+proposal moves the tombstone outside the contract instead of inside it, so no
+accepted sub can equal one. See
+[data-model](docs/codebase/data-model.md).
 
 The first version of this proposal instead refused to remove anybody who had
 created a row. It reads as the safe choice and is not: nearly every real member

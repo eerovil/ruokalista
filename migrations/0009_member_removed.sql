@@ -22,17 +22,7 @@ ALTER TABLE member ADD COLUMN removed_at TEXT;
 --
 -- Rather than rebuild `member` to make that UNIQUE conditional (four tables
 -- point at it; a rebuild against the live database is not worth it), the live
--- column is rewritten to a tombstone and the real sub is kept here.
---
--- The tombstone has to be something Google can never issue. The first version
--- of this migration said `removed:<id>` was safe because a Google `sub` is a
--- decimal string — which Google does not promise. Its contract is any
--- case-sensitive ASCII string of up to 255 characters, so `removed:2` is a
--- legal account id, and reserving that shape would have locked a real person
--- out of the admin screen and left a parked row for them to collide with.
---
--- So the tombstone is outside that contract rather than inside it: U+2014 EM
--- DASH followed by the member id. It is not ASCII, so it is not a `sub`.
--- `src/google.ts::isGoogleSub` states that contract in one place, and both
--- sign-in and the admin form are held to it.
+-- column is rewritten to a sentinel and the real sub is kept here. Google's
+-- `sub` is a decimal string, so `removed:<id>` can never collide with one, and
+-- `src/households.ts` refuses to accept a sub in that shape as input.
 ALTER TABLE member ADD COLUMN removed_google_sub TEXT;
