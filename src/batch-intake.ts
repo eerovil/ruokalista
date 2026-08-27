@@ -251,7 +251,7 @@ function recipeToSave(
     ingredients.map((ingredient) => [keyOf(ingredient.name), ingredient.id]),
   );
   const existingIds = new Set(ingredients.map((ingredient) => ingredient.id));
-  const lines = draft.lines.map((line) => {
+  const lines = draft.lines.map((line, index) => {
     const key = keyOf(line.ingredientName);
     const exact = existingByName.get(key);
     let ingredient: LineIngredient;
@@ -278,6 +278,9 @@ function recipeToSave(
       sourceLine: line.sourceLine,
       section: line.section,
       phase: line.phase,
+      // A bundle is taken in the order it was written, so the row a step's
+      // mention points at is simply where the line sits in the draft.
+      formIndex: index,
     };
   });
   const recipe: RecipeToSave = {

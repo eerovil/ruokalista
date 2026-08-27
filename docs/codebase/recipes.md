@@ -66,6 +66,88 @@ practice, since a phase select and the ingredient select share a `select`
 element and a locator that means "the ingredient select" breaks if a second
 `select` appears on the same row.
 
+## An ingredient named in a step (issue #120)
+
+This pull request proposes letting a preparation step point at the ingredients
+it names, so a cook can reveal an amount without looking back up the screen.
+`src/ingredient-refs.ts` owns the whole idea and is the file to read first.
+
+A reference is deliberately thin, and both omissions are the point:
+
+- **No amount.** The `ingredient_line` row stays the only place a quantity
+  lives, so a different portion count and a later edit to a line both come
+  through on their own. Nothing has to be kept in step.
+- **All amounts for an ingredient.** Nothing stops a recipe listing one
+  ingredient twice — salt at two stages, oil to fry in and oil for the dressing
+  — and the model's line choice is not independently verified. A mention
+  therefore names the ingredient, and the screen reveals every distinct stated
+  amount from that recipe's rows (`2 rkl / 1 dl`). Blank amounts are dropped and
+  identical amounts collapse. Showing both cannot confidently give the cook the
+  wrong single instruction.
+- **No character range.** A stored `start`/`end` would be wrong the moment
+  somebody fixed a typo earlier in the sentence. What is stored is the wording
+  that was matched and roughly where it was; `resolveMentions` finds it again in
+  whatever the text says now, taking the occurrence nearest the recorded
+  position. Anything that cannot be placed — wording edited away, two references
+  landing on the same words — is left as plain text, because linking the wrong
+  word is worse than linking no word.
+
+An occurrence has to be a **word of its own**, not a substring: a reference for
+`suola` must not go on matching after the step becomes "Lisää suolakurkut", or
+the salt amount lands in the middle of a word about gherkins. The boundary test
+is Unicode-aware (`\p{L}\p{N}\p{M}`), because an ASCII rule would treat `ö` as a
+boundary and match `suola` inside `suolaöljy`. Finnish inflection is unaffected:
+the wording stored is the wording the step used, so `tomaatit` is matched as
+`tomaatit` rather than derived from `tomaatti` — and a step later re-inflected
+to `tomaatteja` loses the link, which is the harmless half of the trade.
+
+The reference exists in two shapes and `saveRecipe` is where one becomes the
+other. A **draft** reference (`DraftIngredientRef`) points at an ingredient line
+by its *index*, because on an import half the ingredients do not have ids yet;
+a **saved** one (`StepIngredientRef`) carries the `ingredient` id. The editor
+converts back to indexes when it renders, since a form row is the thing a member
+can move or retype and an index survives both.
+
+An index alone is not enough, though: it says *where* an ingredient sits on the
+form, not *which* one it is. So the editor also sends `expectedIngredientId`,
+the ingredient the reference was made against, and `resolveStepRefs`
+(`src/recipe-save.ts`) asks the question the mention actually asks — does this
+step's own recipe row still have a line with that ingredient? The row is only a
+handle: with a duplicated ingredient the editor has to hang the mention on one
+of the rows and picks the first, so repointing *that* row while another still
+carries the ingredient leaves the mention true and it survives. Change the only
+tomato line to paprika and a step saying "tomaatit" has nothing left to name, so
+it goes back to being plain text rather than quietly revealing paprika's amount.
+Renaming an ingredient keeps its id, so a rename keeps its mentions — the same
+rule, the other way up. The field is null on an import, where no id existed to
+expect.
+
+Asking about "this step's own recipe row" is also what refuses a cross-part
+move, with no separate check: a line that ended up in a different part is not in
+that list, so a reference to it resolves to nothing. A part is a recipe row of
+its own, and an amount the reader cannot see on that screen is not worth linking
+to.
+
+An import reference has no ingredient to expect and is resolved through the row
+it points at — matched on `LineToSave.formIndex`, the row's own number, rather
+than on where it sits in the array. `readLines` drops removed rows and re-sorts
+the rest by their position boxes, so somebody who removes one line on the review
+screen would otherwise slide every later mention onto the next ingredient along,
+which is a wrong amount rather than a missing one.
+
+The reveal proposed on the recipe screen is **a checkbox and its label, not a
+script**: every mention toggles on its own, it survives Safari's
+back-forward cache, and it works with JavaScript off, which is the standing
+rule for anything on the reading path. `MENTION_STYLE` in `src/recipes.ts` is
+the whole of it. A mention whose ingredient states no amount ("hieman
+sitruunaruohoa") renders as plain text — a control that does nothing is worse
+than no control.
+
+One consequence worth knowing before writing a test: the amount is in the markup
+with `display: none` on it until it is tapped. Nobody reads it, nothing copies
+it and no screen reader announces it, but it *is* in `textContent`. See
+[testing](docs/codebase/testing.md).
+
 ## Scaling
 
 A recipe opened from a day carries that day's portions. The week itself is for
