@@ -32,9 +32,9 @@ Regenerate after a change that alters a screen:
 | `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
-| `28-week-not-admin.png` | Proposed week as an ordinary member sees it — no way into the admin surface |
-| `29-week-admin.png` | Proposed week as an admin sees it, with the one link to Ylläpito |
-| `30-admin.png` | Proposed admin screen: the boundary, with no tools behind it yet |
+| `28-week-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
+| `29-week-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
+| `30-admin.png` | Proposed admin panel: recipe image management and the AgentDeck import |
 | `32-admin-recipe-images.png` | Proposed picture list: missing, stale, current and manually added |
 | `33-admin-recipe-images-confirm.png` | Proposed prompt to copy, the numbered manifest, and the sheet upload |
 | `34-admin-recipe-images-done.png` | Proposed same screen after the browser cut a sheet and stored the crops |

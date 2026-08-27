@@ -69,16 +69,25 @@ Granting it is an operator action, like membership: `scripts/set-admin.sh
 never inserts). There is no way to grant it from inside the app and there is
 not meant to be.
 
-The week screen shows an admin a `Ylläpito` link and shows an ordinary member
-nothing. That is tidiness, not the boundary — `/admin` refuses whether or not
-anybody saw a link. It sits on the week screen (`src/week-screens.ts`) rather
-than in the shared shell because putting it in `page()`'s header would mean
-threading the signed-in member through roughly thirty call sites, which was a
-deliberate scope decision left open for a later PR to redo if the admin surface
-needs shell-level presence.
+### One panel, and one way to it (#106, proposed)
+
+This pull request proposes that the admin panel be the only place an admin tool
+is found, and the account button in the top bar be the only way to the panel.
+`page()` therefore takes a viewer — `Member` satisfies it by shape — and every
+signed-in screen passes the member it already holds. The sign-in screens pass
+null. This is the shell-level presence #94 deliberately deferred, and the
+week screen's own `Ylläpito` link goes away with it.
+
+`accountMenu` in `src/html.ts` asks one question about the viewer: `isAdmin`.
+Nothing else about a member reaches the shell, and the entry is still courtesy:
+every route behind it refuses an ordinary member whether or not a link rendered.
+
+`/admin` becomes a list of tools, one row each: recipe image management and the
+AgentDeck bundle import. Adding the next admin tool means adding a row there,
+not a link somewhere an ordinary member looks.
 
 Seed member 3 is Koti's admin and member 1 stays ordinary, so the specs have
-both sides and every existing screenshot is unchanged.
+both sides.
 
 `member.isAdmin` is threaded through every `members.ts` lookup via the shared
 `MEMBER_COLUMNS` constant, so `findMemberById`, `findMemberByGoogleSub` and

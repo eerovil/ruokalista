@@ -139,6 +139,12 @@ const STYLES = `
   }
   .account-menu form { margin: 0; }
   .account-menu button { width: 100%; }
+  .account-menu a {
+    display: flex; align-items: center;
+    min-height: var(--tap); padding: 0 .6rem; margin-bottom: .35rem;
+    font-weight: 600; text-decoration: none;
+    border-bottom: 1px solid var(--edge);
+  }
 
   .tabs {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
@@ -504,22 +510,45 @@ function tabs(current: Shell): Raw {
 </nav>`;
 }
 
-/** The account affordance: small, out of the way, and the way out of the app. */
-const ACCOUNT = html`<details class="account">
+/**
+ * Who is looking at the screen. The shell asks one question about them — are
+ * they an admin — and that decides whether the account menu offers the admin
+ * panel. Nothing else about the viewer reaches this file, and the menu entry is
+ * courtesy: `/admin` refuses an ordinary member whether or not they saw a link.
+ *
+ * `Member` satisfies this by shape, so every screen passes the member it
+ * already has. A screen with no viewer — the sign-in wall and its refusals —
+ * passes null, which is also the shell that renders no account button at all.
+ */
+export interface Viewer {
+  isAdmin: boolean;
+}
+
+/**
+ * The account affordance: small, out of the way, and the way out of the app —
+ * and, for an admin, the one way in to the admin panel. It lives here rather
+ * than on the week screen so that every screen offers it, which is what #106
+ * asked for and what #94 deliberately deferred.
+ */
+function accountMenu(viewer: Viewer | null): Raw {
+  return html`<details class="account">
   <summary role="button" aria-label="Tili">
     ${icon(`<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>`)}
   </summary>
   <div class="account-menu">
+    ${viewer?.isAdmin ? html`<a href="/admin">Ylläpito</a>` : ""}
     <form method="post" action="/auth/signout">
       <button type="submit" class="quiet">Kirjaudu ulos</button>
     </form>
   </div>
 </details>`;
+}
 
 export function page(
   title: string,
   body: Raw,
   shell: Shell,
+  viewer: Viewer | null,
   status = 200,
 ): Response {
   const signedIn = shell !== "signed-out";
@@ -544,7 +573,7 @@ export function page(
 ${signedIn
     ? html`<header class="topbar">
   <a class="wordmark" href="/">Ruokalista</a>
-  ${ACCOUNT}
+  ${accountMenu(viewer)}
 </header>`
     : ""}
 <main>

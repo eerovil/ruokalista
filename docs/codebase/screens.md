@@ -10,8 +10,10 @@ also the only thing to check when reviewing for injection.
 
 `page()` takes a `Shell` — `week`, `recipes`, `intake`, `ingredients`, or
 `signed-out` — which is the bottom-tab destination the screen belongs to, so an
-inner screen like a recipe still lights up `Reseptit`. `signed-out` renders no
-tabs and no sign-out, because there is nowhere to navigate yet.
+inner screen like a recipe still lights up `Reseptit`. Issue #106 proposes that
+it also take a viewer so the shared account menu can offer the admin panel only
+to an admin. `signed-out` renders no tabs or account button, because there is
+nowhere to navigate yet.
 
 Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
 is the first thing to become unreadable on a phone in a bright kitchen. Controls

@@ -157,10 +157,12 @@ against every draft up front, defaulting new-ingredient decisions to "new", and
 turns a `SaveRefused` into a `BatchRefused` so the routes only ever need to
 catch one refusal type.
 
-Routes, all behind `requireMemberScreen` like every other household route:
+Issue #106 proposes moving all three routes behind `requireAdminScreen`:
 `GET /intake/batch` (upload form), `POST /intake/batch/review` (validate and
-show a review, no save), `POST /intake/batch/import` (revalidate and save), in
-`src/batch-intake-screens.ts`.
+show a review, no save), and `POST /intake/batch/import` (revalidate and save),
+in `src/batch-intake-screens.ts`. The paths stay unchanged, but the entry moves
+from ordinary intake navigation to the admin panel because importing a bundle
+writes many recipes and may create ingredients in one operation.
 
 Saving reuses `saveRecipe()` unchanged, called once per recipe in sequence via
 `saveRecipesSequentially` (`src/batch-save.ts`) — sequentially so a new
@@ -188,4 +190,3 @@ before validating anything.
 `docs/agentdeck-recipe-bundles.md` is the docs-only contract for the bundle
 JSON shape and generation rules. `.generated/` is git-ignored, since a
 generated bundle is private household data and must never be committed.
-
