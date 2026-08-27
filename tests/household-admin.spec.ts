@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -201,7 +202,7 @@ test("a cupboard entry counts as something made, too", async ({
   expect(removed.status()).toBe(303);
 });
 
-test("an admin cannot remove their own membership here", async ({ page }) => {
+test("an admin's own row cannot be removed here", async ({ page }) => {
   await signIn(page, 3);
   await page.goto("/admin/households/1");
 
@@ -209,10 +210,126 @@ test("an admin cannot remove their own membership here", async ({ page }) => {
   await row.locator("summary").click();
   await row.getByRole("button", { name: "Poista taloudesta" }).click();
 
-  await expect(page.locator(".refused")).toContainText("omaa jäsenyyttäsi");
+  await expect(page.locator(".refused")).toContainText("on ylläpitäjä");
   await expect(
     page.locator("details.rename").filter({ hasText: "Ylläpitäjä" }),
   ).toHaveCount(1);
+});
+
+test("an admin's Google sub cannot be repointed at another account", async ({
+  page,
+}) => {
+  // The privilege transfer this screen must not have. Sign-in matches on
+  // google_sub and reads is_admin off that same row, so changing an admin's sub
+  // would hand admin to whoever owns the new one — without touching a field
+  // called is_admin, and without scripts/set-admin.sh.
+  await signIn(page, 3);
+  await page.goto("/admin/households/1");
+
+  const row = page.locator("details.rename").filter({ hasText: "Ylläpitäjä" });
+  await row.locator("summary").click();
+  await page.locator("#member-3-sub").fill("sub-kaapattu");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page.locator(".refused")).toContainText(
+    "Google-tunnistettaan ei voi vaihtaa",
+  );
+
+  // And the row still points where it did.
+  await page.goto("/admin/households/1");
+  await page
+    .locator("details.rename")
+    .filter({ hasText: "Ylläpitäjä" })
+    .locator("summary")
+    .click();
+  await expect(page.locator("#member-3-sub")).toHaveValue("dev-seed-admin");
+});
+
+test("an admin's name and email are still editable", async ({ page }) => {
+  // The guard is on identity, not on the row. Correcting a typo in an admin's
+  // name is exactly the job this screen exists for.
+  await signIn(page, 3);
+  await page.goto("/admin/households/1");
+
+  const row = page.locator("details.rename").filter({ hasText: "Ylläpitäjä" });
+  await row.locator("summary").click();
+  await page.locator("#member-3-name").fill("Ylläpitäjä Ylläkoski");
+  await page.locator("#member-3-email").fill("yllapitaja@example.com");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  const renamed = page
+    .locator("details.rename")
+    .filter({ hasText: "Ylläkoski" });
+  await expect(renamed).toContainText("yllapitaja@example.com");
+  await expect(page.locator(".refused")).toHaveCount(0);
+
+  // Put the seeded name back for the tests that follow.
+  await renamed.locator("summary").click();
+  await page.locator("#member-3-name").fill("Ylläpitäjä");
+  await page.locator("#member-3-email").fill("");
+  await renamed.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(
+    page.locator("details.rename").filter({ hasText: "Ylläpitäjä" }),
+  ).toContainText("ei sähköpostia");
+});
+
+test("another admin's row is refused too, through the routes themselves", async ({
+  page,
+  request,
+}) => {
+  // The guard reads the row's own is_admin, not "is this me". Proving that
+  // needs a second admin, and this screen deliberately cannot make one — so the
+  // test promotes a member the way an operator would, straight in the database,
+  // and then tries both writes against somebody who is not the caller.
+  await signIn(page, 3);
+  await page.goto("/admin/households/2");
+  await page.locator("#add-name").fill("Toinen ylläpitäjä");
+  await page.locator("#add-sub").fill("sub-toinen-yllapitaja");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+
+  const memberId = await memberIdOf(page, "Toinen ylläpitäjä");
+  promoteToAdmin("sub-toinen-yllapitaja");
+
+  const repointed = await request.post(
+    `/admin/households/2/members/${memberId}`,
+    {
+      headers: { Cookie: cookieHeader(3) },
+      maxRedirects: 0,
+      form: {
+        display_name: "Toinen ylläpitäjä",
+        email: "",
+        google_sub: "sub-kaapattu",
+      },
+    },
+  );
+  expect(repointed.status()).toBe(400);
+  expect(await repointed.text()).toContain("ei voi vaihtaa");
+
+  const removed = await request.post(
+    `/admin/households/2/members/${memberId}/delete`,
+    { headers: { Cookie: cookieHeader(3) }, maxRedirects: 0 },
+  );
+  expect(removed.status()).toBe(400);
+  expect(await removed.text()).toContain("ei voi poistaa");
+
+  // Both refused, so the row is still there and still points where it did.
+  await page.goto("/admin/households/2");
+  const row = page
+    .locator("details.rename")
+    .filter({ hasText: "Toinen ylläpitäjä" });
+  await expect(row).toHaveCount(1);
+  await row.locator("summary").click();
+  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue(
+    "sub-toinen-yllapitaja",
+  );
+
+  // Demote and remove, so household 2 is back to one member.
+  demoteFromAdmin("sub-toinen-yllapitaja");
+  const gone = await request.post(
+    `/admin/households/2/members/${memberId}/delete`,
+    { headers: { Cookie: cookieHeader(3) }, maxRedirects: 0 },
+  );
+  expect(gone.status()).toBe(303);
 });
 
 test("a Google sub already in use is refused, and says where it is", async ({
@@ -391,6 +508,35 @@ test("the ordinary product still shows nobody another household", async ({
   await expect(page.getByText("naapurin suola")).toHaveCount(0);
   await expect(page.getByText("valkokaali")).toBeVisible();
 });
+
+/**
+ * Admin is granted the way `scripts/set-admin.sh` grants it — against the
+ * database, never through the app. A test that needs a second admin has to go
+ * the same way, which is itself part of what is being proved.
+ */
+function setAdmin(googleSub: string, on: boolean): void {
+  execFileSync(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      "ruokalista",
+      "--local",
+      "--command",
+      `UPDATE member SET is_admin = ${on ? 1 : 0} WHERE google_sub = '${googleSub}'`,
+    ],
+    { cwd: process.cwd(), stdio: "ignore" },
+  );
+}
+
+function promoteToAdmin(googleSub: string): void {
+  setAdmin(googleSub, true);
+}
+
+function demoteFromAdmin(googleSub: string): void {
+  setAdmin(googleSub, false);
+}
 
 async function memberIdOf(page: Page, name: string): Promise<number> {
   const action = await page

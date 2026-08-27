@@ -49,3 +49,4 @@ Regenerate after a change that alters a screen:
 | `41-pantry.png` | Proposed cupboard page: only what the household keeps in, each with the way to say it ran out |
 | `42-admin-households.png` | Proposed household list, including the household this admin does not belong to |
 | `43-admin-household.png` | Proposed household detail: the name, the members, and one member row opened for editing |
+| `44-admin-member-refused.png` | Proposed refusal when an admin's Google sub is repointed — admin travels with the sub, so this stays an operator action |

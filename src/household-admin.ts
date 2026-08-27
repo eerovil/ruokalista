@@ -27,10 +27,16 @@ import type { RouteContext } from "./router.ts";
  *
  * It reads and writes across household boundaries on purpose, which nothing else
  * in the app does — see `src/households.ts` for why the exception is confined
- * there. Two things it deliberately cannot do, both from the issue: it never
- * touches `member.is_admin`, and it offers no "move to another household". A
- * move is a removal and an addition, which leaves two visible actions instead of
- * one silent reparenting.
+ * there. Two things it deliberately cannot do, both from the issue: it cannot
+ * move admin around, and it offers no "move to another household". A move is a
+ * removal and an addition, which leaves two visible actions instead of one
+ * silent reparenting.
+ *
+ * "Cannot move admin around" is more than leaving `is_admin` off the form.
+ * Sign-in matches on `google_sub`, so repointing an admin's row at a different
+ * Google account would hand that account admin, and deleting the row would take
+ * admin away — neither of which is a form field, and both of which
+ * `src/households.ts::adminRowGuard` refuses.
  *
  * Household deletion is out of scope, so there is no button for it.
  */
@@ -149,19 +155,13 @@ export async function removeMemberForm(
   const id = Number(ctx.params["id"]);
   const memberId = Number(ctx.params["memberId"]);
 
-  return withRefusal(ctx, member, id, { scope: `member-${memberId}` }, () => {
-    // The one member this screen will not remove is the one using it. An admin
-    // who deletes their own row is signed out of a tool nothing else can reach,
-    // and the way back in is the hand-written INSERT this screen exists to
-    // replace.
-    if (memberId === member.id) {
-      throw new HouseholdRefused(
-        "Et voi poistaa omaa jäsenyyttäsi tältä näytöltä.",
-      );
-    }
-
-    return removeMember(ctx.env.DB, id, memberId);
-  });
+  // No "not yourself" check here on purpose. `removeMember` refuses to delete
+  // any admin's row, and only an admin can reach this route — so the caller's
+  // own row is already covered, by a rule that also covers the other admin the
+  // caller is not.
+  return withRefusal(ctx, member, id, { scope: `member-${memberId}` }, () =>
+    removeMember(ctx.env.DB, id, memberId),
+  );
 }
 
 /**

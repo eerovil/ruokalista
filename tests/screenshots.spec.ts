@@ -582,6 +582,24 @@ test.describe("signed in as an admin", () => {
     });
   });
 
+  test("an admin's row refusing to be repointed", async ({ page }) => {
+    // The guard that keeps admin an operator action: sign-in matches on
+    // google_sub, so changing an admin's would hand admin to another Google
+    // account. Member 3 is the seed's admin.
+    await page.goto("/admin/households/1");
+    const row = page.locator("details.rename").filter({ hasText: "Ylläpitäjä" });
+    await row.locator("summary").click();
+    await page.locator("#member-3-sub").fill("jonkun-muun-google-tili");
+    await row.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page.locator(".refused")).toContainText(
+      "Google-tunnistettaan ei voi vaihtaa",
+    );
+    await page.screenshot({
+      path: `${SHOTS}/44-admin-member-refused.png`,
+      fullPage: true,
+    });
+  });
+
   test("choosing which recipes get a picture", async ({ page }) => {
     // A household in the middle of things, which is the only state this screen
     // is interesting in: one recipe with no picture, one with a picture

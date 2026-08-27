@@ -116,11 +116,18 @@ cannot see household 2's ingredient.
 
 Three things the proposal deliberately cannot do, all from #127:
 
-- **It never touches `member.is_admin`.** The column is absent from every read
-  and every write in `src/households.ts`, and the UPDATE names its three
-  editable columns one by one, so a form field claiming `is_admin=1` is just
-  more of the request. Granting admin stays `scripts/set-admin.sh`. A screen
-  that could make more admins is the role system #94 refused to build.
+- **It cannot move admin around.** Granting admin stays `scripts/set-admin.sh`;
+  a screen that could make more admins is the role system #94 refused to build.
+  Leaving `is_admin` off the form is not enough for that, and this is the trap
+  the proposal was reviewed for. Sign-in matches a member on `google_sub` and
+  then reads `is_admin` off that same row, so repointing an admin's row at a
+  different Google account would hand that account admin, and deleting the row
+  would take admin away — neither of which is a form field. So
+  `src/households.ts::adminRowGuard` reads `is_admin` internally and refuses
+  both: on an admin's row, `google_sub` is not editable and the row is not
+  removable. Name and email stay editable, because neither decides who the row
+  is. `is_admin` never leaves that module, never reaches the markup and is never
+  a form field.
 - **There is no "move to another household".** A move is a removal and an
   addition, which leaves two visible actions instead of one silent reparenting.
 - **There is no household delete.**
@@ -129,9 +136,8 @@ Removing a member is the operation with a real failure mode: `member.id` is what
 `ingredient`, `recipe` (twice), `planned_batch` and `pantry_entry` record as
 having created a row. `removeMember` counts those first and refuses in Finnish,
 naming how many rows are in the way, rather than letting D1 answer with a
-constraint error. It also refuses to remove the admin using the screen — an
-admin who deletes their own row is locked out of the tool that would let them
-back in.
+constraint error. There is no separate "not yourself" rule: the admin-row guard
+above already refuses every admin's row, and only an admin reaches these routes.
 
 A new table with a `REFERENCES member(id)` column has to be added to that count,
 or the refusal turns back into a 500. `tests/household-admin.spec.ts` covers the

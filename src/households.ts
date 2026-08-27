@@ -32,6 +32,10 @@ export interface Household {
  * A member as this screen edits one: the three fields an operator has to be
  * able to correct, and nothing else. Note what is missing — `isAdmin`, which
  * `Member` in `src/members.ts` carries and this type must not.
+ *
+ * `is_admin` is still *read* below, but only as a guard on the two writes that
+ * would otherwise move admin around (see `adminRowGuard`). It never leaves this
+ * module, never reaches the markup and is never a form field.
  */
 export interface HouseholdMember {
   id: number;
@@ -53,10 +57,11 @@ interface HouseholdMemberRow {
   display_name: string;
   email: string | null;
   google_sub: string;
+  is_admin: number;
 }
 
 const HOUSEHOLD_MEMBER_COLUMNS =
-  "id, household_id, display_name, email, google_sub" as const;
+  "id, household_id, display_name, email, google_sub, is_admin" as const;
 
 /** Every household there is, with how many people are in it. */
 export async function allHouseholds(db: D1Database): Promise<Household[]> {
@@ -172,6 +177,8 @@ export async function addMember(
  * field at all. Moving somebody between households is deliberately not offered:
  * #127 says remove them from one and add them to the other, which leaves a
  * visible pair of actions instead of a silent reparenting.
+ *
+ * On an admin's row, `google_sub` is not editable — see `adminRowGuard`.
  */
 export async function updateMember(
   db: D1Database,
@@ -179,8 +186,12 @@ export async function updateMember(
   memberId: number,
   input: MemberInput,
 ): Promise<void> {
-  const existing = await memberOf(db, householdId, memberId);
-  const fields = await memberFields(db, input, existing.id);
+  const row = await memberRowOf(db, householdId, memberId);
+  const fields = await memberFields(db, input, row.id);
+
+  if (row.is_admin === 1 && fields.googleSub !== row.google_sub) {
+    throw new HouseholdRefused(adminRowGuard(row.display_name, "sub"));
+  }
 
   await db
     .prepare(
@@ -208,13 +219,20 @@ export async function updateMember(
  * column, so a new table that records who made a row belongs in it — the
  * newest is `pantry_entry.added_by` (#125). Forgetting one turns a refusal
  * back into a constraint error, which is a 500 rather than a sentence.
+ *
+ * An admin's row is not removable here at all — see `adminRowGuard`.
  */
 export async function removeMember(
   db: D1Database,
   householdId: number,
   memberId: number,
 ): Promise<HouseholdMember> {
-  const member = await memberOf(db, householdId, memberId);
+  const row = await memberRowOf(db, householdId, memberId);
+  const member = toHouseholdMember(row);
+
+  if (row.is_admin === 1) {
+    throw new HouseholdRefused(adminRowGuard(row.display_name, "delete"));
+  }
 
   const authored = await db
     .prepare(
@@ -241,11 +259,43 @@ export async function removeMember(
   return member;
 }
 
+/**
+ * The two ways this screen could move admin around without ever showing the
+ * word, and the reason `is_admin` is read here at all.
+ *
+ * Sign-in matches a member on `google_sub` and then reads `is_admin` off that
+ * same row (`src/members.ts::findMemberByGoogleSub`). So repointing an admin's
+ * row at a different Google account hands that account admin, and deleting the
+ * row takes admin away — both without `scripts/set-admin.sh`, which #127 says
+ * is the only way admin is granted or revoked. Neither shows up in a review of
+ * the form fields, because neither is a form field.
+ *
+ * Refusing both here rather than in the screen keeps the rule with the write it
+ * protects: a second caller of `updateMember` cannot miss it. Name and email
+ * stay editable, because neither decides who the row is.
+ */
+function adminRowGuard(displayName: string, what: "sub" | "delete"): string {
+  const tail =
+    "Ylläpito-oikeus kulkee rivin mukana, ja se annetaan ja otetaan pois vain käsin tietokannasta.";
+
+  return what === "sub"
+    ? `${displayName} on ylläpitäjä, joten hänen Google-tunnistettaan ei voi vaihtaa täältä. ${tail} Nimen ja sähköpostin voi silti korjata.`
+    : `${displayName} on ylläpitäjä, joten häntä ei voi poistaa täältä. ${tail}`;
+}
+
 async function memberOf(
   db: D1Database,
   householdId: number,
   memberId: number,
 ): Promise<HouseholdMember> {
+  return toHouseholdMember(await memberRowOf(db, householdId, memberId));
+}
+
+async function memberRowOf(
+  db: D1Database,
+  householdId: number,
+  memberId: number,
+): Promise<HouseholdMemberRow> {
   const row = Number.isInteger(memberId)
     ? await db
         .prepare(
@@ -258,7 +308,7 @@ async function memberOf(
 
   if (row === null) throw new HouseholdRefused("Tuntematon jäsen.");
 
-  return toHouseholdMember(row);
+  return row;
 }
 
 /**
