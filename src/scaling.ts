@@ -1,4 +1,4 @@
-import type { Measurement } from "./quantities.ts";
+import { formatMeasurement, type Measurement } from "./quantities.ts";
 
 /**
  * Scaling a recipe to the number of portions a day is planned for.
@@ -87,6 +87,43 @@ export function scaleMeasurement(
         : roundForKitchen(line.altQuantity * factor, line.altUnit),
     altUnit: line.altUnit,
   };
+}
+
+/**
+ * Whether this line's source wording earns a second line under it.
+ *
+ * Repeating every source line turns a screen into a comparison view, and while
+ * cooking or shopping fast legibility is worth more than maximum evidence. So
+ * the source appears in exactly the two cases where the structured line is not
+ * the whole truth:
+ *
+ *   - **No stated amount.** The fields have nowhere to put "hieman", "maun
+ *     mukaan" or "tarvittaessa", so the qualifier only exists in the source.
+ *     About a fifth of lines are like this.
+ *   - **A scaled amount.** The number on the screen is no longer the number on
+ *     the page, and the source line is what says so.
+ *
+ * Everything else — ranges, second measurements, plain amounts — round-trips
+ * through the fields intact, so a copy underneath adds nothing to read.
+ *
+ * It lives here rather than on the recipe screen because it is a question about
+ * what scaling changed, and the shopping list has to ask it too.
+ */
+export function sourceWorthShowing(
+  line: Measurement & { ingredient: string; sourceLine: string },
+  factor: number | null,
+): boolean {
+  if (line.quantity === null) {
+    // Nothing lost if the source line is just the ingredient again.
+    return line.sourceLine.trim() !== "" &&
+      line.sourceLine.trim().toLocaleLowerCase("fi") !==
+        line.ingredient.trim().toLocaleLowerCase("fi");
+  }
+
+  return (
+    formatMeasurement(scaleMeasurement(line, factor)) !==
+    formatMeasurement(line)
+  );
 }
 
 function snap(value: number, step: number): number {
