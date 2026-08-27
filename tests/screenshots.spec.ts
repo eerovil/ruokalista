@@ -425,6 +425,51 @@ test.describe("signed in", () => {
     }
   });
 
+  /**
+   * The cupboard, used rather than empty: two staples put in from the list,
+   * the list split into its two sections, and the cupboard's own page.
+   */
+  test("the cupboard, and the list it splits in two", async ({ page }) => {
+    const planned = [
+      await createBatch(page, shiftedFromToday(0), "dinner", 1, 8),
+      await createBatch(page, shiftedFromToday(2), "dinner", 3, 6),
+    ];
+
+    await page.goto("/ostoslista");
+    for (const name of ["öljy", "maito"]) {
+      const item = page
+        .locator(".shopping-item", { hasText: name })
+        .first();
+      await item.locator("summary").click();
+      await item.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+    }
+
+    // The Löytyy section is really there, with its rows and their amounts,
+    // before anything is photographed.
+    const found = page.locator(".shopping-section", { hasText: "Löytyy" });
+    await expect(found).toBeVisible();
+    await expect(
+      page.locator(".shopping-list").last().locator("> li"),
+    ).toHaveCount(2);
+    await page.screenshot({
+      path: `${SHOTS}/40-shopping-pantry.png`,
+      fullPage: true,
+    });
+
+    await page.goto("/kaappi");
+    await expect(page.locator(".pantry li")).toHaveCount(2);
+    await page.screenshot({ path: `${SHOTS}/41-pantry.png`, fullPage: true });
+
+    // Leave the cupboard and the week as they were found: the shots above and
+    // below share this database.
+    for (const id of [1, 9]) {
+      await page.request.post(`/kaappi/${id}/poista`);
+    }
+    for (const id of planned) {
+      await page.request.delete(`/api/batches/${id}`);
+    }
+  });
+
   test("the ingredient list", async ({ page }) => {
     await page.goto("/ingredients");
     await expect(page.locator(".ingredients li").first()).toBeVisible();

@@ -101,6 +101,35 @@ origin reads as `manual` too, since every row #89 ever wrote was a hand
 upload, and the migration is written so landing it does not retroactively
 stale a single existing picture.
 
+## The cupboard
+
+This pull request proposes `migrations/0008_pantry.sql` (#125): `pantry_entry`,
+one row per ingredient the household keeps in. A row means "we have enough of
+this, treat it as unlimited"; no row means nothing is known and the ingredient
+is bought as normal. Running out is a delete, not a second kind of row.
+
+```sql
+CREATE TABLE pantry_entry (
+  id, household_id, ingredient_id,
+  state,          -- 'unlimited' today, 'quantity' reserved
+  quantity, quantity_unit,
+  added_at, added_by,
+  UNIQUE (household_id, ingredient_id)
+);
+```
+
+`state` is a word rather than a boolean deliberately, and the amount columns
+exist before anything writes them: counted inventory — 6 kpl of eggs against
+the 10 a week needs — is meant to land as the `quantity` state plus a
+subtraction rule, not as a replacement table. Two CHECK constraints hold the
+pair together: an amount belongs to the counted state and to no other, and it
+is never negative. `src/pantry.ts` is the only place that reads or writes this
+table, and its `splitByPantry` looks only at membership, so v1 cannot
+accidentally depend on the unused columns.
+
+Matching is by `ingredient_id` — the household's canonical identity for a
+foodstuff — and never by name.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
@@ -112,7 +141,8 @@ request origin, or anything the client says.
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`.
+`ingredient_line`, `planned_batch`, `batch_occurrence`, and — as this pull
+request proposes — `pantry_entry`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.

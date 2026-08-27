@@ -200,6 +200,9 @@ function fakeDatabase(): {
     batch_occurrence: [
       { batch_id: 1, date: "2026-08-25", slot: "dinner" },
     ],
+    pantry_entry: [
+      { id: 1, household_id: 1, ingredient_id: 1, state: "unlimited" },
+    ],
   };
 
   const db = {

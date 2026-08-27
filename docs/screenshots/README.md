@@ -45,3 +45,5 @@ Regenerate after a change that alters a screen:
 | `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
 | `36-week-empty-today.png` | Proposed empty current week as it opens — the viewport lands on today, not Monday (not full-page, on purpose) |
 | `37-week-long-title.png` | Proposed long recipe name wrapping in the card head, beside the widest carried pill |
+| `40-shopping-pantry.png` | Proposed shopping list split in two: Ostettavat, then a Löytyy section keeping the cupboard's staples and their amounts |
+| `41-pantry.png` | Proposed cupboard page: only what the household keeps in, each with the way to say it ran out |
