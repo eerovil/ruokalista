@@ -19,9 +19,26 @@ Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
 is the first thing to become unreadable on a phone in a bright kitchen. Controls
 are at least `--tap` tall, `--tap-compact` where a row would otherwise blow up.
 
+## The week
+
+Issue #119 proposes replacing the week's occurrence-per-row layout with one card
+per cooked batch. `src/week-screens.ts::weekScreen` groups by `PlannedBatch.id`
+— never by recipe title, so two cookings of the same dish stay two cards — and
+draws each batch once, in the day of its first occurrence inside the visible
+week (`anchorDate`). The card carries the recipe, `Kokataan · N annosta`, one
+row per covered day (`ma 7.12. · Lounas · Päivällinen`), and the batch's edge
+state: `Kokattu 6.12.` when the cooking happened before the visible week,
+`viimeinen annos` when it ends inside it, `jatkuu ensi viikolle` when it does
+not. The proposal deletes the left-hand rail #90 added, because a card that
+lists its own days no longer needs a line drawn beside it.
+
+The current day gets `.day.is-today`, `id="tanaan"`, and a `Tänään` badge, and
+the week nav's middle link becomes an in-page jump to it instead of "Tämä
+viikko". A third inline island scrolls to it — see below.
+
 ### Server-rendered inline script islands
 
-Two screens ship a hand-written `<script>` rather than a build step, and both
+Three screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
 
@@ -37,8 +54,14 @@ transpilation:
   request that resolves after the tab was already backgrounded, and
   `pagehide`/`pageshow` handlers stop and reacquire the lock across Safari's
   back-forward cache.
+- `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
+  only when the week on screen is the current one and it has something on it,
+  and it runs once at parse time, before anyone can have scrolled, so it cannot
+  fight a member who is already moving. It bails out on an explicit `#` anchor
+  and on a scroll position the browser restored, and a browser without
+  `scrollIntoView` simply opens at Monday as before.
 
-Both islands are written in ES5 (`var`, no arrow functions, no regular
+All three islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.
 
 ## Browser compatibility

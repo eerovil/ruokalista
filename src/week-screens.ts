@@ -4,6 +4,7 @@ import {
   isDate,
   mondayOf,
   shortDate,
+  shortDayName,
   today,
   weekFrom,
 } from "./dates.ts";
@@ -33,7 +34,14 @@ const SLOT_NAMES: Record<Slot, string> = {
   dinner: "Päivällinen",
 };
 
-/** `GET /` — seven days projected from every batch touching the week. */
+/**
+ * `GET /` — seven days, each holding the batches that *begin* in it.
+ *
+ * A batch is one cooking, however many meals it feeds, so the week draws it
+ * once: one card, anchored at the batch's first occurrence inside the visible
+ * week, listing every day and meal that cooking covers. Grouping is by batch
+ * id — two separate cookings of the same recipe stay two cards.
+ */
 export async function weekScreen(
   { env, url }: RouteContext,
   member: Member,
@@ -48,246 +56,154 @@ export async function weekScreen(
     days[6]!,
   );
   const now = today();
-  const { laneById, laneCount } = assignBatchLanes(batches);
-  const railWidth = laneCount === 0 ? 0 : Math.min(0.8, 5 / laneCount);
+  const isCurrentWeek = monday === mondayOf(now);
 
   return page(
     "Viikko",
     html`<h1>Viikko</h1>
       <nav class="weeks">
         <a href="/?week=${addDays(monday, -7)}" rel="prev">← Edellinen</a>
-        <a href="/">Tämä viikko</a>
+        ${isCurrentWeek
+          ? html`<a class="to-today" href="#tanaan">Tänään</a>`
+          : html`<a href="/">Tämä viikko</a>`}
         <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
       </nav>
-      <style>
-        .week-days .day {
-          display: grid;
-          grid-template-columns: repeat(var(--rail-count), var(--rail-width)) minmax(0, 1fr);
-          position: relative;
-          margin-bottom: 0;
-          padding-bottom: 1.5rem;
-        }
-        .week-days .day.is-today {
-          border-left: 0;
-          padding-left: 0;
-          box-shadow: inset 3px 0 0 var(--accent);
-        }
-        .week-days .day h2,
-        .week-days .batch-track,
-        .week-days .slot-actions {
-          grid-column: -2 / -1;
-        }
-        .week-days .batch-track {
-          display: block;
-          min-width: 0;
-        }
-        .week-days .batch-track.is-end .batch-day-content::after {
-          content: none;
-        }
-        .week-days .slot-actions {
-          padding-left: 0;
-        }
-        .week-days .batch-rail {
-          position: relative;
-          z-index: 1;
-          min-width: 0;
-          pointer-events: none;
-        }
-        .week-days .batch-rail-line {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          left: 50%;
-          width: 3px;
-          border-radius: 2px;
-          background: var(--accent);
-          transform: translateX(-50%);
-        }
-        .week-days .batch-rail.continues-after .batch-rail-line {
-          bottom: -1.5rem;
-        }
-        .week-days .batch-rail-dot {
-          position: absolute;
-          left: 50%;
-          z-index: 2;
-          width: .65rem;
-          height: .65rem;
-          border-radius: 50%;
-          background: var(--accent);
-          transform: translateX(-50%);
-        }
-        .week-days .batch-rail-dot.is-start { top: .35rem; }
-        .week-days .batch-rail-dot.is-end { bottom: .35rem; }
-      </style>
-      <div
-        class="week-days"
-        style="--rail-count:${Math.max(1, laneCount)};--rail-width:${railWidth}rem"
-      >${days.map((date) => dayCard(date, batches, date === now, laneById))}</div>`,
+      <div class="week-days">
+        ${days.map((date) => daySection(date, batches, date === now, monday, days[6]!))}
+      </div>
+      ${isCurrentWeek && batches.length > 0 ? SCROLL_TO_TODAY : ""}`,
     "week",
     member,
   );
 }
 
-function assignBatchLanes(
-  batches: PlannedBatch[],
-): { laneById: Map<number, number>; laneCount: number } {
-  const laneEnds: string[] = [];
-  const laneById = new Map<number, number>();
-  const ordered = [...batches].sort(
-    (a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id,
-  );
-
-  for (const batch of ordered) {
-    let lane = laneEnds.findIndex((endDate) => endDate < batch.startDate);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = batch.endDate;
-    laneById.set(batch.id, lane);
+/**
+ * Opens the current week where the household actually is, rather than always
+ * at Monday. It runs once, at parse time, before anyone can have scrolled, so
+ * there is nothing to fight; a past or future week never renders it at all.
+ * ES5 on purpose — inline scripts ship untranspiled.
+ */
+const SCROLL_TO_TODAY = raw(`<script>
+(function () {
+  var day = document.getElementById("tanaan");
+  if (!day || !day.scrollIntoView) return;
+  // An explicit anchor, or a scroll position the browser restored, wins.
+  if (window.location.hash) return;
+  if (window.pageYOffset > 0) return;
+  try {
+    day.scrollIntoView(true);
+  } catch (error) {
+    // An old browser without the option object still has nothing to fix.
   }
+})();
+</script>`);
 
-  return { laneById, laneCount: laneEnds.length };
-}
-
-function dayCard(
+function daySection(
   date: string,
   batches: PlannedBatch[],
   isToday: boolean,
-  laneById: Map<number, number>,
+  monday: string,
+  sunday: string,
 ): Raw {
-  const active = batches
-    .filter((batch) => batch.startDate <= date && batch.endDate >= date)
+  const starting = batches
+    .filter((batch) => anchorDate(batch) === date)
     .sort(
       (a, b) =>
-        (laneById.get(a.id) ?? 0) - (laneById.get(b.id) ?? 0),
+        slotOrder(firstOccurrenceOn(a, date)) -
+          slotOrder(firstOccurrenceOn(b, date)) || a.id - b.id,
     );
-  const tracks = dayTracks(date, active, laneById);
-  const rowsByBatch = new Map<number, { first: number; last: number }>();
-  tracks.forEach((track, index) => {
-    const row = index + 2;
-    const rows = rowsByBatch.get(track.batch.id);
-    if (rows === undefined) {
-      rowsByBatch.set(track.batch.id, { first: row, last: row });
-    } else {
-      rows.last = row;
-    }
-  });
-  const lastGridLine = tracks.length + 3;
 
-  return html`<section class="${isToday ? "day is-today" : "day"}">
-    <h2 style="grid-row:1">${dayName(date)} <span class="meta">${shortDate(date)}</span></h2>
-    ${active.map((batch) => {
-      const rows = rowsByBatch.get(batch.id)!;
-      return batchRail(
-        batch,
-        date,
-        laneById.get(batch.id) ?? 0,
-        rows.first,
-        rows.last,
-        lastGridLine,
-      );
-    })}
-    ${tracks.map((track, index) => {
-      const row = index + 2;
-      const rows = rowsByBatch.get(track.batch.id)!;
-      return batchTrack(
-        track.batch,
-        date,
-        row,
-        track.occurrence,
-        row === rows.first,
-        row === rows.last,
-      );
-    })}
-    <div class="slot-actions" style="grid-row:${tracks.length + 2}">
+  return html`<section
+    class="${isToday ? "day is-today" : "day"}"
+    ${isToday ? rawTodayId : ""}
+  >
+    <h2>
+      ${dayName(date)} <span class="meta">${shortDate(date)}</span>
+      ${isToday ? html`<span class="today-badge">Tänään</span>` : ""}
+    </h2>
+    ${starting.length === 0
+      ? ""
+      : html`<div class="batch-cards">
+          ${starting.map((batch) => batchCard(batch, monday, sunday))}
+        </div>`}
+    <div class="slot-actions">
       ${SLOTS.map((slot) => slotAction(date, slot, batches))}
     </div>
   </section>`;
 }
 
-interface DayTrack {
-  batch: PlannedBatch;
-  occurrence: BatchOccurrence | null;
+const rawTodayId = raw('id="tanaan"');
+
+/** The day this batch's card is drawn in: its first occurrence in view. */
+function anchorDate(batch: PlannedBatch): string {
+  return batch.occurrences.reduce(
+    (earliest, item) => (item.date < earliest ? item.date : earliest),
+    batch.occurrences[0]?.date ?? batch.startDate,
+  );
 }
 
-function dayTracks(
+function firstOccurrenceOn(
+  batch: PlannedBatch,
   date: string,
-  batches: PlannedBatch[],
-  laneById: Map<number, number>,
-): DayTrack[] {
-  return batches
-    .flatMap<DayTrack>((batch) => {
-      const occurrences = batch.occurrences.filter((item) => item.date === date);
-      return occurrences.length === 0
-        ? [{ batch, occurrence: null }]
-        : occurrences.map((occurrence) => ({ batch, occurrence }));
-    })
-    .sort(
-      (a, b) =>
-        slotOrder(a.occurrence) - slotOrder(b.occurrence) ||
-        (laneById.get(a.batch.id) ?? 0) - (laneById.get(b.batch.id) ?? 0),
-    );
+): BatchOccurrence | null {
+  return batch.occurrences.find((item) => item.date === date) ?? null;
 }
 
 function slotOrder(occurrence: BatchOccurrence | null): number {
   return occurrence === null ? SLOTS.length : SLOTS.indexOf(occurrence.slot);
 }
 
-function batchRail(
-  batch: PlannedBatch,
-  date: string,
-  lane: number,
-  firstTrackRow: number,
-  lastTrackRow: number,
-  lastGridLine: number,
-): Raw {
-  const starts = date === batch.startDate;
-  const ends = date === batch.endDate;
-  const continuesBefore = date > batch.startDate;
-  const continuesAfter = date < batch.endDate;
-  const startRow = starts ? firstTrackRow : 1;
-  const endRow = ends ? lastTrackRow + 1 : lastGridLine;
+/**
+ * One cooking. The head is the recipe and the way into every batch action; the
+ * rows below are the meals this same pot covers, in order, across days.
+ */
+function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
+  const days = occurrenceDays(batch);
+  const cookedInView = batch.startDate >= monday;
+  const finishesInView = batch.endDate <= sunday;
 
-  return html`<div
-    class="batch-rail${starts ? " is-start" : ""}${ends ? " is-end" : ""}${continuesBefore ? " continues-before" : ""}${continuesAfter ? " continues-after" : ""}"
-    data-batch-id="${batch.id}"
-    data-lane="${lane}"
-    aria-hidden="true"
-    style="grid-column:${lane + 1};grid-row:${startRow} / ${endRow}"
-  >
-    <span class="batch-rail-line"></span>
-    ${starts ? html`<span class="batch-rail-dot is-start"></span>` : ""}
-    ${ends ? html`<span class="batch-rail-dot is-end"></span>` : ""}
-  </div>`;
+  return html`<article class="batch-card" data-batch-id="${batch.id}">
+    <div class="entry"><a href="/batches/${batch.id}">
+      ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
+      <span class="entry-title">${batch.title}</span>
+    </a></div>
+    ${cookedInView
+      ? html`<p class="batch-start">Kokataan · ${batch.portions} annosta</p>`
+      : html`<p class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${batch.portions} annosta</p>`}
+    <ul class="batch-when">
+      ${days.map(
+        (day, index) => html`<li class="batch-when-day">
+          <span class="batch-when-date">${shortDayName(day.date)} ${shortDate(day.date)}</span>
+          <span class="batch-when-slots">${day.slots.map((slot) => SLOT_NAMES[slot]).join(" · ")}</span>
+          ${index === 0 ? "" : html`<span class="batch-passes">jatkuu</span>`}
+        </li>`,
+      )}
+    </ul>
+    ${finishesInView
+      ? html`<p class="batch-end">viimeinen annos</p>`
+      : html`<p class="batch-passes batch-onward">jatkuu ensi viikolle</p>`}
+  </article>`;
 }
 
-function batchTrack(
-  batch: PlannedBatch,
-  date: string,
-  gridRow: number,
-  occurrence: BatchOccurrence | null,
-  firstForBatch: boolean,
-  lastForBatch: boolean,
-): Raw {
-  const starts = date === batch.startDate && firstForBatch;
-  const ends = date === batch.endDate && lastForBatch;
-  return html`<div
-    class="batch-track${starts ? " is-start" : ""}${ends ? " is-end" : ""}"
-    data-batch-id="${batch.id}"
-    style="grid-row:${gridRow}"
-  >
-    <div class="batch-day-content">
-      ${starts
-        ? html`<strong class="batch-start">Kokataan · ${batch.portions} annosta</strong>`
-        : ""}
-      ${occurrence === null
-        ? html`<span class="batch-passes">Jatkuu</span>`
-        : html`<div class="entry"><a href="/batches/${batch.id}">
-            ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
-            <span class="entry-slot">${SLOT_NAMES[occurrence.slot]}</span>
-            <span class="entry-title">${batch.title}</span>
-          </a></div>`}
-      ${ends ? html`<span class="batch-end">viimeinen annos</span>` : ""}
-    </div>
-  </div>`;
+interface OccurrenceDay {
+  date: string;
+  slots: Slot[];
+}
+
+/** The batch's in-view occurrences, one row per day, lunch before dinner. */
+function occurrenceDays(batch: PlannedBatch): OccurrenceDay[] {
+  const byDate = new Map<string, Slot[]>();
+  for (const occurrence of batch.occurrences) {
+    const slots = byDate.get(occurrence.date);
+    if (slots === undefined) byDate.set(occurrence.date, [occurrence.slot]);
+    else if (!slots.includes(occurrence.slot)) slots.push(occurrence.slot);
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, slots]) => ({
+      date,
+      slots: [...slots].sort((a, b) => SLOTS.indexOf(a) - SLOTS.indexOf(b)),
+    }));
 }
 
 function slotAction(
@@ -300,10 +216,12 @@ function slotAction(
       (occurrence) => occurrence.date === date && occurrence.slot === slot,
     ),
   );
+  // The same invitation whether or not the meal already has something on it:
+  // a second dish is an ordinary thing to plan, not a different action.
   return html`<a
     class="${occupied ? "add-more" : "empty-slot"}"
     href="/picker?date=${date}&slot=${slot}"
-  >${occupied ? "+ Lisää toinen" : `+ ${SLOT_NAMES[slot]}`}</a>`;
+  >+ ${SLOT_NAMES[slot]}</a>`;
 }
 
 /** `GET /batches/:id` — actions affect the whole cooked batch. */

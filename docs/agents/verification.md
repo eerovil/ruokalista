@@ -37,7 +37,7 @@ Which spec covers what, roughly:
 
 | What changed | The spec to run |
 | --- | --- |
-| the week, the days, a planned meal | `week.spec.ts`, `week-rails.spec.ts` |
+| the week, the days, a planned meal | `week.spec.ts`, `week-grouping.spec.ts` |
 | the recipe screen, the list, the picker | `recipes.spec.ts` |
 | the editor, the line form | `editor.spec.ts` |
 | portions, factors, rounding | `scaling.spec.ts` |

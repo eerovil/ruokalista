@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -182,10 +182,29 @@ test("one cooked batch continues through selected lunches", async ({ page }) => 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Öljykastike");
   await page.getByRole("link", { name: "Takaisin viikkoon" }).click();
 
-  await expect(page.locator(".batch-track")).toHaveCount(3);
+  // One cooking, one card: three lunches, but the recipe is drawn once, in
+  // the day it is cooked, with the meals it covers listed inside it.
+  await expect(page.locator(".batch-card")).toHaveCount(1);
+  await expect(page.locator(".entry", { hasText: "Öljykastike" })).toHaveCount(1);
   await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
   await expect(page.locator(".batch-end")).toHaveText("viimeinen annos");
-  await expect(page.locator(".entry", { hasText: "Öljykastike" })).toHaveCount(3);
+  await expect(page.locator(".batch-when-day")).toHaveCount(3);
+  await expect(page.locator(".batch-when-date")).toHaveText([
+    "ma 2.11.",
+    "ti 3.11.",
+    "ke 4.11.",
+  ]);
+  await expect(page.locator(".batch-when-slots")).toHaveText([
+    "Lounas",
+    "Lounas",
+    "Lounas",
+  ]);
+  // Only the days after the cooking day are a continuation of it.
+  await expect(page.locator(".batch-passes")).toHaveCount(2);
+  // And the card sits in the day it is cooked, not in every day it feeds.
+  await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(1);
+  await expect(page.locator(".day").nth(1).locator(".batch-card")).toHaveCount(0);
+  await expect(page.locator(".day").nth(2).locator(".batch-card")).toHaveCount(0);
 });
 
 test("overlapping batches and same-recipe batches keep separate identity", async ({
@@ -208,34 +227,66 @@ test("overlapping batches and same-recipe batches keep separate identity", async
   ]);
 
   await page.goto("/?week=2026-11-09");
-  await expect(page.locator(".day").nth(1).locator(".entry")).toHaveCount(3);
-  await expect(page.locator(".batch-track")).toHaveCount(7);
+  // Two cookings begin on Monday and the second Kaalilaatikko on Tuesday —
+  // three cards, never merged, even though two of them are the same recipe.
+  await expect(page.locator(".batch-card")).toHaveCount(3);
+  const monday = page.locator(".day").first();
+  await expect(monday.locator(".batch-card")).toHaveCount(2);
+  await expect(monday.locator(`.batch-card[data-batch-id="${lunches}"]`)).toHaveCount(1);
+  await expect(monday.locator(`.batch-card[data-batch-id="${dinners}"]`)).toHaveCount(1);
+  const tuesday = page.locator(".day").nth(1);
+  await expect(tuesday.locator(".batch-card")).toHaveCount(1);
+  await expect(
+    tuesday.locator(`.batch-card[data-batch-id="${secondKaalilaatikko}"]`),
+  ).toHaveCount(1);
 });
 
-test("a day lists every lunch before every dinner", async ({ page }) => {
-  const first = await createBatch(page, "2027-01-05", "lunch", 1);
-  await setCoverage(page, first, [
-    ["2027-01-05", "lunch"],
+test("a day lists its lunch batch before its dinner batch", async ({ page }) => {
+  const dinners = await createBatch(page, "2027-01-05", "dinner", 1);
+  await setCoverage(page, dinners, [
     ["2027-01-05", "dinner"],
+    ["2027-01-06", "dinner"],
   ]);
-  const second = await createBatch(page, "2027-01-05", "lunch", 2);
-  await setCoverage(page, second, [
+  const lunches = await createBatch(page, "2027-01-05", "lunch", 2);
+  await setCoverage(page, lunches, [
     ["2027-01-05", "lunch"],
-    ["2027-01-05", "dinner"],
+    ["2027-01-06", "lunch"],
   ]);
 
   await page.goto("/?week=2027-01-04");
   const tuesday = page.locator(".day").nth(1);
-  await expect(tuesday.locator(".entry-slot")).toHaveText([
-    "Lounas",
-    "Lounas",
-    "Päivällinen",
-    "Päivällinen",
+  await expect(tuesday.locator(".batch-card")).toHaveCount(2);
+  // The lunch batch was planned second but is read first.
+  await expect(tuesday.locator(".batch-card").nth(0)).toHaveAttribute(
+    "data-batch-id",
+    String(lunches),
+  );
+  await expect(tuesday.locator(".batch-card").nth(1)).toHaveAttribute(
+    "data-batch-id",
+    String(dinners),
+  );
+  await expect(tuesday.locator(".entry-title")).toHaveText([
+    "Öljykastike",
+    "Kaalilaatikko",
   ]);
-  await expect(tuesday.locator(".batch-track")).toHaveCount(4);
-  await expect(tuesday.locator(".batch-rail")).toHaveCount(2);
-  await expectRailSpansTracks(tuesday, first);
-  await expectRailSpansTracks(tuesday, second);
+});
+
+test("a card holding both meals of one day lists them on one row", async ({
+  page,
+}) => {
+  const id = await createBatch(page, "2027-02-02", "lunch", 1);
+  await setCoverage(page, id, [
+    ["2027-02-02", "lunch"],
+    ["2027-02-02", "dinner"],
+  ]);
+
+  await page.goto("/?week=2027-02-01");
+  const tuesday = page.locator(".day").nth(1);
+  await expect(tuesday.locator(".batch-card")).toHaveCount(1);
+  await expect(tuesday.locator(".batch-when-day")).toHaveCount(1);
+  await expect(tuesday.locator(".batch-when-slots")).toHaveText(
+    "Lounas · Päivällinen",
+  );
 });
 
 test("mixed coverage crosses a week boundary and projects into both weeks", async ({
@@ -249,15 +300,26 @@ test("mixed coverage crosses a week boundary and projects into both weeks", asyn
     ["2026-11-17", "lunch"],
   ]);
 
+  // The week it is cooked in shows the cooking, and says it runs on.
   await page.goto("/?week=2026-11-09");
-  await expect(page.locator(".day").last().locator(".batch-track")).toHaveClass(
-    /is-start/,
-  );
+  const sunday = page.locator(".day").last();
+  await expect(sunday.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(sunday.locator(".batch-onward")).toHaveText("jatkuu ensi viikolle");
+  await expect(sunday.locator(".batch-end")).toHaveCount(0);
+
+  // The following week anchors it on Monday, remembers when it was cooked,
+  // and ends it where it actually ends.
   await page.goto("/?week=2026-11-16");
-  await expect(page.locator(".day").first().locator(".entry")).toHaveCount(2);
-  await expect(page.locator(".day").nth(1).locator(".batch-track")).toHaveClass(
-    /is-end/,
-  );
+  const monday = page.locator(".day").first();
+  await expect(monday.locator(".batch-card")).toHaveCount(1);
+  await expect(monday.locator(".batch-carried")).toHaveText("Kokattu 15.11. · 4 annosta");
+  await expect(monday.locator(".batch-start")).toHaveCount(0);
+  await expect(monday.locator(".batch-when-date")).toHaveText([
+    "ma 16.11.",
+    "ti 17.11.",
+  ]);
+  await expect(monday.locator(".batch-end")).toHaveText("viimeinen annos");
+  await expect(page.locator(".day").nth(1).locator(".batch-card")).toHaveCount(0);
 
   const projected = await page.request.get(
     "/api/menu?from=2026-11-16&to=2026-11-16",
@@ -443,26 +505,6 @@ async function setCoverage(
     },
   });
   expect(response.status()).toBe(204);
-}
-
-async function expectRailSpansTracks(
-  day: Locator,
-  batchId: number,
-): Promise<void> {
-  const railRows = await day
-    .locator(`.batch-rail[data-batch-id="${batchId}"]`)
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { start: style.gridRowStart, end: style.gridRowEnd };
-    });
-  const trackRows = await day
-    .locator(`.batch-track[data-batch-id="${batchId}"]`)
-    .evaluateAll((elements) =>
-      elements.map((element) => getComputedStyle(element).gridRowStart),
-    );
-
-  expect(railRows.start).toBe(trackRows[0]);
-  expect(railRows.end).toBe(String(Number(trackRows.at(-1)) + 1));
 }
 
 async function getBatch(

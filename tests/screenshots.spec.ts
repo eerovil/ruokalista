@@ -87,52 +87,50 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
   });
 
-  test("continuous overlapping rails", async ({ page }) => {
+  test("a batch spanning several days is one card", async ({ page }) => {
     const lunches = await createBatch(page, "2026-12-07", "lunch", 1);
     await setCoverage(page, lunches, [
       ["2026-12-07", "lunch"],
       ["2026-12-08", "dinner"],
       ["2026-12-09", "lunch"],
+      ["2026-12-09", "dinner"],
     ]);
     const dinners = await createBatch(page, "2026-12-07", "dinner", 2);
     await setCoverage(page, dinners, [
       ["2026-12-07", "dinner"],
-      ["2026-12-08", "dinner"],
-      ["2026-12-09", "dinner"],
+      ["2026-12-08", "lunch"],
     ]);
 
     await page.goto("/?week=2026-12-07");
-    await expect(page.locator(".batch-rail")).toHaveCount(6);
+    await expect(page.locator(".batch-card")).toHaveCount(2);
+    await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(2);
+    await expect(page.locator(".batch-when-day")).toHaveCount(5);
     await expect(page.locator(".batch-end")).toHaveCount(2);
     await page.screenshot({
-      path: `${SHOTS}/24-continuous-rails.png`,
+      path: `${SHOTS}/24-multi-day-batch.png`,
       fullPage: true,
     });
   });
 
-  test("lunches precede dinners within a day", async ({ page }) => {
-    const first = await createBatch(page, "2027-01-05", "lunch", 1);
-    await setCoverage(page, first, [
-      ["2027-01-05", "lunch"],
-      ["2027-01-05", "dinner"],
-    ]);
-    const second = await createBatch(page, "2027-01-05", "lunch", 2);
-    await setCoverage(page, second, [
-      ["2027-01-05", "lunch"],
-      ["2027-01-05", "dinner"],
+  test("today in the current week", async ({ page }) => {
+    const now = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Helsinki",
+    }).format(new Date());
+    const tomorrow = new Date(`${now}T00:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const id = await createBatch(page, now, "lunch", 1);
+    await setCoverage(page, id, [
+      [now, "lunch"],
+      [now, "dinner"],
+      [tomorrow.toISOString().slice(0, 10), "lunch"],
     ]);
 
-    await page.goto("/?week=2027-01-04");
-    const tuesday = page.locator(".day").nth(1);
-    await expect(tuesday.locator(".entry-slot")).toHaveText([
-      "Lounas",
-      "Lounas",
-      "Päivällinen",
-      "Päivällinen",
-    ]);
-    await expect(tuesday.locator(".batch-rail")).toHaveCount(2);
+    await page.goto("/");
+    const today = page.locator(".day.is-today");
+    await expect(today.locator(".today-badge")).toHaveText("Tänään");
+    await expect(today.locator(".batch-card")).toHaveCount(1);
     await page.screenshot({
-      path: `${SHOTS}/27-week-slot-order.png`,
+      path: `${SHOTS}/27-week-today.png`,
       fullPage: true,
     });
   });

@@ -253,30 +253,36 @@ const STYLES = `
     margin-bottom: 1.5rem; font-size: .85rem; }
   nav.weeks a { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); text-decoration: none; color: var(--muted); }
-  .day { margin-bottom: 1.5rem; }
-  .day h2 { margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
+  .day { margin-bottom: 1.25rem; scroll-margin-top: .75rem; }
+  .day h2 { display: flex; align-items: center; gap: .5rem;
+    margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
   .day.is-today h2 { font-weight: 700; }
-  .day.is-today { border-left: 3px solid var(--accent); padding-left: .6rem; }
-  .batch-tracks { display: flex; flex-direction: column; gap: .25rem; }
-  .batch-track { display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); }
-  .batch-marker { position: relative; }
-  .batch-marker::before { content: ""; position: absolute; left: .4rem;
-    top: -.4rem; bottom: -.4rem; width: 3px; border-radius: 2px;
-    background: var(--accent); }
-  .batch-track.is-start .batch-marker::before { top: .65rem; }
-  .batch-track.is-end .batch-marker::before { bottom: .65rem; }
-  .batch-track.is-start .batch-marker::after,
-  .batch-track.is-end .batch-day-content::after { content: ""; position: absolute;
-    width: .65rem; height: .65rem; border-radius: 50%; background: var(--accent); }
-  .batch-track.is-start .batch-marker::after { left: .1rem; top: .35rem; }
-  .batch-track.is-end .batch-day-content { position: relative; }
-  .batch-track.is-end .batch-day-content::after { left: -1rem; bottom: .35rem; }
-  .batch-day-content { display: flex; flex-direction: column; gap: .25rem;
-    min-width: 0; padding: .2rem 0 .6rem; }
-  .batch-start { color: var(--accent); font-size: .8rem; }
+  .day.is-today { padding: .6rem .7rem .1rem; border: 1px solid var(--accent);
+    border-radius: var(--radius); background: var(--surface); }
+  .today-badge { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
+    text-transform: none; color: var(--accent-fg); background: var(--accent);
+    border-radius: .25rem; }
+  .batch-cards { display: flex; flex-direction: column; gap: .5rem;
+    margin: 0 0 .5rem; }
+  .batch-card { display: flex; flex-direction: column; gap: .25rem;
+    min-width: 0; padding: .35rem 0 .5rem; }
+  .batch-start, .batch-carried { margin: 0; font-size: .8rem; }
+  .batch-start { color: var(--accent); }
+  .batch-carried { color: var(--muted); }
+  .batch-when { display: flex; flex-direction: column; gap: .15rem;
+    margin: 0; padding: 0; list-style: none; }
+  .batch-when-day { display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: .4rem; font-size: .8rem; }
+  .batch-when-date { min-width: 4.5rem; color: var(--fg);
+    text-transform: capitalize; }
+  .batch-when-slots { color: var(--muted); }
   .batch-passes, .batch-end { color: var(--muted); font-size: .75rem; }
+  .batch-passes { padding: .05rem .35rem; border: 1px solid var(--edge);
+    border-radius: .25rem; }
+  .batch-end, .batch-onward { margin: 0; }
   .batch-end { align-self: flex-end; }
-  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem 1.1rem;
+  .batch-onward { align-self: flex-start; }
+  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem;
     border-top: 1px solid var(--edge); }
   .empty-slot, .add-more { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
@@ -287,10 +293,9 @@ const STYLES = `
     background: var(--surface); border-radius: var(--radius);
   }
   .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
+  /* Today's own container is already --surface, so its cards need to lift. */
+  .day.is-today .entry > a { background: var(--bg); }
   .entry-title { flex: 1; }
-  .entry-slot { color: var(--muted); font-size: .75rem; min-width: 4.8rem; }
-  .entry-portions { color: var(--muted); font-size: .8rem; white-space: nowrap;
-    font-variant-numeric: tabular-nums; }
   .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
   .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
