@@ -1,4 +1,5 @@
 import { html, raw, type Raw } from "./html.ts";
+import { decodeDraftRefs } from "./ingredient-refs.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import { formatDecimal } from "./quantities.ts";
@@ -47,6 +48,13 @@ export interface StepFormValues {
   text: string;
   section: string;
   phase: string;
+  /**
+   * The step's ingredient mentions, encoded (issue #120). Carried as one opaque
+   * hidden field and never shown: it is the model's reading of the sentence,
+   * not something anybody asked to maintain. It rides along so that editing a
+   * step's wording does not silently throw its links away.
+   */
+  refs: string;
 }
 
 export interface LineRowOptions {
@@ -469,6 +477,7 @@ export function stepValuesFromForm(form: FormData): StepFormValues[] {
       text: String(value),
       section: formField(form, `step.${index}.section`),
       phase: formField(form, `step.${index}.phase`),
+      refs: formField(form, `step.${index}.refs`),
     });
   }
 
@@ -503,6 +512,7 @@ export function stepValuesForRendering(form: FormData): StepFormValues[] {
         text: String(value),
         section: formField(form, `step.${index}.section`),
         phase: formField(form, `step.${index}.phase`),
+        refs: formField(form, `step.${index}.refs`),
       });
     }
     return steps.sort((a, b) => a.index - b.index);
@@ -522,6 +532,7 @@ export function readSteps(form: FormData): StepToSave[] {
         text: values.text,
         section: readText(values.section),
         phase: readPhase(values.phase),
+        refs: decodeDraftRefs(values.refs),
       },
     }))
     .sort((a, b) => a.position - b.position)

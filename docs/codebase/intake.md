@@ -118,6 +118,29 @@ and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
 that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
 before the browser sees it** — no regular expressions in that script.
 
+## Marking the ingredients a step names (issue #120)
+
+This pull request proposes a second job for the same model call: alongside the
+lines and the steps, mark which words in each step name which of the draft's own
+ingredient lines. It is a marking task and the prompt says so — no new
+ingredient, no amount copied into a step, no rewording of the step text. A step
+that names nothing gets `[]`, and a generic phrase like "lisää loput ainekset"
+is left alone.
+
+`ingredient_refs` on a draft step is `{line, matched_text, approx_position}`,
+where `line` is the *index* of the ingredient line in the same draft. An
+ingredient id does not exist yet at draft time, which is half the point of an
+import. `assertDraftWire` treats the field as **optional** — a bundle written
+before this exists is still a valid bundle — and `toDraftRefs` silently drops a
+reference that points past the end of `lines`, points into another part of the
+dish, or claims wording the step does not contain. Every one of those is a
+producer having got something slightly wrong, and the recipe is worth more than
+the link.
+
+Nothing here was proved with a paid call. The sample draft
+(`src/sample-draft.ts`) carries references, so the review screen, the save and
+the recipe screen are all walked with the real code and no model.
+
 ## Batch intake from AgentDeck (#87)
 
 Issue #82 added a second, model-free intake path: a bundle of recipes generated

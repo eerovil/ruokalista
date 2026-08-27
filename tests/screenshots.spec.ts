@@ -166,6 +166,37 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/05-recipe.png`, fullPage: true });
   });
 
+  /**
+   * Issue #120's whole surface, in two pictures: the method as it reads by
+   * default, and the same method with two of its ingredients tapped open.
+   * Cooking for eight rather than four, so the revealed figures are visibly
+   * this meal's and not the page's.
+   */
+  test("ingredient amounts revealed in the method", async ({ page }) => {
+    await page.goto("/recipes/1?portions=8");
+    const kaali = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: "kaali" }) });
+    const vesi = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: "vesi" }) });
+
+    await expect(kaali.locator(".mention-amount")).toBeHidden();
+    await page.screenshot({
+      path: `${SHOTS}/36-step-mentions-closed.png`,
+      fullPage: true,
+    });
+
+    await kaali.locator("label").click();
+    await vesi.locator("label").click();
+    await expect(kaali.locator(".mention-amount")).toBeVisible();
+    await expect(vesi.locator(".mention-amount")).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/37-step-mentions-open.png`,
+      fullPage: true,
+    });
+  });
+
   test("a recipe with a picture, and the editor that put it there", async ({
     page,
   }) => {

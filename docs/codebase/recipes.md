@@ -66,6 +66,48 @@ practice, since a phase select and the ingredient select share a `select`
 element and a locator that means "the ingredient select" breaks if a second
 `select` appears on the same row.
 
+## An ingredient named in a step (issue #120)
+
+This pull request proposes letting a preparation step point at the ingredients
+it names, so a cook can reveal an amount without looking back up the screen.
+`src/ingredient-refs.ts` owns the whole idea and is the file to read first.
+
+A reference is deliberately thin, and both omissions are the point:
+
+- **No amount.** The `ingredient_line` row stays the only place a quantity
+  lives, so a different portion count and a later edit to a line both come
+  through on their own. Nothing has to be kept in step.
+- **No character range.** A stored `start`/`end` would be wrong the moment
+  somebody fixed a typo earlier in the sentence. What is stored is the wording
+  that was matched and roughly where it was; `resolveMentions` finds it again in
+  whatever the text says now, taking the occurrence nearest the recorded
+  position. Anything that cannot be placed — wording edited away, two references
+  landing on the same words — is left as plain text, because linking the wrong
+  word is worse than linking no word.
+
+The reference exists in two shapes and `saveRecipe` is where one becomes the
+other. A **draft** reference (`DraftIngredientRef`) points at an ingredient line
+by its *index*, because on an import half the ingredients do not have ids yet;
+a **saved** one (`StepIngredientRef`) carries the `ingredient` id. The editor
+converts back to indexes when it renders, since a form row is the thing a member
+can move or retype and an index survives both. `resolveStepRefs`
+(`src/recipe-save.ts`) drops a reference whose line ended up in a different part
+of the dish than the step — a part is a recipe row of its own, and an amount the
+reader cannot see on that screen is not worth linking to.
+
+The reveal proposed on the recipe screen is **a checkbox and its label, not a
+script**: every mention toggles on its own, it survives Safari's
+back-forward cache, and it works with JavaScript off, which is the standing
+rule for anything on the reading path. `MENTION_STYLE` in `src/recipes.ts` is
+the whole of it. A mention whose ingredient states no amount ("hieman
+sitruunaruohoa") renders as plain text — a control that does nothing is worse
+than no control.
+
+One consequence worth knowing before writing a test: the amount is in the markup
+with `display: none` on it until it is tapped. Nobody reads it, nothing copies
+it and no screen reader announces it, but it *is* in `textContent`. See
+[testing](docs/codebase/testing.md).
+
 ## Scaling
 
 A recipe opened from a day carries that day's portions. The week itself is for

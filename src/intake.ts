@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import type { Env } from "./env.ts";
+import type { DraftIngredientRef } from "./ingredient-refs.ts";
+import { MAX_REFS_PER_STEP, mentionResolves } from "./ingredient-refs.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import { recipePhase, type RecipePhase } from "./recipe-phase.ts";
 
@@ -54,6 +56,12 @@ export interface DraftStep {
   text: string;
   section: string | null;
   phase: RecipePhase;
+  /**
+   * The ingredients this step mentions by name, pointing at this draft's own
+   * lines (issue #120). Empty on nearly every producer: absent from the wire is
+   * a valid draft, which is what keeps an older AgentDeck bundle importable.
+   */
+  refs: DraftIngredientRef[];
 }
 
 export interface Draft {
@@ -104,8 +112,24 @@ export const DRAFT_SCHEMA = {
               { type: "null" },
             ],
           },
+          // Issue #120: which words in `text` name which of this draft's own
+          // ingredient lines. A pointer and the wording, never an amount.
+          ingredient_refs: {
+            type: "array",
+            maxItems: MAX_REFS_PER_STEP,
+            items: {
+              type: "object",
+              properties: {
+                line: { type: "integer" },
+                matched_text: { type: "string" },
+                approx_position: { type: "integer" },
+              },
+              required: ["line", "matched_text", "approx_position"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["text", "section", "phase"],
+        required: ["text", "section", "phase", "ingredient_refs"],
         additionalProperties: false,
       },
     },
@@ -218,6 +242,22 @@ Säännöt, joista ei poiketa:
   nolla tai yksi. Jos merkitsisit yli puolet riveistä, merkitse vain ne joissa
   tietoa todella katosi, ja jätä muut nulliksi. Rivi jonka luit suoraan oikein
   ei koskaan saa notea.
+- Merkitse jokaisen vaiheen ingredient_refs-kenttään ne kohdat, joissa vaiheen
+  teksti nimeää jonkin tämän reseptin ainesrivin. line on sen ainesrivin
+  järjestysnumero lines-taulukossa, ensimmäinen rivi on 0. matched_text on
+  täsmälleen se sanamuoto, joka vaiheen tekstissä lukee, taivutus mukaan lukien
+  ("tomaatit", ei "tomaatti"). approx_position on sen sanan alkukohta vaiheen
+  tekstissä merkkeinä laskettuna, ensimmäinen merkki on 0; likiarvo riittää.
+  Tunnista tavallinen suomen taivutus ja sanamuotojen vaihtelu: "tomaatti"
+  voi esiintyä muodossa "tomaatit" tai "tomaatteja".
+  Näistä ei poiketa:
+  - älä keksi ainesriviä jota lines-taulukossa ei ole, äläkä viittaa toisen
+    osan riviin — vaihe viittaa vain oman section-arvonsa riveihin;
+  - älä koskaan kirjoita määrää tai yksikköä matched_text-kenttään; määrä
+    luetaan aina ainesriviltä;
+  - älä muuta vaiheen tekstiä millään tavalla;
+  - yleisiä ilmauksia kuten "lisää loput ainekset" ei tarvitse yhdistää
+    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [].
 ${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
@@ -416,14 +456,18 @@ function assertDraftWire(raw: unknown): void {
 
   if (!Array.isArray(draft["steps"])) invalid("steps must be an array");
   draft["steps"].forEach((rawStep, index) => {
-    const step = objectWithKeys(rawStep, `steps[${index}]`, [
-      "text",
-      "section",
-      "phase",
-    ]);
+    const step = objectWithKeys(
+      rawStep,
+      `steps[${index}]`,
+      ["text", "section", "phase"],
+      // Optional: a bundle written before issue #120 links no ingredients, and
+      // refusing it would break every draft AgentDeck has already generated.
+      ["ingredient_refs"],
+    );
     requireString(step["text"], `steps[${index}].text`);
     requireStringOrNull(step["section"], `steps[${index}].section`);
     requirePhase(step["phase"], `steps[${index}].phase`);
+    requireStepRefs(step["ingredient_refs"], `steps[${index}].ingredient_refs`);
   });
 
   if (!Array.isArray(draft["lines"])) invalid("lines must be an array");
@@ -469,12 +513,13 @@ function objectWithKeys(
   value: unknown,
   label: string,
   keys: string[],
+  optional: string[] = [],
 ): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     invalid(`${label} must be an object`);
   }
   const object = value as Record<string, unknown>;
-  const expected = new Set(keys);
+  const expected = new Set([...keys, ...optional]);
   for (const key of keys) {
     if (!(key in object)) invalid(`${label}.${key} is required`);
   }
@@ -503,6 +548,39 @@ function requireNumberOrNull(value: unknown, label: string): void {
 function requireWholeOrNull(value: unknown, label: string): void {
   if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value))) {
     invalid(`${label} must be an integer or null`);
+  }
+}
+
+/**
+ * A step's ingredient references, if it carries any. The shape is checked
+ * strictly, like every other field — but *which* line a reference points at and
+ * whether its wording is really in the step are settled in `toDraft`, where the
+ * rest of the draft is in hand, and a reference that fails there is dropped
+ * rather than refused. A mislinked word is a small loss; refusing the whole
+ * import over one would not be.
+ */
+function requireStepRefs(value: unknown, label: string): void {
+  if (value === undefined || value === null) return;
+  if (!Array.isArray(value)) invalid(`${label} must be an array`);
+  if (value.length > MAX_REFS_PER_STEP) {
+    invalid(`${label} may hold at most ${MAX_REFS_PER_STEP} references`);
+  }
+
+  value.forEach((rawRef, index) => {
+    const ref = objectWithKeys(rawRef, `${label}[${index}]`, [
+      "line",
+      "matched_text",
+      "approx_position",
+    ]);
+    requireWhole(ref["line"], `${label}[${index}].line`);
+    requireString(ref["matched_text"], `${label}[${index}].matched_text`);
+    requireWhole(ref["approx_position"], `${label}[${index}].approx_position`);
+  });
+}
+
+function requireWhole(value: unknown, label: string): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    invalid(`${label} must be a whole number that is not negative`);
   }
 }
 
@@ -542,26 +620,74 @@ function toDraft(raw: unknown, source: IntakeSource, model: string): Draft {
   }
 
   const draft = raw as Record<string, unknown>;
-  const lines = Array.isArray(draft["lines"]) ? draft["lines"] : [];
-  const steps = Array.isArray(draft["steps"]) ? draft["steps"] : [];
+  const rawLines = Array.isArray(draft["lines"]) ? draft["lines"] : [];
+  const rawSteps = Array.isArray(draft["steps"]) ? draft["steps"] : [];
+  const lines = rawLines.map(toDraftLine);
 
   return {
     title: typeof draft["title"] === "string" ? draft["title"] : "",
     yieldPortions: wholeOrNull(draft["yield_portions"]),
     sourceText: keptSourceText(source, draft["source_text"]),
-    steps: steps.map(toDraftStep).filter((step) => step.text !== ""),
-    lines: lines.map(toDraftLine),
+    steps: rawSteps
+      .map((step) => toDraftStep(step, lines))
+      .filter((step) => step.text !== ""),
+    lines,
     structuredBy: model,
   };
 }
 
-function toDraftStep(raw: unknown): DraftStep {
+function toDraftStep(raw: unknown, lines: DraftLine[]): DraftStep {
   const step = (raw ?? {}) as Record<string, unknown>;
+  const text = typeof step["text"] === "string" ? step["text"].trim() : "";
+  const section = textOrNull(step["section"]);
+
   return {
-    text: typeof step["text"] === "string" ? step["text"].trim() : "",
-    section: textOrNull(step["section"]),
+    text,
+    section,
     phase: recipePhase(step["phase"]),
+    refs: toDraftRefs(step["ingredient_refs"], text, section, lines),
   };
+}
+
+/**
+ * The step's ingredient references, keeping only the ones that are safe to act
+ * on. A reference is dropped, never refused, when it points past the end of the
+ * ingredient list, when it points into a different part of the dish than the
+ * step itself, or when the wording it claims to have matched is not in the step
+ * at all. Every one of those is a producer having got something slightly wrong,
+ * and the recipe is worth more than the link.
+ */
+function toDraftRefs(
+  raw: unknown,
+  text: string,
+  section: string | null,
+  lines: DraftLine[],
+): DraftIngredientRef[] {
+  if (!Array.isArray(raw)) return [];
+
+  const refs: DraftIngredientRef[] = [];
+
+  for (const entry of raw.slice(0, MAX_REFS_PER_STEP)) {
+    const ref = (entry ?? {}) as Record<string, unknown>;
+    const lineIndex = wholeOrNull(ref["line"]);
+    const matchedText =
+      typeof ref["matched_text"] === "string" ? ref["matched_text"] : "";
+    const approxPosition = wholeOrNull(ref["approx_position"]);
+
+    if (lineIndex === null || lineIndex < 0 || lineIndex >= lines.length) {
+      continue;
+    }
+    if ((lines[lineIndex]?.section ?? null) !== section) continue;
+    if (!mentionResolves(text, matchedText)) continue;
+
+    refs.push({
+      lineIndex,
+      matchedText,
+      approxPosition: Math.max(0, approxPosition ?? 0),
+    });
+  }
+
+  return refs;
 }
 
 function toDraftLine(raw: unknown): DraftLine {

@@ -70,17 +70,34 @@ VALUES
   (5, 1, 'Juustokastike', NULL,
    'Lasagne', 'pasted', 1, 1, 3, 2);
 
-INSERT INTO recipe_step (recipe_id, position, text, phase) VALUES
-  (1, 1, 'Kuullota kaali öljyssä.', NULL),
-  (1, 2, 'Lisää vesi ja hauduta.', NULL),
-  (2, 1, 'Sekoita.', NULL),
+-- ingredient_refs is issue #120: which words in a step name which of this
+-- recipe's own ingredient lines, so the amount can be revealed where the word
+-- already is. It carries no amount and no character range — see
+-- src/ingredient-refs.ts. Recipe 1 covers the four cases worth seeding: two
+-- mentions in one step, one in another, a mention of an ingredient the source
+-- gave no amount for (which must stay plain text), and a stale reference to
+-- wording that is not in the step at all (which must simply not link).
+INSERT INTO recipe_step (recipe_id, position, text, phase, ingredient_refs) VALUES
+  (1, 1, 'Kuullota kaali öljyssä.', NULL,
+   '[{"ingredientId":3,"matchedText":"kaali","approxPosition":9},'
+   || '{"ingredientId":1,"matchedText":"öljyssä","approxPosition":15}]'),
+  (1, 2, 'Lisää vesi ja hauduta.', NULL,
+   '[{"ingredientId":2,"matchedText":"vesi","approxPosition":6}]'),
+  (1, 3, 'Mausta sitruunaruoholla ja tarjoa.', NULL,
+   '[{"ingredientId":4,"matchedText":"sitruunaruoholla","approxPosition":7},'
+   || '{"ingredientId":3,"matchedText":"kaali","approxPosition":0}]'),
+  (2, 1, 'Sekoita.', NULL, NULL),
   -- A legacy parent step remains explicitly unclassified and keeps its old
   -- parent-first position after the phase migration.
-  (3, 1, 'Voitele vuoka.', NULL),
-  (3, 2, 'Lämmitä uuni 200 asteeseen.', 'before_parts'),
-  (3, 3, 'Kokoa vuokaan ja paista 40 minuuttia.', 'after_parts'),
-  (4, 1, 'Ruskista jauheliha.', NULL),
-  (5, 1, 'Kuumenna maito ja sulata juusto joukkoon.', NULL);
+  (3, 1, 'Voitele vuoka.', NULL, NULL),
+  (3, 2, 'Lämmitä uuni 200 asteeseen.', 'before_parts', NULL),
+  (3, 3, 'Kokoa vuokaan ja paista 40 minuuttia.', 'after_parts', NULL),
+  (4, 1, 'Ruskista jauheliha.', NULL, NULL),
+  -- A part's own step linking a part's own line: the reference resolves inside
+  -- the recipe row the part became, never across into the dish or a sibling.
+  (4, 2, 'Anna jauhelihan hautua hetki.', NULL,
+   '[{"ingredientId":7,"matchedText":"jauhelihan","approxPosition":5}]'),
+  (5, 1, 'Kuumenna maito ja sulata juusto joukkoon.', NULL, NULL);
 
 -- One line of each awkward shape the schema exists to hold: a plain amount, a
 -- range, a second measurement in another unit, and no amount at all.

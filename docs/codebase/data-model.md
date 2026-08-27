@@ -101,6 +101,24 @@ origin reads as `manual` too, since every row #89 ever wrote was a hand
 upload, and the migration is written so landing it does not retroactively
 stale a single existing picture.
 
+## Ingredients a step names
+
+`migrations/0008_step_ingredient_refs.sql` (issue #120, proposed here) adds one
+nullable `recipe_step.ingredient_refs` column holding a small JSON array of
+`{ingredientId, matchedText, approxPosition}`. NULL and `"[]"` both mean "this
+step links nothing", which is what every existing row is.
+
+A column rather than a table, on purpose: a reference has no identity of its
+own, is only ever read with the step it belongs to, and a new table would drag
+in the six-file lockstep below for what is a detail of one row. Backup and
+restore need no change — `backup.ts` captures with `SELECT *` and `restore.ts`
+writes whatever columns a row carries.
+
+`src/ingredient-refs.ts::parseStepRefs` is the only reader, and it treats a
+malformed value as no references rather than throwing: a step whose links cannot
+be understood is still a step somebody has to cook from. See
+[recipes](docs/codebase/recipes.md) for what the column is for.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One

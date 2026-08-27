@@ -1,5 +1,10 @@
 import { problem } from "./auth.ts";
 import { html, page, type Raw } from "./html.ts";
+import {
+  parseStepRefs,
+  resolveMentions,
+  type StepIngredientRef,
+} from "./ingredient-refs.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
@@ -27,6 +32,8 @@ export interface RecipeSummary {
 
 export interface RecipeLine extends Measurement {
   position: number;
+  /** The `ingredient` row, so a step's mention of it can find its amount. */
+  ingredientId: number;
   ingredient: string;
   sourceLine: string;
   phase: RecipePhase;
@@ -35,6 +42,8 @@ export interface RecipeLine extends Measurement {
 export interface RecipeStep {
   text: string;
   phase: RecipePhase;
+  /** Ingredients this step names in its own wording. See `ingredient-refs.ts`. */
+  refs: StepIngredientRef[];
 }
 
 export interface Recipe extends RecipeSummary {
@@ -107,8 +116,15 @@ interface RecipeRow extends SummaryRow {
   revision: number;
 }
 
+interface StepRow {
+  text: string;
+  phase: RecipePhase;
+  ingredient_refs: string | null;
+}
+
 interface LineRow {
   position: number;
+  ingredient_id: number;
   quantity: number | null;
   quantity_max: number | null;
   unit: string | null;
@@ -148,7 +164,9 @@ export async function findRecipe(
   const batch = await db.batch<never>([
     db
       .prepare(
-        `SELECT recipe_step.text, recipe_step.phase
+        `SELECT recipe_step.text,
+                recipe_step.phase,
+                recipe_step.ingredient_refs
            FROM recipe_step
            JOIN recipe ON recipe.id = recipe_step.recipe_id
           WHERE recipe_step.recipe_id = ? AND recipe.household_id = ?
@@ -158,6 +176,7 @@ export async function findRecipe(
     db
       .prepare(
         `SELECT ingredient_line.position,
+                ingredient_line.ingredient_id,
                 ingredient_line.quantity,
                 ingredient_line.quantity_max,
                 ingredient_line.unit,
@@ -176,7 +195,7 @@ export async function findRecipe(
       .bind(id, householdId),
   ]);
 
-  const steps = (batch[0]?.results ?? []) as RecipeStep[];
+  const steps = (batch[0]?.results ?? []) as StepRow[];
   const lines = (batch[1]?.results ?? []) as LineRow[];
 
   // One level only: a part cannot itself have parts, so this never recurses
@@ -194,9 +213,14 @@ export async function findRecipe(
     createdAt: row.created_at,
     createdBy: row.created_by,
     parts,
-    steps,
+    steps: steps.map((step) => ({
+      text: step.text,
+      phase: step.phase,
+      refs: parseStepRefs(step.ingredient_refs),
+    })),
     lines: lines.map((line) => ({
       position: line.position,
+      ingredientId: line.ingredient_id,
       quantity: line.quantity,
       quantityMax: line.quantity_max,
       unit: line.unit,
@@ -258,12 +282,17 @@ export async function apiShowRecipe(
   return Response.json({ recipe: recipeForApi(recipe) });
 }
 
-/** Keep the existing JSON shape; phases are an internal cooking-view concern. */
+/**
+ * Keep the existing JSON shape; phases and ingredient mentions are both
+ * internal cooking-view concerns, and neither has ever been on the wire.
+ */
 function recipeForApi(recipe: Recipe): object {
   return {
     ...recipe,
     steps: recipe.steps.map((step) => step.text),
-    lines: recipe.lines.map(({ phase: _phase, ...line }) => line),
+    lines: recipe.lines.map(
+      ({ phase: _phase, ingredientId: _ingredientId, ...line }) => line,
+    ),
     parts: recipe.parts.map(recipeForApi),
   };
 }
@@ -379,11 +408,74 @@ function sourceWorthShowing(line: RecipeLine, factor: number | null): boolean {
   );
 }
 
+/**
+ * A step, with the ingredients it names made tappable (issue #120).
+ *
+ * The reveal is a checkbox and its label, not a script. Every mention toggles
+ * on its own, it survives a page the browser restored from its back-forward
+ * cache, and it works on a browser that runs no JavaScript at all — which is
+ * the standing rule for anything on the reading path. The amount sits in the
+ * markup already scaled, so what appears is this meal's figure and not the
+ * page's, and nothing has to be kept in step with a later edit: the next render
+ * reads the ingredient line again.
+ *
+ * A mention whose ingredient states no amount ("hieman sitruunaruohoa") is left
+ * as plain text. There is nothing to reveal, and a control that does nothing is
+ * worse than no control.
+ */
+function stepText(
+  step: RecipeStep,
+  amounts: Map<number, string>,
+  idPrefix: string,
+): Raw {
+  const segments = resolveMentions(step.text, step.refs);
+  if (segments.every((segment) => segment.kind === "text")) {
+    return html`${step.text}`;
+  }
+
+  return html`${segments.map((segment, index) => {
+    if (segment.kind === "text") return html`${segment.text}`;
+
+    const amount = amounts.get(segment.ingredientId) ?? "";
+    if (amount === "") return html`${segment.text}`;
+
+    const id = `${idPrefix}-${index}`;
+    return html`<span class="mention"
+      ><input type="checkbox" id="${id}" class="mention-toggle" /><label
+        for="${id}"
+        ><span class="mention-amount">${amount}</span
+        ><span class="mention-word">${segment.text}</span></label
+      ></span
+    >`;
+  })}`;
+}
+
+/** Every amount this recipe's own lines can offer a mention, already scaled. */
+function amountsByIngredient(
+  recipe: Recipe,
+  factor: number | null,
+): Map<number, string> {
+  const amounts = new Map<number, string>();
+
+  for (const line of recipe.lines) {
+    // The first line wins. A recipe listing one ingredient twice is rare, and
+    // showing the first amount beats showing a total nobody wrote down.
+    if (amounts.has(line.ingredientId)) continue;
+    amounts.set(
+      line.ingredientId,
+      formatMeasurement(scaleMeasurement(line, factor)),
+    );
+  }
+
+  return amounts;
+}
+
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
 function body(
   recipe: Recipe,
   factor: number | null,
   phases?: RecipePhase[],
+  bucket = "a",
 ): Raw {
   const lines = phases === undefined
     ? recipe.lines
@@ -391,6 +483,10 @@ function body(
   const steps = phases === undefined
     ? recipe.steps
     : recipe.steps.filter((step) => phases.includes(step.phase));
+
+  // Every line of this recipe, not only the ones this phase renders: a step
+  // done after the parts still mentions an ingredient listed before them.
+  const amounts = amountsByIngredient(recipe, factor);
 
   return html`${lines.length === 0
       ? ""
@@ -412,8 +508,12 @@ function body(
     ${steps.length === 0
       ? ""
       : html`<h3>Valmistus</h3>
-          <ol>
-            ${steps.map((step) => html`<li>${step.text}</li>`)}
+          <ol class="steps">
+            ${steps.map(
+              (step, index) => html`<li>
+                ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
+              </li>`,
+            )}
           </ol>`}`;
 }
 
@@ -484,7 +584,11 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
         ${body(part, factor)}
       </section>`,
     )}
-    ${recipe.parts.length === 0 ? "" : body(recipe, factor, ["after_parts"])}
+    <!-- A different bucket letter, because this is the same recipe rendered a
+         second time and two mentions may not share a checkbox id. -->
+    ${recipe.parts.length === 0
+      ? ""
+      : body(recipe, factor, ["after_parts"], "b")}
 
     <!-- Still stored, still one tap away, but not competing with the cooking. -->
     <details class="source-original">
@@ -493,11 +597,46 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
     </details>
 
     ${keepAwake()}
+    ${MENTION_STYLE}
 
     <p class="recipe-edit">
       <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
     </p>`;
 }
+
+/**
+ * A mention should read as the sentence it is part of, not as a button — the
+ * instruction is the thing being read, and a row of chips through the middle of
+ * it is harder to follow than the plain text was. So: the same font, the same
+ * colour, and a faint dotted underline as the only hint that it does anything.
+ *
+ * Kept here rather than in the shell's stylesheet because it is one screen's
+ * concern, and `src/html.ts` is the file every screen shares.
+ */
+const MENTION_STYLE = html`<style>
+  .steps li { padding: .35rem 0; line-height: 1.55; }
+  .mention { display: inline; }
+  /* Off-screen rather than display:none — a hidden control cannot be focused,
+     and this one is how a keyboard reaches the amount. */
+  .mention-toggle {
+    position: absolute; width: 1px; height: 1px;
+    margin: 0; padding: 0; opacity: 0; pointer-events: none;
+  }
+  .mention > label {
+    display: inline; cursor: pointer;
+    text-decoration: underline dotted var(--muted);
+    text-underline-offset: .2em;
+  }
+  .mention-amount {
+    font-weight: 600; font-variant-numeric: tabular-nums;
+    color: var(--accent); margin-right: .3em;
+  }
+  .mention-toggle:not(:checked) + label .mention-amount { display: none; }
+  .mention-toggle:checked + label { text-decoration: none; }
+  .mention-toggle:focus-visible + label {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;
+  }
+</style>`;
 
 async function loadRequested(
   db: D1Database,

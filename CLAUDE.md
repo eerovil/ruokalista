@@ -30,7 +30,7 @@ parameter. There is no other way in. Another household's record is a 404, not a
 | --- | --- |
 | Routing and the one handler | `src/index.ts`, `src/router.ts`, `src/env.ts` |
 | Sign-in, sessions, admin | `src/auth.ts`, `src/signin.ts`, `src/members.ts`, `src/admin-screens.ts` |
-| Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts` |
+| Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts`, `src/ingredient-refs.ts` |
 | Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
@@ -64,9 +64,13 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   not a message telling you to set up. See
   [dev-environment](docs/codebase/dev-environment.md).
 - **Two agent worktrees at once break each other's tests.** Both default to port
-  8787 and share one local D1 database, which reads as connection-refused and
-  lock flakiness rather than as contention. Set `PLAYWRIGHT_PORT` in one of
-  them. See [testing](docs/codebase/testing.md).
+  8787, and `reuseExistingServer` means the second suite silently tests the
+  first worktree's code against its database — which reads as
+  connection-refused and scattered nonsense failures rather than as contention.
+  Set `PLAYWRIGHT_PORT` in one of them. (`scripts/playwright.sh` did not
+  forward that variable into the container until the change proposed in #120,
+  so on older checkouts setting it changes nothing.) See
+  [testing](docs/codebase/testing.md).
 - **A new API key needs two places, not one.** A key in `.dev.vars` never
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).

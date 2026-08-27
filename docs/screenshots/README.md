@@ -41,3 +41,5 @@ Regenerate after a change that alters a screen:
 | `32-generated-images.png` | Recipe list with every row pictured from one contact sheet |
 | `33-generated-recipe.png` | One recipe with its picture from that sheet |
 | `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
+| `36-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
+| `37-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |

@@ -1,3 +1,5 @@
+import type { DraftIngredientRef, StepIngredientRef } from "./ingredient-refs.ts";
+import { serializeStepRefs } from "./ingredient-refs.ts";
 import { ingredientsFor } from "./ingredients.ts";
 import type { Member } from "./members.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
@@ -38,6 +40,13 @@ export interface StepToSave {
   text: string;
   section: string | null;
   phase: RecipePhase;
+  /**
+   * Ingredient mentions in `text`, pointing at this recipe's lines by their
+   * index in `lines` (issue #120). Ingredient ids do not exist yet on an
+   * import, so the index is the only identity a draft or a form can carry;
+   * `childrenOf` turns it into one at the moment the ids are known.
+   */
+  refs: DraftIngredientRef[];
 }
 
 export interface RecipeToSave {
@@ -246,20 +255,29 @@ function childrenOf(
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
     .forEach((step, index) => {
+      const refs = serializeStepRefs(resolveStepRefs(step, lines, belongs));
+
       if (guard === undefined) {
         statements.push(
           db
             .prepare(
-              "INSERT INTO recipe_step (recipe_id, position, text, phase) VALUES (?, ?, ?, ?)",
+              `INSERT INTO recipe_step (recipe_id, position, text, phase, ingredient_refs)
+               VALUES (?, ?, ?, ?, ?)`,
             )
-            .bind(recipeId, index + 1, step.text.trim(), phaseFor(step.phase)),
+            .bind(
+              recipeId,
+              index + 1,
+              step.text.trim(),
+              phaseFor(step.phase),
+              refs,
+            ),
         );
       } else {
         statements.push(
           db
             .prepare(
-              `INSERT INTO recipe_step (recipe_id, position, text, phase)
-               SELECT ?, ?, ?, ?
+              `INSERT INTO recipe_step (recipe_id, position, text, phase, ingredient_refs)
+               SELECT ?, ?, ?, ?, ?
                 WHERE EXISTS (
                   SELECT 1 FROM recipe
                    WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -270,6 +288,7 @@ function childrenOf(
               index + 1,
               step.text.trim(),
               phaseFor(step.phase),
+              refs,
               guard.recipeId,
               guard.householdId,
               guard.writeToken,
@@ -337,6 +356,42 @@ function childrenOf(
     });
 
   return statements;
+}
+
+/**
+ * Turn a step's line-index references into ingredient-id ones, dropping any
+ * that cannot mean anything here.
+ *
+ * A dish written in parts becomes several recipe rows, and a step is stored
+ * with the row its own part became. A reference from that step to a line that
+ * ended up in a *different* row would name an ingredient the reader cannot see
+ * amounts for on this screen, so it is dropped rather than stored — the same
+ * "leave it unlinked rather than link the wrong thing" rule the resolver
+ * follows on the way out.
+ *
+ * Two mentions of the same ingredient in one step are both kept: they are
+ * different words in different places, and each toggles on its own.
+ */
+function resolveStepRefs(
+  step: StepToSave,
+  lines: ResolvedLine[],
+  belongs: (section: string | null) => boolean,
+): StepIngredientRef[] {
+  const refs: StepIngredientRef[] = [];
+
+  for (const ref of step.refs) {
+    const target = lines[ref.lineIndex];
+    if (target === undefined) continue;
+    if (!belongs(target.line.section)) continue;
+
+    refs.push({
+      ingredientId: target.ingredientId,
+      matchedText: ref.matchedText,
+      approxPosition: ref.approxPosition,
+    });
+  }
+
+  return refs;
 }
 
 function ingredientStatements(

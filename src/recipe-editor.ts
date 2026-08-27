@@ -1,5 +1,6 @@
 import { problem } from "./auth.ts";
 import { html, page, raw, type Raw } from "./html.ts";
+import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
@@ -356,6 +357,15 @@ function editorForm(
         ...Array.from({ length: SPARE_LINES }, emptyLine),
       ];
 
+  // Ingredient mentions are saved against an ingredient id, but the form talks
+  // in row indexes — the row is what a member can move, retype or repoint, and
+  // an index survives all three. This is the one place the two meet.
+  const rowOfIngredient = new Map<number, number>();
+  recipe.lines.forEach((line, index) => {
+    const id = idOf(line.ingredient, ingredients);
+    if (id !== null && !rowOfIngredient.has(id)) rowOfIngredient.set(id, index);
+  });
+
   const steps: StepFormValues[] = attempted
     ? stepValuesForRendering(attempted.form)
     : [
@@ -365,6 +375,20 @@ function editorForm(
           text: step.text,
           section: "",
           phase: step.phase ?? "",
+          refs: encodeDraftRefs(
+            step.refs.flatMap((ref) => {
+              const lineIndex = rowOfIngredient.get(ref.ingredientId);
+              // An ingredient that is no longer on the recipe has no row to
+              // point at, so the mention quietly stops being a link.
+              return lineIndex === undefined
+                ? []
+                : [{
+                    lineIndex,
+                    matchedText: ref.matchedText,
+                    approxPosition: ref.approxPosition,
+                  }];
+            }),
+          ),
         })),
         ...Array.from({ length: 2 }, (_, spare) => {
           const index = recipe.steps.length + spare;
@@ -374,6 +398,7 @@ function editorForm(
             text: "",
             section: "",
             phase: "",
+            refs: "",
           };
         }),
       ];
@@ -453,6 +478,7 @@ function editorForm(
               aria-label="Järjestys"
               class="position"
             />
+            <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
             <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
               >${step.text}</textarea
             >
