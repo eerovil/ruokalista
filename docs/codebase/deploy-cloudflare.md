@@ -44,6 +44,31 @@ briefly live without `SESSION_SECRET`, which is the 503 path, not an open one.
 actually deploying — it prints the bindings table (e.g.
 `env.RECIPE_IMAGES (ruokalista-recipe-images) R2 Bucket`) and exits.
 
+## The shopping-list service
+
+`SOSTOSLISTA_API_TOKEN` is the bearer secret of **s-ostoslista-worker**
+(`https://s-ostoslista-worker.eerovil.workers.dev`, repo
+`eerovil/s-ostoslista-client`) — a separate Worker that keeps a D1 copy of one
+S-ryhmä shopping list in two-way sync with the S-ostoslista phone app, on a
+five-minute cron. It lets this app put things on that real list.
+
+It is **not** an S-ryhmä credential. That service holds the app's AppSync key
+and the phone's identity token; ruokalista only ever holds a bearer token for
+the service's own API, so a leak here cannot touch S-ryhmä accounts and is
+rotated with one `wrangler secret put` on either side.
+
+`scripts/save-ostoslista-token.sh` stores it the same way as the Anthropic key —
+`.dev.vars` for local development, a Worker secret for the deployed app — and
+then checks it against the service's `/status`, printing only the bound list id
+and item count.
+
+The service's URL is `SOSTOSLISTA_SERVICE_URL`, a plain var in `wrangler.jsonc`
+rather than a secret. Its API is `GET /products?q=` to search the shop's
+catalogue, `POST /items {"ean"}` or `{"note"}` to add, and
+`DELETE /items?ean=`/`?note=` to remove; product images come from
+`https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which needs no
+auth. Its README documents the rest.
+
 `SESSION_SECRET` is generated during setup and never stored anywhere, so a
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.
