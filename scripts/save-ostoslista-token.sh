@@ -28,7 +28,8 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib-cloudflare.sh
 . ./scripts/lib-cloudflare.sh
 
-# Kept in step with SOSTOSLISTA_SERVICE_URL in wrangler.jsonc. Overridable so
+# The deployed Worker reaches the service over a service binding, so this URL is
+# only for the check below, which runs from this host. Overridable so
 # this can be pointed at a replacement deployment without editing the script.
 service_url="${SOSTOSLISTA_SERVICE_URL:-https://s-ostoslista-worker.eerovil.workers.dev}"
 

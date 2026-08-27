@@ -166,7 +166,7 @@ export async function sendShoppingListForm(
       sent += 1;
     }
   } catch (error) {
-    console.error("S-ostoslista send failed", error);
+    console.error(`S-ostoslista send failed: ${reason(error)}`);
     const progress = sent === 0
       ? "Mitään ei lähetetty."
       : `${sent}/${buy.length} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
@@ -205,7 +205,7 @@ export async function productSearchScreen(
   try {
     products = await client.search(query);
   } catch (error) {
-    console.error("S-ostoslista product search failed", error);
+    console.error(`S-ostoslista product search failed: ${reason(error)}`);
     refused = "S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.";
     status = 502;
   }
@@ -232,7 +232,7 @@ export async function saveProductForm(
   try {
     products = await client.search(query);
   } catch (error) {
-    console.error("S-ostoslista product selection search failed", error);
+    console.error(`S-ostoslista product selection search failed: ${reason(error)}`);
     return productPage(
       member,
       item,
@@ -687,21 +687,45 @@ function selectedBuyItem(
   return buy.find((item) => item.ingredientId === ingredientId) ?? null;
 }
 
+/**
+ * A URL means "call the service over HTTP", which is how the browser tests
+ * reach their fixture. Otherwise the bound Worker is the transport, and the
+ * base URL only has to be a valid absolute URL for the client to resolve paths
+ * against — the binding decides where the request actually goes, so the
+ * hostname below is never resolved.
+ */
+const BOUND_SERVICE_BASE = "https://s-ostoslista-worker.invalid/";
+
 function externalClient(env: RouteContext["env"], member: Member): SOstoslistaClient | null {
   const householdId = Number(env.SOSTOSLISTA_HOUSEHOLD_ID);
   if (!Number.isSafeInteger(householdId) || householdId !== member.householdId) {
     return null;
   }
-  if (!env.SOSTOSLISTA_SERVICE_URL || !env.SOSTOSLISTA_API_TOKEN) return null;
+  if (!env.SOSTOSLISTA_API_TOKEN) return null;
+  const overrideUrl = env.SOSTOSLISTA_SERVICE_URL;
+  const service = env.SOSTOSLISTA_SERVICE;
+  if (!overrideUrl && !service) return null;
   try {
     return new SOstoslistaClient(
-      env.SOSTOSLISTA_SERVICE_URL,
+      overrideUrl || BOUND_SERVICE_BASE,
       env.SOSTOSLISTA_API_TOKEN,
+      overrideUrl || !service
+        ? undefined
+        : (input, init) => service.fetch(input as RequestInfo, init),
     );
   } catch (error) {
-    console.error("S-ostoslista configuration is invalid", error);
+    console.error(`S-ostoslista configuration is invalid: ${reason(error)}`);
     return null;
   }
+}
+
+/**
+ * Workers Logs keeps a thrown Error's stack but not its message, so passing the
+ * error as a second argument to console.error loses the one line that says what
+ * went wrong. Interpolating it is what makes a failure diagnosable from the log.
+ */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
