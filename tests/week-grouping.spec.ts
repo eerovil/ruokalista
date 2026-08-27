@@ -90,17 +90,70 @@ test("a batch spanning three days is one card with three occurrence rows", async
   ]);
   await expect(card.locator(".batch-end")).toHaveText("viimeinen annos");
 
-  // Both cards are anchored on Monday, and neither reappears further down.
+  // Both full cards stay anchored on Monday. Later covered days summarize the
+  // continuing recipes instead of repeating those action surfaces.
   const days = page.locator(".day");
   await expect(days.nth(0).locator(".batch-card")).toHaveCount(2);
   await expect(days.nth(1).locator(".batch-card")).toHaveCount(0);
   await expect(days.nth(2).locator(".batch-card")).toHaveCount(0);
   await expect(page.locator(".batch-card")).toHaveCount(2);
+  await expect(days.nth(0).locator(".continuing-card")).toHaveCount(0);
+
+  const tuesday = days.nth(1);
+  await expect(tuesday.locator(".covered-status")).toHaveText("✓ katettu");
+  await expect(tuesday.locator(".continuing-title")).toHaveText([
+    "Öljykastike",
+    "Kaalilaatikko",
+  ]);
+  await expect(tuesday.locator(".continuing-slots")).toHaveText([
+    "Lounas",
+    "Päivällinen",
+  ]);
+
+  const wednesday = days.nth(2);
+  await expect(wednesday.locator(".covered-status")).toHaveText("✓ katettu");
+  await expect(wednesday.locator(".continuing-row")).toHaveCount(1);
+  await expect(wednesday.locator(".continuing-title")).toHaveText(
+    "Kaalilaatikko",
+  );
+  await expect(wednesday.locator(".continuing-slots")).toHaveText(
+    "Lounas · Päivällinen",
+  );
 
   // The card is still the way into everything you can do to the batch.
   await card.locator(".entry a").click();
   await expect(page).toHaveURL(new RegExp(`/batches/${spanning}$`));
   await expect(page.getByRole("link", { name: "Jatkuu…" })).toBeVisible();
+});
+
+test("two continuing batches of one recipe share one summary row", async ({
+  page,
+}) => {
+  const monday = "2027-02-01";
+  const tuesday = "2027-02-02";
+  const lunches = await createBatch(page, monday, "lunch", 1);
+  const dinners = await createBatch(page, monday, "dinner", 1);
+  await setCoverage(page, lunches, [
+    [monday, "lunch"],
+    [tuesday, "lunch"],
+  ]);
+  await setCoverage(page, dinners, [
+    [monday, "dinner"],
+    [tuesday, "dinner"],
+  ]);
+
+  await page.goto(`/?week=${monday}`);
+  const tuesdaySection = page.locator(".day").nth(1);
+  await expect(tuesdaySection.locator(".continuing-row")).toHaveCount(1);
+  await expect(tuesdaySection.locator(".continuing-title")).toHaveText(
+    "Kaalilaatikko",
+  );
+  await expect(tuesdaySection.locator(".continuing-slots")).toHaveText(
+    "Lounas · Päivällinen",
+  );
+  await expect(tuesdaySection.locator(".covered-status")).toHaveText(
+    "✓ katettu",
+  );
 });
 
 test("the left-hand timeline rail is gone", async ({ page }) => {
@@ -119,26 +172,37 @@ test("the left-hand timeline rail is gone", async ({ page }) => {
 test("a batch open at either visible edge says so instead of ending", async ({
   page,
 }) => {
-  const fromPreviousWeek = await createBatch(page, "2026-12-06", "dinner", 1);
+  const edgeMonday = "2027-03-01";
+  const fromPreviousWeek = await createBatch(page, "2027-02-28", "dinner", 1);
   await setCoverage(page, fromPreviousWeek, [
-    ["2026-12-06", "dinner"],
-    ["2026-12-07", "lunch"],
-    ["2026-12-08", "dinner"],
+    ["2027-02-28", "dinner"],
+    ["2027-03-01", "lunch"],
+    ["2027-03-02", "dinner"],
   ]);
-  const intoNextWeek = await createBatch(page, "2026-12-11", "lunch", 2);
+  const intoNextWeek = await createBatch(page, "2027-03-05", "lunch", 2);
   await setCoverage(page, intoNextWeek, [
-    ["2026-12-11", "lunch"],
-    ["2026-12-12", "lunch"],
-    ["2026-12-13", "dinner"],
-    ["2026-12-14", "lunch"],
+    ["2027-03-05", "lunch"],
+    ["2027-03-06", "lunch"],
+    ["2027-03-07", "dinner"],
+    ["2027-03-08", "lunch"],
   ]);
 
-  await page.goto(`/?week=${MONDAY}`);
+  await page.goto(`/?week=${edgeMonday}`);
 
   const carried = page.locator(`.batch-card[data-batch-id="${fromPreviousWeek}"]`);
-  await expect(carried.locator(".batch-carried")).toHaveText("Kokattu 6.12. · 4 annosta");
+  await expect(carried.locator(".batch-carried")).toHaveText(
+    "Kokattu 28.2. · 4 annosta",
+  );
   await expect(carried.locator(".batch-start")).toHaveCount(0);
   await expect(carried.locator(".batch-end")).toHaveText("viimeinen annos");
+  const days = page.locator(".day");
+  await expect(days.first().locator(".continuing-card")).toHaveCount(0);
+  await expect(days.nth(1).locator(".continuing-title")).toHaveText(
+    "Kaalilaatikko",
+  );
+  await expect(days.nth(1).locator(".continuing-slots")).toHaveText(
+    "Päivällinen",
+  );
 
   const onward = page.locator(`.batch-card[data-batch-id="${intoNextWeek}"]`);
   await expect(onward.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
@@ -163,6 +227,9 @@ test("every day keeps its own add action, with no duplicated wording", async ({
     "+ Lounas",
     "+ Päivällinen",
   ]);
+  await expect(
+    page.locator(".day").nth(1).locator(".slot-actions a"),
+  ).toHaveText(["+ Lounas", "+ Päivällinen"]);
   await monday.locator(".slot-actions a").first().click();
   await expect(page).toHaveURL(/\/picker\?date=2026-12-07&slot=lunch$/);
 });
@@ -305,6 +372,23 @@ test("a long recipe name wraps in the card head instead of being cut off", async
     expect(card.wordOverflow, `card ${card.id} overflows a child box`).toBeLessThanOrEqual(1);
     expect(card.spill, `card ${card.id} spills past its right edge`).toBeLessThanOrEqual(1);
   }
+
+  const continuingOverflow = await page
+    .locator(".day")
+    .nth(1)
+    .locator(".continuing-card")
+    .evaluate((card) => {
+      const title = card.querySelector(".continuing-title")!;
+      const cardBox = card.getBoundingClientRect();
+      return {
+        clipped: card.scrollWidth - card.clientWidth,
+        wordOverflow: title.scrollWidth - title.clientWidth,
+        spill: title.getBoundingClientRect().right - cardBox.right,
+      };
+    });
+  expect(continuingOverflow.clipped).toBeLessThanOrEqual(1);
+  expect(continuingOverflow.wordOverflow).toBeLessThanOrEqual(1);
+  expect(continuingOverflow.spill).toBeLessThanOrEqual(1);
 
   const page_ = await page.evaluate(() => ({
     pageWidth: document.documentElement.scrollWidth,
