@@ -48,3 +48,5 @@ Regenerate after a change that alters a screen:
 | `38-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
 | `39-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |
 | `40-step-mention-all-amounts.png` | Proposed duplicated ingredient mention showing every distinct stated amount inline |
+| `40-shopping-pantry.png` | Proposed shopping list split in two: Ostettavat, then a Löytyy section keeping the cupboard's staples and their amounts |
+| `41-pantry.png` | Proposed cupboard page: only what the household keeps in, each with the way to say it ran out |

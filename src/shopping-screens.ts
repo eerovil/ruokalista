@@ -2,6 +2,13 @@ import { addDays, shortDate, shortDayName, today } from "./dates.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
 import { menuBetween, type PlannedBatch } from "./menu.ts";
+import {
+  PantryRefused,
+  addToPantry,
+  pantryIngredientIds,
+  removeFromPantry,
+  splitByPantry,
+} from "./pantry.ts";
 import type { RouteContext } from "./router.ts";
 import {
   AMOUNT_IN_RECIPE,
@@ -14,14 +21,20 @@ import {
  * `GET /ostoslista` — what the selected cookings need bought.
  *
  * The selection lives in the query string and nowhere else. There is no
- * shopping-list table, no saved basket and no "already have this" state: the
- * screen is a view over the week that was already planned, and reopening it
- * recomputes the default rather than remembering what was ticked last time
- * (issue #123 asks for exactly this and no more).
+ * shopping-list table and no saved basket: the screen is a view over the week
+ * that was already planned, and reopening it recomputes the default rather
+ * than remembering what was ticked last time (issue #123 asks for exactly this
+ * and no more).
  *
- * That also keeps the screen server-rendered. The form is a plain GET form
- * with checkboxes and a submit button, so it works with no JavaScript at all,
- * which is the standing frontend requirement from #65.
+ * The one thing it does read and write is the cupboard (#125) — and that is a
+ * fact about the kitchen, not about this list: adding oregano to the cupboard
+ * here is the same act as adding it on the cupboard's own screen, and it
+ * outlives this trip. Nothing about a particular trip is stored either way.
+ *
+ * That also keeps the screen server-rendered. The picker is a plain GET form
+ * with checkboxes and a submit button, and each cupboard button is a small
+ * POST form, so the screen works with no JavaScript at all, which is the
+ * standing frontend requirement from #65.
  */
 
 /** How far ahead there is anything to shop for. */
@@ -47,6 +60,7 @@ const CHOSEN = "valittu";
 export async function shoppingScreen(
   { env, url }: RouteContext,
   member: Member,
+  refused: string | null = null,
 ): Promise<Response> {
   const from = today();
   const to = addDays(from, WINDOW_DAYS - 1);
@@ -60,9 +74,16 @@ export async function shoppingScreen(
   const selectedIds = chosenIds(url, cookings, from);
   const selected = cookings.filter((batch) => selectedIds.has(batch.id));
 
-  const items = shoppingList(
-    await shoppingLinesFor(env.DB, member.householdId, [...selectedIds]),
-  );
+  const [lines, inPantry] = await Promise.all([
+    shoppingLinesFor(env.DB, member.householdId, [...selectedIds]),
+    pantryIngredientIds(env.DB, member.householdId),
+  ]);
+
+  // The cupboard is applied after the totals are added up, not before: an
+  // ingredient the household already has is still part of what the cooking
+  // needs, it is just not part of what the trip has to buy. Both sections keep
+  // the amounts and the breakdown #123 worked out (#125).
+  const { buy, atHome } = splitByPantry(shoppingList(lines), inPantry);
 
   const heading = headingFor(selected);
 
@@ -70,6 +91,7 @@ export async function shoppingScreen(
     heading,
     html`<h1>${heading}</h1>
       ${picker(cookings, selectedIds)}
+      ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
       ${cookings.length === 0
         ? html`<div class="nothing">
             <p class="empty">Seuraavan kahden viikon aikana ei kokata mitään.</p>
@@ -79,10 +101,67 @@ export async function shoppingScreen(
           ? html`<p class="empty">
               Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
             </p>`
-          : itemList(items)}`,
+          : sections(buy, atHome, selectedIds)}`,
     "shopping",
     member,
+    refused === null ? 200 : 400,
   );
+}
+
+/**
+ * `POST /ostoslista/kaappi` — the cupboard, changed from the list itself.
+ *
+ * The list is where somebody notices that they never actually buy oregano, so
+ * this is the way the cupboard grows. The selected cookings ride along as
+ * hidden fields and are rebuilt into the redirect, so the member lands back on
+ * the same list they were reading with the row moved between its sections —
+ * not on a default list they have to re-tick.
+ */
+export async function shoppingPantryForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const form = await ctx.request.formData();
+  const ingredientId = Number(form.get("aines"));
+  const removing = form.get("toiminto") === "poista";
+
+  try {
+    if (removing) {
+      await removeFromPantry(ctx.env.DB, member.householdId, ingredientId);
+    } else {
+      await addToPantry(
+        ctx.env.DB,
+        member.householdId,
+        member.id,
+        ingredientId,
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof PantryRefused)) throw error;
+    return shoppingScreen(
+      { ...ctx, url: new URL(`/ostoslista?${selectionQuery(form)}`, ctx.url) },
+      member,
+      error.message,
+    );
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/ostoslista?${selectionQuery(form)}` },
+  });
+}
+
+/**
+ * The selection the form carried, re-serialised from integers we checked
+ * ourselves. Nothing the browser sent is echoed into the redirect as-is.
+ */
+function selectionQuery(form: FormData): string {
+  const query = new URLSearchParams({ [CHOSEN]: "1" });
+  for (const value of form.getAll(CHOICE)) {
+    const id = Number(value);
+    if (Number.isSafeInteger(id)) query.append(CHOICE, String(id));
+  }
+  return query.toString();
 }
 
 /**
@@ -176,13 +255,49 @@ const rawOpen = raw("open");
 const rawChecked = raw("checked");
 
 /**
- * One row per ingredient, each one openable to say where its total came from.
+ * The list in two parts: what to buy, then what the cupboard already covers.
+ *
+ * The second part is not a footnote about rows that were removed — they are
+ * still the week's ingredients, with the same totals and the same breakdown.
+ * It only answers a different question: this one you have (#125). A list that
+ * silently dropped them would be indistinguishable from one that forgot them,
+ * and the household would find out at the hob.
+ */
+function sections(
+  buy: ShoppingItem[],
+  atHome: ShoppingItem[],
+  selectedIds: Set<number>,
+): Raw {
+  // With nothing in the cupboard there is only one list, and a lone
+  // "Ostettavat" heading under a heading that already says Ostoslista is a
+  // word for its own sake.
+  if (atHome.length === 0) return itemList(buy, selectedIds, false);
+
+  return html`<h2 class="shopping-section">Ostettavat</h2>
+    ${buy.length === 0
+      ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
+      : itemList(buy, selectedIds, false)}
+    <h2 class="shopping-section">Löytyy</h2>
+    <p class="empty">
+      Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
+      <a href="/kaappi">kaapissa</a>.
+    </p>
+    ${itemList(atHome, selectedIds, true)}`;
+}
+
+/**
+ * One row per ingredient, each one openable to say where its total came from
+ * and to move it in or out of the cupboard.
  *
  * A `<details>` rather than a script: the breakdown is the answer to "why does
  * it say five", and that answer should not depend on the browser being able to
  * run anything.
  */
-function itemList(items: ShoppingItem[]): Raw {
+function itemList(
+  items: ShoppingItem[],
+  selectedIds: Set<number>,
+  inPantry: boolean,
+): Raw {
   if (items.length === 0) {
     return html`<p class="empty">Valituissa aterioissa ei ole aineksia.</p>`;
   }
@@ -216,8 +331,38 @@ function itemList(items: ShoppingItem[]): Raw {
               </li>`,
             )}
           </ul>
+          ${pantryButton(item, selectedIds, inPantry)}
         </details>
       </li>`,
     )}
   </ul>`;
+}
+
+/**
+ * The one thing a shopping-list row can be told: we always have this, or we
+ * have run out of it. It sits inside the opened row rather than on the summary
+ * line, because the summary is what somebody reads while shopping and a button
+ * per line would compete with the amounts.
+ */
+function pantryButton(
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+  inPantry: boolean,
+): Raw {
+  return html`<form
+    method="post"
+    action="/ostoslista/kaappi"
+    class="inline pantry-action"
+  >
+    <input type="hidden" name="aines" value="${item.ingredientId}" />
+    ${inPantry
+      ? html`<input type="hidden" name="toiminto" value="poista" />`
+      : ""}
+    ${[...selectedIds].map(
+      (id) => html`<input type="hidden" name="${CHOICE}" value="${id}" />`,
+    )}
+    <button type="submit">
+      ${inPantry ? "Poista kaapista" : "Löytyy jo kaapista"}
+    </button>
+  </form>`;
 }

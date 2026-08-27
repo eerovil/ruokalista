@@ -124,6 +124,9 @@ async function ingredientList(
       Talouden yhteinen sanasto. Kaksi lähes samaa nimeä vierekkäin on merkki
       siitä, että toinen kannattaa nimetä uudelleen.
     </p>
+    <!-- The cupboard is a short list of these same ingredients, so this is the
+         screen it hangs off; it has no tab of its own (#125). -->
+    <p><a href="/kaappi">Kaapin ainekset</a></p>
     ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
     ${ingredients.length === 0
       ? html`<p class="empty">

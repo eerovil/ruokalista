@@ -23,6 +23,7 @@ const TABLES: readonly BackupTableName[] = [
   "ingredient_line",
   "planned_batch",
   "batch_occurrence",
+  "pantry_entry",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -106,6 +107,31 @@ test("orphan and duplicate batch occurrences are rejected", async () => {
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(invalid)),
     /duplicate batch occurrence/,
+  );
+});
+
+test("orphan and duplicate pantry entries are rejected", async () => {
+  const snapshot = await validSnapshot();
+  let unsigned = unsignedOf(snapshot);
+  unsigned.tables.pantry_entry[0]!.ingredient_id = 999;
+  let invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /orphan pantry_entry\.ingredient_id=999/,
+  );
+
+  // Two answers for one ingredient is not a pantry, it is a disagreement — the
+  // table's UNIQUE says so and a restore must not be the way around it.
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.pantry_entry.push({
+    ...unsigned.tables.pantry_entry[0]!,
+    id: 2,
+  });
+  unsigned.row_counts.pantry_entry += 1;
+  invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /duplicate pantry entry/,
   );
 });
 
@@ -249,6 +275,18 @@ async function validSnapshot() {
     ],
     batch_occurrence: [
       { batch_id: 1, date: "2026-08-25", slot: "dinner" },
+    ],
+    pantry_entry: [
+      {
+        id: 1,
+        household_id: 1,
+        ingredient_id: 1,
+        state: "unlimited",
+        quantity: null,
+        quantity_unit: null,
+        added_at: "2026-08-25 00:00:00",
+        added_by: 1,
+      },
     ],
   } satisfies BackupSnapshotUnsigned["tables"];
 

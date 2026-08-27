@@ -33,7 +33,7 @@ try {
     "--persist-to",
     sourceState,
     "--command",
-    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch')",
+    "INSERT INTO planned_batch (id, household_id, recipe_id, portions, created_at, created_by) VALUES (1, 1, 3, 6, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1)",
   ]);
 
   const snapshot = await captureSnapshot(sourceState);
@@ -78,6 +78,14 @@ try {
     { batch_id: 1, date: "2026-08-26", slot: "lunch" },
   ])) {
     throw new Error("round-trip did not preserve batch occurrences");
+  }
+  const pantry = target.pantry_entry[0];
+  if (
+    pantry?.ingredient_id !== 1 ||
+    pantry.state !== "unlimited" ||
+    pantry.quantity !== null
+  ) {
+    throw new Error("round-trip did not preserve the pantry entry");
   }
 
   console.log(`restore round-trip ok: sha256=${snapshot.sha256}`);
