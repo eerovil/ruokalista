@@ -68,9 +68,9 @@ export interface LineRowOptions {
   /** Show cooking phase for content belonging to a multipart dish itself. */
   phases?: boolean;
   /**
-   * The recipe editor's row (issue #128): the ingredient, the amount's number
-   * and the remove box on the row itself, and everything else — the unit
-   * included — one tap down.
+   * The recipe editor's row (issue #128): the ingredient, the amount's number,
+   * its unit as read-only context, and the remove box on the row itself. The
+   * unit's editable field and everything else stay one tap down.
    *
    * Off by default, so the intake correction screen keeps the row it has. The
    * two screens are asking different questions: intake is checking a whole
@@ -96,9 +96,10 @@ export interface LineRowOptions {
  * of them already carries a value, so a recipe that genuinely uses one is never
  * quietly hiding it — including on a re-render after a refusal.
  *
- * The unit is deliberately not one of them even on a compact row, where it does
- * sit behind the disclosure: almost every line has a unit, so counting it would
- * open every row and there would be nothing compact left.
+ * The unit is deliberately not one of them even on a compact row. Its value is
+ * visible beside the amount, while its editable field stays behind the
+ * disclosure; counting it would open almost every row and there would be
+ * nothing compact left.
  */
 function hasUncommonValues(
   values: LineFormValues,
@@ -186,11 +187,14 @@ export function lineRow(
       : ""}
 
     ${compact
-      ? // Issue #128: which ingredient, how much of it, and away with it. Those
-        // are the three things somebody opens a saved recipe to change, so they
-        // are the whole row and the unit goes down with the rest.
+      ? // Keep the unit visible as context while leaving unit editing with the
+        // less common fields under the disclosure.
         html`<div class="line-main">
-          ${picker} ${quantityBox} ${removeBox}
+          ${picker} ${quantityBox}
+          ${values.unit.trim() === ""
+            ? ""
+            : html`<span class="line-unit">${values.unit}</span>`}
+          ${removeBox}
         </div>`
       : // The common path: how much, of what. Everything else is one tap down.
         html`<div class="amounts">
