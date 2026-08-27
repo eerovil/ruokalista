@@ -54,6 +54,38 @@ async function expectAllMentionAmounts(
   }
 }
 
+test("the recipe-wide toggle follows the preparation instructions", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  const placement = await page.evaluate(() => {
+    const label = document.querySelector(".reveal-all-label");
+    const steps = [...document.querySelectorAll(".steps")];
+    const ingredients = [...document.querySelectorAll("h3")].find(
+      (heading) => heading.textContent?.trim() === "Ainekset",
+    );
+    const finalSteps = steps[steps.length - 1];
+
+    if (!label || !ingredients || !finalSteps) {
+      return { afterIngredients: false, afterInstructions: false };
+    }
+
+    return {
+      afterIngredients: Boolean(
+        ingredients.compareDocumentPosition(label) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      afterInstructions: finalSteps.nextElementSibling === label,
+    };
+  });
+
+  expect(placement).toEqual({
+    afterIngredients: true,
+    afterInstructions: true,
+  });
+});
+
 test("a mention starts closed and opens on a tap", async ({ page }) => {
   await page.goto("/recipes/1");
 

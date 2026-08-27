@@ -23,7 +23,7 @@ Regenerate after a change that alters a screen:
 | `08-correct.png` | Check and correct, with the new ingredient marked |
 | `09-gate-refused.png` | The approval gate refusing a save |
 | `10-recipes-search.png` | Search results |
-| `11-editor.png` | The recipe editor, with source text read-only below |
+| `11-editor.png` | The recipe editor: proposed compact ingredient rows and the always-visible `+ Lisää aines` |
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
 | `14-scaled.png` | The same lasagne planned for 8, amounts rounded for a kitchen |
@@ -56,5 +56,6 @@ Regenerate after a change that alters a screen:
 | `45-admin-household-after-removal.png` | Proposed household after an established member is removed — no refusal, and the household stands |
 | `46-recipes-after-removal.png` | Proposed recipe list after that removal: the recipes are still there and still credited to the person who wrote them |
 | `47-admin-member-sub-refused.png` | Proposed refusal of something that is not a Google identifier — the contract the removed-member tombstone is kept outside of |
+| `47-editor-remove-mentioned.png` | Proposed refusal when a linked row is repointed and removed together but the step still names its saved ingredient, with the step quoted and the forced-removal escape hatch |
 | `48-step-mentions-all-open.png` | Proposed recipe-wide amount toggle with every ingredient amount revealed in the preparation sentences |
 | `49-covered-days.png` | Proposed covered days: two recipes continuing into Tuesday, one covering both of Wednesday's meals, `katettu` in each heading and both add links still there (not full-page, on purpose) |

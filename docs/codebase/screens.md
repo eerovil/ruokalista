@@ -135,6 +135,39 @@ is the same ingredients seen another way, and off the `Löytyy` section itself.
 The split rule is `src/pantry.ts::splitByPantry`, tested directly in
 `dev/check-pantry.ts`.
 
+## The recipe editor's ingredient rows
+
+This pull request proposes reshaping the recipe editor's ingredient rows around
+the four things somebody opens a saved recipe to do (#128): pick the ingredient,
+change the amount's number, remove the line, and add one. Those four are on the
+row itself; everything else — the unit included — moves behind the row's own
+`Lisää asetuksia` disclosure.
+
+`lineRow`/`lineRows` in `src/line-form.ts` are shared with the intake correction
+screen, so the change arrives as an option (`LineRowOptions.compact`) that only
+`src/recipe-editor.ts` passes. Intake keeps the row it has: it is checking a
+whole import line by line against the text it came from, and the unit is part of
+what is being checked. Without the option the markup is unchanged.
+
+Two things follow from making removal a one-tap action:
+
+- **The editor has no spare rows.** `+ Lisää aines` is always visible at the end
+  of the list and is a plain submit button, not a script: it posts the form,
+  `saveEditForm` sees `addLine`, and the screen comes back with one more row and
+  everything typed so far still in it. The new row's picker gets `autofocus`, so
+  the browser scrolls to it instead of dropping the member at the top. Because
+  that button is now the first submit button on the form, the form also carries
+  an off-screen copy of the save button ahead of it (`.default-submit`), so
+  pressing Enter in a text field still saves.
+- **A removal that would orphan a step's mention is refused.**
+  `src/line-removal.ts::removalConflicts` asks the ingredient↔step anchors from
+  #120 — not the raw text — whether any step still names the ingredient being
+  removed, ignoring links whose wording the member has already edited away and
+  ingredients another row still carries. The refusal quotes the steps at fault
+  above the method, and `Poista silti` is a separate button inside that block
+  that forces it through. The rule is pure and tested in
+  `dev/check-line-removal.ts`.
+
 ### Server-rendered inline script islands
 
 Three screens ship a hand-written `<script>` rather than a build step, and all

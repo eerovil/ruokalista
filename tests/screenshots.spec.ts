@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
 import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
-import { openDraftEditor } from "./support/lines";
+import { addIngredientRow, openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -224,8 +224,17 @@ test.describe("signed in", () => {
     const vesi = page
       .locator(".steps .mention")
       .filter({ has: page.locator(".mention-word", { hasText: "vesi" }) });
+    const revealAll = page.locator(".reveal-all-label");
 
     await expect(kaali.locator(".mention-amount")).toBeHidden();
+    await expect(revealAll).toBeVisible();
+    const methodBox = await page.locator(".steps").last().boundingBox();
+    const toggleBox = await revealAll.boundingBox();
+    expect(methodBox).not.toBeNull();
+    expect(toggleBox).not.toBeNull();
+    expect(toggleBox!.y).toBeGreaterThanOrEqual(
+      methodBox!.y + methodBox!.height,
+    );
     await page.screenshot({
       path: `${SHOTS}/38-step-mentions-closed.png`,
       fullPage: true,
@@ -467,6 +476,34 @@ test.describe("signed in", () => {
     await page.goto("/recipes/1/edit");
     await expect(page.locator(".line").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/11-editor.png`, fullPage: true });
+  });
+
+  test("a removal the steps still argue with", async ({ page }) => {
+    await page.goto("/recipes/1/edit");
+    // A fifth row asked for by hand, so the shot shows the add button having
+    // done its job as well as the row it makes.
+    await addIngredientRow(page);
+    await page.locator(".line").nth(4).locator("select").selectOption({
+      label: "ananas",
+    });
+    await page.locator(".line").nth(4).locator("input[name$=quantity]").fill("1");
+
+    // The saved row is sitruunaruoho. Even if it is repointed on the same
+    // submit, removing it is refused because the last step still names the
+    // saved ingredient.
+    const linked = page.locator(".line").nth(3);
+    await linked.locator("select").selectOption({ label: "valkokaali" });
+    await linked.locator("input[name$=remove]").check();
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+    await expect(page.locator(".line-conflicts")).toContainText("Vaihe 3");
+    await expect(page.locator(".refused")).toContainText("sitruunaruoho");
+    await expect(linked.locator("select")).toHaveValue("3");
+    await expect(page.getByRole("button", { name: "Poista silti" })).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/47-editor-remove-mentioned.png`,
+      fullPage: true,
+    });
   });
 
   test("confirming a deletion", async ({ page }) => {

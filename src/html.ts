@@ -485,6 +485,46 @@ const STYLES = `
     color: var(--accent); font-size: .9rem; font-weight: 600;
   }
   .amounts .qty { flex: 0 0 6rem; }
+
+  /* The editor's compact ingredient row (issue #128): what it is, how much of
+     it, and away with it, all on one line. The picker takes the slack because
+     it is the field holding a word rather than a number. */
+  .line.is-compact { padding: .5rem 0; }
+  .line-main { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+  .line-main select { flex: 1 1 9rem; min-width: 0; margin: 0; }
+  .line-main .qty { flex: 0 0 5rem; margin: 0; }
+  .line-main .remove { flex: 0 0 auto; }
+  .add-line { margin: .75rem 0 1rem; }
+  .add-line button {
+    min-height: var(--tap); width: 100%;
+    color: var(--accent); background: var(--surface);
+    border: 1px dashed var(--accent); font-weight: 600;
+  }
+
+  /* Off screen, not display:none — a submit button the browser has thrown away
+     cannot be the one that answers Enter, which is this button's whole job. */
+  .default-submit {
+    position: absolute; width: 1px; height: 1px; min-height: 0;
+    padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0);
+  }
+
+  .line-conflicts {
+    padding: .7rem .8rem; margin: 0 0 1rem;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-left-width: 4px; border-radius: var(--radius);
+  }
+  .line-conflicts h3 { margin: 0 0 .4rem; font-size: 1rem; }
+  .line-conflicts p { margin: .4rem 0; font-size: .9rem; }
+  /* Each entry says "Vaihe 3" itself, so a list marker would number the
+     numbers. */
+  .mention-steps { margin: .3rem 0 .6rem; padding-left: 0; list-style: none; }
+  .mention-steps .step-number {
+    display: block; color: var(--muted); font-size: .75rem;
+  }
+  .mention-steps .step-text { display: block; font-size: .9rem; }
+  .force-remove { display: flex; flex-wrap: wrap; gap: .5rem;
+    align-items: center; }
+  .force-remove .empty { flex: 1 1 12rem; font-size: .75rem; }
   .badge.is-decision {
     color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
     font-weight: 600;
