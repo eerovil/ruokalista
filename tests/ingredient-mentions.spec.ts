@@ -92,10 +92,15 @@ test("tapping again hides it, and mentions toggle independently", async ({
   await expect(oljy.locator(".mention-amount")).toBeVisible();
 });
 
-test("one keyboard toggle layers every amount over individual choices", async ({
+test("one keyboard toggle reveals and then truly hides every amount", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+
+  // Hide-all must clear state that predates the global control too.
+  const kaali = mention(page, "kaali");
+  await kaali.locator("label").click();
+  await expect(kaali.locator(".mention-amount")).toBeVisible();
 
   const revealAllByName = page.getByRole("checkbox", {
     name: "Näytä kaikki määrät",
@@ -111,13 +116,12 @@ test("one keyboard toggle layers every amount over individual choices", async ({
   await expectAllMentionAmounts(page, true);
   await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
 
-  // An individual choice remains its own state even while the global layer
-  // already makes every amount visible.
-  const kaali = mention(page, "kaali");
-  await kaali.locator("label").click();
   await revealAll.press("Space");
-  await expect(kaali.locator(".mention-amount")).toBeVisible();
-  await expect(mention(page, "öljyssä").locator(".mention-amount")).toBeHidden();
+  await expect(revealAll).not.toBeChecked();
+  await expectAllMentionAmounts(page, false);
+  await expect(page.locator(".mention-toggle:checked")).toHaveCount(0);
+  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+    .toBeVisible();
 });
 
 test("one toggle covers a multipart dish and survives back-forward restore", async ({

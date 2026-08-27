@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, type Raw } from "./html.ts";
+import { html, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
   resolveMentions,
@@ -591,6 +591,7 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
 
     ${keepAwake()}
     ${MENTION_STYLE}
+    ${canRevealAmounts ? html`<script>${raw(REVEAL_ALL_ISLAND)}</script>` : ""}
 
     <p class="recipe-edit">
       <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
@@ -663,6 +664,24 @@ const MENTION_STYLE = html`<style>
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;
   }
 </style>`;
+
+/* Deliberately ES5 syntax: this string reaches browsers without transpilation. */
+const REVEAL_ALL_ISLAND = `
+(function () {
+  var revealAll = document.getElementById('reveal-all-amounts');
+  if (
+    !revealAll ||
+    typeof revealAll.addEventListener !== 'function' ||
+    typeof document.querySelectorAll !== 'function'
+  ) return;
+
+  revealAll.addEventListener('change', function () {
+    var mentions = document.querySelectorAll('.mention-toggle');
+    for (var index = 0; index < mentions.length; index += 1) {
+      mentions[index].checked = revealAll.checked;
+    }
+  });
+}());`;
 
 async function loadRequested(
   db: D1Database,
