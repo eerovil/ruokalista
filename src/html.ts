@@ -495,6 +495,65 @@ const STYLES = `
   }
   .recipe-image-editor { margin: 0 0 1.5rem; }
   .recipe-image-editor h2 { margin: 0 0 .5rem; }
+  /* ------------------------------------------------------ the shopping list */
+
+  /* Which meals are in the list, folded away: the list itself is what somebody
+     opened the screen to read. */
+  .shopping-picker { margin: 0 0 1.25rem; padding: 0 .8rem;
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: var(--radius); }
+  .shopping-picker > summary {
+    display: flex; align-items: center; gap: .5rem;
+    min-height: var(--tap); cursor: pointer; font-weight: 600;
+  }
+  .shopping-picker > summary .meta { margin-left: auto; font-weight: 400; }
+  .shopping-picker form.stacked { margin: 0; padding-bottom: .8rem; }
+  .shopping-picker button { width: 100%; }
+  /* form.stacked's global "label { display: block }" would stack the tick box
+     above its own meal, so this has to be scoped to the row, exactly as the
+     admin image list found out. */
+  .shopping-meals li label {
+    display: flex; align-items: center; gap: .7rem;
+    min-height: var(--tap); padding: .35rem 0; margin: 0;
+    font-weight: 400; cursor: pointer;
+    border-top: 1px solid var(--edge);
+  }
+  .shopping-meals li input { flex: none; min-height: 0;
+    width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
+  .shopping-meal { display: flex; flex-direction: column; min-width: 0;
+    overflow-wrap: break-word; }
+  .shopping-meal-title { font-weight: 600; }
+
+  .shopping-list > li { border-bottom: 1px solid var(--edge); }
+  .shopping-item > summary {
+    display: flex; align-items: baseline; gap: .75rem;
+    min-height: var(--tap); padding: .35rem 0; cursor: pointer;
+    list-style: none;
+  }
+  .shopping-item > summary::-webkit-details-marker { display: none; }
+  /* Nothing else says these rows open, the same problem the ingredient list
+     solved with a chevron. */
+  .shopping-item > summary::after {
+    content: "›"; color: var(--muted); font-size: 1.1rem; line-height: 1;
+    transition: transform .1s;
+  }
+  .shopping-item[open] > summary::after { transform: rotate(90deg); }
+  .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  .shopping-item[open] .shopping-name { font-weight: 600; }
+  .shopping-total { font-weight: 600; font-variant-numeric: tabular-nums;
+    text-align: right; }
+  /* An amount the recipe never gave a number to is not a quantity, so it does
+     not get a quantity's weight. */
+  .shopping-total.is-unstated { font-weight: 400; color: var(--muted);
+    font-size: .85rem; }
+  .shopping-from { margin: 0 0 .6rem; padding-left: .7rem;
+    border-left: 3px solid var(--edge); }
+  .shopping-from li { display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: .5rem; padding: .3rem 0; font-size: .9rem; }
+  .shopping-from-what { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  .shopping-from-amount { font-variant-numeric: tabular-nums; }
+  .shopping-from .source { flex-basis: 100%; margin: 0; }
+
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;
     color: var(--warn); font-size: .9rem;
@@ -514,6 +573,7 @@ const STYLES = `
  */
 export type Shell =
   | "week"
+  | "shopping"
   | "recipes"
   | "intake"
   | "ingredients"
@@ -525,6 +585,16 @@ const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
     href: "/",
     label: "Viikko",
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>`,
+  },
+  {
+    // Next to the week on purpose: the list is a reading of the week, and the
+    // shop is the next thing that happens after the week is planned.
+    shell: "shopping",
+    href: "/ostoslista",
+    label: "Ostokset",
+    // A trolley, not a basket: the Ainekset tab is already a jar-shaped
+    // container, and two containers side by side read as the same tab twice.
+    icon: `<circle cx="9.5" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.5 10.2a1.5 1.5 0 0 0 1.5 1.1h7.6a1.5 1.5 0 0 0 1.5-1.2L20 8H6"/>`,
   },
   {
     shell: "recipes",
