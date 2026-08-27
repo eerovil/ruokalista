@@ -46,6 +46,10 @@ fail if somebody widens this.
 The local D1 database is keyed by the `database_id` in `wrangler.jsonc`. Change
 that id and local dev silently points at a different, empty database — the
 symptom is `no such table: member`. Re-run `migrate:local` and `seed:local`.
+This change makes the browser suite handle the schema half itself: before its
+`wrangler dev` starts, `tests/support/local-d1.ts::ensureLocalD1()` applies the
+existing migrations to this worktree's local persistence. Per-spec reseeding
+remains separate and supplies the browser fixtures.
 
 ## What counts as "local" — and why it's wider than loopback
 
@@ -80,19 +84,23 @@ returned `true`.
 `.dev.vars` is gitignored and is not carried by `git worktree add`, so a fresh
 agent worktree for this repo starts with none. The browser suite's own fixup,
 `tests/support/dev-vars.ts::ensureDevVars()` (called from `playwright.config.ts`
-before `wrangler dev` starts), only fills in blanks in a file that already
-exists — it does not create the file. With zero `.dev.vars`, the first failure
-is an unrelated-looking `ENOENT: no such file or directory, open
-'/app/.dev.vars'` out of `tests/support/session.ts::sessionSecret()`, not a
-clear "run this setup step" message. Copy `.dev.vars.example` to `.dev.vars` in
-every new worktree before running local D1 commands or the Playwright
-`webServer`.
+before `wrangler dev` starts), creates the file when it is absent as well as
+filling blank required values. Copying `.dev.vars.example` is still useful for
+ordinary development, but it is not a browser-suite prerequisite.
 
 `ensureDevVars()` only fills `SESSION_SECRET`, `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET` when they're blank — a real value already in
 `.dev.vars` (e.g. because somebody signs in with Google locally) is left
 alone, and `ANTHROPIC_API_KEY` is never touched. See
 [testing](docs/codebase/testing.md) for how the browser suite uses this.
+
+A fresh worktree's local D1 persistence is separate from `.dev.vars`. With the
+bootstrap introduced here, the Playwright config migrates that database before
+starting its server; it does not share mutable D1 state with another worktree.
+A cold first Wrangler boot can still exceed Playwright's 120-second server
+timeout even after migration succeeds. In that case, use the detached-server
+workaround in [testing](docs/codebase/testing.md); that startup delay is
+distinct from an unmigrated database returning a degraded `/health` response.
 
 ## A parameter-property constructor can break a `dev/*.ts` check
 
