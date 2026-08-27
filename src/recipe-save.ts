@@ -34,6 +34,16 @@ export interface LineToSave {
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
   phase: RecipePhase;
+  /**
+   * Which row of the draft or form this line came from.
+   *
+   * A step's mention points at a line by this number, and it has to be the
+   * row's own identity rather than a place in the array: `readLines` drops
+   * removed rows and sorts what is left by the position boxes, so a member who
+   * reorders or removes one line on the review screen moves every later line's
+   * array index out from under the mentions pointing at them.
+   */
+  formIndex: number;
 }
 
 export interface StepToSave {
@@ -42,9 +52,9 @@ export interface StepToSave {
   phase: RecipePhase;
   /**
    * Ingredient mentions in `text`, pointing at this recipe's lines by their
-   * index in `lines` (issue #120). Ingredient ids do not exist yet on an
-   * import, so the index is the only identity a draft or a form can carry;
-   * `childrenOf` turns it into one at the moment the ids are known.
+   * `formIndex` (issue #120). Ingredient ids do not exist yet on an import, so
+   * the row is the only identity a draft can carry; `childrenOf` turns it into
+   * one at the moment the ids are known.
    */
   refs: DraftIngredientRef[];
 }
@@ -259,7 +269,7 @@ function childrenOf(
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
     .forEach((step, index) => {
-      const refs = serializeStepRefs(resolveStepRefs(step, lines, ownLines));
+      const refs = serializeStepRefs(resolveStepRefs(step, ownLines));
 
       if (guard === undefined) {
         statements.push(
@@ -372,50 +382,73 @@ function childrenOf(
  * "leave it unlinked rather than link the wrong thing" rule the resolver
  * follows on the way out.
  *
- * A reference is also dropped when the row it points at no longer holds the
- * ingredient the reference was made against. An index says where a line sits on
- * the form, not which ingredient it is, and repointing a row pulls those two
- * apart: a member who changes a line from tomato to paprika and leaves the step
- * saying "tomaatit" must not end up with paprika's amount hiding behind that
- * word. Renaming an ingredient keeps its id and so keeps its mentions, which is
- * the right half of the same rule.
+ * A mention names an **ingredient**, so a reference the editor rebuilt is asked
+ * about the ingredient and not about the row it happened to be anchored to.
+ * The editor has to hang a saved mention on some row to put it in the form, and
+ * with a duplicated ingredient it picks the first one — but that row is only a
+ * handle. If a member repoints it and another row still carries the ingredient,
+ * the mention is still true and the screen still has an amount to reveal, so it
+ * survives. It goes only when this step's own recipe row has no line with that
+ * ingredient left at all.
  *
- * `expectedIngredientId` is null on an import, where no id existed to expect,
- * and such a reference is never dropped on this account.
+ * That covers the repointing case the guard was added for: change the only
+ * tomato line to paprika and a step saying "tomaatit" has nothing to name, so
+ * it goes back to being plain text rather than revealing paprika's amount.
+ * Renaming an ingredient keeps its id and so keeps its mentions, which is the
+ * right half of the same rule.
+ *
+ * A reference from an import has no `expectedIngredientId` — no id existed yet
+ * — so it is resolved through the row it points at, matched by `formIndex`
+ * rather than by array position, since `readLines` has already dropped removed
+ * rows and re-sorted the rest by their position boxes.
  *
  * Two mentions of the same ingredient in one step are both kept: they are
  * different words in different places, and each toggles on its own.
  */
 function resolveStepRefs(
   step: StepToSave,
-  lines: ResolvedLine[],
   ownLines: ResolvedLine[],
 ): StepIngredientRef[] {
   const refs: StepIngredientRef[] = [];
 
   for (const ref of step.refs) {
-    const target = lines[ref.lineIndex];
-    if (target === undefined) continue;
-
-    // Not being in `ownLines` at all is the cross-part case: the line went to a
-    // different recipe row than the step did.
-    if (!ownLines.includes(target)) continue;
-
-    if (
-      ref.expectedIngredientId !== null &&
-      ref.expectedIngredientId !== target.ingredientId
-    ) {
-      continue;
-    }
+    const ingredientId = ingredientForRef(ref, ownLines);
+    if (ingredientId === null) continue;
 
     refs.push({
-      ingredientId: target.ingredientId,
+      ingredientId,
       matchedText: ref.matchedText,
       approxPosition: ref.approxPosition,
     });
   }
 
   return refs;
+}
+
+/**
+ * The ingredient a reference names once the form has been read, or null when it
+ * no longer names one this step can show.
+ *
+ * `ownLines` is this step's own recipe row, which is what makes the cross-part
+ * rule fall out rather than needing its own check: a line that went to a
+ * different part of the dish is not in here, so a reference to it resolves to
+ * nothing.
+ */
+function ingredientForRef(
+  ref: DraftIngredientRef,
+  ownLines: ResolvedLine[],
+): number | null {
+  if (ref.expectedIngredientId !== null) {
+    const stillHere = ownLines.some(
+      (entry) => entry.ingredientId === ref.expectedIngredientId,
+    );
+    return stillHere ? ref.expectedIngredientId : null;
+  }
+
+  const target = ownLines.find(
+    (entry) => entry.line.formIndex === ref.lineIndex,
+  );
+  return target?.ingredientId ?? null;
 }
 
 function ingredientStatements(

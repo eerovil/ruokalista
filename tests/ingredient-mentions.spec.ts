@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
+import {
+  ANCHOR_REPOINT_DRAFT,
+  DUPLICATE_AMOUNT_DRAFT,
+  REMOVED_LINE_DRAFT,
+  stubStructuring,
+} from "./support/draft";
+import { openDraftEditor, openMore } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -197,6 +203,85 @@ test("duplicate ingredient lines reveal all useful amounts before and after an e
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
   expect(await bothAmounts()).toEqual(["2 rkl / 1 dl", "2 rkl / 1 dl"]);
+});
+
+/** Import a stubbed draft and save it as it stands. Returns the recipe's URL. */
+async function importAndSave(
+  page: import("@playwright/test").Page,
+  draft: unknown,
+  title: string,
+): Promise<string> {
+  await stubStructuring(page, draft);
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill(title);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  return page.url();
+}
+
+/**
+ * The editor has to hang a saved mention on some row to put it in the form, and
+ * with a duplicated ingredient it picks the first one. That row is a handle,
+ * not the mention's identity: repoint it while another row still carries the
+ * ingredient and the mention is still true, so it has to survive.
+ */
+test("repointing the row a mention was anchored to keeps the mention alive", async ({
+  page,
+}) => {
+  await importAndSave(page, ANCHOR_REPOINT_DRAFT, "Paistetut perunat");
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  const recipe = page.url();
+
+  const oil = mention(page, /^öljyssä$/);
+  await oil.locator("label").click();
+  await expect(oil.locator(".mention-amount")).toHaveText("2 rkl / 1 dl");
+
+  // Row 0 is the first öljy line and the one the editor anchors to. Point only
+  // that row somewhere else; the 1 dl öljy row is left exactly as it was.
+  await page.goto(`${recipe}/edit`);
+  await page.locator('select[name="line.0.ingredient"]').selectOption({
+    label: "jauheliha",
+  });
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  // Öljy is still in the recipe, so the word still reveals what is left of it.
+  const after = mention(page, /^öljyssä$/);
+  await expect(after).toHaveCount(1);
+  await after.locator("label").click();
+  await expect(after.locator(".mention-amount")).toHaveText("1 dl");
+});
+
+/**
+ * Removing a line on the review screen closes the gap in what gets saved. A
+ * mention pointing at a line by its place in that list would slide onto the
+ * next ingredient and reveal its amount — a wrong instruction rather than a
+ * missing link, so the row carries its own identity instead.
+ */
+test("removing a line before saving does not slide a mention onto the next one", async ({
+  page,
+}) => {
+  await importAndSave(page, REMOVED_LINE_DRAFT, "Haudutettu kaali");
+
+  // Take the öljy line out. The step mentions the valkokaali line after it.
+  await openDraftEditor(page);
+  const first = page.locator(".edit-lines .line").first();
+  await openMore(first);
+  await first.locator('input[name="line.0.remove"]').check();
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  await expect(page.locator(".lines li")).toHaveCount(2);
+  await expect(page.locator(".lines li").nth(0)).toContainText("valkokaali");
+  await expect(page.locator(".lines li").nth(1)).toContainText("vesi");
+
+  const kaali = mention(page, /^kaali$/);
+  await kaali.locator("label").click();
+  // The cabbage's own 500 g, not the water's 1 l that took its place.
+  await expect(kaali.locator(".mention-amount")).toHaveText("500 g");
 });
 
 test("mentions survive an edit that moves the text along", async ({ page }) => {

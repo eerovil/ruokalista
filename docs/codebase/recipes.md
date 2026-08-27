@@ -109,18 +109,31 @@ converts back to indexes when it renders, since a form row is the thing a member
 can move or retype and an index survives both.
 
 An index alone is not enough, though: it says *where* an ingredient sits on the
-form, not *which* one it is, and repointing a row pulls those apart. So the
-editor also sends `expectedIngredientId`, the ingredient the reference was made
-against, and `resolveStepRefs` (`src/recipe-save.ts`) drops the reference when
-the row now resolves to something else. Change a line from tomato to paprika
-and a step still saying "tomaatit" goes back to being plain text rather than
-quietly revealing paprika's amount. Renaming an ingredient keeps its id, so a
-rename keeps its mentions — the same rule, the other way up. The field is null
-on an import, where no id existed to expect.
+form, not *which* one it is. So the editor also sends `expectedIngredientId`,
+the ingredient the reference was made against, and `resolveStepRefs`
+(`src/recipe-save.ts`) asks the question the mention actually asks — does this
+step's own recipe row still have a line with that ingredient? The row is only a
+handle: with a duplicated ingredient the editor has to hang the mention on one
+of the rows and picks the first, so repointing *that* row while another still
+carries the ingredient leaves the mention true and it survives. Change the only
+tomato line to paprika and a step saying "tomaatit" has nothing left to name, so
+it goes back to being plain text rather than quietly revealing paprika's amount.
+Renaming an ingredient keeps its id, so a rename keeps its mentions — the same
+rule, the other way up. The field is null on an import, where no id existed to
+expect.
 
-`resolveStepRefs` also drops a reference whose line ended up in a different part
-of the dish than the step — a part is a recipe row of its own, and an amount the
-reader cannot see on that screen is not worth linking to.
+Asking about "this step's own recipe row" is also what refuses a cross-part
+move, with no separate check: a line that ended up in a different part is not in
+that list, so a reference to it resolves to nothing. A part is a recipe row of
+its own, and an amount the reader cannot see on that screen is not worth linking
+to.
+
+An import reference has no ingredient to expect and is resolved through the row
+it points at — matched on `LineToSave.formIndex`, the row's own number, rather
+than on where it sits in the array. `readLines` drops removed rows and re-sorts
+the rest by their position boxes, so somebody who removes one line on the review
+screen would otherwise slide every later mention onto the next ingredient along,
+which is a wrong amount rather than a missing one.
 
 The reveal proposed on the recipe screen is **a checkbox and its label, not a
 script**: every mention toggles on its own, it survives Safari's

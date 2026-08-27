@@ -447,6 +447,10 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
         sourceLine: values.sourceLine.trim(),
         section: readText(values.section),
         phase: readPhase(values.phase),
+        // The row this came from, kept because a step's mention points at it.
+        // What this function returns is sorted by the position boxes and has
+        // the removed rows taken out, so a place in that array is not a row.
+        formIndex: i,
       },
     });
   }
