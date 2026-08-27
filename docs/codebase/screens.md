@@ -55,11 +55,13 @@ transpilation:
   `pagehide`/`pageshow` handlers stop and reacquire the lock across Safari's
   back-forward cache.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
-  only when the week on screen is the current one and it has something on it,
-  and it runs once at parse time, before anyone can have scrolled, so it cannot
-  fight a member who is already moving. It bails out on an explicit `#` anchor
-  and on a scroll position the browser restored, and a browser without
-  `scrollIntoView` simply opens at Monday as before.
+  whenever the week on screen is the current one, empty or not — seven day
+  headings and fourteen add links already outrun a phone, and an empty week is
+  exactly the one somebody opens in order to plan today. It runs once at parse
+  time, before anyone can have scrolled, so it cannot fight a member who is
+  already moving. It bails out on an explicit `#` anchor and on a scroll
+  position the browser restored, and a browser without `scrollIntoView` simply
+  opens at Monday as before.
 
 All three islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.

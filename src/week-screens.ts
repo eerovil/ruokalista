@@ -71,7 +71,7 @@ export async function weekScreen(
       <div class="week-days">
         ${days.map((date) => daySection(date, batches, date === now, monday, days[6]!))}
       </div>
-      ${isCurrentWeek && batches.length > 0 ? SCROLL_TO_TODAY : ""}`,
+      ${isCurrentWeek ? SCROLL_TO_TODAY : ""}`,
     "week",
     member,
   );
@@ -81,6 +81,11 @@ export async function weekScreen(
  * Opens the current week where the household actually is, rather than always
  * at Monday. It runs once, at parse time, before anyone can have scrolled, so
  * there is nothing to fight; a past or future week never renders it at all.
+ *
+ * An empty week gets it too: seven day headings and fourteen add links are
+ * already taller than a phone, and a week with nothing on it is exactly the
+ * one somebody opens in order to plan today.
+ *
  * ES5 on purpose — inline scripts ship untranspiled.
  */
 const SCROLL_TO_TODAY = raw(`<script>

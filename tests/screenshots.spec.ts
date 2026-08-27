@@ -112,6 +112,18 @@ test.describe("signed in", () => {
     });
   });
 
+  /**
+   * The one screenshot deliberately not `fullPage`: what it is evidence of is
+   * where the viewport lands, and a full-page capture cannot show that.
+   */
+  test("an empty current week opens on today", async ({ page }) => {
+    await page.goto("/");
+    const today = page.locator(".day.is-today");
+    await expect(page.locator(".batch-card")).toHaveCount(0);
+    await expect(today).toBeInViewport();
+    await page.screenshot({ path: `${SHOTS}/36-week-empty-today.png` });
+  });
+
   test("today in the current week", async ({ page }) => {
     const now = new Intl.DateTimeFormat("sv-SE", {
       timeZone: "Europe/Helsinki",

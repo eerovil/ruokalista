@@ -19,6 +19,38 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
+/**
+ * First in the file on purpose: `reseed` plants no batches, and only the
+ * today test below puts one in the current week, so this is the one place
+ * an empty current week can be seen.
+ */
+test("an empty current week still opens on today", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.locator(".batch-card")).toHaveCount(0);
+  const today = page.locator(".day.is-today");
+  await expect(today).toHaveAttribute("id", "tanaan");
+
+  // Seven day headings and fourteen add links are taller than a phone, so
+  // there is something to scroll past — and it was scrolled past.
+  const viewport = page.viewportSize()!;
+  expect(await page.evaluate(() => document.body.scrollHeight)).toBeGreaterThan(
+    viewport.height,
+  );
+  const box = await today.boundingBox();
+  expect(box!.y).toBeGreaterThanOrEqual(-1);
+  expect(box!.y).toBeLessThan(viewport.height);
+
+  // Monday is above the fold unless today is Monday.
+  const offset = await page.evaluate(() => window.pageYOffset);
+  const isMonday = await page
+    .locator(".day")
+    .first()
+    .evaluate((element) => element.classList.contains("is-today"));
+  if (isMonday) expect(offset).toBe(0);
+  else expect(offset).toBeGreaterThan(0);
+});
+
 test("a batch spanning three days is one card with three occurrence rows", async ({
   page,
 }) => {
