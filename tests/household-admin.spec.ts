@@ -556,13 +556,14 @@ test("a signed-out browser is sent to sign in, not to the households", async ({
 test("the ordinary product still shows nobody another household", async ({
   page,
 }) => {
-  // The whole point of confining the crossing: member 1 sees household 1 only,
-  // exactly as before.
+  // The whole point of confining the crossing: member 1 sees household 1's
+  // recipes only, exactly as before. The ingredient dictionary is shared since
+  // #143 and is no longer the thing to measure this with — a recipe is.
   await signIn(page, 1);
-  await page.goto("/ingredients");
+  await page.goto("/recipes");
 
-  await expect(page.getByText("naapurin suola")).toHaveCount(0);
-  await expect(page.getByText("valkokaali")).toBeVisible();
+  await expect(page.getByText("Naapurin uunikala")).toHaveCount(0);
+  await expect(page.getByText("Kaalilaatikko")).toBeVisible();
 });
 
 /**
@@ -657,14 +658,16 @@ test("an established member is removed, keeps their history, and moves house", a
   const movedId = await memberIdOf(page, "Eero");
   expect(movedId).not.toBe(1);
 
-  // Signed in there, they see household 2's ingredient and none of household 1's.
-  const nowNeighbour = await request.get("/api/ingredients", {
+  // Signed in there, they see household 2's recipes and none of household 1's.
+  // The ingredient dictionary is global since #143, so the recipe list is what
+  // still answers "which household am I in".
+  const nowNeighbour = await request.get("/api/recipes", {
     headers: { Cookie: cookieHeader(movedId) },
   });
   expect(nowNeighbour.status()).toBe(200);
-  const names = JSON.stringify(await nowNeighbour.json());
-  expect(names).toContain("naapurin suola");
-  expect(names).not.toContain("valkokaali");
+  const titles = JSON.stringify(await nowNeighbour.json());
+  expect(titles).toContain("Naapurin uunikala");
+  expect(titles).not.toContain("Kaalilaatikko");
 });
 
 /**

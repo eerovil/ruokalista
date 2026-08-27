@@ -168,3 +168,27 @@ already refuses every admin's row, and only an admin reaches these routes.
 are full-tier files (see `docs/codebase/testing.md`) — no focused spec covers
 them, so a change here should run the whole browser suite, not just
 `auth.spec.ts` / `admin.spec.ts`.
+
+## The one exception: a published recipe (issue #143)
+
+Proposed here, and narrow on purpose. A household may publish a dish; a
+published dish is readable and plannable by every signed-in household. That is
+the whole of it:
+
+- Every **write** stays scoped to `recipe.household_id` — editing, deleting,
+  unpublishing, uploading a picture. `findRecipe` is the own-only load and is
+  what all of them use; `findReadableRecipe` is the wider one and is only ever
+  reached from a reading path.
+- A **private** recipe of another household is still a 404, unchanged.
+- There is **no role or grant model**. A recipe is published or it is not.
+  Anything that is not "everybody" is "nobody", and this change deliberately
+  does not add a way to say otherwise.
+
+Two things moved with it. `requireDish` (`src/menu.ts`) accepts a published dish
+so another household can plan one, and renaming an ingredient became an admin
+operation (`requireAdminScreen`/`requireAdmin` on `/ingredients/:id/rename` and
+`PATCH /api/ingredients/:id`) because the dictionary is global now and a rename
+rewrites what every household's recipes say. Coining a new name while writing a
+recipe is still every member's.
+
+See [ADR-0006](../adr/0006-a-published-recipe-is-shared-not-copied.md).

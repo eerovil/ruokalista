@@ -204,7 +204,11 @@ test("a meaningful resume refreshes reading but preserves editing", async ({
   context,
   page,
 }) => {
-  await context.addCookies([sessionCookie(1)]);
+  // Member 3 rather than 1: this case needs a rename to land mid-test so the
+  // resume has something to refresh to, and renaming a global ingredient is an
+  // admin operation since #143. They are in the same household, so everything
+  // else on screen is unchanged.
+  await context.addCookies([sessionCookie(3)]);
   await page.addInitScript(() => {
     const clock = { now: Date.now() };
     Object.defineProperty(window, "pwaTestClock", { value: clock });

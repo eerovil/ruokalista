@@ -247,7 +247,7 @@ function createIngredient(name: string): void {
       "ruokalista",
       "--local",
       "--command",
-      `INSERT INTO ingredient (household_id, name, created_by) VALUES (1, '${name.replaceAll("'", "''")}', 1)`,
+      `INSERT INTO ingredient (name, created_by) VALUES ('${name.replaceAll("'", "''")}', 1)`,
     ],
     { cwd: process.cwd(), encoding: "utf8" },
   );

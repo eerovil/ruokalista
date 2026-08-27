@@ -124,15 +124,28 @@ test("another household's recipe is a 404, not a peek", async ({ browser }) => {
   await context.close();
 });
 
-test("the neighbour sees only their own ingredients", async ({ browser }) => {
+test("the ingredient dictionary is one dictionary, but its counts are not", async ({
+  browser,
+}) => {
+  // Until #143 this asserted that the neighbour saw only their own ingredient.
+  // The dictionary is deliberately global now — one canonical `suola` for
+  // everybody — because a published recipe's lines have to mean the same
+  // foodstuff in every household's shopping list.
   const context = await browser.newContext();
   await context.addCookies([sessionCookie(2)]);
 
   const response = await context.request.get("/api/ingredients");
   const body = (await response.json()) as {
-    ingredients: { name: string }[];
+    ingredients: { name: string; recipeCount: number }[];
   };
-  expect(body.ingredients.map((i) => i.name)).toEqual(["naapurin suola"]);
+  const names = body.ingredients.map((i) => i.name);
+  expect(names).toContain("naapurin suola");
+  expect(names).toContain("valkokaali");
+
+  // What the neighbour still cannot see is how household 1 uses them: the
+  // count is over the recipes this household can open, and Koti's are private.
+  const cabbage = body.ingredients.find((i) => i.name === "valkokaali");
+  expect(cabbage?.recipeCount).toBe(0);
 
   await context.close();
 });

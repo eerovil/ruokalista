@@ -246,3 +246,26 @@ row of controls.
 - `docs/codebase/recipe-images.md` — the generator and freshness rules this
   admin screen is built on.
 - `docs/codebase/testing.md` — the browser suite that walks these screens.
+
+## Publishing, on the screens (issue #143)
+
+Three screens gained something, and the shapes are worth knowing before adding a
+fourth.
+
+- **`/recipes` is one form.** The whole list posts to `/recipes/julkaisu` with a
+  checkbox per row and two submit buttons that differ only by `value`. The
+  checkbox is a sibling of the row's link rather than inside it, so tapping a
+  row still opens the recipe; `.recipes.is-selectable` is the rule that lays
+  those two out side by side. A published row carries a `.badge.is-published`.
+- **`/recipes/julkiset` is a separate section**, not a filter on the list, and
+  it excludes this household's own published recipes.
+- **The recipe screen ends in `.recipe-sharing`**, which holds both this
+  household's default portions and — for the owner only — the publish control.
+  Both are about this household's relationship to the recipe rather than about
+  the cooking, which is what the rest of the screen is for. A non-owner gets a
+  `.shared-from` line under the title instead of an edit link, said before the
+  ingredients because whose recipe this is changes how it should be read.
+
+`PUBLISH_STYLE` in `src/recipes.ts` holds the rules, beside the screens that use
+them rather than in the shell — the same arrangement as `MENTION_STYLE`. None of
+it needs a script.

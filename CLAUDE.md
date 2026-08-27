@@ -24,6 +24,14 @@ Every route that touches household data is wrapped in `requireMember`
 parameter. There is no other way in. Another household's record is a 404, not a
 403 — whether it exists is not this household's business.
 
+Issue #143 proposes the one exception, and it is deliberately narrow: a
+household may **publish** a dish, and a published dish is readable and plannable
+by everyone. Every write stays owner-scoped, a private recipe of another
+household is still a 404, and there is no role or grant model behind it. The
+same change makes `ingredient` a global dictionary, because a shared recipe's
+lines have to mean the same foodstuff in every household's shopping list. See
+[ADR-0006](docs/adr/0006-a-published-recipe-is-shared-not-copied.md).
+
 ## The map
 
 | Area | Where it lives |
@@ -32,6 +40,7 @@ parameter. There is no other way in. Another household's record is a 404, not a
 | Sign-in, sessions, admin | `src/auth.ts`, `src/signin.ts`, `src/members.ts`, `src/admin-screens.ts` |
 | Households and their members, admin-side | `src/households.ts`, `src/household-admin.ts` |
 | Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts`, `src/ingredient-refs.ts` |
+| Publishing a recipe, and a household's own default for one | `src/recipe-publish.ts`, `src/recipe-preference.ts`, `src/publish-screens.ts` |
 | Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
@@ -94,6 +103,15 @@ Each of these has cost somebody real time. The detail is in the linked doc.
 - **`docs/spec.md` has drifted.** It still describes `meal_entry` as current and
   the planned-batch model as a proposal; the swap merged in #57/#86. Trust the
   code and [data-model](docs/codebase/data-model.md) over the spec on schema.
+- **Rebuilding a table in a D1 migration is not the SQLite recipe.** D1 enforces
+  foreign keys and a migration's statements are not in a transaction you
+  control, so `PRAGMA defer_foreign_keys` does nothing and dropping a referenced
+  table fails — and where the child has `ON DELETE CASCADE`, a `DROP TABLE`
+  would take its rows with it. Renaming does not save you either: with foreign
+  keys on, SQLite rewrites children's `REFERENCES` clauses to follow the rename
+  whatever `legacy_alter_table` says. `migrations/0011_public_recipes.sql` shows
+  the sequence that does work. See
+  [data-model](docs/codebase/data-model.md).
 - **Touching `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` or a
   migration is full-tier.** No focused spec covers them, so run the whole
   browser suite. See [agent-workflow](docs/codebase/agent-workflow.md).

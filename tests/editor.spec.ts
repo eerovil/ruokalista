@@ -348,11 +348,17 @@ test.describe("ingredients", () => {
     await expect(rows.first()).toContainText("ei käytössä");
     await expect(rows.last().locator(".ingredient-name")).toHaveText("öljy");
 
-    // The list reads; it does not sit there looking half-edited.
-    await expect(rows.first().locator("input")).toBeHidden();
+    // The list reads; it does not sit there looking half-edited. For an
+    // ordinary member since #143 there is nothing to edit at all — the
+    // dictionary is global and renaming it is the admin's.
+    await expect(rows.first().locator("input")).toHaveCount(0);
   });
 
-  test("renaming an ingredient renames it everywhere", async ({ page }) => {
+  test("renaming an ingredient renames it everywhere", async ({ page, context }) => {
+    // Member 3 is Koti's admin. Renaming rewrites what every household's
+    // recipes say, so it is their operation now (#143).
+    await context.clearCookies();
+    await context.addCookies([sessionCookie(3)]);
     await page.goto("/ingredients");
     const row = page.locator(".ingredients li", { hasText: "sitruunaruoho" });
     await row.locator("summary").click();
@@ -369,7 +375,10 @@ test.describe("ingredients", () => {
 
   test("renaming onto a name that exists is refused, not merged", async ({
     page,
+    context,
   }) => {
+    await context.clearCookies();
+    await context.addCookies([sessionCookie(3)]);
     await page.goto("/ingredients");
     const row = page.locator(".ingredients li", { hasText: "ananas" });
     await row.locator("summary").click();
@@ -383,23 +392,37 @@ test.describe("ingredients", () => {
     ).toHaveCount(1);
   });
 
-  test("an empty name is refused", async ({ page }) => {
-    const response = await page.request.patch("/api/ingredients/1", {
-      data: { name: "   " },
-    });
-    expect(response.status()).toBe(400);
-  });
-
-  test("another household cannot rename these", async ({ browser }) => {
+  test("an empty name is refused", async ({ browser }) => {
     const context = await browser.newContext();
-    await context.addCookies([sessionCookie(2)]);
+    await context.addCookies([sessionCookie(3)]);
 
     const response = await context.request.patch("/api/ingredients/1", {
-      data: { name: "kaapattu" },
+      data: { name: "   " },
     });
     expect(response.status()).toBe(400);
 
     await context.close();
+  });
+
+  test("an ordinary member cannot rename these, in either household", async ({
+    browser,
+  }) => {
+    // The dictionary is one dictionary now (#143), so "not yours" is no longer
+    // the reason — "not an admin's job" is, and the answer is the admin gate's
+    // 404 rather than a 400 about the name. Both households get the same
+    // answer, which is the point: neither is being told anything about the
+    // other.
+    for (const memberId of [1, 2]) {
+      const context = await browser.newContext();
+      await context.addCookies([sessionCookie(memberId)]);
+
+      const response = await context.request.patch("/api/ingredients/1", {
+        data: { name: "kaapattu" },
+      });
+      expect(response.status()).toBe(404);
+
+      await context.close();
+    }
   });
 });
 

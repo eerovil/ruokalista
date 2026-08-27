@@ -215,12 +215,68 @@ This is a column addition, so the backup lockstep below does not move: backup
 captures `SELECT *` and restore builds its INSERT from the row's own keys, so
 both carry the new columns without a change.
 
+## Public recipes, and a global ingredient dictionary
+
+Issue #143, proposed here, adds `recipe.published_at` and `recipe.published_by`
+(`migrations/0011_public_recipes.sql`). A dish carrying a `published_at` is
+readable and plannable by every household; the row is shared rather than copied,
+so the owner's edits are immediately what everyone reads. Parts carry no
+`published_at` of their own — publishing a dish publishes the dish. The access
+question is two scopes and nothing more, `own` and `readable`, both in
+`src/recipes.ts`; every write stays on `own`. See
+[ADR-0006](../adr/0006-a-published-recipe-is-shared-not-copied.md) for why there
+is no role or grant model behind it.
+
+The same migration makes `ingredient` **global**: no `household_id`, and one
+canonical row per name (`UNIQUE (name)` replacing
+`ingredient_name_per_household`). This is what lets a published recipe reach
+another household's shopping list and cupboard without a per-household
+remapping layer. `pantry_entry` is untouched in that respect — it still carries
+`household_id`, and every query over it still filters on it.
+
+Duplicate rows across households are coalesced onto the lowest id per folded
+name. The fold does the three Finnish vowels by hand because SQLite's `lower()`
+is ASCII-only, the same reason `src/ingredients.ts` sorts in JavaScript. Every
+reference moves with them: `ingredient_line`, `pantry_entry` (deduplicating the
+rows that would collide on `UNIQUE (household_id, ingredient_id)`), and the
+ingredient ids inside `recipe_step.ingredient_refs`, which are JSON rather than
+a foreign key and so need rewriting by hand. A malformed refs value is left
+exactly as it is, the way `parseStepRefs` treats it.
+
+`recipe_preference` is the third table this adds: one `(household_id,
+recipe_id)` row holding the default portions the picker starts from.
+`recipe.yield_portions` is what the source page said and travels with the
+recipe; "we always make this for nine" is a fact about a kitchen, and putting it
+on the shared row would push the publisher's habit onto everyone who plans it.
+
+### Rebuilding a table in a D1 migration
+
+Worth reading before writing another one. The plain SQLite rebuild does not work
+here, and the failure is not obvious:
+
+- **D1 enforces foreign keys, always**, and a migration's statements are not
+  inside a transaction the file controls, so `PRAGMA defer_foreign_keys` buys
+  nothing. `DROP TABLE ingredient` while `ingredient_line` references it fails
+  outright — and `pantry_entry`'s `ON DELETE CASCADE` would have emptied every
+  cupboard on the way past.
+- **Renaming does not save you.** With foreign keys on, SQLite rewrites other
+  tables' `REFERENCES` clauses to follow the rename, whatever
+  `legacy_alter_table` says, so the children chase the old table around instead
+  of attaching to the new one.
+
+0011 uses that rewrite deliberately instead of fighting it: the new table is
+built under a working name, the two child tables are rebuilt to reference *it*,
+and only then is the old table dropped and the new one renamed into place —
+which is what points the children back at `ingredient`. No statement in the
+sequence ever leaves a constraint violated, so none of it depends on a pragma.
+
 ## Backup and restore: the manifest lockstep rule
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, and `pantry_entry`.
+`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`, and
+`recipe_preference`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.

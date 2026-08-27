@@ -148,6 +148,53 @@ with `display: none` on it until it is tapped. Nobody reads it, nothing copies
 it and no screen reader announces it, but it *is* in `textContent`. See
 [testing](docs/codebase/testing.md).
 
+## Publishing a recipe (issue #143)
+
+Proposed here: a household may publish a dish, and a published dish is readable
+and plannable by every other household while staying editable only by its owner.
+`src/recipe-publish.ts` owns the rules and `src/publish-screens.ts` the two forms
+that reach them; `src/recipes.ts` holds the two scopes everything reads through.
+
+- **`findRecipe`** is own-only, and every write path uses it — editing,
+  deleting, uploading a picture. **`findReadableRecipe`** adds "or published".
+  Keeping them as two named functions rather than one flag is the point: a new
+  write route has to opt *in* to the wider scope, and there is no reason it ever
+  would.
+- **A part is read through its dish.** Parts carry no `published_at`, so a
+  non-owner asking for one directly gets a 404 — everything they need from it is
+  already on the dish's screen. The dish's own load reaches its parts through
+  the *owner's* household, which is why `partsOf` takes `row.household_id`
+  rather than the reader's.
+- **Unpublishing is refused while another household has a future occurrence**,
+  and **a published recipe cannot be deleted at all** — delete asks for the
+  unpublish first, so it inherits that check instead of carrying a second copy
+  of it. A past occurrence blocks nothing. `countOnMenu` in
+  `src/recipe-editor.ts` counts every household's batches for the same reason:
+  once a past plan no longer blocks unpublishing, somebody else's row can still
+  be pointing at the recipe when the owner tries to delete it.
+- **The bulk form is the list itself.** A household shares a batch of recipes in
+  one sitting, so the whole `.recipes` list on `/recipes` is one form with a
+  checkbox per row and `Julkaise valitut` / `Poista julkaisu valituista` under
+  it. The checkbox sits outside the row's link, so tapping a row still opens the
+  recipe.
+- **A partial result is a refusal.** Publishing eleven and having two blocked
+  re-renders the list with the reason; only a clean run redirects.
+
+`/recipes/julkiset` is the public section, and it deliberately excludes this
+household's own published recipes: "ours" and "somebody else's" are different
+things to a cook, and one of them can be corrected when the oven temperature
+turns out to be wrong.
+
+### A default that belongs to the kitchen
+
+`recipe_preference` (`src/recipe-preference.ts`) holds one number per household
+per recipe: the portions the picker starts from. `recipe.yield_portions` is what
+the source page said and travels with the recipe when it is published; this is
+the household's own habit, and it is set and read by whoever is looking. The
+publisher has no more say over another household's number than the other way
+round. A blank box clears it — the absence of a row is "no particular default",
+the same shape the cupboard uses.
+
 ## Scaling
 
 A recipe opened from a day carries that day's portions. The week itself is for
