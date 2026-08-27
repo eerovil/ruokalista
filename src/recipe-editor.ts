@@ -1,6 +1,6 @@
 import { problem } from "./auth.ts";
 import { html, page, raw, type Raw } from "./html.ts";
-import { encodeDraftRefs, lineForRef } from "./ingredient-refs.ts";
+import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
@@ -357,13 +357,16 @@ function editorForm(
         ...Array.from({ length: SPARE_LINES }, emptyLine),
       ];
 
-  // A saved mention names a line by ingredient and position; the form talks in
-  // row indexes, because a row is what a member can move, retype or repoint.
-  // This is the one place the two meet, and it uses the same `lineForRef` the
-  // recipe screen does so the editor and the screen can never disagree about
-  // which line a mention meant.
-  const rowOfLine = new Map<number, number>();
-  recipe.lines.forEach((line, index) => rowOfLine.set(line.position, index));
+  // A saved mention names an ingredient, but the form talks in row indexes.
+  // Any row carrying that ingredient is enough: the screen reveals every
+  // distinct amount from all of them, and `expectedIngredientId` still catches
+  // a row that gets repointed while the form is open.
+  const rowOfIngredient = new Map<number, number>();
+  recipe.lines.forEach((line, index) => {
+    if (!rowOfIngredient.has(line.ingredientId)) {
+      rowOfIngredient.set(line.ingredientId, index);
+    }
+  });
 
   const steps: StepFormValues[] = attempted
     ? stepValuesForRendering(attempted.form)
@@ -376,12 +379,9 @@ function editorForm(
           phase: step.phase ?? "",
           refs: encodeDraftRefs(
             step.refs.flatMap((ref) => {
-              // A line that is no longer there, or an ingredient now listed on
-              // several lines with no position agreeing, has no row to point
-              // at — so the mention quietly stops being a link.
-              const line = lineForRef(ref, recipe.lines);
-              const lineIndex =
-                line === null ? undefined : rowOfLine.get(line.position);
+              const lineIndex = rowOfIngredient.get(ref.ingredientId);
+              // An ingredient that is no longer on the recipe has no row to
+              // point at, so the mention quietly stops being a link.
               return lineIndex === undefined
                 ? []
                 : [{

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { stubStructuring } from "./support/draft";
+import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -151,19 +151,18 @@ test("repointing an ingredient row unlinks its mention, it does not rebind it", 
 });
 
 /**
- * A recipe may list one ingredient twice, at two amounts, for two stages of the
- * cooking — oil to fry in and oil for the dressing. A mention names one of
- * those lines, not the ingredient in general, so each has to reveal its own
- * figure. Getting this wrong would not read as a broken link; it would read as
- * an instruction, and the wrong one.
+ * A recipe may list one ingredient several times for several stages. The model
+ * chooses a line without anything independently verifying that choice, so a
+ * mention reveals every distinct stated amount for the ingredient. Blank
+ * amounts disappear and repeated amounts appear once.
  *
  * Built through the real import path rather than seeded, so the identity has to
  * survive being invented by the model, saved, rendered, and edited.
  */
-test("two lines of one ingredient reveal their own amounts, before and after an edit", async ({
+test("duplicate ingredient lines reveal all useful amounts before and after an edit", async ({
   page,
 }) => {
-  await stubStructuring(page, TWICE_OILED);
+  await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
   await page.getByRole("button", { name: "Jäsennä" }).click();
@@ -174,9 +173,9 @@ test("two lines of one ingredient reveal their own amounts, before and after an 
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
   const recipe = page.url();
 
-  // Both lines are öljy; only their amounts differ.
+  // Several lines are öljy: two amounts differ, one is blank and one repeats.
   await expect(page.locator(".lines li").nth(0)).toContainText("2 rkl");
-  await expect(page.locator(".lines li").nth(2)).toContainText("1 dl");
+  await expect(page.locator(".lines li").nth(4)).toContainText("1 dl");
 
   async function bothAmounts() {
     const frying = mention(page, /^öljyssä$/);
@@ -189,7 +188,7 @@ test("two lines of one ingredient reveal their own amounts, before and after an 
     ];
   }
 
-  expect(await bothAmounts()).toEqual(["2 rkl", "1 dl"]);
+  expect(await bothAmounts()).toEqual(["2 rkl / 1 dl", "2 rkl / 1 dl"]);
 
   // The same after a round-trip through the editor, which rebuilds every
   // reference from scratch. Nothing is changed on the way through.
@@ -197,54 +196,8 @@ test("two lines of one ingredient reveal their own amounts, before and after an 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
-  expect(await bothAmounts()).toEqual(["2 rkl", "1 dl"]);
+  expect(await bothAmounts()).toEqual(["2 rkl / 1 dl", "2 rkl / 1 dl"]);
 });
-
-/**
- * Öljy twice, at two amounts, with a step naming each. The second step says
- * plain "öljy" so the two mentions are told apart by their line and not by
- * their wording.
- */
-const TWICE_OILED = {
-  title: "Perunasalaatti",
-  yield_portions: 4,
-  source_text: "Perunasalaatti\n4 annosta\n2 rkl öljyä\n500 g valkokaalia\n1 dl öljyä",
-  steps: [
-    {
-      text: "Paista kaali öljyssä.",
-      section: null,
-      phase: null,
-      ingredient_refs: [{ line: 0, matched_text: "öljyssä", approx_position: 13 }],
-    },
-    {
-      text: "Sekoita loppu öljy joukkoon.",
-      section: null,
-      phase: null,
-      ingredient_refs: [{ line: 2, matched_text: "öljy", approx_position: 14 }],
-    },
-  ],
-  lines: [
-    {
-      quantity: 2, quantity_max: null, unit: "rkl",
-      alt_quantity: null, alt_unit: null,
-      ingredient_id: 1, ingredient_name: "öljy", source_line: "2 rkl öljyä",
-      section: null, phase: null, note: null,
-    },
-    {
-      quantity: 500, quantity_max: null, unit: "g",
-      alt_quantity: null, alt_unit: null,
-      ingredient_id: 3, ingredient_name: "valkokaali",
-      source_line: "500 g valkokaalia",
-      section: null, phase: null, note: null,
-    },
-    {
-      quantity: 1, quantity_max: null, unit: "dl",
-      alt_quantity: null, alt_unit: null,
-      ingredient_id: 1, ingredient_name: "öljy", source_line: "1 dl öljyä",
-      section: null, phase: null, note: null,
-    },
-  ],
-};
 
 test("mentions survive an edit that moves the text along", async ({ page }) => {
   await page.goto("/recipes/1/edit");

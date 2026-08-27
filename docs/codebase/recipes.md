@@ -77,19 +77,13 @@ A reference is deliberately thin, and both omissions are the point:
 - **No amount.** The `ingredient_line` row stays the only place a quantity
   lives, so a different portion count and a later edit to a line both come
   through on their own. Nothing has to be kept in step.
-- **A line, not an ingredient.** A reference stores `linePosition` as well as
-  `ingredientId`, because nothing stops a recipe listing one ingredient twice —
-  salt at two stages, oil to fry in and oil for the dressing — and the two lines
-  carry different amounts. Resolving a mention to "the first line with that
-  ingredient" would put the frying oil's figure behind a word about the
-  dressing: not a link that failed, a link that is confidently wrong. The
-  position rather than `ingredient_line.id`, because that id is not stable —
-  `replaceRecipe` deletes a recipe's lines and inserts them again on every save.
-  `lineForRef` is the one place that decides which line a reference means, used
-  by the recipe screen and the editor alike: the line at that position if it
-  still holds that ingredient; failing that the only line carrying it, if there
-  is only one, so ordinary reordering does not break the common case; failing
-  that nothing.
+- **All amounts for an ingredient.** Nothing stops a recipe listing one
+  ingredient twice — salt at two stages, oil to fry in and oil for the dressing
+  — and the model's line choice is not independently verified. A mention
+  therefore names the ingredient, and the screen reveals every distinct stated
+  amount from that recipe's rows (`2 rkl / 1 dl`). Blank amounts are dropped and
+  identical amounts collapse. Showing both cannot confidently give the cook the
+  wrong single instruction.
 - **No character range.** A stored `start`/`end` would be wrong the moment
   somebody fixed a typo earlier in the sentence. What is stored is the wording
   that was matched and roughly where it was; `resolveMentions` finds it again in

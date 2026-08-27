@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { stubStructuring } from "./support/draft";
+import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
 import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -205,6 +205,30 @@ test.describe("signed in", () => {
       path: `${SHOTS}/39-step-mentions-open.png`,
       fullPage: true,
     });
+  });
+
+  test("a duplicated ingredient reveals all its amounts", async ({ page }) => {
+    await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
+    await page.goto("/intake");
+    await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Tallenna resepti" }).click();
+    await expect(page).toHaveURL(/\/recipes\/\d+$/);
+    const recipe = page.url();
+
+    const oil = page
+      .locator(".steps .mention")
+      .filter({ has: page.locator(".mention-word", { hasText: /^öljyssä$/ }) });
+    await oil.locator("label").click();
+    await expect(oil.locator(".mention-amount")).toBeVisible();
+    await expect(oil.locator(".mention-amount")).toHaveText("2 rkl / 1 dl");
+    await page.screenshot({
+      path: `${SHOTS}/40-step-mention-all-amounts.png`,
+      fullPage: true,
+    });
+
+    await page.goto(`${recipe}/delete`);
+    await page.getByRole("button", { name: "Poista lopullisesti" }).click();
   });
 
   test("a recipe with a picture, and the editor that put it there", async ({

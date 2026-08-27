@@ -47,3 +47,4 @@ Regenerate after a change that alters a screen:
 | `37-week-long-title.png` | Proposed long recipe name wrapping in the card head, beside the widest carried pill |
 | `38-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
 | `39-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |
+| `40-step-mention-all-amounts.png` | Proposed duplicated ingredient mention showing every distinct stated amount inline |

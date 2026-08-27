@@ -397,11 +397,10 @@ export async function recipeScreen(
  */
 function stepText(
   step: RecipeStep,
-  recipe: Recipe,
   amounts: Map<number, string>,
   idPrefix: string,
 ): Raw {
-  const segments = resolveMentions(step.text, step.refs, recipe.lines);
+  const segments = resolveMentions(step.text, step.refs);
   if (segments.every((segment) => segment.kind === "text")) {
     return html`${step.text}`;
   }
@@ -409,7 +408,7 @@ function stepText(
   return html`${segments.map((segment, index) => {
     if (segment.kind === "text") return html`${segment.text}`;
 
-    const amount = amounts.get(segment.linePosition) ?? "";
+    const amount = amounts.get(segment.ingredientId) ?? "";
     if (amount === "") return html`${segment.text}`;
 
     const id = `${idPrefix}-${index}`;
@@ -425,27 +424,31 @@ function stepText(
 
 /**
  * Every amount this recipe's own lines can offer a mention, already scaled and
- * keyed by the line's position.
- *
- * By position and not by ingredient: a recipe may list the same ingredient
- * twice with different amounts, and a mention names one of those lines rather
- * than the ingredient in general. `resolveMentions` has already decided which
- * line each mention means.
+ * keyed by ingredient. A duplicated ingredient shows every distinct stated
+ * amount in recipe order: seeing both is safer than trusting an unverified
+ * model choice about which line a word meant. Blank amounts are omitted and
+ * repeats collapse.
  */
-function amountsByLine(
-  recipe: Recipe,
+export function amountsByIngredient(
+  lines: readonly RecipeLine[],
   factor: number | null,
 ): Map<number, string> {
-  const amounts = new Map<number, string>();
+  const collected = new Map<number, Set<string>>();
 
-  for (const line of recipe.lines) {
-    amounts.set(
-      line.position,
-      formatMeasurement(scaleMeasurement(line, factor)),
-    );
+  for (const line of lines) {
+    const amount = formatMeasurement(scaleMeasurement(line, factor));
+    if (amount === "") continue;
+    const values = collected.get(line.ingredientId) ?? new Set<string>();
+    values.add(amount);
+    collected.set(line.ingredientId, values);
   }
 
-  return amounts;
+  return new Map(
+    [...collected].map(([ingredientId, values]) => [
+      ingredientId,
+      [...values].join(" / "),
+    ]),
+  );
 }
 
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
@@ -464,7 +467,7 @@ function body(
 
   // Every line of this recipe, not only the ones this phase renders: a step
   // done after the parts still mentions an ingredient listed before them.
-  const amounts = amountsByLine(recipe, factor);
+  const amounts = amountsByIngredient(recipe.lines, factor);
 
   return html`${lines.length === 0
       ? ""
@@ -489,7 +492,7 @@ function body(
           <ol class="steps">
             ${steps.map(
               (step, index) => html`<li>
-                ${stepText(step, recipe, amounts, `m${recipe.id}${bucket}${index}`)}
+                ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
           </ol>`}`;
