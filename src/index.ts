@@ -67,8 +67,9 @@ import {
   regularIcon512,
   serviceWorker,
 } from "./pwa.ts";
+import { pantryRemoveForm, pantryScreen } from "./pantry-screens.ts";
 import { Router, type RouteContext } from "./router.ts";
-import { shoppingScreen } from "./shopping-screens.ts";
+import { shoppingPantryForm, shoppingScreen } from "./shopping-screens.ts";
 import {
   completeSignIn,
   devSignIn,
@@ -117,6 +118,9 @@ const router = new Router()
   .post("/batches/:id/recipe", requireMemberScreen(changeBatchRecipeForm))
   .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))
   .get("/ostoslista", requireMemberScreen(shoppingScreen))
+  .post("/ostoslista/kaappi", requireMemberScreen(shoppingPantryForm))
+  .get("/kaappi", requireMemberScreen(pantryScreen))
+  .post("/kaappi/:id/poista", requireMemberScreen(pantryRemoveForm))
   .get("/api/menu", requireMember(apiMenu))
   .post("/api/batches", requireMember(apiAddPlannedBatch))
   .patch("/api/batches/:id", requireMember(apiUpdatePlannedBatch))

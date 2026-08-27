@@ -398,6 +398,20 @@ const STYLES = `
   .rename[open] > summary::after { transform: rotate(90deg); }
   .rename form.inline { margin: .4rem 0 .6rem; }
   .rename form.inline input { width: auto; flex: 1; text-align: left; }
+  /* The cupboard's own screen: a short list of staples, each with the one
+     thing there is to do to it. */
+  .pantry li {
+    display: flex; align-items: baseline; gap: .75rem;
+    min-height: var(--tap); padding: .5rem 0;
+    border-bottom: 1px solid var(--edge);
+  }
+  .pantry .ingredient-name { flex: 1; }
+  .pantry form { margin: 0; }
+  /* The move between the two shopping sections, inside the opened row. */
+  .pantry-action { margin: .2rem 0 .6rem; }
+  .pantry-action button { width: 100%; }
+  .shopping-section { margin: 1.6rem 0 .2rem; font-size: 1.05rem; }
+  .shopping-section + .empty { margin-top: 0; }
   button.danger {
     color: var(--accent-fg); background: var(--warn);
     border-color: var(--warn); font-weight: 600;
