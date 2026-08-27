@@ -56,6 +56,24 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$#" -gt 0 ] || { echo "usage: node.sh [options] command ..." >&2; exit 2; }
+
+# This image has no browsers, so a browser run started here fails in a way that
+# reads like broken tests rather than like the wrong wrapper. Say which one to
+# use instead. (#128 lost a cycle to exactly this.)
+for arg in "$@"; do
+  case "$arg" in
+    playwright|test:browser|*/playwright)
+      cat >&2 <<EOF
+node.sh cannot run the browser tests: this image carries no browsers.
+
+Use the Playwright wrapper instead:
+
+  ./scripts/playwright.sh npx playwright test
+EOF
+      exit 2
+      ;;
+  esac
+done
 if [ "$serve" = "1" ] && [ "$login" = "1" ]; then
   echo "--serve and --login cannot be used together" >&2
   exit 2
