@@ -27,9 +27,6 @@ const MODEL = "claude-sonnet-5";
  */
 const EFFORT = "medium" as const;
 
-/** The ceiling on the streamed model call's output tokens. */
-const MAX_TOKENS = 128000;
-
 export interface DraftLine {
   quantity: number | null;
   quantityMax: number | null;
@@ -89,8 +86,39 @@ export type IntakeSource =
 /** The model asked for. Exposed so a streamed draft can be stamped with it. */
 export const STRUCTURED_BY = MODEL;
 
+/**
+ * What a member is told when an import fails and there is nothing more useful
+ * to say. Every message a household reads is Finnish; the `Error.message` next
+ * to it is English and goes to the log.
+ */
+const GENERIC_REFUSAL = "Reseptin jäsennys ei onnistunut. Yritä uudelleen.";
+
 /** Thrown when the model failed in a way that re-running might fix. */
-export class RetryableStructuringError extends Error {}
+export class RetryableStructuringError extends Error {
+  /** The Finnish sentence the screen shows. */
+  readonly memberMessage: string;
+
+  constructor(message: string, memberMessage: string = GENERIC_REFUSAL) {
+    super(message);
+    this.memberMessage = memberMessage;
+  }
+}
+
+/**
+ * The Finnish sentence for any import failure. An error that carries no
+ * member-facing wording is a bug or an outage, and either way the household
+ * only needs to know it can try again — the English detail is logged.
+ */
+export function importFailureMessage(error: unknown): string {
+  console.log(JSON.stringify({
+    event: "intake.failed",
+    detail: String((error as Error)?.message ?? error),
+  }));
+
+  return error instanceof RetryableStructuringError
+    ? error.memberMessage
+    : GENERIC_REFUSAL;
+}
 
 const nullable = (type: string) => ({
   anyOf: [{ type }, { type: "null" }],
@@ -117,11 +145,9 @@ export const DRAFT_SCHEMA = {
           },
           // Issue #120: which words in `text` name which of this draft's own
           // ingredient lines. A pointer and the wording, never an amount.
-          // No maxItems here: structured outputs refuse it ("For 'array' type,
-          // property 'maxItems' is not supported") and the whole request comes
-          // back a 400, so the cap lives in `requireStepRefs` and
-          // `toDraftRefs` instead — which have to hold it anyway, since an
-          // AgentDeck bundle is not schema-constrained.
+          // The cap lives in the prompt and in assertDraftWire, not here:
+          // structured outputs reject `maxItems`, and the whole request 400s
+          // if it is present — see dev/check-draft-schema.ts.
           ingredient_refs: {
             type: "array",
             items: {
@@ -264,7 +290,8 @@ Säännöt, joista ei poiketa:
     luetaan aina ainesriviltä;
   - älä muuta vaiheen tekstiä millään tavalla;
   - yleisiä ilmauksia kuten "lisää loput ainekset" ei tarvitse yhdistää
-    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [].
+    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [];
+  - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.
 ${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
@@ -301,6 +328,30 @@ function keptSourceText(source: IntakeSource, transcribed: unknown): string {
 }
 
 /**
+ * Refuse a response that stopped for a reason other than being finished.
+ *
+ * A draft cut off at `max_tokens` is still valid JSON as far as the transport
+ * is concerned — it just ends mid-document — and a refusal produces no text at
+ * all. Both used to reach the browser looking like a completed import, which
+ * is how a truncated draft became "the model returned unparseable JSON" three
+ * screens later.
+ */
+function assertFinished(stopReason: string | null): void {
+  if (stopReason === "refusal") {
+    throw new Error(
+      "The model declined to structure this text.",
+    );
+  }
+  if (stopReason === "max_tokens") {
+    throw new RetryableStructuringError(
+      "The draft was cut off at max_tokens.",
+      "Resepti oli niin pitkä, että jäsennys katkesi kesken. " +
+        "Kokeile kuvata tai liittää vain yhden reseptin verran kerrallaan.",
+    );
+  }
+}
+
+/**
  * The draft as a stream of bytes.
  *
  * Bytes never stop flowing, so Cloudflare's ~125 s proxy cutoff never fires —
@@ -317,42 +368,80 @@ export function streamDraft(
 
   return new ReadableStream({
     async start(controller) {
-      try {
-        const stream = client.messages.stream({
-          ...requestFor(source, ingredients),
-        });
+      // Once a byte is out it cannot be taken back, so a retry is only
+      // possible while the response body is still empty — which is exactly
+      // the case for a request the model refuses before it starts writing.
+      let sent = 0;
 
-        let text = "";
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const stream = client.messages.stream({
+            ...requestFor(source, ingredients),
+          });
 
-        for await (const event of stream) {
-          if (
-            event.type === "content_block_delta" &&
-            event.delta.type === "text_delta"
-          ) {
-            text += event.delta.text;
-            controller.enqueue(encoder.encode(event.delta.text));
+          let text = "";
+
+          for await (const event of stream) {
+            if (
+              event.type === "content_block_delta" &&
+              event.delta.type === "text_delta"
+            ) {
+              text += event.delta.text;
+              controller.enqueue(encoder.encode(event.delta.text));
+              sent += 1;
+            }
           }
+
+          const response = await stream.finalMessage();
+          logImportUsage(
+            recipeTitle(response.content, text),
+            response.usage,
+            response.stop_reason,
+          );
+          // The browser is about to hand this straight back to
+          // /intake/correct, so a cut-off or empty draft has to fail here
+          // rather than arrive there looking finished.
+          assertFinished(response.stop_reason);
+          if (text.trim() === "") {
+            throw new RetryableStructuringError("The model returned no draft.");
+          }
+
+          controller.close();
+          return;
+        } catch (cause) {
+          // Only our own retryable failures are worth a second call. A 400
+          // from the API is a request this code got wrong, and repeating it
+          // just spends the key twice.
+          if (
+            attempt === 0 && sent === 0 &&
+            cause instanceof RetryableStructuringError
+          ) continue;
+
+          // A JSON body has no room for an in-band error, so the stream is torn
+          // down instead. The browser still has what the member typed.
+          controller.error(cause);
+          return;
         }
-
-        const response = await stream.finalMessage();
-        logImportUsage(recipeTitle(response.content, text), response.usage);
-
-        controller.close();
-      } catch (cause) {
-        // A JSON body has no room for an in-band error, so the stream is torn
-        // down instead. The browser still has what the member typed.
-        controller.error(cause);
       }
     },
   });
 }
 
-/** Record the cost-bearing part of a completed model response. */
-export function logImportUsage(title: string | null, usage: unknown): void {
+/**
+ * Record the cost-bearing part of a completed model response, and why it
+ * stopped — without the stop reason, a truncated import is indistinguishable
+ * from a finished one in the log.
+ */
+export function logImportUsage(
+  title: string | null,
+  usage: unknown,
+  stopReason?: string | null,
+): void {
   console.log(JSON.stringify({
     event: "intake.model_usage",
     recipe_title: title,
     usage,
+    stop_reason: stopReason ?? undefined,
   }));
 }
 
@@ -383,7 +472,11 @@ export function draftFromJson(
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new RetryableStructuringError("The model returned unparseable JSON.");
+    throw new RetryableStructuringError(
+      text.trim() === ""
+        ? "The browser handed back an empty draft."
+        : "The model returned unparseable JSON.",
+    );
   }
 
   assertDraftWire(raw);
@@ -557,7 +650,10 @@ function anthropic(env: Env): Anthropic {
 function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
   return {
     model: MODEL,
-    max_tokens: MAX_TOKENS,
+    // The model's own ceiling, counted across thinking *and* the draft. It is
+    // a limit rather than a spend, so nothing costs more for it being high —
+    // but a budget this large is why both calls have to stream.
+    max_tokens: 128000,
     output_config: {
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },

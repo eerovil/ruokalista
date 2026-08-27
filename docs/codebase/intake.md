@@ -7,6 +7,28 @@ so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
 
+**`DRAFT_SCHEMA` may only use the JSON Schema subset structured outputs accept.**
+An unsupported keyword is not ignored and does not degrade: the request is a
+400, so *every* model-backed import stops working at once. `maxItems` did
+exactly that after #120 — the cap was added to the schema, nothing about it
+needed a paid call to review, and the first symptom a household saw was
+`Reseptin jäsennys ei onnistunut` on an intake screen three hops from the
+cause. Size and count caps therefore live in the prompt and in
+`assertDraftWire`, never in the schema, and `dev/check-draft-schema.ts` walks
+the schema for the whole unsupported list without spending anything.
+
+**The model call streams and checks `stop_reason`.** `max_tokens` is the
+model's full 128000 — a ceiling rather than a spend, so it costs nothing to
+leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft cut off at
+`max_tokens` is a JSON document that just ends, and a refusal is no text at
+all. Neither condition raises anything in the transport, so before this check
+both reached the browser looking like a finished import and failed one screen
+later at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
+while no byte has been sent — after that the member sees the failure. Failures
+reach a member as Finnish through `importFailureMessage`, which logs the
+English detail; `intake.model_usage` carries `stop_reason` alongside the token
+counts, so a truncated import is visible in `wrangler tail`.
+
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
 `src/sample-draft.ts` to the same `/intake/correct` the streaming island hands
@@ -131,15 +153,7 @@ is left alone.
 `ingredient_refs` on a draft step is `{line, matched_text, approx_position}`,
 where `line` is the *index* of the ingredient line in the same draft. An
 ingredient id does not exist yet at draft time, which is half the point of an
-import. The cap on how many references a step may carry is **not** in `DRAFT_SCHEMA`.
-It was, as `maxItems`, and structured outputs refuse that keyword — the whole
-request comes back `400 output_config.format.schema: For 'array' type, property
-'maxItems' is not supported`, so every import failed, on both paths. This pull
-request drops it from the schema; `requireStepRefs` and `toDraftRefs` still
-enforce `MAX_REFS_PER_STEP`, and they have to anyway, because an AgentDeck
-bundle is never schema-constrained.
-
-`assertDraftWire` treats the field as **optional** — a bundle written
+import. `assertDraftWire` treats the field as **optional** — a bundle written
 before this exists is still a valid bundle — and `toDraftRefs` silently drops a
 reference that points past the end of `lines`, points into another part of the
 dish, or claims wording the step does not contain. Every one of those is a

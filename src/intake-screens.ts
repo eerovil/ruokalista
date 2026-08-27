@@ -4,6 +4,7 @@ import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
   draftFromJson,
+  importFailureMessage,
   streamDraft,
   STRUCTURED_BY,
   type Draft,
@@ -338,7 +339,7 @@ export async function correctScreen(
       member,
     );
   } catch (error) {
-    return failed(member, String((error as Error).message ?? error), pasted);
+    return failed(member, importFailureMessage(error), pasted);
   }
 }
 
