@@ -6,6 +6,9 @@ import type { Page } from "@playwright/test";
  * by CI cannot drift apart.
  */
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
+import { STREAM_MARKERS } from "../../src/intake.ts";
+
+export { STREAM_MARKERS };
 
 export { SAMPLE_DRAFT as DRAFT_FIXTURE };
 const DRAFT_FIXTURE = SAMPLE_DRAFT;
@@ -83,6 +86,19 @@ export async function stubStructuring(
   page: Page,
   draft: unknown = DRAFT_FIXTURE,
 ): Promise<StubbedCall[]> {
+  return stubStreamBody(page, JSON.stringify(draft) + STREAM_MARKERS.complete);
+}
+
+/**
+ * Answer the same route with a body written out marker by marker, which is how
+ * a cut-off attempt and a retry are tested without the model (#146). Everything
+ * the island rejects is expressed here rather than in an assertion, so a test
+ * can hand it exactly what a truncated stream looks like on the wire.
+ */
+export async function stubStreamBody(
+  page: Page,
+  body: string,
+): Promise<StubbedCall[]> {
   const calls: StubbedCall[] = [];
 
   await page.route("**/api/intake/structure", async (route) => {
@@ -90,13 +106,17 @@ export async function stubStructuring(
 
     await route.fulfill({
       status: 200,
-      contentType: "application/json; charset=utf-8",
-      body: JSON.stringify(draft),
+      contentType: "text/plain; charset=utf-8",
+      body,
     });
   });
 
   return calls;
 }
+
+/** The bytes a stream carries when an attempt was cut off part-way. */
+export const TRUNCATED_ATTEMPT =
+  '{"title":"Katkennut","yield_portions":4,"source_text":"Uunikaali","lines":[{"quantity":1,"unit":"dl"';
 
 /**
  * Öljy on two lines with distinguishable amounts, and a step mentioning it.

@@ -118,6 +118,34 @@ and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
 that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
 before the browser sees it** — no regular expressions in that script.
 
+## What a streamed body says about its attempts (issue #146)
+
+This pull request proposes closing an asymmetry between the two paths. The
+plain path has always had `structureDraftWithRetry`, which retries a retryable
+failure once, and `structureDraft`, which checks `stop_reason` before parsing.
+The streaming path had neither: an answer cut off at `max_tokens` was streamed
+through as if it were whole, the island handed it to `/intake/correct`, and the
+member met the parser's own English — "The model returned unparseable JSON."
+
+The awkward part is that by the time an attempt is recognisably bad, its bytes
+are already at the browser. Nothing can be un-sent. So the body stops being
+plain JSON and gains three end-of-attempt markers (`STREAM_MARKERS` in
+`src/intake.ts`, served as `text/plain`): `restart` says everything streamed so
+far is dead and a second attempt begins here, `complete` says what precedes it
+already parsed on the server, and `failed` says every attempt failed. The
+island keeps only the bytes after the last `restart`, and hands over only what
+a `complete` closes — so two attempts can never be concatenated into one
+unparseable draft however the chunks fall, and a half-draft never reaches
+`/intake/correct`.
+
+The retry itself stays on the server, in `draftStream`, next to the
+retryability it already knows about. `draftStream` takes the model call as an
+argument purely so `dev/check-intake-stream.ts` can drive the whole loop from
+fake responses — a cut-off first attempt, an unparseable one that stopped
+cleanly, a refusal that must not be retried, and two failures in a row — with
+no model call and nothing spent. `tests/intake.spec.ts` covers the island's
+half from the same fixtures.
+
 ## Marking the ingredients a step names (issue #120)
 
 This pull request proposes a second job for the same model call: alongside the
