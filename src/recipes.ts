@@ -561,10 +561,7 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
             type="checkbox"
             id="reveal-all-amounts"
             class="reveal-all"
-          /><label for="reveal-all-amounts" class="reveal-all-label"
-            ><span class="reveal-all-show">Näytä kaikki määrät</span
-            ><span class="reveal-all-hide">Piilota määrät</span></label
-          >`
+          />`
       : ""}
 
     ${recipe.parts.length === 0
@@ -582,6 +579,13 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
     ${recipe.parts.length === 0
       ? ""
       : body(recipe, factor, ["after_parts"], "b")}
+
+    ${canRevealAmounts
+      ? html`<label for="reveal-all-amounts" class="reveal-all-label"
+          ><span class="reveal-all-show">Näytä kaikki määrät</span
+          ><span class="reveal-all-hide">Piilota määrät</span></label
+        >`
+      : ""}
 
     <!-- Still stored, still one tap away, but not competing with the cooking. -->
     <details class="source-original">
@@ -635,15 +639,16 @@ const MENTION_STYLE = html`<style>
   .reveal-all-label {
     display: inline-flex; align-items: center; min-height: var(--tap-compact);
     padding: 0 .75rem; margin: 0 0 .65rem; cursor: pointer;
+    scroll-margin-bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1rem);
     border: 1px solid var(--edge); border-radius: var(--radius);
     background: var(--surface); font-weight: 600;
   }
   .reveal-all-hide { display: none; }
-  .reveal-all:checked + .reveal-all-label .reveal-all-show { display: none; }
-  .reveal-all:checked + .reveal-all-label .reveal-all-hide { display: inline; }
+  .reveal-all:checked ~ .reveal-all-label .reveal-all-show { display: none; }
+  .reveal-all:checked ~ .reveal-all-label .reveal-all-hide { display: inline; }
   /* Plain :focus is deliberate: older Safari predates :focus-visible, and a
      keyboard user still needs to see where this off-screen checkbox is. */
-  .reveal-all:focus + .reveal-all-label {
+  .reveal-all:focus ~ .reveal-all-label {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .mention > label {

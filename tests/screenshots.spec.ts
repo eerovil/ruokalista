@@ -190,8 +190,17 @@ test.describe("signed in", () => {
     const vesi = page
       .locator(".steps .mention")
       .filter({ has: page.locator(".mention-word", { hasText: "vesi" }) });
+    const revealAll = page.locator(".reveal-all-label");
 
     await expect(kaali.locator(".mention-amount")).toBeHidden();
+    await expect(revealAll).toBeVisible();
+    const methodBox = await page.locator(".steps").last().boundingBox();
+    const toggleBox = await revealAll.boundingBox();
+    expect(methodBox).not.toBeNull();
+    expect(toggleBox).not.toBeNull();
+    expect(toggleBox!.y).toBeGreaterThanOrEqual(
+      methodBox!.y + methodBox!.height,
+    );
     await page.screenshot({
       path: `${SHOTS}/38-step-mentions-closed.png`,
       fullPage: true,
