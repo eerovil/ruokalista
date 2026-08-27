@@ -6,6 +6,7 @@ import {
   draftFromJson,
   streamDraft,
   structureDraftWithRetry,
+  STREAM_MARKERS,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
@@ -61,6 +62,22 @@ const STREAMING_ISLAND = `
   var progress = document.getElementById('progress');
   var status = document.getElementById('status');
   var LONG_EDGE = 1500;
+
+  // What the server says about each attempt (#146). Only text a COMPLETE marker
+  // closes is a whole draft; anything else is a failed attempt and is dropped
+  // rather than handed to /intake/correct, which is where a cut-off answer used
+  // to surface as "The model returned unparseable JSON."
+  var RESTART = ${JSON.stringify(STREAM_MARKERS.restart)};
+  var COMPLETE = ${JSON.stringify(STREAM_MARKERS.complete)};
+  var FAILED_TEXT = 'malli ei saanut reseptiä valmiiksi. Liittämäsi teksti on tallessa — kokeile uudelleen.';
+
+  // The server retries once and marks where the second attempt begins. Only the
+  // bytes after the last such mark belong to the attempt in hand, so the two
+  // attempts can never be read as one draft.
+  function currentAttempt(all) {
+    var at = all.lastIndexOf(RESTART);
+    return at < 0 ? all : all.slice(at + RESTART.length);
+  }
 
   // What the household is told while the model works. The draft arrives as
   // JSON, and showing raw JSON to somebody importing a recipe is showing them
@@ -150,23 +167,37 @@ const STREAMING_ISLAND = `
           status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
           var decoder = new TextDecoder();
-          var draft = '';
+          var all = '';
+          var retried = false;
           return (function pump() {
             return reader.read().then(function (chunk) {
-              if (chunk.done) return draft;
-              draft += decoder.decode(chunk.value, { stream: true });
-              progress.textContent = summarise(draft);
+              if (chunk.done) return all;
+              all += decoder.decode(chunk.value, { stream: true });
+              if (!retried && all.indexOf(RESTART) >= 0) {
+                retried = true;
+                status.textContent = 'Ensimmäinen yritys katkesi — yritetään uudelleen…';
+              }
+              progress.textContent = summarise(currentAttempt(all));
               return pump();
             });
           })();
         });
       })
-      .then(function (draft) {
+      .then(function (all) {
+        var attempt = currentAttempt(all);
+        var end = attempt.indexOf(COMPLETE);
+        // No COMPLETE means the server gave up, or the stream died on the way.
+        // Either way there is no draft here, only the beginning of one.
+        if (end < 0) throw new Error(FAILED_TEXT);
         status.textContent = 'Valmis — avataan tarkistus.';
-        handOver(draft, file ? 'photographed' : 'pasted', text);
+        handOver(attempt.slice(0, end), file ? 'photographed' : 'pasted', text);
       })
       .catch(function (error) {
         status.textContent = 'Jäsennys epäonnistui: ' + error.message;
+        // The counts belonged to an attempt that came to nothing. Leaving them
+        // up would read as a half-finished import that is still going.
+        progress.hidden = true;
+        progress.textContent = '';
         form.querySelector('button').disabled = false;
       });
   });
@@ -285,6 +316,9 @@ export async function structureScreen(
  * `POST /api/intake/structure` — run the model and stream the draft straight
  * through. The browser accumulates it and hands it back to /intake/correct,
  * which keeps the correction screen server-rendered.
+ *
+ * The body is the draft's JSON plus the attempt markers in `STREAM_MARKERS`,
+ * so it is not itself JSON and does not claim to be. Only the island reads it.
  */
 export async function structureStream(
   { env, request }: RouteContext,
@@ -321,7 +355,7 @@ export async function structureStream(
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "text/plain; charset=utf-8",
       // Nothing between here and the browser should hold bytes back.
       "Cache-Control": "no-store",
       "X-Accel-Buffering": "no",

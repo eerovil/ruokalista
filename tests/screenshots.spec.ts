@@ -2,7 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
+import {
+  DUPLICATE_AMOUNT_DRAFT,
+  STREAM_MARKERS,
+  stubStreamBody,
+  stubStructuring,
+  TRUNCATED_ATTEMPT,
+} from "./support/draft";
 import { addIngredientRow, openDraftEditor } from "./support/lines";
 import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
@@ -440,6 +446,34 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Jäsennä" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/08-correct.png`, fullPage: true });
+  });
+
+  test("a streamed import that failed both attempts", async ({ page }) => {
+    // Both attempts stop mid-JSON (#146). What the member must see is plain
+    // Finnish and their own paste still in the box — not the review screen
+    // reporting "The model returned unparseable JSON."
+    await stubStreamBody(
+      page,
+      TRUNCATED_ATTEMPT +
+        STREAM_MARKERS.restart +
+        TRUNCATED_ATTEMPT +
+        STREAM_MARKERS.failed,
+    );
+
+    await page.goto("/intake");
+    await page
+      .getByLabel("Liitä reseptin teksti")
+      .fill("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.");
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+
+    await expect(page.locator("#status")).toContainText(
+      "malli ei saanut reseptiä valmiiksi",
+    );
+    await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+    await page.screenshot({
+      path: `${SHOTS}/56-intake-stream-failed.png`,
+      fullPage: true,
+    });
   });
 
   test("the approval gate refusing", async ({ page }) => {
