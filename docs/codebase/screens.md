@@ -49,6 +49,25 @@ run past the card's edge. `tests/week-grouping.spec.ts` guards it by comparing
 each card's `scrollWidth` with its `clientWidth`; a page-level overflow check
 cannot see inside a clipping card.
 
+Issue #138 proposes what a *later* day shows once its meals are already served
+by food cooked earlier, because anchoring each card on its first occurrence
+leaves those days reading as empty. `week-screens.ts::continuingRecipesOn`
+collects the batches whose anchor day is before this date and which still have
+an occurrence on it, and reduces them to one `.continuing-row` per recipe with
+that day's meal labels combined (`Lounas · Päivällinen`) — so two cookings of
+the same dish continuing into one day become one row, even though they stay two
+cards on their anchor day. The rows sit in a `.continuing-card`, and the
+heading gains `✓ katettu` only when the continuations cover every slot in
+`SLOTS`; a day whose remaining slot is filled by fresh cooking is not
+"covered by earlier food" and does not claim to be.
+
+The summary is deliberately not a second batch card: no thumbnail, no portions
+pill, no link. The card on the anchor day is still the one way into everything
+you can do to that cooking, which is what keeps #119's grouping-by-batch-id
+intact while the later-day view groups by recipe purely for reading. Both
+`+ Lounas` and `+ Päivällinen` stay on a covered day too — a second dish beside
+leftovers is an ordinary thing to plan.
+
 The current day gets `.day.is-today`, `id="tanaan"` and a `Tänään` badge, and a
 floating `.to-today` chip offers the way back after scrolling elsewhere — the
 week nav keeps "Tämä viikko" on every week, as the mockup shows. A third inline
