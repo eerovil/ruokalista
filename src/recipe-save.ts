@@ -369,6 +369,17 @@ function childrenOf(
  * "leave it unlinked rather than link the wrong thing" rule the resolver
  * follows on the way out.
  *
+ * A reference is also dropped when the row it points at no longer holds the
+ * ingredient the reference was made against. An index says where a line sits on
+ * the form, not which ingredient it is, and repointing a row pulls those two
+ * apart: a member who changes a line from tomato to paprika and leaves the step
+ * saying "tomaatit" must not end up with paprika's amount hiding behind that
+ * word. Renaming an ingredient keeps its id and so keeps its mentions, which is
+ * the right half of the same rule.
+ *
+ * `expectedIngredientId` is null on an import, where no id existed to expect,
+ * and such a reference is never dropped on this account.
+ *
  * Two mentions of the same ingredient in one step are both kept: they are
  * different words in different places, and each toggles on its own.
  */
@@ -383,6 +394,12 @@ function resolveStepRefs(
     const target = lines[ref.lineIndex];
     if (target === undefined) continue;
     if (!belongs(target.line.section)) continue;
+    if (
+      ref.expectedIngredientId !== null &&
+      ref.expectedIngredientId !== target.ingredientId
+    ) {
+      continue;
+    }
 
     refs.push({
       ingredientId: target.ingredientId,

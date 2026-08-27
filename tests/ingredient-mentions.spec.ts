@@ -115,6 +115,33 @@ test("a part's step reveals the part's own amount, scaled with the dish", async 
   await expect(doubled.locator(".mention-amount")).toHaveText("800 g");
 });
 
+test("repointing an ingredient row unlinks its mention, it does not rebind it", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+
+  // The first line is öljy, and the first step says "öljyssä". Point that line
+  // at a different ingredient and leave the step's wording exactly as it is.
+  await page.locator('select[name="line.0.ingredient"]').selectOption({
+    label: "jauheliha",
+  });
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await page.goto("/recipes/1");
+  await expect(page.locator(".lines li").first()).toContainText("jauheliha");
+
+  // The word still reads, and reveals nothing. Rebinding it to whatever took
+  // the row over would put jauheliha's amount behind the word "öljyssä".
+  await expect(mention(page, "öljyssä")).toHaveCount(0);
+  await expect(page.locator(".steps li").nth(0)).toContainText("öljyssä");
+  await expect(page.locator(".steps li").nth(0)).not.toContainText("½ dl");
+
+  // Only that row's mention went. The other one on the same step is untouched.
+  const kaali = mention(page, "kaali");
+  await kaali.locator("label").click();
+  await expect(kaali.locator(".mention-amount")).toHaveText("½ kpl (500 g)");
+});
+
 test("mentions survive an edit that moves the text along", async ({ page }) => {
   await page.goto("/recipes/1/edit");
 

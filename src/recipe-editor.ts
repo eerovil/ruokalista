@@ -386,6 +386,10 @@ function editorForm(
                     lineIndex,
                     matchedText: ref.matchedText,
                     approxPosition: ref.approxPosition,
+                    // Which ingredient, as well as which row. The row can be
+                    // repointed while this form is open, and then the index
+                    // alone would hand the mention to whatever took its place.
+                    expectedIngredientId: ref.ingredientId,
                   }];
             }),
           ),

@@ -77,6 +77,45 @@ test("wording that is no longer in the step is left unlinked", () => {
   ]);
 });
 
+test("a word that only contains the wording is not a match", () => {
+  // The step was linked while it read "Lisää suola." and has since been edited.
+  // A plain substring search would still find "suola" inside "suolakurkut" and
+  // put the salt amount in the middle of a word about gherkins.
+  assert.deepEqual(mentions("Lisää suolakurkut.", [ref(1, "suola", 6)]), []);
+  // The same on the other side, and with a Finnish letter as the neighbour —
+  // an ASCII-only boundary rule would call "ö" a boundary and match here.
+  assert.deepEqual(mentions("Lisää merisuola.", [ref(1, "suola", 6)]), []);
+  assert.deepEqual(mentions("Lisää suolaöljy.", [ref(1, "suola", 6)]), []);
+  assert.deepEqual(mentions("Lisää suola2.", [ref(1, "suola", 6)]), []);
+
+  // The word on its own still resolves, next to a space or any punctuation.
+  assert.deepEqual(mentions("Lisää suola.", [ref(1, "suola", 6)]), ["1:suola"]);
+  assert.deepEqual(mentions("Lisää suola, hyvin.", [ref(1, "suola", 6)]), [
+    "1:suola",
+  ]);
+  assert.deepEqual(mentions("Suola sekaan.", [ref(1, "suola", 0)]), ["1:Suola"]);
+});
+
+test("the stored wording is matched as written, inflection and all", () => {
+  // The model records what the step said, so an inflected form is the needle
+  // rather than something derived from the ingredient's name.
+  assert.deepEqual(mentions("Lisää tomaatteja.", [ref(1, "tomaatteja", 6)]), [
+    "1:tomaatteja",
+  ]);
+  // And a step re-inflected after the link was made loses it rather than
+  // guessing — the harmless half of the same rule.
+  assert.deepEqual(mentions("Lisää tomaatteja.", [ref(1, "tomaatit", 6)]), []);
+});
+
+test("wording that carries its own punctuation is not held to a boundary", () => {
+  // Only the sides where the needle itself ends in a word character are
+  // checked, so a reference that brought a bracket along still resolves.
+  assert.deepEqual(
+    mentions("Käytä (valkokaali) tässä.", [ref(1, "(valkokaali)", 6)]),
+    ["1:(valkokaali)"],
+  );
+});
+
 test("case is folded, so a sentence-initial mention still matches", () => {
   assert.deepEqual(mentions("Tomaatit halkaistaan.", [ref(1, "tomaatit", 0)]), [
     "1:Tomaatit",
@@ -130,13 +169,26 @@ test("a malformed column reads as no references rather than throwing", () => {
 });
 
 test("the form field round-trips and refuses junk", () => {
-  const refs = [{ lineIndex: 2, matchedText: "kaali", approxPosition: 10 }];
+  const refs = [
+    { lineIndex: 2, matchedText: "kaali", approxPosition: 10, expectedIngredientId: 3 },
+  ];
   assert.deepEqual(decodeDraftRefs(encodeDraftRefs(refs)), refs);
+
+  // An import's reference has no ingredient to expect, and null is a value
+  // here rather than a missing field.
+  const fromImport = [
+    { lineIndex: 0, matchedText: "kaali", approxPosition: 9, expectedIngredientId: null },
+  ];
+  assert.deepEqual(decodeDraftRefs(encodeDraftRefs(fromImport)), fromImport);
+
   assert.equal(encodeDraftRefs([]), "");
   assert.deepEqual(decodeDraftRefs(""), []);
   assert.deepEqual(decodeDraftRefs("["), []);
   assert.deepEqual(decodeDraftRefs('[[1,"kaali"]]'), []);
-  assert.deepEqual(decodeDraftRefs('[[-1,"kaali",0]]'), []);
+  assert.deepEqual(decodeDraftRefs('[[1,"kaali",0]]'), []);
+  assert.deepEqual(decodeDraftRefs('[[-1,"kaali",0,3]]'), []);
+  assert.deepEqual(decodeDraftRefs('[[1,"kaali",0,0]]'), []);
+  assert.deepEqual(decodeDraftRefs('[[1,"kaali",0,"3"]]'), []);
 });
 
 test("a step may not carry an unbounded number of mentions", () => {

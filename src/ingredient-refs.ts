@@ -45,6 +45,21 @@ export interface DraftIngredientRef {
   lineIndex: number;
   matchedText: string;
   approxPosition: number;
+  /**
+   * The ingredient this reference was made against, when there was one.
+   *
+   * A row index says *where* the ingredient is on the form, not *which* one it
+   * is, and those come apart the moment somebody repoints a row: change row 3
+   * from tomato to paprika and a step still saying "tomaatit" would quietly
+   * start revealing paprika's amount. So the editor sends the id it started
+   * with, and the save drops the reference if the row now resolves to a
+   * different ingredient.
+   *
+   * Null on an import, where there is genuinely no id yet — half the point of
+   * an import is that some of its ingredients are about to be created, so
+   * there is nothing for the index to have come apart from.
+   */
+  expectedIngredientId: number | null;
 }
 
 // -------------------------------------------------------------- resolving
@@ -152,14 +167,29 @@ export function mentionResolves(text: string, matchedText: string): boolean {
 }
 
 /**
- * Every index where `needle` occurs in `haystack`, matched without regard to
- * case.
+ * Every index where `needle` occurs in `haystack` **as a word of its own**,
+ * matched without regard to case.
  *
  * Case is folded in Finnish, so "Tomaatit" at the start of a sentence still
  * matches a reference recorded as "tomaatit". Folding can in principle change a
  * string's length, which would make an index into the folded text mean nothing
  * in the original — when that happens this falls back to matching exactly,
  * which loses a match rather than mislabelling one.
+ *
+ * A plain substring search is not enough. A reference recorded for "suola"
+ * would go on matching after the step was edited to "Lisää suolakurkut", and
+ * the salt amount would appear inside a word about gherkins — the exact thing
+ * a stale reference is supposed to stop doing. So a candidate has to sit on a
+ * word boundary: no letter, digit or combining mark immediately either side.
+ *
+ * Finnish inflection is untouched by this, because the wording stored is the
+ * wording the step used — "tomaatit" is matched as "tomaatit", not derived
+ * from "tomaatti". A step later re-inflected to "tomaatteja" loses the link,
+ * and losing it is the correct half of the trade.
+ *
+ * The boundary is only required on a side where the stored wording itself ends
+ * in a word character. A reference that happens to carry its own punctuation
+ * should not be refused for the company it keeps.
  */
 function occurrencesOf(haystack: string, needle: string): number[] {
   const foldedHay = haystack.toLocaleLowerCase("fi");
@@ -169,6 +199,10 @@ function occurrencesOf(haystack: string, needle: string): number[] {
     foldedHay.length === haystack.length && foldedNeedle.length === needle.length;
   const hay = usable ? foldedHay : haystack;
   const pin = usable ? foldedNeedle : needle;
+  if (pin === "") return [];
+
+  const checkBefore = startsWithWordChar(pin);
+  const checkAfter = endsWithWordChar(pin);
 
   const found: number[] = [];
   let from = 0;
@@ -176,11 +210,43 @@ function occurrencesOf(haystack: string, needle: string): number[] {
   for (;;) {
     const at = hay.indexOf(pin, from);
     if (at === -1) break;
-    found.push(at);
     from = at + 1;
+
+    if (checkBefore && isWordCharBefore(hay, at)) continue;
+    if (checkAfter && isWordCharAt(hay, at + pin.length)) continue;
+    found.push(at);
   }
 
   return found;
+}
+
+/**
+ * A letter, a digit or a combining mark — Unicode-aware, because "ö" and "ä"
+ * are ordinary letters here and an ASCII rule would call them boundaries and
+ * happily match "suola" inside "suolaöljy".
+ */
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
+
+function isWordCharAt(text: string, index: number): boolean {
+  if (index < 0 || index >= text.length) return false;
+  const code = text.codePointAt(index);
+  return code !== undefined && WORD_CHAR.test(String.fromCodePoint(code));
+}
+
+/** The character ending just before `index`, surrogate pair and all. */
+function isWordCharBefore(text: string, index: number): boolean {
+  if (index <= 0) return false;
+  const previous = text.charCodeAt(index - 1);
+  const isLowSurrogate = previous >= 0xdc00 && previous <= 0xdfff;
+  return isWordCharAt(text, isLowSurrogate && index >= 2 ? index - 2 : index - 1);
+}
+
+function startsWithWordChar(text: string): boolean {
+  return isWordCharAt(text, 0);
+}
+
+function endsWithWordChar(text: string): boolean {
+  return isWordCharBefore(text, text.length);
 }
 
 // ----------------------------------------------------------------- codecs
@@ -252,6 +318,7 @@ export function encodeDraftRefs(refs: readonly DraftIngredientRef[]): string {
       ref.lineIndex,
       ref.matchedText,
       ref.approxPosition,
+      ref.expectedIngredientId,
     ]),
   );
 }
@@ -270,17 +337,23 @@ export function decodeDraftRefs(raw: string): DraftIngredientRef[] {
 
   const refs: DraftIngredientRef[] = [];
   for (const entry of parsed.slice(0, MAX_REFS_PER_STEP)) {
-    if (!Array.isArray(entry) || entry.length !== 3) continue;
-    const [lineIndex, matchedText, approxPosition] = entry as unknown[];
+    if (!Array.isArray(entry) || entry.length !== 4) continue;
+    const [lineIndex, matchedText, approxPosition, expected] = entry as unknown[];
     if (!Number.isSafeInteger(lineIndex) || (lineIndex as number) < 0) continue;
     if (typeof matchedText !== "string" || matchedText.trim() === "") continue;
     if (!Number.isSafeInteger(approxPosition) || (approxPosition as number) < 0) {
+      continue;
+    }
+    // Null is a real value here — it says "this came from an import, there was
+    // no ingredient to expect" — so only a wrong *kind* of value is junk.
+    if (expected !== null && (!Number.isSafeInteger(expected) || (expected as number) <= 0)) {
       continue;
     }
     refs.push({
       lineIndex: lineIndex as number,
       matchedText,
       approxPosition: approxPosition as number,
+      expectedIngredientId: expected as number | null,
     });
   }
 

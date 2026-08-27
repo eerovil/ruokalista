@@ -85,13 +85,33 @@ A reference is deliberately thin, and both omissions are the point:
   landing on the same words — is left as plain text, because linking the wrong
   word is worse than linking no word.
 
+An occurrence has to be a **word of its own**, not a substring: a reference for
+`suola` must not go on matching after the step becomes "Lisää suolakurkut", or
+the salt amount lands in the middle of a word about gherkins. The boundary test
+is Unicode-aware (`\p{L}\p{N}\p{M}`), because an ASCII rule would treat `ö` as a
+boundary and match `suola` inside `suolaöljy`. Finnish inflection is unaffected:
+the wording stored is the wording the step used, so `tomaatit` is matched as
+`tomaatit` rather than derived from `tomaatti` — and a step later re-inflected
+to `tomaatteja` loses the link, which is the harmless half of the trade.
+
 The reference exists in two shapes and `saveRecipe` is where one becomes the
 other. A **draft** reference (`DraftIngredientRef`) points at an ingredient line
 by its *index*, because on an import half the ingredients do not have ids yet;
 a **saved** one (`StepIngredientRef`) carries the `ingredient` id. The editor
 converts back to indexes when it renders, since a form row is the thing a member
-can move or retype and an index survives both. `resolveStepRefs`
-(`src/recipe-save.ts`) drops a reference whose line ended up in a different part
+can move or retype and an index survives both.
+
+An index alone is not enough, though: it says *where* an ingredient sits on the
+form, not *which* one it is, and repointing a row pulls those apart. So the
+editor also sends `expectedIngredientId`, the ingredient the reference was made
+against, and `resolveStepRefs` (`src/recipe-save.ts`) drops the reference when
+the row now resolves to something else. Change a line from tomato to paprika
+and a step still saying "tomaatit" goes back to being plain text rather than
+quietly revealing paprika's amount. Renaming an ingredient keeps its id, so a
+rename keeps its mentions — the same rule, the other way up. The field is null
+on an import, where no id existed to expect.
+
+`resolveStepRefs` also drops a reference whose line ended up in a different part
 of the dish than the step — a part is a recipe row of its own, and an amount the
 reader cannot see on that screen is not worth linking to.
 

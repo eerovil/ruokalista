@@ -684,6 +684,9 @@ function toDraftRefs(
       lineIndex,
       matchedText,
       approxPosition: Math.max(0, approxPosition ?? 0),
+      // An import has no ingredient to expect: the line this points at may not
+      // be a row in the household's list until the save creates one.
+      expectedIngredientId: null,
     });
   }
 
