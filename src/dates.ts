@@ -54,6 +54,11 @@ export function dayName(date: string): string {
   return DAY_NAMES[(weekday + 6) % 7]!;
 }
 
+/** `ma`, `ti`, … — for an occurrence row that already sits under a heading. */
+export function shortDayName(date: string): string {
+  return dayName(date).slice(0, 2);
+}
+
 /** `2026-08-25` as `25.8.` — enough beside a weekday name. */
 export function shortDate(date: string): string {
   const [, month, day] = date.split("-") as [string, string, string];

@@ -253,30 +253,69 @@ const STYLES = `
     margin-bottom: 1.5rem; font-size: .85rem; }
   nav.weeks a { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); text-decoration: none; color: var(--muted); }
-  .day { margin-bottom: 1.5rem; }
-  .day h2 { margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
+  .day { margin-bottom: 1.25rem; scroll-margin-top: .75rem; }
+  .day h2 { display: flex; align-items: center; gap: .5rem;
+    margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
   .day.is-today h2 { font-weight: 700; }
-  .day.is-today { border-left: 3px solid var(--accent); padding-left: .6rem; }
-  .batch-tracks { display: flex; flex-direction: column; gap: .25rem; }
-  .batch-track { display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); }
-  .batch-marker { position: relative; }
-  .batch-marker::before { content: ""; position: absolute; left: .4rem;
-    top: -.4rem; bottom: -.4rem; width: 3px; border-radius: 2px;
-    background: var(--accent); }
-  .batch-track.is-start .batch-marker::before { top: .65rem; }
-  .batch-track.is-end .batch-marker::before { bottom: .65rem; }
-  .batch-track.is-start .batch-marker::after,
-  .batch-track.is-end .batch-day-content::after { content: ""; position: absolute;
-    width: .65rem; height: .65rem; border-radius: 50%; background: var(--accent); }
-  .batch-track.is-start .batch-marker::after { left: .1rem; top: .35rem; }
-  .batch-track.is-end .batch-day-content { position: relative; }
-  .batch-track.is-end .batch-day-content::after { left: -1rem; bottom: .35rem; }
-  .batch-day-content { display: flex; flex-direction: column; gap: .25rem;
-    min-width: 0; padding: .2rem 0 .6rem; }
-  .batch-start { color: var(--accent); font-size: .8rem; }
-  .batch-passes, .batch-end { color: var(--muted); font-size: .75rem; }
-  .batch-end { align-self: flex-end; }
-  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem 1.1rem;
+  .day.is-today { padding: .6rem .7rem .1rem; border: 1px solid var(--accent);
+    border-radius: var(--radius); background: var(--surface); }
+  .today-badge { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
+    text-transform: none; color: var(--accent-fg); background: var(--accent);
+    border-radius: .25rem; }
+  .batch-cards { display: flex; flex-direction: column; gap: .5rem;
+    margin: 0 0 .5rem; }
+  /* One cooking reads as one card: head, then a hairline per covered day. */
+  .batch-card { min-width: 0; background: var(--surface);
+    border: 1px solid var(--edge); border-radius: var(--radius);
+    overflow: hidden; }
+  /* The head wraps rather than clipping: a long Finnish compound title beside
+     the wider carried pill runs a 360px row out of width, and a card that
+     hides its overflow would simply cut the name off. */
+  .batch-card .entry > a { flex-wrap: wrap; gap: .4rem .6rem;
+    padding: .6rem .7rem; background: transparent; border-radius: 0; }
+  .batch-card .entry .recipe-image.is-thumb { flex: none;
+    width: 3rem; height: 3rem; border-radius: 50%; }
+  /* Picture and name stay together on one line; only the pill wraps below.
+     A content-sized basis is what makes it wrap for a long name and stay
+     inline for a short one. (No backticks here — STYLES is a template
+     literal, so one would end the string.) */
+  .batch-head-main { display: flex; align-items: center; gap: .6rem;
+    flex: 1 1 auto; min-width: 0; }
+  .batch-card .entry-title { min-width: 0; overflow-wrap: break-word; }
+  .batch-start, .batch-carried { flex: none; margin-left: auto;
+    padding: .2rem .55rem;
+    font-size: .75rem; font-weight: 600; white-space: nowrap;
+    border-radius: 1rem; }
+  .batch-start { color: var(--accent-fg); background: var(--accent); }
+  .batch-carried { color: var(--accent); border: 1px solid var(--accent); }
+  .batch-when { display: block; margin: 0; padding: 0; list-style: none; }
+  .batch-when-day { display: flex; flex-wrap: wrap; align-items: center;
+    gap: .5rem; padding: .45rem .7rem; font-size: .85rem;
+    border-top: 1px solid var(--edge); }
+  .batch-when-weekday { min-width: 1.5rem; color: var(--fg);
+    text-transform: capitalize; }
+  .batch-when-date { min-width: 3rem; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .batch-when-slots { flex: 1 1 6rem; min-width: 0; color: var(--fg);
+    overflow-wrap: break-word; }
+  .batch-passes { margin-left: auto; padding: .1rem .45rem;
+    font-size: .7rem; color: var(--accent); white-space: nowrap;
+    border: 1px solid var(--accent); border-radius: 1rem; }
+  .batch-end, .batch-onward { margin: 0; padding: .35rem .7rem .45rem;
+    font-size: .75rem; color: var(--muted); }
+  .batch-end { text-align: right; }
+  /* Jump back to today after scrolling away — the week's one floating action. */
+  .to-today {
+    position: fixed; right: 1rem; z-index: 2;
+    bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1rem);
+    display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); padding: .4rem .9rem;
+    font-size: .85rem; font-weight: 600; text-decoration: none;
+    color: var(--accent); background: var(--bg);
+    border: 1px solid var(--accent); border-radius: 1.5rem;
+    box-shadow: 0 .25rem .75rem light-dark(rgba(0,0,0,.15), rgba(0,0,0,.55));
+  }
+  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem;
     border-top: 1px solid var(--edge); }
   .empty-slot, .add-more { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
@@ -287,10 +326,9 @@ const STYLES = `
     background: var(--surface); border-radius: var(--radius);
   }
   .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
+  /* Today's own container is already --surface, so its cards need to lift. */
+  .day.is-today .batch-card { background: var(--bg); }
   .entry-title { flex: 1; }
-  .entry-slot { color: var(--muted); font-size: .75rem; min-width: 4.8rem; }
-  .entry-portions { color: var(--muted); font-size: .8rem; white-space: nowrap;
-    font-variant-numeric: tabular-nums; }
   .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
   .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
