@@ -211,8 +211,14 @@ interface LineRow {
  * own — it is a piece of the dish (ADR-0002) — so every row carries the
  * *dish's* yield and the batch's portions, and scales by the one factor.
  *
- * Household-scoped at every hop: the batch, the dish, and the ingredient. A
- * batch belonging to another household simply contributes nothing.
+ * Scoped by the *batch's* household, and only there. That is the one hop that
+ * matters, and since #143 it is the only one that can be asked: a batch may
+ * plan a recipe another household published, so requiring the dish to belong to
+ * the planning household would silently drop every shared recipe off the list —
+ * a shopping list quietly missing a meal's ingredients. The ingredient join
+ * carries no household either, because the dictionary is global now.
+ *
+ * A batch belonging to another household still contributes nothing.
  */
 export async function shoppingLinesFor(
   db: D1Database,
@@ -241,14 +247,12 @@ export async function shoppingLinesFor(
          FROM planned_batch
          JOIN recipe AS dish
            ON dish.id = planned_batch.recipe_id
-          AND dish.household_id = planned_batch.household_id
          JOIN recipe AS source
            ON source.household_id = dish.household_id
           AND (source.id = dish.id OR source.parent_id = dish.id)
          JOIN ingredient_line ON ingredient_line.recipe_id = source.id
          JOIN ingredient
            ON ingredient.id = ingredient_line.ingredient_id
-          AND ingredient.household_id = dish.household_id
         WHERE planned_batch.household_id = ?
           AND planned_batch.id IN (${placeholders})
         ORDER BY planned_batch.id,

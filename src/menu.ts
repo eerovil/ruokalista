@@ -284,10 +284,14 @@ async function requireDish(
   if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
     throw new MenuRefused("Tuntematon resepti.");
   }
+  // Own, or anybody's published dish (#143). A part is still refused whoever
+  // owns it: only a dish gets planned.
   const recipe = await db
     .prepare(
       `SELECT id FROM recipe
-        WHERE id = ? AND household_id = ? AND parent_id IS NULL`,
+        WHERE id = ?
+          AND parent_id IS NULL
+          AND (household_id = ? OR published_at IS NOT NULL)`,
     )
     .bind(recipeId, householdId)
     .first<{ id: number }>();

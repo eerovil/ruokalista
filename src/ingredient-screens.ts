@@ -7,9 +7,17 @@ import type { RouteContext } from "./router.ts";
 /**
  * The shared list, alphabetical, each with the number of recipes using it.
  *
- * Rename is available; merging two that should have been one is not in v1. The
- * list exists partly so the household can see that drift early — two near-twins
- * sitting next to each other is the warning.
+ * Rename is available to an admin; merging two that should have been one is
+ * still not in v1. The list exists partly so drift can be seen early — two
+ * near-twins sitting next to each other is the warning.
+ *
+ * Reading it is every member's business and renaming is not, and #143 is what
+ * moved that line. The dictionary is global now: one `suola` shared by every
+ * household. Coining a new name while writing a recipe is still ordinary work —
+ * it adds a row nobody else was using. Renaming an existing one rewrites what
+ * every household's recipes say, which is exactly the shape of thing
+ * `requireAdmin` exists for. The gate is on the route (`src/index.ts`); the
+ * form below is simply not drawn for somebody who cannot use it.
  */
 
 export class RenameRefused extends Error {}
@@ -107,8 +115,8 @@ async function renameIngredient(
   }
 
   await db
-    .prepare("UPDATE ingredient SET name = ? WHERE id = ? AND household_id = ?")
-    .bind(name, id, member.householdId)
+    .prepare("UPDATE ingredient SET name = ? WHERE id = ?")
+    .bind(name, id)
     .run();
 }
 
@@ -121,8 +129,9 @@ async function ingredientList(
 
   return html`<h1>Ainekset</h1>
     <p class="empty">
-      Talouden yhteinen sanasto. Kaksi lähes samaa nimeä vierekkäin on merkki
-      siitä, että toinen kannattaa nimetä uudelleen.
+      Kaikkien talouksien yhteinen sanasto. Kaksi lähes samaa nimeä vierekkäin
+      on merkki siitä, että toinen kannattaa nimetä uudelleen — nimeäminen on
+      ylläpitäjän työtä, koska se muuttaa nimen kaikille talouksille.
     </p>
     <!-- The cupboard is a short list of these same ingredients, so this is the
          screen it hangs off; it has no tab of its own (#125). -->
@@ -139,28 +148,37 @@ async function ingredientList(
             // no line of its own — a list of live text boxes read as a form
             // nobody had finished filling in.
             (ingredient) => html`<li>
-              <details class="rename">
-                <summary>
-                  <span class="ingredient-name">${ingredient.name}</span>
-                  <span class="meta"
-                    >${ingredient.recipeCount === 0
-                      ? "ei käytössä"
-                      : `${ingredient.recipeCount} reseptissä`}</span
-                  >
-                </summary>
-                <form
-                  method="post"
-                  action="/ingredients/${ingredient.id}/rename"
-                  class="inline"
-                >
-                  <input
-                    name="name"
-                    value="${ingredient.name}"
-                    aria-label="Aineksen nimi"
-                  />
-                  <button type="submit">Tallenna</button>
-                </form>
-              </details>
+              ${member.isAdmin
+                ? html`<details class="rename">
+                    <summary>
+                      <span class="ingredient-name">${ingredient.name}</span>
+                      <span class="meta"
+                        >${ingredient.recipeCount === 0
+                          ? "ei käytössä"
+                          : `${ingredient.recipeCount} reseptissä`}</span
+                      >
+                    </summary>
+                    <form
+                      method="post"
+                      action="/ingredients/${ingredient.id}/rename"
+                      class="inline"
+                    >
+                      <input
+                        name="name"
+                        value="${ingredient.name}"
+                        aria-label="Aineksen nimi"
+                      />
+                      <button type="submit">Tallenna</button>
+                    </form>
+                  </details>`
+                : html`<div class="rename is-readonly">
+                    <span class="ingredient-name">${ingredient.name}</span>
+                    <span class="meta"
+                      >${ingredient.recipeCount === 0
+                        ? "ei käytössä"
+                        : `${ingredient.recipeCount} reseptissä`}</span
+                    >
+                  </div>`}
             </li>`,
           )}
         </ul>`}`;

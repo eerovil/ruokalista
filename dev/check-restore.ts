@@ -24,6 +24,7 @@ const TABLES: readonly BackupTableName[] = [
   "planned_batch",
   "batch_occurrence",
   "pantry_entry",
+  "recipe_preference",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -286,6 +287,16 @@ async function validSnapshot() {
         quantity_unit: null,
         added_at: "2026-08-25 00:00:00",
         added_by: 1,
+      },
+    ],
+    recipe_preference: [
+      {
+        id: 1,
+        household_id: 1,
+        recipe_id: 1,
+        default_portions: 6,
+        updated_at: "2026-08-25 00:00:00",
+        updated_by: 1,
       },
     ],
   } satisfies BackupSnapshotUnsigned["tables"];

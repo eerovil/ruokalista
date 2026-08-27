@@ -37,9 +37,11 @@ import {
 import {
   apiListRecipes,
   apiShowRecipe,
+  publicRecipeListScreen,
   recipeListScreen,
   recipeScreen,
 } from "./recipes.ts";
+import { preferredPortionsForm, publishForm } from "./publish-screens.ts";
 import {
   apiAddPlannedBatch,
   apiMenu,
@@ -140,9 +142,15 @@ const router = new Router()
   .post("/auth/dev-signin", devSignIn)
   .post("/auth/signout", signOut)
   .get("/recipes", requireMemberScreen(recipeListScreen))
+  // Before `/recipes/:id`: the router answers with the first pattern that
+  // matches, and a literal segment has to win over the wildcard that would
+  // otherwise swallow it.
+  .get("/recipes/julkiset", requireMemberScreen(publicRecipeListScreen))
+  .post("/recipes/julkaisu", requireMemberScreen(publishForm))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
+  .post("/recipes/:id/annokset", requireMemberScreen(preferredPortionsForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
   .post("/recipes/:id/image/delete", requireMemberScreen(deleteRecipeImageForm))
   .get("/recipes/:id/delete", requireMemberScreen(confirmDeleteScreen))
@@ -153,8 +161,10 @@ const router = new Router()
   .delete("/api/recipes/:id/image", requireMember(apiDeleteRecipeImage))
   .get("/api/recipes/:id/image/status", requireMember(apiRecipeImageStatus))
   .get("/ingredients", requireMemberScreen(ingredientsScreen))
-  .post("/ingredients/:id/rename", requireMemberScreen(renameForm))
-  .patch("/api/ingredients/:id", requireMember(apiRename))
+  // Renaming a global ingredient rewrites what every household's recipes say,
+  // so it is an admin operation while reading the list is not (#143).
+  .post("/ingredients/:id/rename", requireAdminScreen(renameForm))
+  .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake", requireMemberScreen(structureScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))

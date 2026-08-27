@@ -553,7 +553,6 @@ export async function imageCandidates(
            FROM ingredient_line
            JOIN recipe ON recipe.id = ingredient_line.recipe_id
            JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
-                          AND ingredient.household_id = recipe.household_id
           WHERE recipe.household_id = ?`,
       )
       .bind(householdId),

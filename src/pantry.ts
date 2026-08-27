@@ -16,9 +16,15 @@ import type { ShoppingItem } from "./shopping.ts";
  * new branch rather than a replaced model.
  *
  * Nothing here fuzzy-matches a name. Matching is by `ingredient_id`, the
- * household's own canonical identity for a foodstuff, because deciding that
- * "suola" and "hienosuola" are the same thing is how a list quietly stops
- * mentioning something the household actually needed.
+ * canonical identity for a foodstuff, because deciding that "suola" and
+ * "hienosuola" are the same thing is how a list quietly stops mentioning
+ * something the household actually needed.
+ *
+ * Since #143 that identity is global rather than per household, which is what
+ * lets a cupboard cover an ingredient in a recipe another household published.
+ * The cupboard itself did not become global: every row still carries
+ * `household_id` and every query below still filters on it. What is in our
+ * cupboard is nobody else's business, and stays that way.
  */
 
 export class PantryRefused extends Error {}
@@ -51,13 +57,15 @@ export async function pantryContents(
     .prepare(
       `SELECT ingredient.id AS ingredient_id,
               ingredient.name,
-              count(DISTINCT ingredient_line.recipe_id) AS recipe_count
+              count(DISTINCT recipe.id) AS recipe_count
          FROM pantry_entry
          JOIN ingredient
            ON ingredient.id = pantry_entry.ingredient_id
-          AND ingredient.household_id = pantry_entry.household_id
          LEFT JOIN ingredient_line
                 ON ingredient_line.ingredient_id = ingredient.id
+         LEFT JOIN recipe
+                ON recipe.id = ingredient_line.recipe_id
+               AND recipe.household_id = pantry_entry.household_id
         WHERE pantry_entry.household_id = ?
         GROUP BY ingredient.id, ingredient.name`,
     )
@@ -93,11 +101,10 @@ export async function pantryIngredientIds(
 /**
  * Put an ingredient in the cupboard.
  *
- * The ingredient is checked against the household first: another household's
- * ingredient is not a 403, it simply is not an ingredient this household has
- * (`CLAUDE.md`'s isolation rule). Adding one that is already there is not an
- * error — the member asked for a state, not for a change, and they now have
- * it.
+ * The ingredient only has to exist: the dictionary is global, so there is no
+ * such thing as another household's ingredient any more. Adding one that is
+ * already there is not an error — the member asked for a state, not for a
+ * change, and they now have it.
  */
 export async function addToPantry(
   db: D1Database,
@@ -105,7 +112,7 @@ export async function addToPantry(
   memberId: number,
   ingredientId: number,
 ): Promise<void> {
-  await requireIngredient(db, householdId, ingredientId);
+  await requireIngredient(db, ingredientId);
 
   await db
     .prepare(
@@ -130,7 +137,7 @@ export async function removeFromPantry(
   householdId: number,
   ingredientId: number,
 ): Promise<void> {
-  await requireIngredient(db, householdId, ingredientId);
+  await requireIngredient(db, ingredientId);
 
   await db
     .prepare(
@@ -142,7 +149,6 @@ export async function removeFromPantry(
 
 async function requireIngredient(
   db: D1Database,
-  householdId: number,
   ingredientId: number,
 ): Promise<void> {
   if (!Number.isSafeInteger(ingredientId)) {
@@ -150,8 +156,8 @@ async function requireIngredient(
   }
 
   const known = await db
-    .prepare("SELECT id FROM ingredient WHERE id = ? AND household_id = ?")
-    .bind(ingredientId, householdId)
+    .prepare("SELECT id FROM ingredient WHERE id = ?")
+    .bind(ingredientId)
     .first<{ id: number }>();
   if (known === null) throw new PantryRefused("Tuntematon aines.");
 }
