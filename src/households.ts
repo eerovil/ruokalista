@@ -1,3 +1,5 @@
+import { isGoogleSub } from "./google.ts";
+
 /**
  * The only cross-household queries in the app, and the one place they are
  * allowed to be.
@@ -71,12 +73,33 @@ const STILL_A_MEMBER = "removed_at IS NULL" as const;
 
 /**
  * What a removed member's `google_sub` becomes, so the real one is free for
- * another household. Google's `sub` is a decimal string, so this shape can
- * never collide with one; `memberFields` refuses it as input all the same,
- * because "can never happen" is cheaper to enforce than to rely on.
+ * another household.
+ *
+ * It has to be a value Google can never issue. The first answer to that was
+ * `removed:<id>`, reserved on the belief that a Google `sub` is always a
+ * decimal string — but Google does not promise that. Its contract is the one
+ * `isGoogleSub` states: any ASCII string of up to 255 characters. `removed:2`
+ * is a legal account id under it, so reserving that shape both locked a real
+ * person out of this screen and left a parked row something could collide with.
+ *
+ * So the tombstone leaves Google's space instead of carving a corner out of it.
+ * It opens with U+2014 EM DASH, which is not ASCII, so nothing `isGoogleSub`
+ * accepts can equal it — and no argument about what Google's ids look like can
+ * make it collide. The member id follows, which is what keeps the UNIQUE column
+ * happy while more than one member is parked.
+ *
+ * The character is written as an escape in both spellings rather than typed, so
+ * that what the column is parked on cannot be changed by an editor helpfully
+ * folding it into a hyphen: `char(8212)` is SQLite's escape, `\u2014` is
+ * TypeScript's, and they are the same character.
  */
-const REMOVED_SUB = "'removed:' || id" as const;
-const REMOVED_SUB_PREFIX = "removed:" as const;
+const REMOVED_SUB = "char(8212) || 'removed:' || id" as const;
+const REMOVED_SUB_MARK = "\u2014" as const;
+
+/** The same value `REMOVED_SUB` writes, for anything that has to name it. */
+export function removedSub(memberId: number): string {
+  return `${REMOVED_SUB_MARK}removed:${memberId}`;
+}
 
 /** Every household there is, with how many people are in it. */
 export async function allHouseholds(db: D1Database): Promise<Household[]> {
@@ -344,11 +367,15 @@ async function memberFields(
     );
   }
 
-  // The shape `removeMember` parks a removed member's row on. Google never
-  // issues one, so this cannot be a real person's sub — and letting it be typed
-  // in would put a live member where the removed ones are.
-  if (googleSub.startsWith(REMOVED_SUB_PREFIX)) {
-    throw new HouseholdRefused("Tämä ei ole kelvollinen Google-tunniste.");
+  // Held to Google's own contract for a `sub` — see `isGoogleSub`. This is what
+  // makes the value `removeMember` parks a removed row on unreachable from the
+  // form: that value is not ASCII, so it fails here, and a live member can never
+  // be put where the removed ones are. It also catches the ordinary mistake of
+  // pasting a whole id token, or a name, into the field.
+  if (!isGoogleSub(googleSub)) {
+    throw new HouseholdRefused(
+      "Tämä ei ole kelvollinen Google-tunniste. Tunniste on enintään 255 merkkiä pitkä, ja siinä voi olla vain tavallisia ASCII-merkkejä — ei siis esimerkiksi ääkkösiä.",
+    );
   }
 
   const clash = await db
