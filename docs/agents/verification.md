@@ -38,6 +38,7 @@ Which spec covers what, roughly:
 | What changed | The spec to run |
 | --- | --- |
 | the week, the days, a planned meal | `week.spec.ts`, `week-grouping.spec.ts` |
+| the shopping list, ingredient aggregation | `shopping.spec.ts`, `dev/check-shopping.ts` |
 | the recipe screen, the list, the picker | `recipes.spec.ts` |
 | the editor, the line form | `editor.spec.ts` |
 | ingredient mentions in a step, tap to reveal an amount | `ingredient-mentions.spec.ts`, `dev/check-ingredient-refs.ts` |

@@ -416,6 +416,46 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
   });
 
+  /**
+   * The shopping list (#123), on a fortnight planned relative to today —
+   * because the screen's fortnight and its five-day default are relative to
+   * today too, so a fixed October week would photograph an empty screen.
+   *
+   * Two shots: the list as it opens, and the same list with a total opened to
+   * show what it is made of.
+   */
+  test("the shopping list", async ({ page }) => {
+    const soon = shiftedFromToday(0);
+    const later = shiftedFromToday(2);
+
+    const planned = [
+      await createBatch(page, soon, "dinner", 1, 8),
+      await createBatch(page, later, "dinner", 3, 6),
+    ];
+
+    await page.goto("/ostoslista");
+    await expect(page.locator(".shopping-list > li").first()).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      "Kaalilaatikko + Lasagne",
+    );
+    await page.screenshot({ path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
+
+    await page.locator(".shopping-picker > summary").click();
+    const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
+    await milk.locator("summary").click();
+    await expect(milk.locator(".shopping-from li").first()).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/39-shopping-breakdown.png`,
+      fullPage: true,
+    });
+
+    // Only what this shot planned goes away again; the week screenshot above
+    // has a cooking on today too, and it is not this test's to delete.
+    for (const id of planned) {
+      await page.request.delete(`/api/batches/${id}`);
+    }
+  });
+
   test("the ingredient list", async ({ page }) => {
     await page.goto("/ingredients");
     await expect(page.locator(".ingredients li").first()).toBeVisible();
@@ -625,14 +665,28 @@ test.describe("a long recipe name on a phone", () => {
   });
 });
 
+/** A day relative to today in Helsinki, which is what the Worker means by it. */
+function shiftedFromToday(days: number): string {
+  const [year, month, day] = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Helsinki",
+  })
+    .format(new Date())
+    .split("-")
+    .map(Number) as [number, number, number];
+  const at = new Date(Date.UTC(year, month - 1, day));
+  at.setUTCDate(at.getUTCDate() + days);
+  return at.toISOString().slice(0, 10);
+}
+
 async function createBatch(
   page: Page,
   date: string,
   slot: "lunch" | "dinner",
   recipeId: number,
+  portions = 4,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot, recipeId, portions: 4 },
+    data: { date, slot, recipeId, portions },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;
