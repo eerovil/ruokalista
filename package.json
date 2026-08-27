@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
     "generate:pwa-assets": "node scripts/generate-pwa-assets.mjs",
+    "generate:client": "node scripts/build-client.mjs",
     "check:pwa-assets": "node scripts/generate-pwa-assets.mjs --check",
-    "typecheck": "tsc --noEmit",
-    "check": "npm run check:pwa-assets && node --experimental-strip-types --test dev/*.ts",
+    "check:client": "node scripts/build-client.mjs --check",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "check": "npm run check:pwa-assets && npm run check:client && node --experimental-strip-types --test dev/*.ts",
     "check:backup-schema": "node --experimental-strip-types scripts/check-backup-schema.ts",
     "check:restore-roundtrip": "node --experimental-strip-types scripts/check-restore-roundtrip.ts",
     "restore:backup": "node --experimental-strip-types scripts/restore-backup.ts",
@@ -21,6 +23,7 @@
     "@cloudflare/workers-types": "^5.20260823.1",
     "@playwright/test": "^1.62.1",
     "@resvg/resvg-js": "^2.6.2",
+    "esbuild": "^0.28.1",
     "typescript": "^5.6.0",
     "wrangler": "^4.0.0"
   },

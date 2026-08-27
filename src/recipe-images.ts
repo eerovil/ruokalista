@@ -107,7 +107,10 @@ export async function apiRecipeImage(
  * it was actually made from. A generator that read the recipe, spent money on a
  * picture, and comes back to store it should state that fingerprint: leaving it
  * out means "made from the recipe as it stands right now", which is a claim
- * about a recipe nobody looked at.
+ * about a recipe nobody looked at. A caller with a long gap between reading and
+ * writing also sends `x-expected-image-key`; an empty value means it saw no
+ * image. That captured state, not the key current when the PUT arrives, is the
+ * compare-and-swap precondition.
  */
 export async function apiPutRecipeImage(
   { env, request, url, params }: RouteContext,
@@ -141,11 +144,16 @@ export async function apiPutRecipeImage(
     };
   }
 
+  const statedExpected = request.headers.get("x-expected-image-key");
+  const expectedKey = statedExpected === null
+    ? row.image_key
+    : (statedExpected.length === 0 ? null : statedExpected);
+
   const refusal = await storeRecipeImage(
     env,
     member.householdId,
     recipeId,
-    row.image_key,
+    expectedKey,
     await request.arrayBuffer(),
     provenance,
   );
@@ -258,12 +266,10 @@ export async function apiDeleteRecipeImage(
  * `oldKey` is not just the object to tidy up afterwards — it is the key this
  * caller believes the row still holds, and the update only happens if it does.
  * That matters because the gap between reading the row and writing it is not
- * always short: the batch generator (#96) reads every recipe, then waits up to
- * three minutes for an image to be drawn. Without the check, somebody who
- * uploaded a picture during that wait would have it silently replaced by a
- * generated one made from the recipe as it was before, and their object would be
- * left in R2 with nothing pointing at it. With it, the loser of the race is told
- * so and the picture that was actually chosen last survives.
+ * always short: the admin can leave the confirmation screen to draw a sheet in
+ * another tool. Without the check, somebody who uploaded a picture during that
+ * gap would have it silently replaced by a generated crop made from older state.
+ * With it, the loser is told so and the picture chosen last survives.
  */
 export async function storeRecipeImage(
   env: RouteContext["env"],

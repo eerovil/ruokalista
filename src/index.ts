@@ -49,9 +49,8 @@ import {
 import {
   recipeImageAdminScreen,
   recipeImageConfirmScreen,
-  recipeImageGenerateForm,
+  recipeImageSplitter,
 } from "./recipe-image-admin.ts";
-import { generateRecipeImages } from "./recipe-image-batch.ts";
 import {
   apiDeleteRecipeImage,
   apiPutRecipeImage,
@@ -155,9 +154,8 @@ const router = new Router()
   .get("/admin", requireAdminScreen(adminScreen))
   .get("/admin/recipe-images", requireAdminScreen(recipeImageAdminScreen))
   .get("/admin/recipe-images/confirm", requireAdminScreen(recipeImageConfirmScreen))
-  .post("/admin/recipe-images/generate", requireAdminScreen(recipeImageGenerateForm))
-  .get("/api/admin/status", requireAdmin(adminStatus))
-  .post("/api/admin/recipe-images/generate", requireAdmin(generateRecipeImages));
+  .get("/admin/recipe-images/split.js", requireAdminScreen(recipeImageSplitter))
+  .get("/api/admin/status", requireAdmin(adminStatus));
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {

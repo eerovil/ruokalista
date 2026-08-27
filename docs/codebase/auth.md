@@ -45,8 +45,8 @@ no cookie, and that an unknown member id is refused.
 Issue #94 (merged as `837a8fe`, PR #102) is the one distinction between members
 there is meant to be: a member either is an admin or is not. It exists for the
 operations that are not every member's to run — the first is the recipe image
-generation in #96 (`/admin/recipe-images`), which spends money and can replace
-pictures in bulk. It is deliberately not a role system, and turning it into one
+management screen (`/admin/recipe-images`), which can replace pictures in bulk.
+It is deliberately not a role system, and turning it into one
 is the failure mode to watch for.
 
 `member.is_admin` (migration `migrations/0007_member_admin.sql`) is the only

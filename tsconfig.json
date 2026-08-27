@@ -17,5 +17,10 @@
   },
   // dev/ is deliberately outside this: those files run on node, and node's
   // globals clash with the Workers ones. `npm run check` executes them instead.
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // src/client/ is outside it for the same reason, one platform along: that
+  // code runs in a browser, where `Response` and `fetch` are the DOM's rather
+  // than the Workers runtime's. tsconfig.client.json checks it, and the modules
+  // both of them share get checked twice — once against each platform.
+  "exclude": ["src/client/**/*.ts"]
 }
