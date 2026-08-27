@@ -5,10 +5,12 @@ import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
   draftFromJson,
   importFailureMessage,
+  MAX_IMAGES,
   streamDraft,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
+  type IntakeImage,
   type IntakeSource,
 } from "./intake.ts";
 import {
@@ -49,8 +51,14 @@ import { SAMPLE_DRAFT } from "./sample-draft.ts";
  * keep flowing, shows it filling in, and then hands the finished draft to the
  * server to render the correction screen.
  *
- * Intake requires this script. The camera route needs it for canvas
- * downscaling, and pasted text uses the same streamed model path.
+ * Intake requires this script. Pasted text uses its streamed model path, and
+ * the camera route also needs it for canvas downscaling.
+ *
+ * It also owns the chosen pages (#156). Neither file input holds the list,
+ * because neither one can: a camera capture replaces its input's single file
+ * every time, and a member shooting page two would otherwise lose page one.
+ * The list lives here, both inputs only ever append to it, and it is what gets
+ * sent — in order.
  */
 const STREAMING_ISLAND = `
 (function () {
@@ -58,17 +66,24 @@ const STREAMING_ISLAND = `
   var progress = document.getElementById('progress');
   var status = document.getElementById('status');
   var photoHelp = document.getElementById('photo-help');
-  if (!form || !progress || !status || !photoHelp || !window.fetch || !window.ReadableStream || !window.TextDecoder) return;
+  var chosenList = document.getElementById('chosen');
+  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise || !window.ReadableStream || !window.TextDecoder) return;
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
   button.disabled = false;
   status.textContent = '';
-  if (!window.createImageBitmap) {
+  if (!window.createImageBitmap || !window.URL || !window.URL.createObjectURL || !window.URL.revokeObjectURL) {
+    form.camera.disabled = true;
     form.photo.disabled = true;
     photoHelp.textContent = 'Kuvan tuonti ei ole käytettävissä tässä selaimessa.';
   }
   var LONG_EDGE = 1500;
+  var MAX_PAGES = ${MAX_IMAGES};
+
+  // The pages to import, in the order they were added. Camera shots and
+  // library picks land in the same list; nothing distinguishes them after this.
+  var pages = [];
 
   // What the household is told while the model works. The draft arrives as
   // JSON, and showing raw JSON to somebody importing a recipe is showing them
@@ -115,6 +130,83 @@ const STREAMING_ISLAND = `
     });
   }
 
+  // One page at a time, on purpose: the order has to survive, and a phone
+  // decoding eight full-size photographs at once is how a tab gets killed.
+  function shrinkAll() {
+    var images = [];
+    return pages
+      .reduce(function (chain, page, index) {
+        return chain.then(function () {
+          status.textContent = pages.length > 1
+            ? 'Luetaan kuvaa ' + (index + 1) + '/' + pages.length + '…'
+            : 'Luetaan kuvaa…';
+          return shrink(page.file).then(function (b64) {
+            images.push({ image: b64, mediaType: 'image/jpeg' });
+          });
+        });
+      }, Promise.resolve())
+      .then(function () { return images; });
+  }
+
+  // Rebuilt whole every time, so the numbering and the remove buttons always
+  // agree with the list rather than with the order things were added.
+  function renderPages() {
+    while (chosenList.firstChild) chosenList.removeChild(chosenList.firstChild);
+    chosenList.hidden = pages.length === 0;
+
+    pages.forEach(function (page, index) {
+      var item = document.createElement('li');
+
+      var thumb = document.createElement('img');
+      thumb.src = page.url;
+      thumb.alt = '';
+      item.appendChild(thumb);
+
+      var name = document.createElement('span');
+      name.className = 'page-name';
+      name.textContent = 'Sivu ' + (index + 1);
+      item.appendChild(name);
+
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'quiet';
+      remove.textContent = 'Poista';
+      remove.addEventListener('click', function () {
+        URL.revokeObjectURL(page.url);
+        pages.splice(index, 1);
+        renderPages();
+      });
+      item.appendChild(remove);
+
+      chosenList.appendChild(item);
+    });
+  }
+
+  function addFrom(input) {
+    var dropped = 0;
+    for (var i = 0; i < input.files.length; i++) {
+      if (pages.length >= MAX_PAGES) { dropped++; continue; }
+      var file = input.files[i];
+      pages.push({ file: file, url: URL.createObjectURL(file) });
+    }
+
+    // Clearing the input is what lets the same camera button be pressed again
+    // for the next page: without it a second identical capture fires no change.
+    input.value = '';
+    renderPages();
+
+    status.textContent = dropped
+      ? 'Enintään ' + MAX_PAGES + ' sivua yhdessä reseptissä.'
+      : '';
+  }
+
+  ['camera', 'photo'].forEach(function (id) {
+    var input = document.getElementById(id);
+    if (input) {
+      input.addEventListener('change', function () { addFrom(input); });
+    }
+  });
+
   function handOver(draft, route, sourceText) {
     var hidden = document.createElement('form');
     hidden.method = 'post';
@@ -131,20 +223,20 @@ const STREAMING_ISLAND = `
   }
 
   form.addEventListener('submit', function (event) {
-    var file = form.photo.files[0];
     var text = form.sourceText.value.trim();
+    var photographed = pages.length > 0;
     event.preventDefault();
-    if (!file && !text) {
+    if (!photographed && !text) {
       status.textContent = 'Liitä ensin reseptin teksti tai valitse kuva.';
       return;
     }
     button.disabled = true;
-    status.textContent = file ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
+    status.textContent = photographed ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
 
-    var prepared = file
-      ? shrink(file).then(function (b64) { return { image: b64, mediaType: 'image/jpeg' }; })
+    var prepared = photographed
+      ? shrinkAll().then(function (images) { return { images: images }; })
       : Promise.resolve({ sourceText: text });
 
     prepared
@@ -176,7 +268,7 @@ const STREAMING_ISLAND = `
       })
       .then(function (draft) {
         status.textContent = 'Valmis — avataan tarkistus.';
-        handOver(draft, file ? 'photographed' : 'pasted', text);
+        handOver(draft, photographed ? 'photographed' : 'pasted', text);
       })
       .catch(function () {
         status.textContent = 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
@@ -231,11 +323,25 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
         placeholder="Liitä tähän resepti sellaisenaan."
       >${sourceText}</textarea>
 
-      <label for="photo">…tai ota tai valitse kuva painetusta sivusta</label>
-      <input id="photo" name="photo" type="file" accept="image/*" />
+      <label for="camera">…tai ota kuva painetusta sivusta</label>
+      <input
+        id="camera"
+        name="camera"
+        type="file"
+        accept="image/*"
+        capture="environment"
+      />
+
+      <label for="photo">…tai valitse kuvia kuvakirjastosta</label>
+      <input id="photo" name="photo" type="file" accept="image/*" multiple />
+
+      <ul id="chosen" class="chosen" hidden></ul>
+
       <p class="empty" id="photo-help">
-        Kuva pienennetään selaimessa ja luetaan kerran. Sitä ei tallenneta
-        minnekään — talteen jää vain sivulta luettu teksti.
+        Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
+        kaikista tulee yksi resepti siinä järjestyksessä kuin ne ovat tässä.
+        Kuvat pienennetään selaimessa ja luetaan kerran. Niitä ei tallenneta
+        minnekään — talteen jää vain sivuilta luettu teksti.
       </p>
 
       <button type="submit" disabled>${submitLabel}</button>
@@ -268,6 +374,39 @@ export function intakeScreen(
 }
 
 /**
+ * The photographed pages a streaming request carries, in the order they were
+ * sent — that order is the reading order of the printed recipe, so nothing
+ * here may sort or dedupe.
+ *
+ * The older single-`image` body is still read. Ruokalista is an installable
+ * PWA, so a browser can be running a cached copy of yesterday's island; the
+ * one-photo import it sends keeps working rather than becoming a 400.
+ */
+export function readImages(body: {
+  image?: unknown;
+  mediaType?: unknown;
+  images?: unknown;
+}): IntakeImage[] {
+  const mediaTypeOf = (value: unknown): string =>
+    typeof value === "string" && value !== "" ? value : "image/jpeg";
+
+  if (Array.isArray(body.images)) {
+    return body.images.flatMap((entry): IntakeImage[] => {
+      const page = (entry ?? {}) as Record<string, unknown>;
+      const base64 = page["image"];
+      if (typeof base64 !== "string" || base64 === "") return [];
+      return [{ base64, mediaType: mediaTypeOf(page["mediaType"]) }];
+    });
+  }
+
+  if (typeof body.image === "string" && body.image !== "") {
+    return [{ base64: body.image, mediaType: mediaTypeOf(body.mediaType) }];
+  }
+
+  return [];
+}
+
+/**
  * `POST /api/intake/structure` — run the model and stream the draft straight
  * through. The browser accumulates it and hands it back to /intake/correct,
  * which keeps the correction screen server-rendered.
@@ -276,25 +415,32 @@ export async function structureStream(
   { env, request }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  let body: { sourceText?: unknown; image?: unknown; mediaType?: unknown };
+  let body: {
+    sourceText?: unknown;
+    image?: unknown;
+    mediaType?: unknown;
+    images?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return problem(400, "Expected a JSON body.");
   }
 
+  const images = readImages(body);
+  if (images.length > MAX_IMAGES) {
+    return problem(400, `Yhteen reseptiin voi antaa enintään ${MAX_IMAGES} kuvaa.`);
+  }
+
   let source: IntakeSource;
-  if (typeof body.image === "string" && body.image !== "") {
-    source = {
-      route: "photographed",
-      imageBase64: body.image,
-      mediaType: typeof body.mediaType === "string" ? body.mediaType : "image/jpeg",
-    };
+  if (images.length > 0) {
+    source = { route: "photographed", images };
   } else if (typeof body.sourceText === "string" && body.sourceText.trim() !== "") {
     source = { route: "pasted", text: body.sourceText };
   } else {
     return problem(400, "Anna joko tekstiä tai kuva.");
   }
+
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
 
@@ -328,7 +474,7 @@ export async function correctScreen(
 
   const source: IntakeSource =
     route === "photographed"
-      ? { route, imageBase64: "", mediaType: "image/jpeg" }
+      ? { route, images: [] }
       : { route, text: pasted };
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
