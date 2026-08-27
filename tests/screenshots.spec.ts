@@ -983,6 +983,11 @@ test.describe("removing an established member", () => {
  * households at the same time, and the seed's member 2 is the other one.
  */
 test.describe("public recipes", () => {
+  // This file reseeds once, in `beforeAll`, and the block above it deliberately
+  // removes member 1 from their household. These shots sign in as that member,
+  // so they need the database put back first.
+  test.beforeEach(reseed);
+
   test("publishing, the public section, and reading somebody else's", async ({
     page,
     context,

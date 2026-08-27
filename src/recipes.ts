@@ -79,6 +79,8 @@ export interface Recipe extends RecipeSummary {
   revision: number;
   steps: RecipeStep[];
   lines: RecipeLine[];
+  /** The dish this is a part of, or null when it is a dish in its own right. */
+  parentId: number | null;
   /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
   parts: Recipe[];
 }
@@ -208,6 +210,7 @@ function filterByTitle(
 }
 
 interface RecipeRow extends SummaryRow {
+  parent_id: number | null;
   source_text: string;
   source_route: "pasted" | "photographed";
   revision: number;
@@ -284,6 +287,7 @@ async function loadRecipe(
               recipe.created_at,
               recipe.household_id,
               recipe.published_at,
+              recipe.parent_id,
               household.name AS household_name,
               member.display_name AS created_by
          FROM recipe
@@ -353,6 +357,7 @@ async function loadRecipe(
     householdId: row.household_id,
     householdName: row.household_name,
     publishedAt: row.published_at,
+    parentId: row.parent_id,
     parts,
     steps: steps.map((step) => ({
       text: step.text,
@@ -445,6 +450,7 @@ function recipeForApi(recipe: Recipe): object {
     householdId: _householdId,
     householdName: _householdName,
     publishedAt: _publishedAt,
+    parentId: _parentId,
     ...wire
   } = recipe;
 
@@ -516,7 +522,9 @@ export async function ownRecipeList(
         // is the action this screen is for — a household shares a batch of
         // recipes in one sitting, not one at a time. The checkbox sits outside
         // the link so that tapping a row still opens the recipe.
-        html`<form method="post" action="/recipes/julkaisu">
+        // `stacked` because the shell's default form is a row, and this one is
+        // a whole list with its actions underneath.
+        html`<form method="post" action="/recipes/julkaisu" class="stacked">
           <input type="hidden" name="q" value="${query}" />
           <ul class="recipes is-selectable">
             ${recipes.map(
@@ -941,6 +949,12 @@ function recipeBody(
  * household that wrote it.
  */
 function sharingSection(recipe: Recipe, view: RecipeView): Raw {
+  // A part has neither of these. It is not published on its own (ADR-0002: it
+  // is a piece of the dish), and it is never planned, so there is no portion
+  // count to have a habit about. Offering either control here would only be a
+  // button that refuses.
+  if (recipe.parentId !== null) return raw("");
+
   const preference = view.preference;
 
   return html`<section class="recipe-sharing">
@@ -973,7 +987,7 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
               ? "Tämä resepti näkyy vain omalle taloudelle."
               : "Tämä resepti näkyy kaikille talouksille, ja ne näkevät myös muutokset heti."}
           </p>
-          <form method="post" action="/recipes/julkaisu">
+          <form method="post" action="/recipes/julkaisu" class="stacked">
             <input type="hidden" name="recipeId" value="${recipe.id}" />
             <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
             ${recipe.publishedAt === null

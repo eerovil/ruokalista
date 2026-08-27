@@ -191,24 +191,44 @@ test("the cupboard is one household's own", async ({ page, browser }) => {
   await neighbour.close();
 });
 
-test("another household's ingredient is not this household's to keep", async ({
+test("an ingredient nobody ever coined is not this household's to keep", async ({
   page,
 }) => {
-  // Ingredient 6 belongs to household 2. Whether it exists at all is not
-  // household 1's business, so this refuses without saying anything about it.
+  // This used to be ingredient 6, on the grounds that it belonged to household
+  // 2. The dictionary is global since #143 — a cupboard has to be able to hold
+  // an ingredient a published recipe names, whoever first typed it — so the only
+  // ingredient left to refuse is one that does not exist. The refusal says
+  // nothing about which, exactly as before.
   const response = await page.request.post("/ostoslista/kaappi", {
-    form: { aines: "6" },
+    form: { aines: "999999" },
     maxRedirects: 0,
   });
 
   expect(response.status()).toBe(400);
   expect(await response.text()).toContain("Tuntematon aines");
 
-  const removal = await page.request.post("/kaappi/6/poista", {
+  const removal = await page.request.post("/kaappi/999999/poista", {
     maxRedirects: 0,
   });
   expect(removal.status()).toBe(400);
   expect(await removal.text()).toContain("Tuntematon aines");
+});
+
+test("a cupboard may hold an ingredient another household coined", async ({
+  page,
+}) => {
+  // Ingredient 6 is household 2's `naapurin suola`, and it is on the recipe
+  // they published. Household 1 planning that recipe has to be able to say it
+  // already has the salt in — which is the whole reason the dictionary went
+  // global (#143). The cupboard row is still household 1's own.
+  const added = await page.request.post("/ostoslista/kaappi", {
+    form: { aines: "6" },
+    maxRedirects: 0,
+  });
+  expect(added.status()).toBe(303);
+
+  await page.goto("/kaappi");
+  await expect(page.locator(".pantry li")).toContainText("naapurin suola");
 });
 
 test("putting the same staple in twice is not an error", async ({ page }) => {
