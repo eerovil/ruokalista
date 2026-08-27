@@ -3,6 +3,7 @@
 -- Two households on purpose: household 2 exists so that anything leaking across
 -- the household_id filter shows up immediately in what household 1 can see.
 
+DELETE FROM pantry_entry;
 DELETE FROM batch_occurrence;
 DELETE FROM planned_batch;
 DELETE FROM ingredient_line;

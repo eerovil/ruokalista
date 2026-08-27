@@ -126,11 +126,17 @@ Three things the proposal deliberately cannot do, all from #127:
 - **There is no household delete.**
 
 Removing a member is the operation with a real failure mode: `member.id` is what
-`ingredient`, `recipe` (twice) and `planned_batch` record as having created a
-row. `removeMember` counts those first and refuses in Finnish, naming how many
-rows are in the way, rather than letting D1 answer with a constraint error. It
-also refuses to remove the admin using the screen — an admin who deletes their
-own row is locked out of the tool that would let them back in.
+`ingredient`, `recipe` (twice), `planned_batch` and `pantry_entry` record as
+having created a row. `removeMember` counts those first and refuses in Finnish,
+naming how many rows are in the way, rather than letting D1 answer with a
+constraint error. It also refuses to remove the admin using the screen — an
+admin who deletes their own row is locked out of the tool that would let them
+back in.
+
+A new table with a `REFERENCES member(id)` column has to be added to that count,
+or the refusal turns back into a 500. `tests/household-admin.spec.ts` covers the
+cupboard case specifically, because `pantry_entry.added_by` is the one that was
+already nearly missed.
 
 `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` and any migration
 are full-tier files (see `docs/codebase/testing.md`) — no focused spec covers

@@ -159,6 +159,48 @@ test("a member who has made something is not removed under the household's feet"
   await expect(page.locator("details.rename")).toHaveCount(1);
 });
 
+test("a cupboard entry counts as something made, too", async ({
+  page,
+  request,
+}) => {
+  // The removal check has to name every table with a REFERENCES member(id)
+  // column, and `pantry_entry.added_by` (#125) is the newest. Forgetting one
+  // turns a Finnish refusal back into a constraint error, so the trap gets its
+  // own test rather than a comment.
+  await signIn(page, 3);
+  await page.goto("/admin/households/2");
+  await page.locator("#add-name").fill("Kaappaaja");
+  await page.locator("#add-sub").fill("sub-kaappaaja");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+
+  const memberId = await memberIdOf(page, "Kaappaaja");
+
+  // Ingredient 6 is household 2's own, so this is that household's cupboard.
+  const stocked = await request.post("/ostoslista/kaappi", {
+    headers: { Cookie: cookieHeader(memberId) },
+    maxRedirects: 0,
+    form: { aines: "6" },
+  });
+  expect(stocked.status()).toBe(303);
+
+  const row = page.locator("details.rename").filter({ hasText: "Kaappaaja" });
+  await row.locator("summary").click();
+  await row.getByRole("button", { name: "Poista taloudesta" }).click();
+  await expect(page.locator(".refused")).toContainText("ei voi poistaa");
+
+  // Put household 2 back to one member for the tests that follow.
+  await request.post("/ostoslista/kaappi", {
+    headers: { Cookie: cookieHeader(memberId) },
+    maxRedirects: 0,
+    form: { aines: "6", toiminto: "poista" },
+  });
+  const removed = await request.post(
+    `/admin/households/2/members/${memberId}/delete`,
+    { headers: { Cookie: cookieHeader(3) }, maxRedirects: 0 },
+  );
+  expect(removed.status()).toBe(303);
+});
+
 test("an admin cannot remove their own membership here", async ({ page }) => {
   await signIn(page, 3);
   await page.goto("/admin/households/1");

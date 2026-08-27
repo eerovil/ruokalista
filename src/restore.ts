@@ -25,6 +25,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "ingredient_line",
   "planned_batch",
   "batch_occurrence",
+  // After ingredient and member: a pantry row points at both.
+  "pantry_entry",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -236,6 +238,7 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   const recipeIds = uniqueIntegerKey(snapshot.tables.recipe, "id", "recipe");
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
+  uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
@@ -244,6 +247,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     snapshot.tables.batch_occurrence,
     ["batch_id", "date", "slot"],
     "batch occurrence",
+  );
+  uniqueComposite(
+    snapshot.tables.pantry_entry,
+    ["household_id", "ingredient_id"],
+    "pantry entry",
   );
 
   for (const row of snapshot.tables.member) {
@@ -274,6 +282,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   }
   for (const row of snapshot.tables.batch_occurrence) {
     requireReference(row, "batch_id", batchIds, "batch_occurrence.batch_id");
+  }
+  for (const row of snapshot.tables.pantry_entry) {
+    requireReference(row, "household_id", householdIds, "pantry_entry.household_id");
+    requireReference(row, "ingredient_id", ingredientIds, "pantry_entry.ingredient_id");
+    requireReference(row, "added_by", memberIds, "pantry_entry.added_by");
   }
 }
 

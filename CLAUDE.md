@@ -36,6 +36,7 @@ parameter. There is no other way in. Another household's record is a 404, not a
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |
+| The cupboard | `src/pantry.ts`, `src/pantry-screens.ts` |
 | Markup and the shell | `src/html.ts` |
 | Schema and backups | `migrations/`, `src/backup.ts`, `src/restore.ts` |
 

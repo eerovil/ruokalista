@@ -91,6 +91,31 @@ The proposal also moves `sourceWorthShowing` out of `src/recipes.ts` and into
 the same question the cooking view does — see
 [recipes](docs/codebase/recipes.md).
 
+## The cupboard
+
+This pull request proposes `GET /kaappi` (`src/pantry-screens.ts`) and a
+two-section shopping list (#125). The screen shows only what the household
+keeps in — not a catalogue of every ingredient with a switch beside it — and
+the one action on a row is `Loppui`, which removes it.
+
+Things get *into* the cupboard from the shopping list, because that is where
+somebody notices oregano on the list and remembers the jar in the cupboard.
+Each opened list row carries a small POST form to `/ostoslista/kaappi`; the
+ticked cookings ride along as hidden `ateria` fields and are re-serialised from
+integers into the redirect, so the member lands back on the same list rather
+than a default one, and nothing the browser sent is echoed back as-is.
+
+A cupboard ingredient does not vanish from the list. It moves under a `Löytyy`
+heading at the bottom, keeping the total and the breakdown `shoppingList`
+worked out, because "why does this week need oregano at all" is worth being
+able to answer about a staple too. With an empty cupboard there are no section
+headings at all — one list needs no heading saying it is the list.
+
+There is no sixth bottom tab: the cupboard hangs off the Ainekset screen, which
+is the same ingredients seen another way, and off the `Löytyy` section itself.
+The split rule is `src/pantry.ts::splitByPantry`, tested directly in
+`dev/check-pantry.ts`.
+
 ### Server-rendered inline script islands
 
 Three screens ship a hand-written `<script>` rather than a build step, and all

@@ -203,6 +203,11 @@ export async function updateMember(
  * members would either break a foreign key or, worse, take the household's
  * recipes with it — so this counts first and says what is in the way, in
  * Finnish, rather than letting D1 answer with a constraint error.
+ *
+ * The count below has to name every table with a `REFERENCES member(id)`
+ * column, so a new table that records who made a row belongs in it — the
+ * newest is `pantry_entry.added_by` (#125). Forgetting one turns a refusal
+ * back into a constraint error, which is a 500 rather than a sentence.
  */
 export async function removeMember(
   db: D1Database,
@@ -216,7 +221,8 @@ export async function removeMember(
       `SELECT
          (SELECT count(*) FROM ingredient    WHERE created_by = ?1) +
          (SELECT count(*) FROM recipe        WHERE created_by = ?1 OR updated_by = ?1) +
-         (SELECT count(*) FROM planned_batch WHERE created_by = ?1) AS rows_made`,
+         (SELECT count(*) FROM planned_batch WHERE created_by = ?1) +
+         (SELECT count(*) FROM pantry_entry  WHERE added_by   = ?1) AS rows_made`,
     )
     .bind(memberId)
     .first<{ rows_made: number }>();
