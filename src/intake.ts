@@ -27,6 +27,15 @@ const MODEL = "claude-sonnet-5";
  */
 const EFFORT = "medium" as const;
 
+/**
+ * The ceiling on a draft's output tokens, shared by both intake paths.
+ *
+ * It is far above what the SDK allows a non-streaming call to ask for — roughly
+ * 21,300 tokens, past which `messages.create` throws rather than sending
+ * anything — so every model call here streams. See `structureDraftWith`.
+ */
+export const MAX_TOKENS = 128000;
+
 export interface DraftLine {
   quantity: number | null;
   quantityMax: number | null;
@@ -114,9 +123,13 @@ export const DRAFT_SCHEMA = {
           },
           // Issue #120: which words in `text` name which of this draft's own
           // ingredient lines. A pointer and the wording, never an amount.
+          // No maxItems here: structured outputs refuse it ("For 'array' type,
+          // property 'maxItems' is not supported") and the whole request comes
+          // back a 400, so the cap lives in `requireStepRefs` and
+          // `toDraftRefs` instead — which have to hold it anyway, since an
+          // AgentDeck bundle is not schema-constrained.
           ingredient_refs: {
             type: "array",
-            maxItems: MAX_REFS_PER_STEP,
             items: {
               type: "object",
               properties: {
@@ -294,6 +307,26 @@ function keptSourceText(source: IntakeSource, transcribed: unknown): string {
 }
 
 /**
+ * What `structureDraft` needs of the SDK: one streamed model call, awaited to
+ * completion. Narrower than `Anthropic` so a check can hand in a stand-in and
+ * exercise the whole path without spending anything on the key.
+ */
+export interface DraftModelClient {
+  messages: {
+    stream(body: ModelRequest): { finalMessage(): Promise<ModelResponse> };
+  };
+}
+
+type ModelRequest = ReturnType<typeof requestFor>;
+
+interface ModelResponse {
+  content: Array<{ type: string; text?: string }>;
+  stop_reason: string | null;
+  usage: unknown;
+  model: string;
+}
+
+/**
  * Run the model over source text and return a draft. Nothing is written to D1
  * here — a failed import leaves no trace, which is why there is no draft table.
  */
@@ -302,13 +335,29 @@ export async function structureDraft(
   source: IntakeSource,
   ingredients: IngredientSummary[],
 ): Promise<Draft> {
-  const client = anthropic(env);
+  return structureDraftWith(anthropic(env), source, ingredients);
+}
 
-  let response;
+/**
+ * The same call against a given client. Both intake paths stream, and this one
+ * collects the stream server-side rather than sending it on: the SDK refuses a
+ * non-streaming request whose `max_tokens` implies more than ten minutes of
+ * work, and MAX_TOKENS is far above that ceiling. `messages.create` therefore
+ * threw before anything left the Worker, which broke the plain form post — the
+ * path a browser without JavaScript takes (issue #152). Streaming here keeps
+ * one request shape and one limit for both paths instead of two that have to
+ * be held apart by hand.
+ */
+export async function structureDraftWith(
+  client: DraftModelClient,
+  source: IntakeSource,
+  ingredients: IngredientSummary[],
+): Promise<Draft> {
+  let response: ModelResponse;
   try {
-    response = await client.messages.create({
-      ...requestFor(source, ingredients),
-    });
+    response = await client.messages
+      .stream({ ...requestFor(source, ingredients) })
+      .finalMessage();
   } catch (cause) {
     throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
   }
@@ -604,7 +653,7 @@ function anthropic(env: Env): Anthropic {
 function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
   return {
     model: MODEL,
-    max_tokens: 128000,
+    max_tokens: MAX_TOKENS,
     output_config: {
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },
