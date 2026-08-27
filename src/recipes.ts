@@ -540,6 +540,7 @@ export function recipeImage(
 
 function recipeBody(recipe: Recipe, portions: number | null): Raw {
   const factor = scaleFactor(recipe.yieldPortions, portions);
+  const canRevealAmounts = hasRevealableMention(recipe, factor);
 
   return html`${recipeImage(recipe)}
     <h1>${recipe.title}</h1>
@@ -554,6 +555,17 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
           ? `${recipe.yieldPortions} annosta`
           : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
     </p>
+
+    ${canRevealAmounts
+      ? html`<input
+            type="checkbox"
+            id="reveal-all-amounts"
+            class="reveal-all"
+          /><label for="reveal-all-amounts" class="reveal-all-label"
+            ><span class="reveal-all-show">Näytä kaikki määrät</span
+            ><span class="reveal-all-hide">Piilota määrät</span></label
+          >`
+      : ""}
 
     ${recipe.parts.length === 0
       ? body(recipe, factor)
@@ -585,6 +597,22 @@ function recipeBody(recipe: Recipe, portions: number | null): Raw {
     </p>`;
 }
 
+/** Whether this dish or any of its parts has an amount the toggle can reveal. */
+function hasRevealableMention(recipe: Recipe, factor: number | null): boolean {
+  const amounts = amountsByIngredient(recipe.lines, factor);
+  const thisRecipeHasOne = recipe.steps.some((step) =>
+    resolveMentions(step.text, step.refs).some(
+      (segment) =>
+        segment.kind === "mention" &&
+        (amounts.get(segment.ingredientId) ?? "") !== "",
+    )
+  );
+
+  return thisRecipeHasOne || recipe.parts.some(
+    (part) => hasRevealableMention(part, factor),
+  );
+}
+
 /**
  * A mention should read as the sentence it is part of, not as a button — the
  * instruction is the thing being read, and a row of chips through the middle of
@@ -599,9 +627,21 @@ const MENTION_STYLE = html`<style>
   .mention { display: inline; }
   /* Off-screen rather than display:none — a hidden control cannot be focused,
      and this one is how a keyboard reaches the amount. */
-  .mention-toggle {
+  .mention-toggle, .reveal-all {
     position: absolute; width: 1px; height: 1px;
     margin: 0; padding: 0; opacity: 0; pointer-events: none;
+  }
+  .reveal-all-label {
+    display: inline-flex; align-items: center; min-height: var(--tap-compact);
+    padding: 0 .75rem; margin: 0 0 .65rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: var(--radius);
+    background: var(--surface); font-weight: 600;
+  }
+  .reveal-all-hide { display: none; }
+  .reveal-all:checked + .reveal-all-label .reveal-all-show { display: none; }
+  .reveal-all:checked + .reveal-all-label .reveal-all-hide { display: inline; }
+  .reveal-all:focus-visible + .reveal-all-label {
+    outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .mention > label {
     display: inline; cursor: pointer;
@@ -613,6 +653,9 @@ const MENTION_STYLE = html`<style>
     color: var(--accent); margin-right: .3em;
   }
   .mention-toggle:not(:checked) + label .mention-amount { display: none; }
+  .reveal-all:checked ~ * .mention-toggle:not(:checked) + label .mention-amount {
+    display: inline;
+  }
   .mention-toggle:checked + label { text-decoration: none; }
   .mention-toggle:focus-visible + label {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;

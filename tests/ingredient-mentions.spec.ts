@@ -40,6 +40,20 @@ function mention(
     .filter({ has: page.locator(".mention-word", { hasText: word }) });
 }
 
+async function expectAllMentionAmounts(
+  page: import("@playwright/test").Page,
+  visible: boolean,
+) {
+  const amounts = page.locator(".mention-amount");
+  const count = await amounts.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await (visible
+      ? expect(amounts.nth(index)).toBeVisible()
+      : expect(amounts.nth(index)).toBeHidden());
+  }
+}
+
 test("a mention starts closed and opens on a tap", async ({ page }) => {
   await page.goto("/recipes/1");
 
@@ -76,6 +90,82 @@ test("tapping again hides it, and mentions toggle independently", async ({
   await kaali.locator("label").click();
   await expect(kaali.locator(".mention-amount")).toBeHidden();
   await expect(oljy.locator(".mention-amount")).toBeVisible();
+});
+
+test("one keyboard toggle layers every amount over individual choices", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  const revealAllByName = page.getByRole("checkbox", {
+    name: "Näytä kaikki määrät",
+  });
+  const revealAll = page.locator(".reveal-all");
+  await revealAllByName.focus();
+  await expect(revealAll).toBeFocused();
+  await revealAll.press("Space");
+  await expectAllMentionAmounts(page, true);
+  await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
+
+  // An individual choice remains its own state even while the global layer
+  // already makes every amount visible.
+  const kaali = mention(page, "kaali");
+  await kaali.locator("label").click();
+  await revealAll.press("Space");
+  await expect(kaali.locator(".mention-amount")).toBeVisible();
+  await expect(mention(page, "öljyssä").locator(".mention-amount")).toBeHidden();
+});
+
+test("one toggle covers a multipart dish and survives back-forward restore", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3");
+
+  const revealAllByName = page.getByRole("checkbox", {
+    name: "Näytä kaikki määrät",
+  });
+  const revealAll = page.locator(".reveal-all");
+  await expect(revealAllByName).toBeVisible();
+  await page.locator(".reveal-all-label").click();
+  await expect(revealAll).toBeChecked();
+  const partAmounts = page.locator(".part .mention-amount");
+  expect(await partAmounts.count()).toBeGreaterThan(0);
+  for (let index = 0; index < await partAmounts.count(); index += 1) {
+    await expect(partAmounts.nth(index)).toBeVisible();
+  }
+  await expect(page.locator(".reveal-all")).toHaveCount(1);
+
+  await page.goto("/recipes");
+  await page.goBack();
+  await expect(page.locator(".reveal-all")).toBeChecked();
+  await expect(page.locator(".part .mention-amount")).toBeVisible();
+});
+
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("the recipe-wide toggle still reveals and hides every amount", async ({
+    page,
+  }) => {
+    await page.goto("/recipes/1");
+
+    const revealAllByName = page.getByRole("checkbox", {
+      name: "Näytä kaikki määrät",
+    });
+    const revealAll = page.locator(".reveal-all");
+    await expect(revealAllByName).toBeVisible();
+    await page.locator(".reveal-all-label").click();
+    await expect(revealAll).toBeChecked();
+    await expectAllMentionAmounts(page, true);
+
+    await page.locator(".reveal-all-label").click();
+    await expect(revealAll).not.toBeChecked();
+    await expectAllMentionAmounts(page, false);
+
+    const kaali = mention(page, "kaali");
+    await kaali.locator("label").click();
+    await expect(kaali.locator(".mention-amount")).toBeVisible();
+  });
 });
 
 test("the revealed amount is this meal's, not the page's", async ({ page }) => {
