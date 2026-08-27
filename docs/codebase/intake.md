@@ -7,6 +7,31 @@ so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
 
+**`DRAFT_SCHEMA` may only use the JSON Schema subset structured outputs accept.**
+An unsupported keyword is not ignored and does not degrade: the request is a
+400, so *every* model-backed import stops working at once. `maxItems` did
+exactly that after #120 — the cap was added to the schema, nothing about it
+needed a paid call to review, and the first symptom a household saw was
+`Reseptin jäsennys ei onnistunut` on an intake screen three hops from the
+cause. Size and count caps therefore live in the prompt and in
+`assertDraftWire`, never in the schema, and `dev/check-draft-schema.ts` walks
+the schema for the whole unsupported list without spending anything.
+
+**Both model calls stream, and both check `stop_reason`.** `structureDraft`
+awaits `finalMessage()` rather than posting a plain request, because the SDK
+refuses a non-streaming call whose token budget could outrun ten minutes, and
+`max_tokens` is the model's full 128000 — a ceiling rather than a spend, so it
+costs nothing to leave high, but it is well over that line. `streamDraft`
+checks the stop reason after `finalMessage()` too: a draft cut off at
+`max_tokens` is a JSON document that just ends, and a refusal is no text at
+all. Neither raises anything in the transport, so before this check both
+reached the browser looking like a finished import and failed one screen later
+at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
+while no byte has been sent — after that the member sees the failure. Failures
+reach a member as Finnish through `importFailureMessage`, which logs the
+English detail; `intake.model_usage` carries `stop_reason` alongside the token
+counts, so a truncated import is visible in `wrangler tail`.
+
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
 `src/sample-draft.ts` to the same `/intake/correct` the streaming island hands

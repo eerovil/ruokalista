@@ -4,6 +4,7 @@ import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
   draftFromJson,
+  importFailureMessage,
   streamDraft,
   structureDraftWithRetry,
   STRUCTURED_BY,
@@ -270,7 +271,7 @@ export async function structureScreen(
     );
   } catch (error) {
     // The member's text is handed back rather than thrown away.
-    return failed(member, String((error as Error).message ?? error), sourceText);
+    return failed(member, importFailureMessage(error), sourceText);
   }
 
   return page(
@@ -356,7 +357,7 @@ export async function correctScreen(
       member,
     );
   } catch (error) {
-    return failed(member, String((error as Error).message ?? error), pasted);
+    return failed(member, importFailureMessage(error), pasted);
   }
 }
 
