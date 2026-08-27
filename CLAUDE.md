@@ -30,6 +30,7 @@ parameter. There is no other way in. Another household's record is a 404, not a
 | --- | --- |
 | Routing and the one handler | `src/index.ts`, `src/router.ts`, `src/env.ts` |
 | Sign-in, sessions, admin | `src/auth.ts`, `src/signin.ts`, `src/members.ts`, `src/admin-screens.ts` |
+| Households and their members, admin-side | `src/households.ts`, `src/household-admin.ts` |
 | Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts` |
 | Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |

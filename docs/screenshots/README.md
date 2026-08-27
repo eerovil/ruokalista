@@ -45,3 +45,5 @@ Regenerate after a change that alters a screen:
 | `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
 | `36-week-empty-today.png` | Proposed empty current week as it opens — the viewport lands on today, not Monday (not full-page, on purpose) |
 | `37-week-long-title.png` | Proposed long recipe name wrapping in the card head, beside the widest carried pill |
+| `42-admin-households.png` | Proposed household list, including the household this admin does not belong to |
+| `43-admin-household.png` | Proposed household detail: the name, the members, and one member row opened for editing |

@@ -95,6 +95,43 @@ both sides.
 `MEMBER_COLUMNS` would silently omit `is_admin` and make every member look
 non-admin.
 
+### Managing households and members (#127, proposed)
+
+This pull request proposes the first admin tool that deliberately crosses a
+household boundary: `Householdit` on `/admin`, which lists every household in
+the database and opens one for editing — its name, its members, and adding,
+editing or removing a member.
+
+Until now membership was a hand-written INSERT against production, because the
+only way to learn somebody's Google `sub` is to read it off the sign-in wall.
+This proposes doing that job in the app, by the one member the app already
+distinguishes.
+
+The crossing is confined to `src/households.ts`, and that is the whole of the
+containment. Nothing in that module takes a viewer's `household_id`, nothing
+outside it reads another household, and every route that reaches it is wrapped
+in `requireAdminScreen`. The household-scoped query pattern everywhere else is
+unchanged — `tests/household-admin.spec.ts` ends by checking that member 1 still
+cannot see household 2's ingredient.
+
+Three things the proposal deliberately cannot do, all from #127:
+
+- **It never touches `member.is_admin`.** The column is absent from every read
+  and every write in `src/households.ts`, and the UPDATE names its three
+  editable columns one by one, so a form field claiming `is_admin=1` is just
+  more of the request. Granting admin stays `scripts/set-admin.sh`. A screen
+  that could make more admins is the role system #94 refused to build.
+- **There is no "move to another household".** A move is a removal and an
+  addition, which leaves two visible actions instead of one silent reparenting.
+- **There is no household delete.**
+
+Removing a member is the operation with a real failure mode: `member.id` is what
+`ingredient`, `recipe` (twice) and `planned_batch` record as having created a
+row. `removeMember` counts those first and refuses in Finnish, naming how many
+rows are in the way, rather than letting D1 answer with a constraint error. It
+also refuses to remove the admin using the screen — an admin who deletes their
+own row is locked out of the tool that would let them back in.
+
 `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` and any migration
 are full-tier files (see `docs/codebase/testing.md`) — no focused spec covers
 them, so a change here should run the whole browser suite, not just

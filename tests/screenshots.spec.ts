@@ -515,6 +515,28 @@ test.describe("signed in as an admin", () => {
     await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
   });
 
+  test("every household, and one of them open", async ({ page }) => {
+    await page.goto("/admin/households");
+    await expect(page.getByRole("heading", { name: "Householdit" })).toBeVisible();
+    // Both seeded households, including the one this admin is not in — that
+    // crossing is the whole point of the screen.
+    await expect(page.getByRole("link", { name: /Naapuri/ })).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/42-admin-households.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("link", { name: /Koti/ }).click();
+    // A member row opened, because a list of closed rows says nothing about
+    // what the screen is for.
+    await page.locator("details.rename").first().locator("summary").click();
+    await expect(page.locator("#member-1-sub")).toHaveValue("dev-seed-koti");
+    await page.screenshot({
+      path: `${SHOTS}/43-admin-household.png`,
+      fullPage: true,
+    });
+  });
+
   test("choosing which recipes get a picture", async ({ page }) => {
     // A household in the middle of things, which is the only state this screen
     // is interesting in: one recipe with no picture, one with a picture
