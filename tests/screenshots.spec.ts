@@ -875,13 +875,15 @@ test.describe("signed in", () => {
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
-    const product = milk.locator(".s-product-results > li", {
-      hasText: "Kotimaista rasvaton maito",
-    });
+    const product = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista rasvaton maito" });
     await expect(product).toBeVisible();
+    // Not full-page: the picker is fixed to the viewport (#200), and a
+    // full-page shot paints a fixed element wherever the page happens to be
+    // scrolled rather than where the member sees it.
     await capture(page, {
       path: `${SHOTS}/57-s-ostoslista-product-search.png`,
-      fullPage: true,
     });
 
     // Hold the optimistic save open, then try to send: the screen says it is
@@ -922,6 +924,7 @@ test.describe("signed in", () => {
     await expect(
       page.locator(".s-current-items li").filter({ hasText: "Kotimaista rasvaton maito" }),
     ).toHaveCount(1);
+    await expect(page.locator(".s-sheet")).toBeHidden();
 
     // The choice itself, back on the list: the picture on the row, and the
     // S-ostoslista panel saying what the list already holds (#159).
@@ -991,14 +994,13 @@ test.describe("signed in", () => {
     // file reseeds once, so the button may read either way by now.
     await milk.locator("summary").click();
     await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-    const product = milk.locator(".s-product-results > li", {
-      hasText: "Kotimaista rasvaton maito",
-    });
+    const product = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista rasvaton maito" });
     await expect(product).toBeVisible();
-    await expect(milk.locator(".s-product-scope-choice")).toBeVisible();
+    await expect(page.locator(".s-sheet .s-product-scope-choice")).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/60-product-scope-choice.png`,
-      fullPage: true,
     });
 
     const saved = page.waitForResponse(
@@ -1025,9 +1027,9 @@ test.describe("signed in", () => {
     // A second package size, taught from the row itself rather than a settings
     // page, and listed underneath with the size that was stored for it.
     await counted.getByRole("button", { name: "Lisää toinen pakkauskoko" }).click();
-    const second = counted.locator(".s-product-results > li", {
-      hasText: "Valio kevytmaito",
-    });
+    const second = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Valio kevytmaito" });
     await expect(second).toBeVisible();
     await Promise.all([
       page.waitForEvent("load"),

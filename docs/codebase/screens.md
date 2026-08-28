@@ -150,7 +150,8 @@ What that buys, and the rules each part follows:
   existing `--tap` minimum, so no row grows, and the slot collapses when there
   is no picture (`.shopping-thumb:empty`) rather than leaving an empty box.
 - **Product choice happens in a panel inside the row**, so choosing a product
-  is not a page navigation and coming back is not a page load.
+  is not a page navigation and coming back is not a page load. (Inside the row
+  is the part #200 takes back below — the panel is what made the list move.)
 - **The next buy row's search is prefetched** while a panel is open. The cache
   is keyed by the search term and the server echoes the term it ran, and the
   island drops any answer that does not match what the row is currently asking
@@ -177,6 +178,65 @@ The island follows the same discipline as the other three: ES5, no regular
 expressions, feature-detected (it does nothing at all without `XMLHttpRequest`,
 `JSON` or `addEventListener`), and it builds every node with `createElement`
 and `createTextNode` so a product name from the shop can never become markup.
+
+### Stopping the screen moving under the member (issue #200)
+
+The shape above worked and read badly on a phone. Every part of choosing a
+product changed the height of something *inside* the list, so the list slid
+under the thumb of the person using it: the search panel grew inside the row it
+belonged to, the chosen product replaced a two-line placeholder with a card
+carrying a 64 px picture, the saving spinner and the refusal were nodes inserted
+and removed, and two of the save paths reloaded the page outright. Walking
+twenty ingredients meant re-finding your place twenty times.
+
+This pull request proposes moving everything that changes size out of the list.
+Nothing here is a scroll-position patch; the positions never move to be
+restored.
+
+- **The picker is one fixed sheet** (`.s-sheet`), built once by the island and
+  appended to `<body>` rather than into a row. It is `position: fixed`, so
+  opening it, searching in it and closing it reflow nothing. Because it is no
+  longer sitting inside the row it belongs to, its head names the ingredient and
+  its amount and says what is chosen for it now — on a phone that heading is the
+  only thing that answers "which of these am I doing". A backdrop click, the
+  `Sulje` button and `Escape` all close it. Above 48rem the same sheet becomes a
+  centred dialog; the flow is not phone-only.
+- **The scope choice visits the sheet, it does not live there.** The server
+  still draws `.s-product-scope-choice` inside the row (`.s-scope-source`,
+  hidden), the island moves that element into the sheet on open and puts it back
+  on close. A dish's title is escaped once, by the server, and the option values
+  cannot drift from what the save accepts.
+- **The row's product line is compact and the same height in both states.** 40 px
+  rather than 64, the name and EAN held to one line each, and a reserved
+  `min-height`, so swapping "Teksti" for a chosen product moves nothing. It
+  takes the full width with its buttons underneath, because squeezed beside them
+  the name ellipsised away the very thing somebody is shopping for.
+- **A row's busy line is reserved, not inserted.** The server ships an empty
+  `.s-status` on every mapped-capable row and the island only fills and empties
+  it.
+- **A refusal is a fixed strip** (`.s-toast`) above the tab bar, with the retry
+  in it, rather than a paragraph pushed into the list at the moment the member
+  is being told something went wrong.
+- **The current-S-ostoslista panel moved below the list.** Its contents are an
+  unknown number of lines that arrive after the screen does, and above the list
+  every one of them pushed the list down while it was being read.
+- **Every row is anchored and every server round-trip returns to its row.**
+  `itemList` gives the first row of each ingredient `id="aines-<ingredientId>"`,
+  and `listLocation` puts that fragment on the redirects from the cupboard
+  buttons, from dropping a package size, and from the whole no-JavaScript
+  product flow. The ingredient rather than the row key, because those are
+  exactly the round-trips that change a key: pinning a product to one dish
+  splits a row in two, and the cupboard moves a row to the other list.
+- **One save path still reloads, and it lands on the ingredient.** A second
+  package size or a recipe's own product changes what the row adds up to, and
+  that arithmetic is the server's — so the island sets the hash to the row's
+  anchor before reloading rather than drawing a guess.
+
+`tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
+row deep in the list, writes `window.scrollY` down, and demands the same number
+after opening the picker, searching again, closing it, drawing the optimistic
+choice and having the save land — plus two more that assert the reload and the
+cupboard button come back to the row they were pressed on.
 
 ## The cupboard
 
