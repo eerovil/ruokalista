@@ -17,16 +17,13 @@ cause. Size and count caps therefore live in the prompt and in
 `assertDraftWire`, never in the schema, and `dev/check-draft-schema.ts` walks
 the schema for the whole unsupported list without spending anything.
 
-**Both model calls stream, and both check `stop_reason`.** `structureDraft`
-awaits `finalMessage()` rather than posting a plain request, because the SDK
-refuses a non-streaming call whose token budget could outrun ten minutes, and
-`max_tokens` is the model's full 128000 — a ceiling rather than a spend, so it
-costs nothing to leave high, but it is well over that line. `streamDraft`
-checks the stop reason after `finalMessage()` too: a draft cut off at
+**The model call streams and checks `stop_reason`.** `max_tokens` is the
+model's full 128000 — a ceiling rather than a spend, so it costs nothing to
+leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft cut off at
 `max_tokens` is a JSON document that just ends, and a refusal is no text at
-all. Neither raises anything in the transport, so before this check both
-reached the browser looking like a finished import and failed one screen later
-at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
+all. Neither condition raises anything in the transport, so before this check
+both reached the browser looking like a finished import and failed one screen
+later at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
 while no byte has been sent — after that the member sees the failure. Failures
 reach a member as Finnish through `importFailureMessage`, which logs the
 English detail; `intake.model_usage` carries `stop_reason` alongside the token
@@ -176,12 +173,13 @@ refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trail
 every recipe; `lineRows` decides which rows are spare by reading the values, as
 "everything after the last row anybody put anything in".
 
-Intake has two paths on purpose. Without JavaScript the form posts to `/intake`
-and the model call is a plain request. With it, the island in
-`src/intake-screens.ts` streams from `/api/intake/structure` so bytes never stop
+Intake requires JavaScript. This pull request proposes removing the plain
+`POST /intake` fallback: the form has no server action and its submit button is
+disabled until the island in `src/intake-screens.ts` finds the browser features
+it needs. The island streams from `/api/intake/structure` so bytes never stop
 flowing, then hands the finished draft to `/intake/correct` — which keeps the
 correction screen server-rendered rather than built in the browser. The camera
-route needs the island either way: downscaling a photograph is a canvas job.
+route also needs the island because downscaling a photograph is a canvas job.
 
 Intake's progress is counted, not dumped: the island reads the streaming JSON
 and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note

@@ -7,7 +7,6 @@ import {
   importFailureMessage,
   MAX_IMAGES,
   streamDraft,
-  structureDraftWithRetry,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
@@ -52,9 +51,8 @@ import { SAMPLE_DRAFT } from "./sample-draft.ts";
  * keep flowing, shows it filling in, and then hands the finished draft to the
  * server to render the correction screen.
  *
- * Without JavaScript the form posts to /intake and works exactly as before,
- * just without the progress. The camera route needs this script either way:
- * downscaling a photograph is a canvas job.
+ * Intake requires this script. Pasted text uses its streamed model path, and
+ * the camera route also needs it for canvas downscaling.
  *
  * It also owns the chosen pages (#156). Neither file input holds the list,
  * because neither one can: a camera capture replaces its input's single file
@@ -65,11 +63,28 @@ import { SAMPLE_DRAFT } from "./sample-draft.ts";
 const STREAMING_ISLAND = `
 (function () {
   var form = document.getElementById('intake');
-  if (!form || !window.fetch || !window.ReadableStream || !window.createImageBitmap) return;
-
   var progress = document.getElementById('progress');
   var status = document.getElementById('status');
+  var photoHelp = document.getElementById('photo-help');
   var chosenList = document.getElementById('chosen');
+  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise || !window.Response || !window.ReadableStream || !window.TextDecoder) return;
+
+  try {
+    var streamProbe = new window.Response(new window.ReadableStream()).body;
+    if (!streamProbe || !streamProbe.getReader) return;
+  } catch (error) {
+    return;
+  }
+
+  var button = form.querySelector('button[type="submit"]');
+  if (!button) return;
+  button.disabled = false;
+  status.textContent = '';
+  if (!window.createImageBitmap || !window.URL || !window.URL.createObjectURL || !window.URL.revokeObjectURL) {
+    form.camera.disabled = true;
+    form.photo.disabled = true;
+    photoHelp.textContent = 'Kuvan tuonti ei ole käytettävissä tässä selaimessa.';
+  }
   var LONG_EDGE = 1500;
   var MAX_PAGES = ${MAX_IMAGES};
 
@@ -111,7 +126,7 @@ const STREAMING_ISLAND = `
   }
 
   function shrink(file) {
-    return createImageBitmap(file).then(function (bitmap) {
+    return window.createImageBitmap(file).then(function (bitmap) {
       var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
       var canvas = document.createElement('canvas');
       canvas.width = Math.round(bitmap.width * scale);
@@ -217,11 +232,12 @@ const STREAMING_ISLAND = `
   form.addEventListener('submit', function (event) {
     var text = form.sourceText.value.trim();
     var photographed = pages.length > 0;
-    if (!photographed && !text) return;
-
     event.preventDefault();
-    var submit = form.querySelector('button[type="submit"]');
-    submit.disabled = true;
+    if (!photographed && !text) {
+      status.textContent = 'Liitä ensin reseptin teksti tai valitse kuva.';
+      return;
+    }
+    button.disabled = true;
     status.textContent = photographed ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
@@ -239,6 +255,9 @@ const STREAMING_ISLAND = `
         }).then(function (response) {
           if (!response.ok) {
             return response.text().then(function (t) { throw new Error(t || response.status); });
+          }
+          if (!response.body || !response.body.getReader) {
+            throw new Error('Streaming response unavailable');
           }
           status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
@@ -258,9 +277,9 @@ const STREAMING_ISLAND = `
         status.textContent = 'Valmis — avataan tarkistus.';
         handOver(draft, photographed ? 'photographed' : 'pasted', text);
       })
-      .catch(function (error) {
-        status.textContent = 'Jäsennys epäonnistui: ' + error.message;
-        submit.disabled = false;
+      .catch(function () {
+        status.textContent = 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
+        button.disabled = false;
       });
   });
 })();
@@ -300,6 +319,51 @@ function sampleDraftForm(): Raw {
     </form>`;
 }
 
+/** The JavaScript-owned intake form, optionally with a paste kept for retry. */
+function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
+  return html`<form class="stacked" id="intake">
+      <label for="sourceText">Liitä reseptin teksti</label>
+      <textarea
+        id="sourceText"
+        name="sourceText"
+        rows="14"
+        placeholder="Liitä tähän resepti sellaisenaan."
+      >${sourceText}</textarea>
+
+      <label for="camera">…tai ota kuva painetusta sivusta</label>
+      <input
+        id="camera"
+        name="camera"
+        type="file"
+        accept="image/*"
+        capture="environment"
+      />
+
+      <label for="photo">…tai valitse kuvia kuvakirjastosta</label>
+      <input id="photo" name="photo" type="file" accept="image/*" multiple />
+
+      <ul id="chosen" class="chosen" hidden></ul>
+
+      <p class="empty" id="photo-help">
+        Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
+        kaikista tulee yksi resepti siinä järjestyksessä kuin ne ovat tässä.
+        Kuvat pienennetään selaimessa ja luetaan kerran. Niitä ei tallenneta
+        minnekään — talteen jää vain sivuilta luettu teksti.
+      </p>
+
+      <button type="submit" disabled>${submitLabel}</button>
+    </form>
+
+    <p id="status" class="status" aria-live="polite">
+      Reseptin tuonti tarvitsee JavaScriptin.
+    </p>
+    <p id="progress" class="progress" aria-live="polite" hidden></p>
+
+    <script>
+      ${raw(STREAMING_ISLAND)}
+    </script>`;
+}
+
 /** `GET /intake` */
 export function intakeScreen(
   { url }: RouteContext,
@@ -308,81 +372,9 @@ export function intakeScreen(
   return page(
     "Lisää resepti",
     html`<h1>Lisää resepti</h1>
-      <form method="post" action="/intake" class="stacked" id="intake">
-        <label for="sourceText">Liitä reseptin teksti</label>
-        <textarea
-          id="sourceText"
-          name="sourceText"
-          rows="14"
-          placeholder="Liitä tähän resepti sellaisenaan."
-        ></textarea>
-
-        <label for="camera">…tai ota kuva painetusta sivusta</label>
-        <input
-          id="camera"
-          name="camera"
-          type="file"
-          accept="image/*"
-          capture="environment"
-        />
-
-        <label for="photo">…tai valitse kuvia kuvakirjastosta</label>
-        <input id="photo" name="photo" type="file" accept="image/*" multiple />
-
-        <ul id="chosen" class="chosen" hidden></ul>
-
-        <p class="empty">
-          Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
-          kaikista tulee yksi resepti siinä järjestyksessä kuin ne ovat tässä.
-          Kuvat pienennetään selaimessa ja luetaan kerran. Niitä ei tallenneta
-          minnekään — talteen jää vain sivuilta luettu teksti.
-        </p>
-
-        <button type="submit">Jäsennä</button>
-      </form>
-
-      <p id="status" class="status" aria-live="polite"></p>
-      <p id="progress" class="progress" aria-live="polite" hidden></p>
-
+      ${intakeForm()}
       ${isLocalOrigin(url) ? sampleDraftForm() : ""}
-
-      <script>
-        ${raw(STREAMING_ISLAND)}
-      </script>`,
-    "intake",
-    member,
-  );
-}
-
-/** `POST /intake` — run the model and show the draft for correcting. */
-export async function structureScreen(
-  { env, request }: RouteContext,
-  member: Member,
-): Promise<Response> {
-  const form = await request.formData();
-  const sourceText = String(form.get("sourceText") ?? "").trim();
-
-  if (sourceText === "") {
-    return failed(member, "Liitä ensin reseptin teksti.", "");
-  }
-
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
-
-  let draft: Draft;
-  try {
-    draft = await structureDraftWithRetry(
-      env,
-      { route: "pasted", text: sourceText },
-      ingredients,
-    );
-  } catch (error) {
-    // The member's text is handed back rather than thrown away.
-    return failed(member, importFailureMessage(error), sourceText);
-  }
-
-  return page(
-    "Tarkista resepti",
-    correctionForm(draft, ingredients, "pasted"),
+      `,
     "intake",
     member,
   );
@@ -875,10 +867,7 @@ function failed(member: Member, message: string, sourceText: string): Response {
     "Jäsennys epäonnistui",
     html`<h1>Jäsennys epäonnistui</h1>
       <p class="refused">${message}</p>
-      <form method="post" action="/intake" class="stacked">
-        <textarea name="sourceText" rows="16">${sourceText}</textarea>
-        <button type="submit">Yritä uudelleen</button>
-      </form>`,
+      ${intakeForm(sourceText, "Yritä uudelleen")}`,
     "intake",
     member,
     400,

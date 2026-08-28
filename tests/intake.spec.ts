@@ -18,6 +18,96 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
+test("intake requires JavaScript instead of posting a plain fallback", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  await context.addCookies([sessionCookie(1)]);
+  const page = await context.newPage();
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.locator("#intake")).not.toHaveAttribute("action", /.+/);
+
+  const response = await context.request.post("/intake", {
+    form: { sourceText: "Uunikaali" },
+  });
+  expect(response.status()).toBe(405);
+
+  await context.close();
+});
+
+test("pasted text works without the photo resize API", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "createImageBitmap", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  await stubStructuring(page);
+
+  await page.goto("/intake");
+
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.locator("#camera")).toBeDisabled();
+  await expect(page.locator("#photo")).toBeDisabled();
+  await expect(page.locator("#photo-help")).toHaveText(
+    "Kuvan tuonti ei ole käytettävissä tässä selaimessa.",
+  );
+
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+});
+
+test("intake stays unavailable without the stream decoder", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "TextDecoder", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+});
+
+test("intake stays unavailable without streamed responses", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Response", {
+      value: function ResponseWithoutBody() {
+        return { body: null };
+      },
+      configurable: true,
+    });
+  });
+
+  await page.goto("/intake");
+
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+});
+
+test("an empty intake is refused without leaving the screen", async ({ page }) => {
+  await page.goto("/intake");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page).toHaveURL(/\/intake$/);
+  await expect(page.locator("#status")).toHaveText(
+    "Liitä ensin reseptin teksti tai valitse kuva.",
+  );
+});
+
 test("pasting text streams a draft and opens the correction screen", async ({
   page,
 }) => {
@@ -549,7 +639,10 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
   await page.getByRole("button", { name: "Jäsennä" }).click();
 
-  await expect(page.locator("#status")).toContainText("epäonnistui");
+  await expect(page.locator("#status")).toHaveText(
+    "Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.",
+  );
+  await expect(page.locator("#status")).not.toContainText("Kokeile myöhemmin");
   await expect(page.getByLabel("Liitä reseptin teksti")).toHaveValue(
     "Uunikaali\n½ dl öljyä",
   );

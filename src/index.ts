@@ -31,7 +31,6 @@ import {
   correctScreen,
   intakeScreen,
   saveScreen,
-  structureScreen,
   structureStream,
 } from "./intake-screens.ts";
 import {
@@ -175,7 +174,6 @@ const router = new Router()
   .post("/ingredients/:id/rename", requireAdminScreen(renameForm))
   .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
-  .post("/intake", requireMemberScreen(structureScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
   .post("/api/intake/structure", requireMember(structureStream))
   .post("/recipes", requireMemberScreen(saveScreen))

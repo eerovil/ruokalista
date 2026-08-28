@@ -398,43 +398,6 @@ function keptSourceText(source: IntakeSource, transcribed: unknown): string {
 }
 
 /**
- * Run the model over source text and return a draft. Nothing is written to D1
- * here — a failed import leaves no trace, which is why there is no draft table.
- */
-export async function structureDraft(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  const client = anthropic(env);
-
-  let response;
-  try {
-    // Streamed even though the whole draft is awaited: the SDK refuses a
-    // plain request whose token budget could outrun ten minutes, which a
-    // photographed page's budget does.
-    response = await client.messages
-      .stream({ ...requestFor(source, ingredients) })
-      .finalMessage();
-  } catch (cause) {
-    throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
-  }
-
-  logImportUsage(recipeTitle(response.content), response.usage, response.stop_reason);
-  assertFinished(response.stop_reason);
-
-  const text = response.content
-    .filter((block) => block.type === "text")
-    .map((block) => (block as { text: string }).text)
-    .join("");
-
-  // Structured outputs constrain the shape, so this should not fail — but the
-  // draft is a human's afternoon either way, so a bad one is retried rather
-  // than shown.
-  return draftFromJson(text, source, response.model);
-}
-
-/**
  * Refuse a response that stopped for a reason other than being finished.
  *
  * A draft cut off at `max_tokens` is still valid JSON as far as the transport
@@ -455,20 +418,6 @@ function assertFinished(stopReason: string | null): void {
       "Resepti oli niin pitkä, että jäsennys katkesi kesken. " +
         "Kokeile kuvata tai liittää vain yhden reseptin verran kerrallaan.",
     );
-  }
-}
-
-/** Runs the model, retrying a retryable failure once before anyone sees it. */
-export async function structureDraftWithRetry(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  try {
-    return await structureDraft(env, source, ingredients);
-  } catch (error) {
-    if (!(error instanceof RetryableStructuringError)) throw error;
-    return structureDraft(env, source, ingredients);
   }
 }
 
@@ -540,6 +489,7 @@ export function streamDraft(
 
           // A JSON body has no room for an in-band error, so the stream is torn
           // down instead. The browser still has what the member typed.
+          importFailureMessage(cause);
           controller.error(cause);
           return;
         }

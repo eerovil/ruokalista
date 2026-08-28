@@ -33,6 +33,27 @@ test("sign-in", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/01-signin.png`, fullPage: true });
 });
 
+test("intake requires JavaScript", async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  await context.addCookies([sessionCookie(1)]);
+  const page = await context.newPage();
+
+  await page.goto("/intake");
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await page.locator("#status").evaluate((element) =>
+    element.scrollIntoView({ block: "center" }),
+  );
+  await expect(page.locator("#status")).toBeInViewport();
+  await page.screenshot({
+    path: `${SHOTS}/57-intake-requires-javascript.png`,
+  });
+
+  await context.close();
+});
+
 test.describe("PWA", () => {
   test.use({ serviceWorkers: "allow" });
 
