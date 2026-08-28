@@ -101,7 +101,7 @@ test("a recipe part cannot be put on the menu through the JSON API", async ({
       date: "2026-12-08",
       slot: "dinner",
       recipeId: 4,
-      portions: 4,
+      multiplier: 1,
     },
   });
 

@@ -572,7 +572,9 @@ function editorForm(
       <label for="title">Nimi</label>
       <input id="title" name="title" value="${title}" required />
 
-      <label for="yield">Annoksia</label>
+      <!-- What the source said the recipe makes. Since #165 this is metadata
+           and nothing scales by it, so the label says whose claim it is. -->
+      <label for="yield">Annoksia lähteen mukaan</label>
       <input
         id="yield"
         name="yield"

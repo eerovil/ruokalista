@@ -282,7 +282,7 @@ async function plan(
 ): Promise<void> {
   await signIn(page, memberId);
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, portions: 4 },
+    data: { date, slot: "dinner", recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
 }
@@ -358,33 +358,59 @@ test("renaming a global ingredient is an admin operation", async ({ page }) => {
   await expect(page.locator(".ingredients")).toContainText("kaali");
 });
 
-test("each household keeps its own default portions for the same recipe", async ({
+test("each household keeps its own default multiplier for the same recipe", async ({
   page,
 }) => {
   await publish(page, 1);
 
-  // Koti always cooks it for nine.
+  // Koti always cooks it at twice the recipe.
   await signIn(page, 1);
   await page.goto("/recipes/1");
-  await page.getByLabel("Oletusannokset").fill("9");
-  await page.locator(".portions-preference button").click();
-  await expect(page.getByLabel("Oletusannokset")).toHaveValue("9");
+  await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await expect(
+    page.locator(".multiplier-choice button.is-current"),
+  ).toHaveText("2×");
 
   // Naapuri is two people, and Koti's habit is not theirs.
   await signIn(page, 2);
   await page.goto("/recipes/1");
-  await expect(page.getByLabel("Oletusannokset")).toHaveValue("");
-  await page.getByLabel("Oletusannokset").fill("2");
-  await page.locator(".portions-preference button").click();
+  await expect(page.locator(".multiplier-choice button.is-current")).toHaveCount(0);
+  await page
+    .locator(".multiplier-choice")
+    .getByRole("button", { name: "0,5×" })
+    .click();
 
   await page.goto("/picker?date=2099-03-03&slot=lunch");
   await expect(
-    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Annoksia"),
-  ).toHaveValue("2");
+    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
+  ).toHaveValue("0,5×");
 
   await signIn(page, 1);
   await page.goto("/picker?date=2099-03-03&slot=lunch");
   await expect(
-    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Annoksia"),
-  ).toHaveValue("9");
+    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
+  ).toHaveValue("2×");
+});
+
+test("a household's default is cleared by an empty box, not guessed at", async ({
+  page,
+}) => {
+  await publish(page, 1);
+  await signIn(page, 1);
+
+  await page.goto("/recipes/1");
+  await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await expect(page.locator(".multiplier-choice button.is-current")).toHaveText("2×");
+
+  await page.locator(".multiplier-choice input").fill("");
+  await page
+    .locator(".multiplier-choice")
+    .getByRole("button", { name: "Tallenna" })
+    .click();
+
+  await expect(page.locator(".multiplier-choice button.is-current")).toHaveCount(0);
+  await page.goto("/picker?date=2099-03-04&slot=lunch");
+  await expect(
+    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
+  ).toHaveValue("1×");
 });

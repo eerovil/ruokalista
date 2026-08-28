@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, raw, type Raw } from "./html.ts";
+import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
   resolveMentions,
@@ -9,9 +9,11 @@ import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import { preferredPortionsFor } from "./recipe-preference.ts";
+import { preferredMultiplierFor } from "./recipe-preference.ts";
 import {
-  scaleFactor,
+  DEFAULT_MULTIPLIER,
+  formatMultiplier,
+  parseMultiplier,
   scaleMeasurement,
   sourceWorthShowing,
 } from "./scaling.ts";
@@ -44,7 +46,7 @@ export interface RecipeSummary {
   title: string;
   createdAt: string;
   createdBy: string;
-  /** What the picker defaults portions to when the source stated one. */
+  /** What the source page said the recipe makes, if it said. Metadata only. */
   yieldPortions: number | null;
   /** The R2 object holding this recipe's picture, or null if it has none. */
   imageKey: string | null;
@@ -650,11 +652,11 @@ export async function recipeScreen(
     );
   }
 
-  // Arriving from a day on the week carries that day's portion count.
-  const asked = Number(url.searchParams.get("portions"));
-  const portions = Number.isSafeInteger(asked) && asked > 0 ? asked : null;
+  // Arriving from a planned batch carries that cooking's multiplier. Anything
+  // else — a bookmark, a typo, nothing at all — is the recipe as written.
+  const asked = parseMultiplier(url.searchParams.get("multiplier") ?? "");
 
-  return renderRecipe(env.DB, member, recipe, portions, null);
+  return renderRecipe(env.DB, member, recipe, asked ?? DEFAULT_MULTIPLIER, null);
 }
 
 /**
@@ -668,14 +670,14 @@ export async function renderRecipe(
   db: D1Database,
   member: Member,
   recipe: Recipe,
-  portions: number | null,
+  multiplier: number,
   refusal: string | null,
 ): Promise<Response> {
-  const preference = await preferredPortionsFor(db, member.householdId, recipe.id);
+  const preference = await preferredMultiplierFor(db, member.householdId, recipe.id);
 
   return page(
     recipe.title,
-    recipeBody(recipe, portions, {
+    recipeBody(recipe, multiplier, {
       owned: recipe.householdId === member.householdId,
       preference,
       refusal,
@@ -737,12 +739,12 @@ function stepText(
  */
 export function amountsByIngredient(
   lines: readonly RecipeLine[],
-  factor: number | null,
+  multiplier: number,
 ): Map<number, string> {
   const collected = new Map<number, Set<string>>();
 
   for (const line of lines) {
-    const amount = formatMeasurement(scaleMeasurement(line, factor));
+    const amount = formatMeasurement(scaleMeasurement(line, multiplier));
     if (amount === "") continue;
     const values = collected.get(line.ingredientId) ?? new Set<string>();
     values.add(amount);
@@ -760,7 +762,7 @@ export function amountsByIngredient(
 /** The ingredients and method of one recipe — a dish, or one of its parts. */
 function body(
   recipe: Recipe,
-  factor: number | null,
+  multiplier: number,
   phases?: RecipePhase[],
   bucket = "a",
 ): Raw {
@@ -773,7 +775,7 @@ function body(
 
   // Every line of this recipe, not only the ones this phase renders: a step
   // done after the parts still mentions an ingredient listed before them.
-  const amounts = amountsByIngredient(recipe.lines, factor);
+  const amounts = amountsByIngredient(recipe.lines, multiplier);
 
   return html`<section class="recipe-section">
     ${lines.length === 0
@@ -781,13 +783,13 @@ function body(
       : html`<h3 class="ingredients-heading">Ainekset</h3>
           <ul class="lines recipe-ingredients">
             ${lines.map((line) => {
-              const amount = formatMeasurement(scaleMeasurement(line, factor));
+              const amount = formatMeasurement(scaleMeasurement(line, multiplier));
               return html`<li>
                 ${amount === ""
                   ? ""
                   : html`<span class="amount">${amount}</span> `}
                 ${line.ingredient}
-                ${sourceWorthShowing(line, factor)
+                ${sourceWorthShowing(line, multiplier)
                   ? html`<span class="source">${line.sourceLine}</span>`
                   : ""}
               </li>`;
@@ -849,18 +851,17 @@ export function recipeImage(
 interface RecipeView {
   /** Whether this household owns the recipe, and so may change it. */
   owned: boolean;
-  /** This household's saved default portions for it, if it has one. */
+  /** This household's saved default multiplier for it, if it has one. */
   preference: number | null;
   refusal: string | null;
 }
 
 function recipeBody(
   recipe: Recipe,
-  portions: number | null,
+  multiplier: number,
   view: RecipeView,
 ): Raw {
-  const factor = scaleFactor(recipe.yieldPortions, portions);
-  const canRevealAmounts = hasRevealableMention(recipe, factor);
+  const canRevealAmounts = hasRevealableMention(recipe, multiplier);
 
   return html`<div class="recipe-view">
     <div class="recipe-summary">
@@ -879,17 +880,23 @@ function recipeBody(
               ${recipe.householdName} on julkaissut tämän reseptin. Voit käyttää
               sitä, mutta vain sen oma talous voi muokata sitä.
             </p>`}
-        <!-- Whether the amounts below are the page's or this meal's is the first
-             thing a cook needs to know, so it sits under the title and says which. -->
-        <p class="${factor === null ? "yield" : "yield is-scaled"}">
-          ${recipe.yieldPortions === null
-            ? // A recipe with no yield says so where a scale control would be: you
-              // cannot scale it, and hiding that would be worse than saying it.
-              "Annosmäärää ei tiedetä, joten reseptiä ei voi skaalata."
-            : factor === null
-              ? `${recipe.yieldPortions} annosta`
-              : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
+        <!-- Whether the amounts below are the page's or this cooking's is the
+             first thing a cook needs to know, so it sits under the title and
+             says which. Since #165 it always can: the recipe as written is 1x,
+             so a dish whose source never stated a yield scales like any other. -->
+        <p class="${multiplier === DEFAULT_MULTIPLIER ? "yield" : "yield is-scaled"}">
+          ${multiplier === DEFAULT_MULTIPLIER
+            ? `${formatMultiplier(multiplier)} · resepti sellaisenaan`
+            : formatMultiplier(multiplier)}
         </p>
+        <!-- What the source page claimed it makes. Kept because it is worth
+             knowing and printed as metadata, never as a control: it is not what
+             scaling starts from any more. -->
+        ${recipe.yieldPortions === null
+          ? ""
+          : html`<p class="meta source-yield">
+              Lähteessä ${recipe.yieldPortions} annosta
+            </p>`}
       </div>
     </div>
 
@@ -903,20 +910,20 @@ function recipeBody(
         : ""}
 
       ${recipe.parts.length === 0
-        ? body(recipe, factor)
-        : body(recipe, factor, [null, "before_parts"])}
+        ? body(recipe, multiplier)
+        : body(recipe, multiplier, [null, "before_parts"])}
       ${recipe.parts.map(
         (part) => html`<section class="part">
           <h2>${part.title}</h2>
-          <!-- A part has no yield of its own, so it scales by the dish's factor. -->
-          ${body(part, factor)}
+          <!-- A part is a piece of the dish, so it takes the dish's multiplier. -->
+          ${body(part, multiplier)}
         </section>`,
       )}
       <!-- A different bucket letter, because this is the same recipe rendered a
            second time and two mentions may not share a checkbox id. -->
       ${recipe.parts.length === 0
         ? ""
-        : body(recipe, factor, ["after_parts"], "b")}
+        : body(recipe, multiplier, ["after_parts"], "b")}
 
       ${canRevealAmounts
         ? html`<label for="reveal-all-amounts" class="reveal-all-label"
@@ -955,15 +962,15 @@ function recipeBody(
  * *this household's relationship to the recipe* rather than about the cooking,
  * and the cooking is what the rest of the page is for. They appear for
  * different people: publishing only for the household that owns the recipe,
- * the default portions for anybody who can open it — a household that plans
- * somebody else's lasagne for nine every time has exactly the same need as the
- * household that wrote it.
+ * the default multiplier for anybody who can open it — a household that always
+ * cooks somebody else's lasagne at one and a half has exactly the same need as
+ * the household that wrote it.
  */
 function sharingSection(recipe: Recipe, view: RecipeView): Raw {
   // A part has neither of these. It is not published on its own (ADR-0002: it
-  // is a piece of the dish), and it is never planned, so there is no portion
-  // count to have a habit about. Offering either control here would only be a
-  // button that refuses.
+  // is a piece of the dish), and it is never planned, so there is no multiplier
+  // to have a habit about. Offering either control here would only be a button
+  // that refuses.
   if (recipe.parentId !== null) return raw("");
 
   const preference = view.preference;
@@ -971,23 +978,19 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
   return html`<section class="recipe-sharing">
     <h2>Tämä resepti taloudessamme</h2>
 
-    <form method="post" action="/recipes/${recipe.id}/annokset" class="stacked">
-      <label for="preferredPortions">Oletusannokset</label>
-      <div class="portions-preference">
-        <input
-          id="preferredPortions"
-          name="portions"
-          inputmode="numeric"
-          value="${preference === null ? "" : String(preference)}"
-          placeholder="${String(recipe.yieldPortions ?? "")}"
-          aria-describedby="preferredPortionsHelp"
-        />
-        <button type="submit">Tallenna</button>
-      </div>
-      <p class="empty" id="preferredPortionsHelp">
-        Mistä annosmäärästä ruokalista aloittaa, kun tämä resepti lisätään
-        viikolle. Tyhjä tarkoittaa reseptin omaa annosmäärää. Tämä on vain
-        meidän talouden asetus.
+    <form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
+      <p class="preference-label" id="preferredMultiplierLabel">Oletuskerroin</p>
+      ${multiplierField({
+        current: preference,
+        typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
+        label: "Oletuskerroin",
+        describedBy: "preferredMultiplierHelp",
+        submit: "Tallenna",
+      })}
+      <p class="empty" id="preferredMultiplierHelp">
+        Millä kertoimella ruokalista aloittaa, kun tämä resepti lisätään
+        viikolle. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
+        reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
       </p>
     </form>
 
@@ -1014,8 +1017,8 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
 }
 
 /** Whether this dish or any of its parts has an amount the toggle can reveal. */
-function hasRevealableMention(recipe: Recipe, factor: number | null): boolean {
-  const amounts = amountsByIngredient(recipe.lines, factor);
+function hasRevealableMention(recipe: Recipe, multiplier: number): boolean {
+  const amounts = amountsByIngredient(recipe.lines, multiplier);
   const thisRecipeHasOne = recipe.steps.some((step) =>
     resolveMentions(step.text, step.refs).some(
       (segment) =>
@@ -1025,7 +1028,7 @@ function hasRevealableMention(recipe: Recipe, factor: number | null): boolean {
   );
 
   return thisRecipeHasOne || recipe.parts.some(
-    (part) => hasRevealableMention(part, factor),
+    (part) => hasRevealableMention(part, multiplier),
   );
 }
 
@@ -1067,8 +1070,8 @@ const PUBLISH_STYLE = html`<style>
   .recipe-sharing h2 { margin: 0 0 .4rem; font-size: 1rem; }
   .recipe-sharing p { margin: 0 0 .6rem; }
   .recipe-sharing form { margin: 0; }
-  .portions-preference { display: flex; align-items: flex-end; gap: .5rem; }
-  .portions-preference input { width: 5rem; }
+  .preference-label { margin: 0 0 .4rem; font-weight: 600; }
+  .source-yield { margin: .1rem 0 0; }
 </style>`;
 
 /**

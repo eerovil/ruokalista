@@ -204,7 +204,7 @@ function fakeDatabase(): {
         source_line: "½ dl öljyä",
       },
     ],
-    planned_batch: [{ id: 1, household_id: 1, recipe_id: 1, portions: 4 }],
+    planned_batch: [{ id: 1, household_id: 1, recipe_id: 1, multiplier: 1, legacy_portions: null }],
     batch_occurrence: [
       { batch_id: 1, date: "2026-08-25", slot: "dinner" },
     ],
@@ -212,7 +212,7 @@ function fakeDatabase(): {
       { id: 1, household_id: 1, ingredient_id: 1, state: "unlimited" },
     ],
     recipe_preference: [
-      { id: 1, household_id: 1, recipe_id: 1, default_portions: 6 },
+      { id: 1, household_id: 1, recipe_id: 1, default_multiplier: 1.5 },
     ],
   };
 

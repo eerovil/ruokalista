@@ -61,9 +61,10 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   await expect(page).toHaveURL(/\/picker\?date=2026-10-05&slot=lunch$/);
   await expect(page.getByRole("heading")).toContainText("Lounas 5.10.");
 
-  // Portions default to the recipe's own yield.
+  // The multiplier starts at the recipe as written, unless this household has
+  // saved its own default for it (#165).
   const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
-  await expect(row.locator("input[name=portions]")).toHaveValue("4");
+  await expect(row.locator("input[name=multiplier]")).toHaveValue("1×");
   await row.getByRole("button", { name: "Lisää" }).click();
 
   await expect(page).toHaveURL(/\/\?week=2026-10-05$/);
@@ -71,7 +72,7 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   await expect(entry).toHaveCount(1);
   await expect(entry).toContainText("Kaalilaatikko");
   await expect(page.locator(".day").first().locator(".batch-start")).toContainText(
-    "4 annosta",
+    "1×",
   );
 
   // The week itself carries no inputs and no delete buttons — the plan is for
@@ -79,7 +80,7 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   await expect(entry.locator("input")).toHaveCount(0);
   await expect(entry.getByRole("button")).toHaveCount(0);
 
-  // Re-portion it on the focused surface.
+  // Change the multiplier on the focused surface.
   await entry.locator("a").click();
   await expect(page).toHaveURL(/\/batches\/\d+$/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -87,19 +88,21 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   );
   await expect(page.locator(".entry-when")).toContainText("1 ateria");
 
-  await page.locator("input[name=portions]").fill("6");
-  await page.getByRole("button", { name: "Tallenna" }).click();
+  await page
+    .locator(".multiplier-choice")
+    .getByRole("button", { name: "1,5×" })
+    .click();
 
   // Back to the week that was being looked at, not to today's.
   await expect(page).toHaveURL(/\/\?week=2026-10-05$/);
   await expect(page.locator(".day").first().locator(".batch-start")).toContainText(
-    "6 annosta",
+    "1,5×",
   );
 
   // Cooking it opens the recipe at the amounts this meal needs.
   await page.locator(".day").first().locator(".entry a").click();
   await page.getByRole("link", { name: "Avaa resepti" }).click();
-  await expect(page).toHaveURL(/\/recipes\/\d+\?portions=6$/);
+  await expect(page).toHaveURL(/\/recipes\/\d+\?multiplier=1\.5$/);
 
   // And take it off again, from the same surface.
   await page.goBack();
@@ -133,14 +136,17 @@ test("another household's meal entry is a 404 on the screen too", async ({
   await context.close();
 });
 
-test("portions that make no sense keep you on the meal, with the reason", async ({
+test("a multiplier that makes no sense keeps you on the meal, with the reason", async ({
   page,
 }) => {
   await addEntry(page, "2026-10-11", "lunch", "Kaalilaatikko");
   await page.locator(".day").last().locator(".entry a").click();
 
-  await page.locator("input[name=portions]").fill("0");
-  await page.getByRole("button", { name: "Tallenna" }).click();
+  await page.locator(".multiplier-choice input").fill("0");
+  await page
+    .locator(".multiplier-choice")
+    .getByRole("button", { name: "Tallenna" })
+    .click();
 
   await expect(page.locator(".refused")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -148,15 +154,26 @@ test("portions that make no sense keep you on the meal, with the reason", async 
   );
   // The refused value itself is handed back, not the stored one — it is
   // precisely what needs to be seen and corrected.
-  await expect(page.locator("input[name=portions]")).toHaveValue("0");
+  await expect(page.locator(".multiplier-choice input")).toHaveValue("0");
 });
 
-test("a recipe with no yield falls back to the household default", async ({
+test("a recipe with no stated yield is planned at 1× like any other", async ({
   page,
 }) => {
   await page.goto(`/picker?date=${MONDAY}&slot=dinner`);
   const row = page.locator(".pick li", { hasText: "Öljykastike" });
-  await expect(row.locator("input[name=portions]")).toHaveValue("4");
+  await expect(row.locator("input[name=multiplier]")).toHaveValue("1×");
+});
+
+test("a custom multiplier can be typed while adding a recipe", async ({ page }) => {
+  await page.goto(`/picker?date=${MONDAY}&slot=dinner`);
+  const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
+  await row.getByLabel("Kerroin").fill("2,5");
+  await row.getByRole("button", { name: "Lisää" }).click();
+
+  await expect(page.locator(".day").first().locator(".batch-start")).toContainText(
+    "2,5×",
+  );
 });
 
 test("a slot can hold more than one recipe", async ({ page }) => {
@@ -186,7 +203,7 @@ test("one cooked batch continues through selected lunches", async ({ page }) => 
   // days receive compact summaries of what continues into them.
   await expect(page.locator(".batch-card")).toHaveCount(1);
   await expect(page.locator(".entry", { hasText: "Öljykastike" })).toHaveCount(1);
-  await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(page.locator(".batch-start")).toHaveText("Kokataan · 1×");
   await expect(page.locator(".batch-end")).toHaveText("viimeinen annos");
   await expect(page.locator(".batch-when-day")).toHaveCount(3);
   await expect(page.locator(".batch-when-weekday")).toHaveText([
@@ -318,7 +335,7 @@ test("mixed coverage crosses a week boundary and projects into both weeks", asyn
   // The week it is cooked in shows the cooking, and says it runs on.
   await page.goto("/?week=2026-11-09");
   const sunday = page.locator(".day").last();
-  await expect(sunday.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(sunday.locator(".batch-start")).toHaveText("Kokataan · 1×");
   await expect(sunday.locator(".batch-onward")).toHaveText("jatkuu ensi viikolle");
   await expect(sunday.locator(".batch-end")).toHaveCount(0);
 
@@ -327,7 +344,7 @@ test("mixed coverage crosses a week boundary and projects into both weeks", asyn
   await page.goto("/?week=2026-11-16");
   const monday = page.locator(".day").first();
   await expect(monday.locator(".batch-card")).toHaveCount(1);
-  await expect(monday.locator(".batch-carried")).toHaveText("Kokattu 15.11. · 4 annosta");
+  await expect(monday.locator(".batch-carried")).toHaveText("Kokattu 15.11. · 1×");
   await expect(monday.locator(".batch-start")).toHaveCount(0);
   await expect(monday.locator(".batch-when-weekday")).toHaveText(["ma", "ti"]);
   await expect(monday.locator(".batch-when-date")).toHaveText([
@@ -380,7 +397,7 @@ test.describe("the JSON API", () => {
     const body = (await response.json()) as {
       batches: {
         title: string;
-        portions: number;
+        multiplier: number;
         occurrences: { date: string; slot: string }[];
       }[];
     };
@@ -403,11 +420,30 @@ test.describe("the JSON API", () => {
     expect(response.status()).toBe(400);
   });
 
-  test("portions must be a real count", async ({ page }) => {
-    const response = await page.request.post("/api/batches", {
-      data: { date: "2026-10-09", slot: "lunch", recipeId: 1, portions: 0 },
+  test("the multiplier must be a positive number", async ({ page }) => {
+    for (const bad of [0, -1]) {
+      const response = await page.request.post("/api/batches", {
+        data: { date: "2026-10-09", slot: "lunch", recipeId: 1, multiplier: bad },
+      });
+      expect(response.status()).toBe(400);
+    }
+  });
+
+  test("a fractional multiplier is planned as it was asked for", async ({
+    page,
+  }) => {
+    const created = await page.request.post("/api/batches", {
+      data: { date: "2026-10-08", slot: "lunch", recipeId: 1, multiplier: 0.5 },
     });
-    expect(response.status()).toBe(400);
+    expect(created.status()).toBe(201);
+
+    const listed = await page.request.get(
+      "/api/menu?from=2026-10-08&to=2026-10-08",
+    );
+    const { batches } = (await listed.json()) as {
+      batches: { multiplier: number }[];
+    };
+    expect(batches[0]?.multiplier).toBe(0.5);
   });
 
   test("another household's recipe cannot be put on this menu", async ({
@@ -418,7 +454,7 @@ test.describe("the JSON API", () => {
 
     // Recipe 1 belongs to household 1, not to the neighbour.
     const response = await context.request.post("/api/batches", {
-      data: { date: "2026-10-09", slot: "lunch", recipeId: 1, portions: 2 },
+      data: { date: "2026-10-09", slot: "lunch", recipeId: 1, multiplier: 1 },
     });
     expect(response.status()).toBe(400);
 
@@ -440,7 +476,7 @@ test.describe("the JSON API", () => {
     await context.addCookies([sessionCookie(2)]);
 
     const patched = await context.request.patch(`/api/batches/${id}`, {
-      data: { portions: 99 },
+      data: { multiplier: 2 },
     });
     expect(patched.status()).toBe(404);
 
@@ -504,7 +540,7 @@ async function createBatch(
   recipeId: number,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot, recipeId, portions: 4 },
+    data: { date, slot, recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;

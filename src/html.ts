@@ -8,6 +8,7 @@
  */
 
 import { PWA_CLIENT_SCRIPT, THEME_COLOR } from "./pwa-content.ts";
+import { formatMultiplier, MULTIPLIER_CHOICES } from "./scaling.ts";
 
 /**
  * Written out longhand rather than as a `constructor(readonly value: string)`
@@ -313,6 +314,11 @@ const STYLES = `
   .batch-passes { margin-left: auto; padding: .1rem .45rem;
     font-size: .7rem; color: var(--accent); white-space: nowrap;
     border: 1px solid var(--accent); border-radius: 1rem; }
+  /* A batch #165 could not convert. Loud enough to be corrected, quiet enough
+     not to look like an error the household caused. */
+  .batch-unconverted { margin: 0; padding: .35rem .7rem;
+    font-size: .75rem; color: var(--accent);
+    border-top: 1px solid var(--edge); }
   .batch-end, .batch-onward { margin: 0; padding: .35rem .7rem .45rem;
     font-size: .75rem; color: var(--muted); }
   .batch-end { text-align: right; }
@@ -345,8 +351,15 @@ const STYLES = `
   .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
   .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-  .portions-row { display: flex; gap: .5rem; align-items: center; }
-  .portions-row input { width: 5rem; text-align: center; }
+  .control-row { display: flex; gap: .5rem; align-items: center; }
+  .control-row input { width: 5rem; text-align: center; }
+  /* One tap for the four multipliers a household actually uses, and a box for
+     everything else — the domain takes any positive number. */
+  .multiplier-choice { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+  .multiplier-choice button { min-width: 3.5rem; padding: .4rem .6rem; }
+  .multiplier-choice .is-current { background: var(--accent); color: var(--bg);
+    border-color: var(--accent); }
+  .multiplier-choice input { width: 4.5rem; text-align: center; }
   .coverage-weeks { align-items: center; }
   .coverage-weeks span { color: var(--muted); }
   .coverage-grid { display: grid; grid-template-columns: minmax(7rem, 1fr) 1fr 1fr;
@@ -384,7 +397,13 @@ const STYLES = `
   .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .pick .recipe-image.is-thumb { width: 2.5rem; height: 2.5rem; }
   .entry .recipe-image.is-thumb { width: 2.25rem; height: 2.25rem; }
-  .pick-title { flex: 1; }
+  /* min-width so a long name shrinks instead of shoving the row's controls
+     past the viewport edge — a flex item will not go below its content
+     otherwise, which is how the multiplier control ended up over the button. */
+  .pick-title { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
+  /* Narrow and non-shrinking, so a long recipe name gives way rather than
+     pushing the multiplier field over the button beside it. */
+  .pick-multiplier { flex: 0 0 auto; width: 4.5rem; min-height: var(--tap-compact); }
   .chosen { list-style: none; margin: .25rem 0 0; padding: 0; }
   .chosen li {
     display: flex; align-items: center; gap: .75rem;
@@ -744,6 +763,56 @@ const STYLES = `
     .tabs a { flex: 0 1 9rem; }
   }
 `;
+
+/**
+ * The multiplier control, wherever a household picks one (#165).
+ *
+ * Four one-tap choices and a box for anything else, because 0,5× to 2× is what
+ * a kitchen reaches for and the domain still accepts any positive number. Each
+ * chip is its own submit button rather than a radio, so choosing one is a
+ * single tap on a phone and the screen needs no script to work — the standing
+ * rule for anything on the planning path (see docs/codebase/screens.md).
+ *
+ * The chips post `preset` and the box posts `multiplier`, which is what keeps
+ * them apart: a browser sends a submit button's value only for the button that
+ * was pressed, so a handler reading `preset` first knows a chip was tapped and
+ * otherwise reads whatever was typed.
+ *
+ * `current` marks the chip that is already in force. `typed` is what to put in
+ * the box, which on a refusal is what the member wrote rather than what is
+ * stored — this app never throws away somebody's input to show them an error.
+ */
+export function multiplierField(
+  options: {
+    current: number | null;
+    typed: string;
+    label: string;
+    describedBy?: string;
+    submit: string;
+  },
+): Raw {
+  return html`<div class="multiplier-choice" role="group" aria-label="${options.label}">
+    ${MULTIPLIER_CHOICES.map(
+      (choice) => html`<button
+        type="submit"
+        name="preset"
+        value="${String(choice)}"
+        class="${choice === options.current ? "is-current" : ""}"
+      >${formatMultiplier(choice)}</button>`,
+    )}
+    <input
+      name="multiplier"
+      inputmode="decimal"
+      value="${options.typed}"
+      size="4"
+      aria-label="Muu kerroin"
+      ${options.describedBy === undefined
+        ? ""
+        : raw(`aria-describedby="${escape(options.describedBy)}"`)}
+    />
+    <button type="submit">${options.submit}</button>
+  </div>`;
+}
 
 /**
  * Which bottom-tab destination a screen belongs to. `signed-out` is the shell

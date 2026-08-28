@@ -11,6 +11,7 @@ import {
   splitByPantry,
 } from "./pantry.ts";
 import type { RouteContext } from "./router.ts";
+import { formatMultiplier } from "./scaling.ts";
 import { SOstoslistaClient, type SOstoslistaProduct } from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
@@ -536,7 +537,7 @@ function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
                 <span class="shopping-meal-title">${batch.title}</span>
                 <span class="meta"
                   >${shortDayName(batch.startDate)} ${shortDate(batch.startDate)}
-                  · ${batch.portions} annosta</span
+                  · ${formatMultiplier(batch.multiplier)}</span
                 >
               </span>
             </label>
