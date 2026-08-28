@@ -165,6 +165,13 @@ What that buys, and the rules each part follows:
 - **The current S-ostoslista is a panel that loads after the screen.** It never
   delays the household's own list, and a failed read is one line and a retry
   inside that panel. A successful send refreshes it.
+- **A finished send pushes the phone's list.** `sendShoppingListForm` calls
+  `SOstoslistaClient::sync` once, after the last item has been accepted — never
+  per item and never after a partial send, because there is nothing to push
+  half of. The service syncs on its own schedule anyway, so a failed push is
+  not a failed send: the screen keeps its `N ainesta lähetettiin` notice and
+  adds a line saying the phone will catch up at the next sweep, and the JSON
+  answer carries the same fact as `synced: false` so the island can say it too.
 
 The island follows the same discipline as the other three: ES5, no regular
 expressions, feature-detected (it does nothing at all without `XMLHttpRequest`,

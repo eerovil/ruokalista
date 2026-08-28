@@ -500,7 +500,13 @@ test("a failed background save is shown, undone, and retryable", async ({
   await expect(milk.locator(".shopping-thumb img")).toHaveCount(0);
 
   failing = false;
+  const retried = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/ostoslista/tuote"),
+  );
   await milk.getByRole("button", { name: "Yritä uudelleen" }).click();
+  await retried;
   await expect(milk.locator(".s-shopping-error")).toHaveCount(0);
   await expect(milk.locator(".s-shopping-product-summary")).toContainText(
     "Kotimaista rasvaton maito 1 l",
@@ -656,6 +662,74 @@ test("sending uses stored EANs, note fallbacks, and excludes the pantry", async 
     false,
   );
   expect(added.every((call) => !("quantity" in (call.body ?? {})))).toBe(true);
+});
+
+test("a finished send pushes the phone's list once, after the last item", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const calls = await externalRequests(page);
+  const syncs = calls.filter(
+    (call) => call.method === "POST" && call.path === "/sync",
+  );
+  expect(syncs).toHaveLength(1);
+
+  // Once, and last: everything that was going on the list is on it before the
+  // phone is told to fetch it.
+  const at = calls.indexOf(syncs[0]!);
+  expect(
+    calls.slice(at).some((call) => call.method === "POST" && call.path === "/items"),
+  ).toBe(false);
+  await expect(page.locator(".s-shopping-send .refused")).toHaveCount(0);
+});
+
+test("a partial send does not push the phone's list", async ({ page, request }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".refused")).toContainText(
+    "S-ostoslistaan ei saatu lähetettyä kaikkea",
+  );
+
+  const calls = await externalRequests(page);
+  expect(calls.some((call) => call.path === "/sync")).toBe(false);
+});
+
+test("a failed push is said beside the send, not instead of it", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-sync`);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  await expect(page.locator(".s-shopping-send .refused")).toContainText(
+    "päivitystä ei saatu käynnistettyä",
+  );
+
+  // The send itself really happened, whatever the phone knows about it yet.
+  const calls = await externalRequests(page);
+  expect(
+    calls.filter((call) => call.method === "POST" && call.path === "/items").length,
+  ).toBeGreaterThan(0);
 });
 
 test("an external outage refuses recoverably without replacing the list", async ({

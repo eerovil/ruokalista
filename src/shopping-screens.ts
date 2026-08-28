@@ -189,12 +189,36 @@ export async function sendShoppingListForm(
       : shoppingScreen(stateCtx, member, message, null, 502);
   }
 
-  if (asJson) return Response.json({ sent, total: buy.length });
+  // Once, after the last item, and only after a send that finished: the sync
+  // pushes the service's copy to the phone, and there is nothing to push part
+  // of. A failure here is not a failed send — the items are on the list, they
+  // are just waiting for the service's own next sweep — so it is said beside
+  // the success rather than instead of it.
+  let synced = true;
+  try {
+    await client.sync();
+  } catch (error) {
+    console.error(`S-ostoslista sync failed: ${reason(error)}`);
+    synced = false;
+  }
+
+  const notSynced =
+    "Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä. Ainekset ovat listalla ja päivittyvät viimeistään seuraavassa synkronoinnissa.";
+
+  if (asJson) {
+    return Response.json({
+      sent,
+      total: buy.length,
+      synced,
+      ...(synced ? {} : { warning: notSynced }),
+    });
+  }
   return shoppingScreen(
     stateCtx,
     member,
-    null,
+    synced ? null : notSynced,
     `${sent} ainesta lähetettiin S-ostoslistaan.`,
+    200,
   );
 }
 
@@ -1335,6 +1359,15 @@ const SHOPPING_ISLAND = `
               'shopping-sent',
               payload.sent + ' ainesta lähetettiin S-ostoslistaan.'
             );
+            // The items are on the list either way; this only says whether the
+            // phone was told about them now or will be at the next sweep.
+            if (payload.synced === false) {
+              note(
+                'refused',
+                payload.warning ||
+                  'Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä.'
+              );
+            }
             loadCurrent();
             return;
           }
@@ -1348,16 +1381,23 @@ const SHOPPING_ISLAND = `
     });
   }
 
-  var sendNote = null;
+  var sendNotes = [];
 
+  /* note(null, null) clears what the last send said; anything else adds a line. */
   function note(className, text) {
-    if (sendNote && sendNote.parentNode) sendNote.parentNode.removeChild(sendNote);
-    sendNote = null;
-    if (className === null) return;
+    if (className === null) {
+      for (var index = 0; index < sendNotes.length; index += 1) {
+        var old = sendNotes[index];
+        if (old.parentNode) old.parentNode.removeChild(old);
+      }
+      sendNotes = [];
+      return;
+    }
     var panel = document.querySelector('.s-shopping-send');
     if (!panel) return;
-    sendNote = el('p', className, text);
-    panel.appendChild(sendNote);
+    var line = el('p', className, text);
+    panel.appendChild(line);
+    sendNotes.push(line);
   }
 
   // --------------------------------------------- what the S list already has
