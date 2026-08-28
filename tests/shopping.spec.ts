@@ -109,6 +109,13 @@ function row(page: Page, name: string) {
   return page.locator(".shopping-list > li", { hasText: name }).first();
 }
 
+/**
+ * Choosing a product the way a member with JavaScript does it (#159): the
+ * search happens in a panel inside the row, and the choice returns to the list
+ * immediately while the save runs in the background. The helper waits for that
+ * save to land, because everything asserted after it is about what the server
+ * kept.
+ */
 async function chooseProduct(
   page: Page,
   ingredient: string,
@@ -116,10 +123,39 @@ async function chooseProduct(
 ): Promise<void> {
   const item = row(page, ingredient);
   await item.locator("summary").click();
-  await item.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-  const result = page.locator(".s-product-results > li", { hasText: product });
+  await openPanel(item);
+  const result = item.locator(".s-product-results > li", { hasText: product });
   await expect(result).toBeVisible();
+
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/ostoslista/tuote"),
+  );
   await result.getByRole("button", { name: "Valitse" }).click();
+  await saved;
+  await expect(item.locator(".s-status")).toHaveCount(0);
+}
+
+/** Open one row's product panel and wait for its first results to arrive. */
+async function openPanel(item: ReturnType<typeof row>): Promise<void> {
+  await item.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+  await expect(item.locator(".s-product-panel")).toBeVisible();
+  await expect(item.locator(".s-product-panel .spinner")).toHaveCount(0);
+}
+
+/** The buy rows in the order the screen lists them. */
+async function buyRowNames(page: Page): Promise<string[]> {
+  return page.locator(".shopping-list > li .shopping-item").evaluateAll(
+    (rows) =>
+      rows.map((one) => one.getAttribute("data-haku") ?? ""),
+  );
+}
+
+/** Wait for the S-ostoslista panel to have finished its own read. */
+async function currentListLoaded(page: Page): Promise<void> {
+  await expect(page.locator(".s-current")).toBeVisible();
+  await expect(page.locator(".s-current .spinner")).toHaveCount(0);
 }
 
 async function externalRequests(page: Page): Promise<
@@ -201,16 +237,55 @@ test("an external product can be selected, persisted, and replaced", async ({
 
   const reloadedMilk = row(page, "maito");
   await reloadedMilk.locator("summary").click();
-  await reloadedMilk.getByRole("button", { name: "Vaihda tuote" }).click();
-  await page.getByLabel("Haku").fill("kahvi");
-  await page.getByRole("button", { name: "Hae tuotteita" }).click();
-  await page
+  await openPanel(reloadedMilk);
+  await reloadedMilk.getByLabel("Haku").fill("kahvi");
+  await reloadedMilk.getByRole("button", { name: "Hae" }).click();
+  const replaced = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/ostoslista/tuote"),
+  );
+  await reloadedMilk
     .locator(".s-product-results > li", { hasText: "Juhla Mokka" })
     .getByRole("button", { name: "Valitse" })
     .click();
+  await expect(reloadedMilk.locator(".s-shopping-product-summary")).toContainText(
+    "Juhla Mokka kahvi 500 g",
+  );
+
+  // The row said so before the save answered, so wait for the save itself
+  // before asking the server what it kept.
+  await replaced;
+  await page.reload();
   await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
     "Juhla Mokka kahvi 500 g",
   );
+});
+
+test("the chosen product's picture is on the row, and the row is no taller", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  const milk = row(page, "maito");
+  const water = row(page, "vesi");
+  const before = await milk.locator("summary").boundingBox();
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  await page.reload();
+  const thumb = row(page, "maito").locator(".shopping-thumb img");
+  await expect(thumb).toBeVisible();
+  await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);
+
+  // The row keeps its height: the picture is smaller than the tap target the
+  // summary already reserved, and an unmapped row beside it is the same height.
+  const after = await row(page, "maito").locator("summary").boundingBox();
+  const unmapped = await water.locator("summary").boundingBox();
+  expect(after?.height).toBe(before?.height);
+  expect(after?.height).toBe(unmapped?.height);
+  // An ingredient with no product has no empty box where the picture would be.
+  await expect(water.locator(".shopping-thumb img")).toHaveCount(0);
 });
 
 test("product selection preserves an explicit non-default meal selection", async ({
@@ -240,18 +315,36 @@ test("product selection preserves an explicit non-default meal selection", async
 test("a forged product result is refused and never persisted", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
-  const milk = row(page, "maito");
-  await milk.locator("summary").click();
-  await milk.getByRole("button", { name: "Valitse tuote" }).click();
 
-  const result = page.locator(".s-product-results > li").first();
-  await result.locator('input[name="ean"]').evaluate((input: HTMLInputElement) => {
-    input.value = "0000000000000";
-  });
-  await result.getByRole("button", { name: "Valitse" }).click();
-  await expect(page.locator(".refused")).toContainText(
-    "Valittua tuotetta ei löytynyt uudesta hausta",
-  );
+  // The selection the screen is showing, so the post below is the one the
+  // browser would really make — with an EAN no search ever returned.
+  const chosen = await page
+    .locator('.s-shopping-send form input[name="ateria"]')
+    .evaluateAll((fields) =>
+      fields.map((field) => (field as HTMLInputElement).value),
+    );
+
+  // Both ways in re-search before writing, so an EAN the browser made up is
+  // refused whether it arrives from the screen's form or from the island.
+  for (const format of ["", "json"]) {
+    const body = new URLSearchParams({
+      aines: "9",
+      haku: "maito",
+      ean: "0000000000000",
+      valittu: "1",
+    });
+    for (const id of chosen) body.append("ateria", id);
+    if (format !== "") body.set("muoto", format);
+
+    const forged = await page.request.post("/ostoslista/tuote", {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      data: body.toString(),
+    });
+    expect(forged.status()).toBe(400);
+    expect(await forged.text()).toContain(
+      "Valittua tuotetta ei löytynyt uudesta hausta",
+    );
+  }
 
   await page.goto("/ostoslista");
   await row(page, "maito").locator("summary").click();
@@ -266,12 +359,268 @@ test("a missing CDN image is hidden without breaking product choice", async ({ p
   await page.goto("/ostoslista");
   const milk = row(page, "maito");
   await milk.locator("summary").click();
-  await milk.getByRole("button", { name: "Valitse tuote" }).click();
+  await openPanel(milk);
 
-  const result = page.locator(".s-product-results > li").first();
+  const result = milk.locator(".s-product-results > li").first();
   await expect(result).toBeVisible();
   await expect(result.locator("img")).toBeHidden();
   await expect(result.getByRole("button", { name: "Valitse" })).toBeEnabled();
+});
+
+test("the next ingredient's search is fetched while this one is open", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  const names = await buyRowNames(page);
+  const at = names.indexOf("maito");
+  const next = names[at + 1] ?? "";
+  expect(next).not.toBe("");
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanel(milk);
+
+  await expect
+    .poll(async () => {
+      const calls = await externalRequests(page);
+      return calls.some(
+        (call) =>
+          call.path.startsWith("/products") &&
+          call.path.includes(encodeURIComponent(next)),
+      );
+    })
+    .toBe(true);
+});
+
+test("a prefetched search is never shown for another ingredient", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  const names = await buyRowNames(page);
+  const next = names[names.indexOf("maito") + 1] ?? "";
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanel(milk);
+  await expect(milk.locator(".s-product-results > li").first()).toContainText(
+    "Kotimaista rasvaton maito",
+  );
+
+  // The row the prefetch warmed shows its own answer — the fixture knows no
+  // product for it — and not the milk sitting in the cache beside it.
+  const neighbour = row(page, next);
+  await neighbour.locator("summary").click();
+  await openPanel(neighbour);
+  await expect(neighbour.locator(".s-product-panel-state")).toContainText(
+    "Haulla ei löytynyt tuotteita",
+  );
+  await expect(neighbour.locator(".s-product-results > li")).toHaveCount(0);
+});
+
+test("a choice returns to the list at once and saves behind it", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  // Hold the save open, so what the row shows meanwhile is the whole point.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/ostoslista/tuote", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await held;
+    await route.continue();
+  });
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanel(milk);
+  await milk
+    .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+    .getByRole("button", { name: "Valitse" })
+    .click();
+
+  // Back in the list, with the choice on the row and the panel closed, while
+  // the save is still in flight.
+  await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+  await expect(milk.locator(".shopping-thumb img")).toBeVisible();
+  await expect(milk.locator(".s-product-panel")).toBeHidden();
+  await expect(milk.locator(".s-status .spinner")).toBeVisible();
+
+  release();
+  await expect(milk.locator(".s-status")).toHaveCount(0);
+  await page.unroute("**/ostoslista/tuote");
+
+  await page.reload();
+  await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+});
+
+test("a failed background save is shown, undone, and retryable", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  let failing = true;
+  await page.route("**/ostoslista/tuote", async (route) => {
+    if (route.request().method() !== "POST" || !failing) return route.continue();
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Tuotetta ei voitu varmistaa." }),
+    });
+  });
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanel(milk);
+  await milk
+    .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+    .getByRole("button", { name: "Valitse" })
+    .click();
+
+  // The row goes back to what the server actually holds, and says why.
+  await expect(milk.locator(".s-shopping-error")).toContainText(
+    "Tuotetta ei voitu varmistaa",
+  );
+  await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
+  await expect(milk.locator(".shopping-thumb img")).toHaveCount(0);
+
+  failing = false;
+  await milk.getByRole("button", { name: "Yritä uudelleen" }).click();
+  await expect(milk.locator(".s-shopping-error")).toHaveCount(0);
+  await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+
+  await page.unroute("**/ostoslista/tuote");
+  await page.reload();
+  await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+});
+
+test("the send button spins and cannot be pressed twice", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let sends = 0;
+  await page.route("**/ostoslista/laheta", async (route) => {
+    sends += 1;
+    await held;
+    await route.continue();
+  });
+
+  const send = page.getByRole("button", { name: /Lähetä S-ostoslistaan|Lähetetään/ });
+  await send.click();
+  await expect(page.locator(".s-shopping-send .spinner")).toBeVisible();
+  await expect(send).toBeDisabled();
+  expect(sends).toBe(1);
+
+  release();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  await expect(send).toBeEnabled();
+  expect(sends).toBe(1);
+});
+
+test("the shopping screen shows what the S list already holds, and refreshes it", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await currentListLoaded(page);
+  await expect(page.locator(".s-current-state")).toContainText("vielä tyhjä");
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  // The panel is refreshed by the send, so the member sees the new situation
+  // without reloading: the mapped product as a product, the rest as reminders.
+  const items = page.locator(".s-current-items li");
+  await expect(items.filter({ hasText: "Kotimaista rasvaton maito" })).toHaveCount(1);
+  await expect(
+    items.filter({ hasText: "Kotimaista rasvaton maito" }),
+  ).toContainText("Tuote");
+  await expect(items.filter({ hasText: "vesi — 2–3 l" })).toContainText(
+    "Muistutus",
+  );
+});
+
+test("an unreadable S list is a line in its own panel, not a broken screen", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  let failing = true;
+  await page.route("**/ostoslista/s-lista", async (route) => {
+    if (!failing) return route.continue();
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "S-ostoslistan sisältöä ei saatu luettua." }),
+    });
+  });
+
+  await page.goto("/ostoslista");
+  await expect(page.locator(".s-current-state")).toContainText(
+    "sisältöä ei saatu luettua",
+  );
+  // The household's own list is untouched by the external failure.
+  await expect(row(page, "maito").locator(".shopping-total")).toHaveText(
+    "5 dl + 2 rkl",
+  );
+
+  failing = false;
+  await page.getByRole("button", { name: "Yritä uudelleen" }).click();
+  await expect(page.locator(".s-current-state")).toContainText("vielä tyhjä");
+  await page.unroute("**/ostoslista/s-lista");
+});
+
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("the product screen and the send form still work on their own", async ({
+    page,
+  }) => {
+    await planTheFortnight(page);
+    await page.goto("/ostoslista");
+
+    const milk = row(page, "maito");
+    await milk.locator("summary").click();
+    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+    await page
+      .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+
+    await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+      "Kotimaista rasvaton maito 1 l",
+    );
+    await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    // The panel that needs a browser to fill it stays out of the way entirely.
+    await expect(page.locator(".s-current")).toBeHidden();
+  });
 });
 
 test("sending uses stored EANs, note fallbacks, and excludes the pantry", async ({
@@ -311,6 +660,9 @@ test("an external outage refuses recoverably without replacing the list", async 
 }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
+  // The current-list read is an external call too, so let it finish before
+  // arming the fixture — otherwise it, not the send, would take the outage.
+  await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
 
@@ -458,6 +810,11 @@ test("another household's cookings are not on our list", async ({
       form: { aines: "9", haku: "maito", ean: "6415712506032" },
     })).status(),
   ).toBe(404);
+  // The island's own routes are behind the same door.
+  expect((await neighbour.request.get("/ostoslista/haku?haku=maito")).status()).toBe(
+    404,
+  );
+  expect((await neighbour.request.get("/ostoslista/s-lista")).status()).toBe(404);
 
   await context.close();
 });

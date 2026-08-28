@@ -622,6 +622,15 @@ const STYLES = `
     transition: transform .1s;
   }
   .shopping-item[open] > summary::after { transform: rotate(90deg); }
+  /* The chosen product's picture, on the row itself (#159). It is smaller than
+     the row's own minimum height, and the slot collapses when there is no
+     picture, so no row grows and no row is left holding an empty box. */
+  .shopping-thumb { flex: none; align-self: center; line-height: 0; }
+  .shopping-thumb:empty { display: none; }
+  .shopping-thumb img {
+    width: 1.6rem; height: 1.6rem; object-fit: contain; background: #fff;
+    border: 1px solid var(--edge); border-radius: .25rem;
+  }
   .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
   .shopping-item[open] .shopping-name { font-weight: 600; }
   .shopping-total { font-weight: 600; font-variant-numeric: tabular-nums;
@@ -668,7 +677,52 @@ const STYLES = `
     display: flex; flex: 1 1 12rem; flex-direction: column; min-width: 0;
     overflow-wrap: break-word;
   }
+  .s-shopping-product-body { display: flex; flex: 1 1 13rem; min-width: 0; }
   .s-shopping-product > form { margin-left: auto; }
+
+  /* The one loading indicator, shared by everything on this screen that waits
+     on the network (#159): a saving row, the send button, and the read of the
+     S-ostoslista's current contents. */
+  .spinner {
+    display: inline-block; flex: none; width: .85rem; height: .85rem;
+    margin-right: .4rem; vertical-align: -.1rem;
+    border: 2px solid var(--edge); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  .s-status { flex-basis: 100%; color: var(--muted); font-size: .85rem; }
+  .s-shopping-error {
+    margin: 0 0 .6rem; padding: .6rem .7rem;
+    color: var(--warn); font-size: .85rem;
+    background: var(--surface); border: 1px solid var(--warn);
+    border-radius: var(--radius);
+  }
+  .s-shopping-error button { min-height: var(--tap-compact); }
+
+  .s-product-panel { margin: 0 0 .7rem; }
+  .s-product-search { display: flex; align-items: flex-end; gap: .5rem;
+    margin-bottom: .6rem; }
+  .s-product-search label { flex: 1; min-width: 0; margin: 0;
+    font-size: .85rem; color: var(--muted); }
+  .s-product-search input { width: 100%; }
+  .s-product-search button { flex: 0 0 auto; }
+  .s-product-panel-state { margin: 0 0 .6rem; color: var(--muted);
+    font-size: .9rem; }
+
+  .s-current { margin-top: .8rem; border-top: 1px solid var(--edge);
+    padding-top: .6rem; }
+  .s-current h3 { margin: 0 0 .3rem; font-size: .95rem; }
+  .s-current-state { display: flex; align-items: center; gap: .5rem;
+    margin: 0; color: var(--muted); font-size: .85rem; }
+  .s-current-state button { min-height: var(--tap-compact); }
+  .s-current-items li {
+    display: flex; align-items: baseline; gap: .6rem;
+    padding: .3rem 0; font-size: .9rem;
+    border-top: 1px solid var(--edge);
+  }
+  .s-current-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
   .product-search-form { margin-bottom: 1rem; }
   .s-product-results { display: grid; gap: .7rem; }
   .s-product-results > li {

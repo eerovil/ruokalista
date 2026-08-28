@@ -632,7 +632,7 @@ test.describe("signed in", () => {
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
-    const product = page.locator(".s-product-results > li", {
+    const product = milk.locator(".s-product-results > li", {
       hasText: "Kotimaista rasvaton maito",
     });
     await expect(product).toBeVisible();
@@ -641,7 +641,28 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
-    await page.goBack();
+    // The choice itself, back on the list: the picture on the row, and the
+    // S-ostoslista panel saying what the list already holds (#159).
+    await product.getByRole("button", { name: "Valitse" }).click();
+    await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+      "Kotimaista rasvaton maito",
+    );
+    await expect(milk.locator(".s-status")).toHaveCount(0);
+    await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    await expect(
+      page.locator(".s-current-items li").filter({ hasText: "Kotimaista rasvaton maito" }),
+    ).toHaveCount(1);
+    await milk.evaluate((details: HTMLDetailsElement) => {
+      details.open = false;
+    });
+    await page.screenshot({
+      path: `${SHOTS}/58-s-ostoslista-current.png`,
+      fullPage: true,
+    });
+
     await milk.evaluate((details: HTMLDetailsElement) => {
       details.open = true;
     });
