@@ -26,8 +26,9 @@ starts its own `wrangler dev` and each spec reseeds the local database first, so
 a test that saves a recipe cannot change what a later test sees.
 
 **No browser test calls Anthropic.** `tests/support/draft.ts` intercepts
-`/api/intake/structure` with `page.route()` and answers from a fixture, so the
-suite is free to run as often as you like. That fixture is also what makes the
+`/api/intake/imports` and persists a ready D1 job from the sample fixture, so
+the suite exercises the real later-review route without reaching the Queue or
+model. That fixture is also what makes the
 approval gate testable: one of its lines is deliberately unmatched.
 `tests/batch-intake.spec.ts` (8 scenarios: happy-path save through the shared
 `saveRecipe` path, repointing a proposed ingredient name everywhere, refusing

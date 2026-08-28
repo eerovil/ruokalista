@@ -58,7 +58,7 @@ commit what it wrote:
 | `44-admin-member-refused.png` | Proposed refusal when an admin's Google sub is repointed — admin travels with the sub, so this stays an operator action |
 | `45-admin-household-after-removal.png` | Proposed household after an established member is removed — no refusal, and the household stands |
 | `46-recipes-after-removal.png` | Proposed recipe list after that removal: the recipes are still there and still credited to the person who wrote them |
-| `47-admin-member-sub-refused.png` | Proposed refusal of something that is not a Google identifier — the contract the removed-member tombstone is kept outside of |
+| `47-admin-member-sub-refused.png` | Proposed email-only member form refusing an address that already belongs to an active member (#187) |
 | `47-editor-remove-mentioned.png` | Proposed refusal when a linked row is repointed and removed together but the step still names its saved ingredient, with the step quoted and the forced-removal escape hatch |
 | `48-step-mentions-all-open.png` | Proposed recipe-wide amount toggle with every ingredient amount revealed in the preparation sentences |
 | `49-covered-days.png` | Proposed covered days: two recipes continuing into Tuesday, one covering both of Wednesday's meals, `katettu` in each heading and both add links still there (not full-page, on purpose) |
@@ -87,3 +87,4 @@ commit what it wrote:
 | `75-recipe-category-editor.png` | Proposed category picker in the recipe editor: checkboxes, two ticked, no heavier than the fields around it (#196) |
 | `76-recipe-categories.png` | Proposed recipe screen carrying its categories under the title, beside the rest of the dish's own facts |
 | `77-recipes-category-filter.png` | Proposed recipe list standing in **Uuniruoka**: the scrolling chip row above, only the recipes in that category below |
+| `78-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |

@@ -154,6 +154,16 @@ accidentally depend on the unused columns.
 Matching is by `ingredient_id` — the household's canonical identity for a
 foodstuff — and never by name.
 
+## Background recipe imports
+
+Issue #186 proposes `intake_job`, a household-scoped record for a model call
+that continues after its browser leaves. It retains the source, queued/running/
+ready/failed state, safe failure text and validated draft until the recipe is
+saved. Photographed bytes stay temporarily in R2; `image_refs` is only their
+ordered key list. `lease_id` makes completion conditional on the consumer that
+claimed the running job. The queue message carries the job id rather than
+source data.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
@@ -214,6 +224,30 @@ regression.
 This is a column addition, so the backup lockstep below does not move: backup
 captures `SELECT *` and restore builds its INSERT from the row's own keys, so
 both carry the new columns without a change.
+
+## Pending membership by email (#187, proposed)
+
+This pull request proposes `migrations/0014_member_invitations.sql` and its
+`member_invitation` table. One row reserves one normalized email for one
+household until the matching verified Google account first signs in:
+
+```sql
+CREATE TABLE member_invitation (
+  id, household_id, email UNIQUE COLLATE NOCASE, created_at, created_by
+);
+```
+
+It is deliberately separate from `member`. A pending person has no Google
+`sub` yet, while `member.google_sub` is the permanent identity and stays
+`NOT NULL UNIQUE`. Claiming runs as one D1 batch: insert the permanent member
+from the invitation, then delete the invitation only when that exact `sub` and
+email now exist. The batch transaction prevents two callbacks from consuming
+one invitation into two members.
+
+The new table joins the backup/restore manifest after `member`; restore checks
+both its household and creator references and its unique email.
+Deleting its household cascades the invitation, and the admin household screen
+may delete the invitation directly to revoke it before first sign-in.
 
 ## Public recipes, and a global ingredient dictionary
 
@@ -414,9 +448,9 @@ This **is** a table addition, so it goes through the manifest lockstep below.
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
-currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
-`recipe_preference`, — proposed by #161 — `ingredient_product` and
+currently `household`, `member`, `intake_job`, `member_invitation`, `ingredient`,
+`recipe`, `recipe_share`, `recipe_step`, `ingredient_line`, `planned_batch`,
+`batch_occurrence`, `pantry_entry`, `recipe_preference`, `ingredient_product`,
 `recipe_ingredient_product`, and — proposed by #196 — `recipe_category`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate

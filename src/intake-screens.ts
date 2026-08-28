@@ -3,14 +3,21 @@ import { html, page, raw, type Raw } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
+  createIntakeJob,
+  deleteIntakeJob,
+  findIntakeJob,
+  IntakeRefused,
+  listIntakeJobs,
+  retryIntakeJob,
+  type IntakeJob,
+} from "./intake-jobs.ts";
+import {
   draftFromJson,
   importFailureMessage,
   MAX_IMAGES,
-  streamDraft,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
-  type IntakeImage,
   type IntakeSource,
 } from "./intake.ts";
 import {
@@ -47,16 +54,15 @@ import { SAMPLE_DRAFT } from "./sample-draft.ts";
  * screen is where a structured draft becomes a recipe, and it is deliberately
  * in the way — nothing saves while a line is unanswered.
  *
- * Nothing is written to D1 until the save, so a failed import leaves no trace
- * and a closed tab loses only the draft. That is why there is no draft table.
+ * Structuring is a queued job whose source and validated result stay in D1.
+ * The correction screen remains deliberately in the way of the final save.
  */
 
 /**
- * The one island of client-side work in the app. It streams the draft so bytes
- * keep flowing, shows it filling in, and then hands the finished draft to the
- * server to render the correction screen.
+ * The one island of client-side work in the app. It prepares photographed
+ * pages, starts a durable import, then gets out of the model call's lifecycle.
  *
- * Intake requires this script. Pasted text uses its streamed model path, and
+ * Intake requires this script. Pasted text starts its queued model path, and
  * the camera route also needs it for canvas downscaling.
  *
  * It also owns the chosen pages (#156). Neither file input holds the list,
@@ -72,14 +78,7 @@ const STREAMING_ISLAND = `
   var status = document.getElementById('status');
   var photoHelp = document.getElementById('photo-help');
   var chosenList = document.getElementById('chosen');
-  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise || !window.Response || !window.ReadableStream || !window.TextDecoder) return;
-
-  try {
-    var streamProbe = new window.Response(new window.ReadableStream()).body;
-    if (!streamProbe || !streamProbe.getReader) return;
-  } catch (error) {
-    return;
-  }
+  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise) return;
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
@@ -96,48 +95,6 @@ const STREAMING_ISLAND = `
   // The pages to import, in the order they were added. Camera shots and
   // library picks land in the same list; nothing distinguishes them after this.
   var pages = [];
-
-  var FAILED_TEXT = 'malli ei saanut reseptiä valmiiksi. Liittämäsi teksti on tallessa — kokeile uudelleen.';
-
-  // Marked so the catch below knows this wording is ours and is safe to show.
-  function refusal() {
-    var error = new Error(FAILED_TEXT);
-    error.member = true;
-    return error;
-  }
-
-  // What the household is told while the model works. The draft arrives as
-  // JSON, and showing raw JSON to somebody importing a recipe is showing them
-  // the plumbing — so it is counted instead. The counts only ever rise, which
-  // is the reassurance a spinner cannot give: something is still arriving.
-  // No regular expressions in here: this whole script is a template literal, so
-  // a backslash would be eaten before the browser ever saw it.
-  function stringAfter(text, key) {
-    var at = text.indexOf(key);
-    if (at < 0) return '';
-    var start = text.indexOf('"', at + key.length);
-    if (start < 0) return '';
-    var end = text.indexOf('"', start + 1);
-    // A title containing a quote would come out short. It is a progress label.
-    return end < 0 ? '' : text.slice(start + 1, end);
-  }
-
-  function count(text, key) {
-    return text.split(key).length - 1;
-  }
-
-  function summarise(draft) {
-    var title = stringAfter(draft, '"title"');
-    var lines = count(draft, '"ingredient_name"');
-    var steps = count(draft, '"text"');
-
-    var parts = [];
-    if (title) parts.push(title);
-    if (lines) parts.push(lines === 1 ? '1 aines' : lines + ' ainesta');
-    if (steps) parts.push(steps === 1 ? '1 vaihe' : steps + ' vaihetta');
-
-    return parts.length ? parts.join(' · ') : 'Luetaan reseptiä…';
-  }
 
   function shrink(file) {
     return window.createImageBitmap(file).then(function (bitmap) {
@@ -228,21 +185,6 @@ const STREAMING_ISLAND = `
     }
   });
 
-  function handOver(draft, route, sourceText) {
-    var hidden = document.createElement('form');
-    hidden.method = 'post';
-    hidden.action = '/intake/correct';
-    [['draft', draft], ['route', route], ['sourceText', sourceText]].forEach(function (pair) {
-      var field = document.createElement('input');
-      field.type = 'hidden';
-      field.name = pair[0];
-      field.value = pair[1];
-      hidden.appendChild(field);
-    });
-    document.body.appendChild(hidden);
-    hidden.submit();
-  }
-
   form.addEventListener('submit', function (event) {
     var text = form.sourceText.value.trim();
     var photographed = pages.length > 0;
@@ -262,7 +204,7 @@ const STREAMING_ISLAND = `
 
     prepared
       .then(function (body) {
-        return fetch('/api/intake/structure', {
+        return fetch('/api/intake/imports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -270,81 +212,17 @@ const STREAMING_ISLAND = `
           if (!response.ok) {
             return response.text().then(function (t) { throw new Error(t || response.status); });
           }
-          if (!response.body || !response.body.getReader) {
-            throw new Error('Streaming response unavailable');
-          }
-          status.textContent = 'Malli lukee reseptiä…';
-          var reader = response.body.getReader();
-          var decoder = new TextDecoder();
-          var LF = String.fromCharCode(10);
-          var pending = '';
-          var draft = '';
-          var completed = null;
-          var retried = false;
-
-          // Each line is one JSON record. Draft bytes live in an escaped string,
-          // so pasted text cannot impersonate restart or completion framing.
-          function accept(line) {
-            var record;
-            try {
-              record = JSON.parse(line);
-            } catch (_error) {
-              throw refusal();
-            }
-
-            if (completed !== null || !record || typeof record.type !== 'string') {
-              throw refusal();
-            }
-            if (record.type === 'delta' && typeof record.text === 'string') {
-              draft += record.text;
-              progress.textContent = summarise(draft);
-              return;
-            }
-            if (record.type === 'restart') {
-              draft = '';
-              if (!retried) {
-                retried = true;
-                status.textContent = 'Ensimmäinen yritys katkesi — yritetään uudelleen…';
-              }
-              return;
-            }
-            if (record.type === 'complete') {
-              completed = draft;
-              return;
-            }
-            throw refusal();
-          }
-
-          function acceptCompleteLines() {
-            var end = pending.indexOf(LF);
-            while (end >= 0) {
-              var line = pending.slice(0, end);
-              pending = pending.slice(end + 1);
-              if (line) accept(line);
-              end = pending.indexOf(LF);
-            }
-          }
-
-          return (function pump() {
-            return reader.read().then(function (chunk) {
-              if (chunk.done) {
-                pending += decoder.decode();
-                acceptCompleteLines();
-                // Every record ends in a newline. Leftovers mean the transport
-                // ended mid-record, so no draft is safe to hand over.
-                if (pending || completed === null) throw refusal();
-                return completed;
-              }
-              pending += decoder.decode(chunk.value, { stream: true });
-              acceptCompleteLines();
-              return pump();
-            });
-          })();
+          return response.json();
         });
       })
-      .then(function (draft) {
-        status.textContent = 'Valmis — avataan tarkistus.';
-        handOver(draft, photographed ? 'photographed' : 'pasted', text);
+      .then(function (job) {
+        status.textContent = 'Reseptiä käsitellään taustalla. Voit jatkaa Ruokalistan käyttöä.';
+        progress.hidden = true;
+        progress.textContent = '';
+        button.disabled = false;
+        if (job && job.id) {
+          window.location.assign('/intake?started=' + encodeURIComponent(job.id));
+        }
       })
       .catch(function (error) {
         // Only wording this island wrote is shown. Anything else — a transport
@@ -371,6 +249,7 @@ interface CorrectionView {
   sourceText: string;
   sourceRoute: SourceRoute;
   structuredBy: string;
+  intakeJobId: string;
   rows: Array<DraftLine | LineFormValues>;
   steps: StepFormValues[];
   /** The categories ticked on this screen (#196). Never guessed by the model. */
@@ -380,7 +259,7 @@ interface CorrectionView {
 /**
  * The sample draft, offered only by a development server.
  *
- * It posts to the same `/intake/correct` the streaming island hands over to, so
+ * It posts to the same `/intake/correct` the ready-job route ultimately uses, so
  * walking through it exercises the real review, the real editor and the real
  * save — nothing is special-cased downstream. What it skips is the one
  * expensive step.
@@ -427,8 +306,8 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
       <p class="empty" id="photo-help">
         Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
         kaikista tulee yksi resepti siinä järjestyksessä kuin ne ovat tässä.
-        Kuvat pienennetään selaimessa ja luetaan kerran. Niitä ei tallenneta
-        minnekään — talteen jää vain sivuilta luettu teksti.
+        Kuvat pienennetään selaimessa ja säilytetään yksityisesti jäsennyksen
+        ajan. Onnistuneesta tuonnista talteen jää vain sivuilta luettu teksti.
       </p>
 
       <button type="submit" disabled>${submitLabel}</button>
@@ -444,15 +323,100 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
     </script>`;
 }
 
+function intakeJobs(jobs: IntakeJob[]): Raw {
+  if (jobs.length === 0) return html``;
+
+  const state = (job: IntakeJob): Raw => {
+    if (job.status === "ready") {
+      return html`<p><strong>Valmis tarkistettavaksi</strong></p>
+        <p><a class="button" href="/intake/imports/${job.id}/review">Tarkista resepti</a></p>`;
+    }
+    if (job.status === "failed") {
+      return html`<p class="refused">${job.errorMessage ?? "Jäsennys epäonnistui."}</p>
+        <form method="post" action="/intake/imports/${job.id}/retry">
+          <button type="submit">Yritä uudelleen</button>
+        </form>`;
+    }
+    return html`<p><strong>Käsitellään taustalla</strong></p>`;
+  };
+
+  return html`<section aria-labelledby="intake-jobs-title">
+    <h2 id="intake-jobs-title">Keskeneräiset tuonnit</h2>
+    <ul class="recipes">
+      ${jobs.map((job) => html`<li
+        data-intake-job="${job.id}"
+        ${job.status === "queued" || job.status === "running"
+          ? raw('data-intake-pending="true"')
+          : ""}
+      >
+        <div class="recipes-text">
+          <strong>${job.draftTitle ?? intakeSourceLabel(job)}</strong>
+          <span class="meta">${job.sourceRoute === "photographed" ? "Kuvattu" : "Liitetty teksti"}</span>
+          ${state(job)}
+          ${job.status === "failed" && job.sourceText
+            ? html`<details><summary>Alkuperäinen teksti</summary><pre>${job.sourceText}</pre></details>`
+            : ""}
+        </div>
+      </li>`)}
+    </ul>
+    <script>${raw(`
+      (function () {
+        var pending = document.querySelectorAll('[data-intake-pending]');
+        if (!pending.length || !window.fetch || !window.Promise) return;
+        window.setTimeout(function check() {
+          var requests = [];
+          for (var i = 0; i < pending.length; i++) {
+            requests.push(fetch('/api/intake/imports/' + pending[i].getAttribute('data-intake-job'))
+              .then(function (response) { return response.ok ? response.json() : null; }));
+          }
+          Promise.all(requests).then(function (states) {
+            for (var at = 0; at < states.length; at++) {
+              if (states[at] && states[at].status !== 'queued' && states[at].status !== 'running') {
+                window.location.reload();
+                return;
+              }
+            }
+            window.setTimeout(check, 3000);
+          });
+        }, 3000);
+      })();
+    `)}</script>
+  </section>`;
+}
+
+function intakeSourceLabel(job: IntakeJob): string {
+  if (job.sourceRoute === "photographed") {
+    return job.imageRefs.length === 1
+      ? "Kuvattu resepti"
+      : `Kuvattu resepti (${job.imageRefs.length} sivua)`;
+  }
+  const firstLine = (job.sourceText ?? "").split("\n")[0]?.trim();
+  return firstLine || "Liitetty resepti";
+}
+
 /** `GET /intake` */
-export function intakeScreen(
-  { url }: RouteContext,
+export async function intakeScreen(
+  { env, url }: RouteContext,
   member: Member,
-): Response {
+): Promise<Response> {
+  const jobs = await listIntakeJobs(env.DB, member.householdId);
+  const started = url.searchParams.get("started");
+  const startedJob = jobs.find((job) => job.id === started);
+  if (startedJob?.status === "ready") {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `/intake/imports/${startedJob.id}/review` },
+    });
+  }
+  const confirmed = startedJob !== undefined;
   return page(
     "Lisää resepti",
     html`<h1>Lisää resepti</h1>
+      ${confirmed
+        ? html`<p class="status">Reseptiä käsitellään taustalla. Voit jatkaa Ruokalistan käyttöä.</p>`
+        : ""}
       ${intakeForm()}
+      ${intakeJobs(jobs)}
       ${isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
@@ -460,48 +424,8 @@ export function intakeScreen(
   );
 }
 
-/**
- * The photographed pages a streaming request carries, in the order they were
- * sent — that order is the reading order of the printed recipe, so nothing
- * here may sort or dedupe.
- *
- * The older single-`image` body is still read. Ruokalista is an installable
- * PWA, so a browser can be running a cached copy of yesterday's island; the
- * one-photo import it sends keeps working rather than becoming a 400.
- */
-export function readImages(body: {
-  image?: unknown;
-  mediaType?: unknown;
-  images?: unknown;
-}): IntakeImage[] {
-  const mediaTypeOf = (value: unknown): string =>
-    typeof value === "string" && value !== "" ? value : "image/jpeg";
-
-  if (Array.isArray(body.images)) {
-    return body.images.flatMap((entry): IntakeImage[] => {
-      const page = (entry ?? {}) as Record<string, unknown>;
-      const base64 = page["image"];
-      if (typeof base64 !== "string" || base64 === "") return [];
-      return [{ base64, mediaType: mediaTypeOf(page["mediaType"]) }];
-    });
-  }
-
-  if (typeof body.image === "string" && body.image !== "") {
-    return [{ base64: body.image, mediaType: mediaTypeOf(body.mediaType) }];
-  }
-
-  return [];
-}
-
-/**
- * `POST /api/intake/structure` — run the model and stream the draft straight
- * through. The browser accumulates it and hands it back to /intake/correct,
- * which keeps the correction screen server-rendered.
- *
- * The body is newline-delimited JSON: text deltas plus restart, complete or
- * failed records. Only the island reads it.
- */
-export async function structureStream(
+/** `POST /api/intake/imports` — persist the source and return immediately. */
+export async function startIntakeJob(
   { env, request }: RouteContext,
   member: Member,
 ): Promise<Response> {
@@ -517,41 +441,79 @@ export async function structureStream(
     return problem(400, "Expected a JSON body.");
   }
 
-  const images = readImages(body);
-  if (images.length > MAX_IMAGES) {
-    return problem(400, `Yhteen reseptiin voi antaa enintään ${MAX_IMAGES} kuvaa.`);
-  }
-
-  let source: IntakeSource;
-  if (images.length > 0) {
-    source = { route: "photographed", images };
-  } else if (typeof body.sourceText === "string" && body.sourceText.trim() !== "") {
-    source = { route: "pasted", text: body.sourceText };
-  } else {
-    return problem(400, "Anna joko tekstiä tai kuva.");
-  }
-
-
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
-
-  let stream: ReadableStream<Uint8Array>;
   try {
-    stream = streamDraft(env, source, ingredients);
+    const job = await createIntakeJob(env, member, body);
+    return Response.json({ id: job.id, status: job.status }, { status: 202 });
   } catch (error) {
-    return problem(503, String((error as Error).message ?? error));
+    return error instanceof IntakeRefused
+      ? problem(400, error.message)
+      : problem(503, "Reseptin jäsennystä ei voitu käynnistää.");
   }
+}
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      // Nothing between here and the browser should hold bytes back.
-      "Cache-Control": "no-store",
-      "X-Accel-Buffering": "no",
-    },
+/** `GET /api/intake/imports/:id` — household-scoped polling state. */
+export async function intakeJobStatus(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const job = await findIntakeJob(env.DB, params["id"] ?? "", member.householdId);
+  if (job === null) return problem(404, "Not found.");
+  return Response.json({
+    id: job.id,
+    status: job.status,
+    reviewUrl: job.status === "ready" ? `/intake/imports/${job.id}/review` : null,
+    error: job.status === "failed" ? job.errorMessage : null,
   });
 }
 
-/** `POST /intake/correct` — render the correction screen for a streamed draft. */
+/** `POST /intake/imports/:id/retry` — enqueue the retained source again. */
+export async function retryIntakeJobForm(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const retried = await retryIntakeJob(
+    env,
+    params["id"] ?? "",
+    member.householdId,
+  );
+  if (!retried) return intakeNotFound(member);
+  return new Response(null, { status: 303, headers: { Location: "/intake" } });
+}
+
+/** `GET /intake/imports/:id/review` — reopen the normal review from D1. */
+export async function intakeJobReviewScreen(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const job = await findIntakeJob(env.DB, params["id"] ?? "", member.householdId);
+  if (job === null || job.status !== "ready" || job.draftJson === null) {
+    return intakeNotFound(member);
+  }
+
+  const source: IntakeSource = job.sourceRoute === "photographed"
+    ? { route: "photographed", images: [] }
+    : { route: "pasted", text: job.sourceText ?? "" };
+  const ingredients = await ingredientsFor(env.DB, member.householdId);
+
+  try {
+    const draft = draftFromJson(job.draftJson, source, STRUCTURED_BY);
+    return page(
+      "Tarkista resepti",
+      correctionForm(draft, ingredients, job.sourceRoute, job.id),
+      "intake",
+      member,
+    );
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: "intake.persisted_draft_invalid",
+      job_id: job.id,
+      detail: String((error as Error)?.message ?? error),
+    }));
+    return intakeNotFound(member);
+  }
+}
+
+/** `POST /intake/correct` — render the local sample draft's correction screen. */
 export async function correctScreen(
   { env, request }: RouteContext,
   member: Member,
@@ -604,6 +566,19 @@ export async function saveScreen(
       categories: readCategories(form),
     });
 
+    const intakeJobId = String(form.get("intakeJobId") ?? "");
+    if (intakeJobId !== "") {
+      try {
+        await deleteIntakeJob(env, intakeJobId, member.householdId);
+      } catch (error) {
+        console.log(JSON.stringify({
+          event: "intake.cleanup_failed",
+          job_id: intakeJobId,
+          detail: String((error as Error)?.message ?? error),
+        }));
+      }
+    }
+
     // Straight to the recipe, which is why it was imported.
     return new Response(null, {
       status: 302,
@@ -633,6 +608,7 @@ function correctionForm(
   draft: Draft,
   ingredients: IngredientSummary[],
   sourceRoute: SourceRoute,
+  intakeJobId = "",
 ): Raw {
   const rows = [
     ...draft.lines,
@@ -656,6 +632,7 @@ function correctionForm(
       sourceText: draft.sourceText,
       sourceRoute,
       structuredBy: draft.structuredBy,
+      intakeJobId,
       rows,
       steps,
       // Nothing proposes these. The model is not asked to guess what kind of
@@ -678,6 +655,7 @@ function correctionFormFromSubmission(
       sourceText: String(form.get("sourceText") ?? ""),
       sourceRoute: sourceRouteForRendering(form),
       structuredBy: String(form.get("structuredBy") ?? ""),
+      intakeJobId: String(form.get("intakeJobId") ?? ""),
       rows: Array.from({ length: lineCount }, (_, index) =>
         lineValuesFromForm(form, index),
       ),
@@ -890,6 +868,7 @@ function renderCorrection(
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
       <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
+      <input type="hidden" name="intakeJobId" value="${view.intakeJobId}" />
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
 
       ${draftReview(view, ingredients)}
@@ -966,6 +945,18 @@ function failed(member: Member, message: string, sourceText: string): Response {
     "intake",
     member,
     400,
+  );
+}
+
+function intakeNotFound(member: Member): Response {
+  return page(
+    "Ei löytynyt",
+    html`<h1>Ei löytynyt</h1>
+      <p class="empty">Tätä tuontia ei ole.</p>
+      <p><a href="/intake">Takaisin tuonteihin</a></p>`,
+    "intake",
+    member,
+    404,
   );
 }
 

@@ -3,8 +3,8 @@
  * awkward shape in it: a plain amount, a range, a second measurement, a line
  * the source gave no amount for, and one the model could not match.
  *
- * It has two jobs, and they are the same job. The browser suite answers
- * `/api/intake/structure` from it, so no test ever calls Anthropic. And a
+ * It has two jobs, and they are the same job. The browser suite builds a ready
+ * background import from it, so no test ever calls Anthropic. And a
  * development server offers it on the intake screen, so the review, the editor
  * and the save can be walked through by hand for nothing — see `isLocalOrigin`
  * in `src/public-origin.ts` for why that cannot happen in production.

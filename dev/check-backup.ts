@@ -177,6 +177,23 @@ function fakeDatabase(): {
   const tableRows: Record<string, Record<string, unknown>[]> = {
     household: [{ id: 1, name: "Koti" }, { id: 2, name: "Naapuri" }],
     member: [{ id: 1, household_id: 1, display_name: "Eero" }],
+    intake_job: [{
+      id: "job-1",
+      household_id: 1,
+      created_by: 1,
+      status: "failed",
+      lease_id: null,
+      source_route: "pasted",
+      source_text: "Uunikaali",
+      image_refs: null,
+      draft_json: null,
+      error_message: "Jäsennys epäonnistui.",
+      created_at: "2026-08-25 00:00:00",
+      updated_at: "2026-08-25 00:01:00",
+    }],
+    member_invitation: [
+      { id: 1, household_id: 1, email: "uusi@example.com", created_by: 1 },
+    ],
     ingredient: [{ id: 1, name: "öljy" }],
     recipe: [
       {

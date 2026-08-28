@@ -12,8 +12,9 @@ line, ingredient, unit, yield.
 ## Shape of the thing
 
 A single Cloudflare Worker in TypeScript, serving both the HTML app and its JSON
-API, over one D1 database. Google sign-in is the gate. One household exists;
-its row and its members' rows are inserted by hand.
+API, over one D1 database. Google sign-in is the gate. Household administration
+has since moved from hand-written rows to the admin screens; #187 proposes the
+email-only member enrollment described in `docs/codebase/auth.md`.
 
 Deferred out of v1, on purpose:
 
@@ -161,9 +162,10 @@ Notes on the choices, since a schema is where a decision quietly gets reversed:
 - **`ingredient_id` is NOT NULL.** A line cannot exist pointing at an
   unapproved ingredient — that rule is what stops "purjo" and "purjosipuli"
   from both appearing, and the schema, not just the screen, enforces it.
-- **`source_text` sits on the recipe** rather than in an intake table, because
-  a re-import on a future model (#11) needs exactly the recipe and its text.
-  Photographed images are never written anywhere.
+- **`source_text` sits on the recipe** because a re-import on a future model
+  (#11) needs exactly the recipe and its text. Issue #186 also proposes keeping
+  it on an `intake_job` until review and save. Photographed pages are temporary
+  R2 source objects while that job is pending or failed, never recipe images.
 - **No session table.** See Sign-in below.
 - **Author stamps** are on every household-owned record, per #8. There are no
   roles and nothing checks them; they are there so you can see who added a
@@ -175,9 +177,11 @@ Notes on the choices, since a schema is where a decision quietly gets reversed:
 ## Sign-in
 
 Google OAuth, authorization-code flow, handled in the Worker. On callback,
-verify the id token and look up `member` by `google_sub`. **No row means no
-entry** — the screen says the household has to add you, and nothing is created.
-There is no signup path anywhere in the app.
+verify the id token and look up `member` by `google_sub`. Existing members never
+fall back to email matching. #187 proposes one explicit enrollment path: an
+unknown `sub` may consume an admin-created invitation for the same verified
+Google email, creating its permanent member row before the stable-`sub` lookup
+is repeated. Every other unknown account is refused.
 
 The session is a signed cookie (HttpOnly, Secure, SameSite=Lax) holding
 `member_id` and an expiry, HMAC'd with a Worker secret. No session table: with
@@ -192,8 +196,8 @@ modelled, not built".
 ## Screens
 
 Mobile-first, because a week gets planned at the kitchen table and a recipe gets
-read at the hob. Server-rendered HTML with small islands of interactivity;
-the streaming intake screen is the only place that needs real client-side work.
+read at the hob. Server-rendered HTML with small islands of interactivity; the
+queued intake screen is the only place that needs substantial client-side work.
 
 **Sign-in.** One button. Also the wall a stranger hits: signed in with Google
 but no member row, and it says so plainly.
@@ -264,12 +268,18 @@ correcting it. Figures are worked through under What it costs to run.
 Pasting: a textarea, sent as-is. Photographing: a file/camera input, downscaled
 in the browser to a long edge of about 1,500 px and re-encoded as JPEG before
 upload — enough for printed text, small enough to keep the request quick. The
-image is held in memory in the Worker for the length of one model call and then
-dropped. It is never written to D1 and it never reaches R2 — the recipe image
-bucket added for #88 holds pictures a household chose to show, and a
-photographed cookbook page is not one of those.
+image is retained privately in R2 while the proposed background import is
+pending or failed, then dropped as soon as a validated draft is ready. It never
+becomes the recipe's display image.
 
-**2. `POST /api/intake/structure` runs the model.**
+**2. `POST /api/intake/imports` starts a durable import.**
+
+The Worker stores a household-scoped `intake_job`, sends only its id to a
+Cloudflare Queue, and answers immediately. The member may leave, refresh or
+return later; queued/running, ready and failed imports remain listed on
+`/intake`.
+
+The Queue consumer runs the model independently of the browser request.
 
 The Worker loads the household's whole ingredient list — id and name, about 300
 rows — and puts it in the prompt, per #11. It asks for one JSON object:
@@ -309,13 +319,12 @@ null and propose a name. `source_text` is echoed back for the pasted route and
 is the transcription for the photographed route — that is what gets kept
 forever.
 
-**3. The response streams.**
+**3. The model stream stays server-side.**
 
-The Worker calls the model with streaming on and pipes the token stream straight
-into its own response body. Bytes never stop flowing, so Cloudflare's ~125 s
-proxy cutoff never fires — this is the whole reason the stack is Workers (#7).
-The browser shows the draft filling in as it arrives, which also makes a slow
-import feel like progress rather than a hang.
+The Queue consumer reads the model stream, retries a retryable failure once,
+checks the stop reason and validates the whole draft before changing the job to
+ready. No browser connection owns that work. A ready job keeps the draft until
+the member opens the review or returns another day.
 
 **4. Check and correct.**
 
@@ -350,13 +359,11 @@ save otherwise — the screen's rule is enforced again where it counts. On
 success it redirects to the new recipe, which offers "add to a day" straight
 away, because that is why the recipe was imported.
 
-**When it goes wrong.** A model error, a timeout, or unparseable JSON ends the
-stream with an error the screen shows without throwing away what the member
-typed or photographed; retry re-runs step 2 from the same source. Malformed
-JSON is retried once automatically before the member sees anything. Nothing is
-written to D1 until step 5, so a failed import leaves no trace and a closed tab
-loses only the draft — one re-run, about two cents. That is the reason there is
-no draft table.
+**When it goes wrong.** A model error, timeout or unparseable JSON changes the
+job to failed with safe Finnish wording. The paste or temporary photographed
+pages remain attached to that household's job, and the explicit retry action
+re-runs step 2 from the same source. Malformed JSON is retried once
+automatically before the member sees anything.
 
 ## API
 
@@ -376,7 +383,8 @@ signed-in member's household.
 | `POST` | `/api/recipes` | Save a corrected draft |
 | `PUT` | `/api/recipes/:id` | Edit |
 | `DELETE` | `/api/recipes/:id` | Delete, refused if it is on a menu |
-| `POST` | `/api/intake/structure` | Run the model, stream the draft |
+| `POST` | `/api/intake/imports` | Persist a source and queue its model call |
+| `GET` | `/api/intake/imports/:id` | Read this household's queued/ready/failed state |
 | `GET` | `/api/ingredients` | The shared list with usage counts |
 | `PATCH` | `/api/ingredients/:id` | Rename |
 
@@ -393,13 +401,14 @@ Three bills: Cloudflare Workers, D1, and the Anthropic API. Prices checked
 | Worker CPU | 10 ms per invocation | see the note below |
 | D1 rows read | 5,000,000 / day | a few thousand |
 | D1 rows written | 100,000 / day | tens |
-| D1 storage | 5 GB | a few MB — 300 recipes of text |
+| D1 storage | 5 GB | a few MB — recipes plus retained intake drafts |
+| Queue operations | 10,000 / day | three per import, plus rare retries |
 
-**The 10 ms CPU limit does not threaten the streaming import**, which is the one
+**The 10 ms CPU limit does not threaten the queued import**, which is the one
 place you would expect it to. Cloudflare bills *CPU* time, not wall-clock
 duration, and time spent waiting on the model's response is not CPU — the
 Worker is idle while bytes arrive. A 60-second import burns milliseconds of CPU.
-Duration is explicitly not charged and not limited on either plan.
+The Queue consumer has a separate 15-minute wall-clock limit.
 
 **The Workers Paid plan costs $5/month and buys one thing worth having.** Not
 capacity — D1's Time Travel goes from **7 days of restore history to 30**.

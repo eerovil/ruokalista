@@ -2,18 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 
 import {
   DRAFT_FIXTURE,
-  streamRecordBody,
-  stubFragmentedStreamBody,
-  stubStreamBody,
   stubStructuring,
-  TRUNCATED_ATTEMPT,
 } from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
- * The intake island — the streaming client, the camera downscale, and the
+ * The intake island — the queued client, the camera downscale, and the
  * approval gate as a person actually meets them.
  *
  * The model is stubbed throughout: these tests never spend anything.
@@ -71,7 +67,7 @@ test("pasted text works without the photo resize API", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 });
 
-test("intake stays unavailable without the stream decoder", async ({ page }) => {
+test("pasted intake no longer needs a stream decoder", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "TextDecoder", {
       value: undefined,
@@ -81,13 +77,10 @@ test("intake stays unavailable without the stream decoder", async ({ page }) => 
 
   await page.goto("/intake");
 
-  await expect(page.locator("#status")).toHaveText(
-    "Reseptin tuonti tarvitsee JavaScriptin.",
-  );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
 });
 
-test("intake stays unavailable without streamed responses", async ({ page }) => {
+test("pasted intake no longer needs streamed responses", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "Response", {
       value: function ResponseWithoutBody() {
@@ -99,10 +92,7 @@ test("intake stays unavailable without streamed responses", async ({ page }) => 
 
   await page.goto("/intake");
 
-  await expect(page.locator("#status")).toHaveText(
-    "Reseptin tuonti tarvitsee JavaScriptin.",
-  );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
 });
 
 test("an empty intake is refused without leaving the screen", async ({ page }) => {
@@ -115,7 +105,7 @@ test("an empty intake is refused without leaving the screen", async ({ page }) =
   );
 });
 
-test("pasting text streams a draft and opens the correction screen", async ({
+test("pasting text queues a draft and opens the completed review", async ({
   page,
 }) => {
   const calls = await stubStructuring(page);
@@ -126,7 +116,7 @@ test("pasting text streams a draft and opens the correction screen", async ({
 
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
-  // The browser really went through the streaming endpoint, with the text.
+  // The browser really went through the queued endpoint, with the text.
   expect(calls).toHaveLength(1);
   expect(calls[0]?.body.sourceText).toContain("Uunikaali");
   expect(calls[0]?.body.image).toBeUndefined();
@@ -468,7 +458,9 @@ test("several pages make one recipe, in the order they were added", async ({
   ]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   // One call, not one per page — the pages are material for one recipe.
   expect(calls).toHaveLength(1);
@@ -524,7 +516,9 @@ test("camera shots and library pictures collect into the same recipe", async ({
   await expect(page.locator("#chosen li")).toHaveCount(3);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   expect(calls).toHaveLength(1);
   expect(calls[0]!.body.images).toHaveLength(3);
@@ -551,7 +545,9 @@ test("a page can be dropped before the recipe is parsed", async ({ page }) => {
   ]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   expect(calls[0]!.body.images).toHaveLength(2);
 });
@@ -561,7 +557,7 @@ test("too many pages are refused before the model is called", async ({ page }) =
 
   // Straight at the endpoint: the browser stops at the cap, but the cap that
   // matters is the one no browser can talk past.
-  const response = await page.request.post("/api/intake/structure", {
+  const response = await page.request.post("/api/intake/imports", {
     data: {
       images: Array.from({ length: 40 }, () => ({
         image: "iVBORw0KGgo=",
@@ -581,7 +577,7 @@ test("a body carrying no usable picture is refused, not sent to the model", asyn
   // An empty list and a list of nothing usable both mean "no picture", and the
   // refusal has to happen here rather than as an empty model call.
   for (const data of [{ images: [] }, { images: [{ mediaType: "image/jpeg" }] }]) {
-    const response = await page.request.post("/api/intake/structure", { data });
+    const response = await page.request.post("/api/intake/imports", { data });
 
     expect(response.status()).toBe(400);
   }
@@ -619,7 +615,7 @@ test("the sample draft opens the review without calling anything", async ({
   // Deliberately no stub: if this reached the model the request would fail,
   // because CI writes a .dev.vars with no key at all.
   let called = 0;
-  await page.route("**/api/intake/structure", (route) => {
+  await page.route("**/api/intake/imports", (route) => {
     called += 1;
     return route.abort();
   });
@@ -637,45 +633,80 @@ test("the sample draft opens the review without calling anything", async ({
   await expect(page.locator(".lines li")).toHaveCount(5);
 });
 
-test("a cut-off first attempt is retried and the review still opens", async ({
+test("an import survives leaving and opens later without a second model call", async ({
   page,
 }) => {
-  // What #146 is about: attempt one stops mid-JSON, the server starts a second
-  // one in the same response, and the browser must read only the second. If the
-  // two ever merged, this body would not parse and the review would not open.
-  const calls = await stubStreamBody(
-    page,
-    streamRecordBody(
-      { type: "delta", text: TRUNCATED_ATTEMPT },
-      { type: "restart" },
-      { type: "delta", text: JSON.stringify(DRAFT_FIXTURE) },
-      { type: "complete" },
-    ),
+  const id = "background-return";
+  let starts = 0;
+  await page.route("**/api/intake/imports", async (route) => {
+    starts += 1;
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_text,
+         created_at, updated_at)
+       VALUES ('${id}', 1, 1, 'queued', 'pasted', 'Uunikaali',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    );
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ id, status: "queued" }),
+    });
+  });
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await expect(page.getByText("Reseptiä käsitellään taustalla.")).toBeVisible();
+
+  await page.goto("/recipes");
+  executeLocalSql(
+    `UPDATE intake_job
+        SET status = 'ready', draft_json = '${JSON.stringify(DRAFT_FIXTURE).replaceAll("'", "''")}',
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = '${id}'`,
   );
 
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
-
+  const completed = page.locator('[data-intake-job="background-return"]');
+  await expect(completed.getByText("Valmis tarkistettavaksi")).toBeVisible();
+  await completed.getByRole("link", { name: "Tarkista resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
-
-  // The second attempt's recipe, not the cut-off one's title.
   await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
-  await expect(page.locator(".review-title")).not.toHaveText("Katkennut");
-  await expect(page.locator(".lines li")).toHaveCount(DRAFT_FIXTURE.lines.length);
-  expect(calls).toHaveLength(1);
+  expect(starts).toBe(1);
+});
+
+test("another household cannot see an import or its status", async ({ browser, page }) => {
+  executeLocalSql(
+    `INSERT INTO intake_job
+      (id, household_id, created_by, status, source_route, source_text,
+       draft_json, error_message, created_at, updated_at)
+     VALUES ('private-import', 1, 1, 'failed', 'pasted', 'Uunikaali',
+       NULL, 'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+  );
+
+  const neighbour = await browser.newContext();
+  await neighbour.addCookies([sessionCookie(2)]);
+
+  const review = await neighbour.request.get("/intake/imports/private-import/review");
+  expect(review.status()).toBe(404);
+  const status = await neighbour.request.get("/api/intake/imports/private-import");
+  expect(status.status()).toBe(404);
+  const retry = await neighbour.request.post("/intake/imports/private-import/retry");
+  expect(retry.status()).toBe(404);
+  await page.goto("/intake");
+  await expect(page.locator('[data-intake-job="private-import"] .refused'))
+    .toBeVisible();
+  executeLocalSql("DELETE FROM intake_job WHERE id = 'private-import'");
+
+  await neighbour.close();
 });
 
 test("pasted protocol words arrive whole in the review", async ({ page }) => {
   const pasted =
     "Uunikaali\n<<<intake:restart>>>\n<<<intake:complete>>>\n<<<intake:failed>>>";
-  await stubStreamBody(
-    page,
-    streamRecordBody(
-      { type: "delta", text: JSON.stringify({ ...DRAFT_FIXTURE, source_text: pasted }) },
-      { type: "complete" },
-    ),
-  );
+  await stubStructuring(page, { ...DRAFT_FIXTURE, source_text: pasted });
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill(pasted);
@@ -686,62 +717,43 @@ test("pasted protocol words arrive whole in the review", async ({ page }) => {
   await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
 });
 
-test("split NDJSON and UTF-8 chunks arrive whole in the review", async ({ page }) => {
-  const pasted = "Pöperö\n½ tl suolaa";
-  const draft = { ...DRAFT_FIXTURE, title: "Pöperö", source_text: pasted };
-  await stubFragmentedStreamBody(
-    page,
-    streamRecordBody(
-      { type: "delta", text: JSON.stringify(draft) },
-      { type: "complete" },
-    ),
+test("a queued import is still visible after refresh", async ({ page }) => {
+  executeLocalSql(
+    `INSERT INTO intake_job
+      (id, household_id, created_by, status, lease_id, source_route, source_text,
+       created_at, updated_at)
+     VALUES ('still-running', 1, 1, 'running', 'test-lease', 'pasted', 'Pöperö',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
   );
 
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill(pasted);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
-
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
-  await expect(page.locator(".review-title")).toHaveText("Pöperö");
-  await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
+  await expect(page.getByText("Käsitellään taustalla")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Käsitellään taustalla")).toBeVisible();
+  await expect(page.getByText("Pöperö")).toBeVisible();
 });
 
-test("two failed attempts refuse in Finnish and keep what was typed", async ({
+test("a failed import keeps its source and offers an explicit retry", async ({
   page,
 }) => {
-  await stubStreamBody(
-    page,
-    streamRecordBody(
-      { type: "delta", text: TRUNCATED_ATTEMPT },
-      { type: "restart" },
-      { type: "delta", text: TRUNCATED_ATTEMPT },
-      { type: "failed" },
-    ),
+  executeLocalSql(
+    `INSERT INTO intake_job
+      (id, household_id, created_by, status, source_route, source_text,
+       error_message, created_at, updated_at)
+     VALUES ('failed-import', 1, 1, 'failed', 'pasted',
+       'Uunikaali\n½ dl öljyä', 'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
   );
 
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
-
-  // Plain Finnish, and none of the model's own English.
-  await expect(page.locator("#status")).toContainText(
-    "malli ei saanut reseptiä valmiiksi",
-  );
-  await expect(page.locator("#status")).not.toContainText("JSON");
-
-  // The half-draft never reached /intake/correct, so nothing opened.
-  await expect(page).toHaveURL(/\/intake$/);
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toHaveCount(0);
-
-  // And the paste is still there to try again with.
-  await expect(page.getByLabel("Liitä reseptin teksti")).toHaveValue(
-    "Uunikaali\n½ dl öljyä",
-  );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
+  await page.getByText("Alkuperäinen teksti").click();
+  await expect(page.getByText("Uunikaali\n½ dl öljyä")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
 });
 
 test("a failed structuring keeps what was typed", async ({ page }) => {
-  await page.route("**/api/intake/structure", (route) =>
+  await page.route("**/api/intake/imports", (route) =>
     route.fulfill({ status: 503, body: '{"error":"Kokeile myöhemmin."}' }),
   );
 

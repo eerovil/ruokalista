@@ -1,17 +1,20 @@
 import { adminNotFound } from "./auth.ts";
 import { html, page, type Raw } from "./html.ts";
 import {
-  addMember,
   allHouseholds,
   createHousehold,
   findHousehold,
   HouseholdRefused,
+  invitationsOfHousehold,
+  inviteMember,
   membersOfHousehold,
   removeMember,
+  removeMemberInvitation,
   renameHousehold,
   updateMember,
   type Household,
   type HouseholdMember,
+  type InvitedHouseholdMember,
   type MemberInput,
 } from "./households.ts";
 import type { Member } from "./members.ts";
@@ -121,11 +124,25 @@ export async function addMemberForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const input = await memberInput(ctx.request);
+  const form = await ctx.request.formData();
+  const email = String(form.get("email") ?? "");
   const id = Number(ctx.params["id"]);
 
-  return withRefusal(ctx, member, id, { scope: "add", values: input }, () =>
-    addMember(ctx.env.DB, id, input),
+  return withRefusal(ctx, member, id, { scope: "add", values: { email } }, () =>
+    inviteMember(ctx.env.DB, id, email, member.id),
+  );
+}
+
+/** `POST /admin/households/:id/invitations/:invitationId/delete` */
+export async function removeMemberInvitationForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const id = Number(ctx.params["id"]);
+  const invitationId = Number(ctx.params["invitationId"]);
+
+  return withRefusal(ctx, member, id, { scope: "add", values: {} }, () =>
+    removeMemberInvitation(ctx.env.DB, id, invitationId),
   );
 }
 
@@ -213,11 +230,14 @@ async function renderHousehold(
   const household = await findHousehold(db, householdId);
   if (household === null) return adminNotFound(member);
 
-  const members = await membersOfHousehold(db, household.id);
+  const [members, invitations] = await Promise.all([
+    membersOfHousehold(db, household.id),
+    invitationsOfHousehold(db, household.id),
+  ]);
 
   return page(
     household.name,
-    householdBody(household, members, refusal),
+    householdBody(household, members, invitations, refusal),
     "week",
     member,
     status,
@@ -267,6 +287,7 @@ function householdListBody(
 function householdBody(
   household: Household,
   members: HouseholdMember[],
+  invitations: InvitedHouseholdMember[],
   refusal: Refusal | null,
 ): Raw {
   return html`<h1>${household.name}</h1>
@@ -303,18 +324,38 @@ function householdBody(
 
     <h2>Lisää jäsen</h2>
     <p class="empty">
-      Google-tunnisteen (sub) näkee kirjautumisseinältä, kun henkilö on kerran
-      yrittänyt kirjautua. Sähköposti näytetään, mutta sillä ei tunnisteta.
+      Syötä sähköposti. Jäsenyys aktivoituu automaattisesti, kun sama Gmail- tai
+      Google Workspace -tili kirjautuu ensimmäisen kerran.
     </p>
+    ${invitations.length === 0
+      ? ""
+      : html`<h3>Odottaa kirjautumista</h3>
+          <ul class="ingredients">
+            ${invitations.map(
+              (invitation) => html`<li>
+                <span class="ingredient-name">${invitation.email}</span>
+                <form
+                  method="post"
+                  action="/admin/households/${household.id}/invitations/${invitation.id}/delete"
+                >
+                  <button type="submit" class="quiet">Peru kutsu</button>
+                </form>
+              </li>`,
+            )}
+          </ul>`}
     ${message(refusal, "add")}
-    ${memberFieldset(
-      `/admin/households/${household.id}/members`,
-      "add",
-      refusal?.scope === "add"
-        ? refusal.values
-        : { displayName: "", email: "", googleSub: "" },
-      "Lisää jäsen",
-    )}
+    <form method="post" action="/admin/households/${household.id}/members" class="stacked">
+      <label for="add-email">Sähköposti</label>
+      <input
+        id="add-email"
+        name="email"
+        type="email"
+        autocomplete="email"
+        required
+        value="${refusal?.scope === "add" ? (refusal.values.email ?? "") : ""}"
+      />
+      <button type="submit">Lisää jäsen</button>
+    </form>
     <p><a href="/admin/households">Takaisin talouksiin</a></p>`;
 }
 

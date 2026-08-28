@@ -4,14 +4,11 @@ import { readFileSync } from "node:fs";
 import { AGENTDECK_BATCH } from "./support/batch";
 import {
   DUPLICATE_AMOUNT_DRAFT,
-  streamRecordBody,
-  stubStreamBody,
   stubStructuring,
-  TRUNCATED_ATTEMPT,
 } from "./support/draft";
 import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
 import { flatPng } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -663,32 +660,23 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
   });
 
-  test("a streamed import that failed both attempts", async ({ page }) => {
-    // Both attempts stop mid-JSON (#146). What the member must see is plain
-    // Finnish and their own paste still in the box — not the review screen
-    // reporting "The model returned unparseable JSON."
-    await stubStreamBody(
-      page,
-      streamRecordBody(
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "restart" },
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "failed" },
-      ),
+  test("a background import that failed", async ({ page }) => {
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_text,
+         error_message, created_at, updated_at)
+       VALUES ('screenshot-failed', 1, 1, 'failed', 'pasted',
+         'Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.',
+         'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
-
     await page.goto("/intake");
-    await page
-      .getByLabel("Liitä reseptin teksti")
-      .fill("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
-
-    await expect(page.locator("#status")).toContainText(
-      "malli ei saanut reseptiä valmiiksi",
-    );
-    await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+    await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
+    await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+    await page.getByText("Alkuperäinen teksti").click();
+    await expect(page.getByText("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.")).toBeVisible();
     await capture(page, {
-      path: `${SHOTS}/56-intake-stream-failed.png`,
+      path: `${SHOTS}/78-intake-background-failed.png`,
       fullPage: true,
     });
   });
@@ -1167,11 +1155,12 @@ test.describe("signed in as an admin", () => {
       fullPage: true,
     });
 
-    await page.getByRole("link", { name: /Koti/ }).click();
-    // A member row opened, because a list of closed rows says nothing about
-    // what the screen is for.
+    await page.getByRole("link", { name: /Naapuri/ }).click();
+    // One existing member and one pending email: the used state this change
+    // introduces, with the permanent member row still available for editing.
     await page.locator("details.rename").first().locator("summary").click();
-    await expect(page.locator("#member-1-sub")).toHaveValue("dev-seed-koti");
+    await expect(page.locator("#member-2-sub")).toHaveValue("dev-seed-naapuri");
+    await expect(page.getByText("odottaa@example.com", { exact: true })).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/43-admin-household.png`,
       fullPage: true,
@@ -1196,19 +1185,17 @@ test.describe("signed in as an admin", () => {
     });
   });
 
-  test("a Google identifier that is not one, refused", async ({ page }) => {
-    // What a `sub` may be is Google's contract and not this app's habit — see
-    // `src/google.ts::isGoogleSub`. Holding the form to it is what keeps the
-    // value a removed member's row is parked on out of anyone's reach, and it
-    // catches the ordinary slip too: a name typed into the identifier field.
+  test("an already-added email is refused", async ({ page }) => {
+    // The one-field flow must make its duplicate outcome as clear as its happy
+    // path. The seeded active member owns this spelling case-insensitively.
     await page.goto("/admin/households/1");
-    await page.locator("#add-name").fill("Matti Meikäläinen");
-    await page.locator("#add-email").fill("matti@example.com");
-    await page.locator("#add-sub").fill("Matti Meikäläinen");
+    await page.locator("#add-email").fill("EERO@example.com");
     await page.getByRole("button", { name: "Lisää jäsen" }).click();
     await expect(page.locator(".refused")).toContainText(
-      "ei ole kelvollinen Google-tunniste",
+      "jo lisätty talouteen Koti",
     );
+    await expect(page.locator("#add-email")).toHaveValue("EERO@example.com");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await capture(page, {
       path: `${SHOTS}/47-admin-member-sub-refused.png`,
       fullPage: true,
