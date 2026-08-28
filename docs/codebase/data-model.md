@@ -237,6 +237,15 @@ question is two scopes and nothing more, `own` and `readable`, both in
 [ADR-0006](../adr/0006-a-published-recipe-is-shared-not-copied.md) for why there
 is no role or grant model behind it.
 
+### Selected recipe recipients (#185, proposed)
+
+This pull request proposes `recipe_share`, keyed by `(recipe_id, household_id)`.
+It points at the root dish, the recipient household and the member who shared
+it. Public visibility stays on `recipe.published_at`; a recipe is selected when
+that field is null and one or more share rows exist. The table participates in
+backup and restore after `recipe`, `household` and `member`. See
+[ADR-0009](../adr/0009-recipe-sharing-targets-households.md).
+
 The same migration makes `ingredient` **global**: no `household_id`, and one
 canonical row per name (`UNIQUE (name)` replacing
 `ingredient_name_per_household`). This is what lets a published recipe reach
@@ -356,8 +365,8 @@ sequence ever leaves a constraint violated, so none of it depends on a pragma.
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
-currently `household`, `member`, `intake_job`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
+currently `household`, `member`, `intake_job`, `ingredient`, `recipe`, `recipe_share`,
+`recipe_step`, `ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
 `recipe_preference`, and — proposed by #161 — `ingredient_product` and
 `recipe_ingredient_product`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables

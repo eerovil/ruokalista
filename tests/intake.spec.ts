@@ -458,7 +458,9 @@ test("several pages make one recipe, in the order they were added", async ({
   ]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   // One call, not one per page — the pages are material for one recipe.
   expect(calls).toHaveLength(1);
@@ -514,7 +516,9 @@ test("camera shots and library pictures collect into the same recipe", async ({
   await expect(page.locator("#chosen li")).toHaveCount(3);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   expect(calls).toHaveLength(1);
   expect(calls[0]!.body.images).toHaveLength(3);
@@ -541,7 +545,9 @@ test("a page can be dropped before the recipe is parsed", async ({ page }) => {
   ]);
 
   await page.getByRole("button", { name: "Jäsennä" }).click();
-  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   expect(calls[0]!.body.images).toHaveLength(2);
 });

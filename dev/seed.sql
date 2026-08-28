@@ -8,6 +8,7 @@ DELETE FROM recipe_ingredient_product;
 DELETE FROM ingredient_product;
 DELETE FROM intake_job;
 DELETE FROM recipe_preference;
+DELETE FROM recipe_share;
 DELETE FROM pantry_entry;
 DELETE FROM batch_occurrence;
 DELETE FROM planned_batch;

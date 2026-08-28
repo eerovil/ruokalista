@@ -20,6 +20,7 @@ const TABLES: readonly BackupTableName[] = [
   "intake_job",
   "ingredient",
   "recipe",
+  "recipe_share",
   "recipe_step",
   "ingredient_line",
   "planned_batch",
@@ -192,6 +193,7 @@ async function validSnapshot() {
   const tables = {
     household: [
       { id: 1, name: "Koti", created_at: "2026-08-25 00:00:00" },
+      { id: 2, name: "Naapuri", created_at: "2026-08-25 00:00:00" },
     ],
     member: [
       {
@@ -269,6 +271,14 @@ async function validSnapshot() {
         part_position: null,
         revision: 0,
         edit_token: null,
+      },
+    ],
+    recipe_share: [
+      {
+        recipe_id: 1,
+        household_id: 2,
+        shared_at: "2026-08-25 00:00:00",
+        shared_by: 1,
       },
     ],
     recipe_step: [
