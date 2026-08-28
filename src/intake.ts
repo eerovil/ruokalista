@@ -73,21 +73,69 @@ export interface Draft {
   structuredBy: string;
 }
 
+/** One photographed page, as it is handed to the model. */
+export interface IntakeImage {
+  base64: string;
+  mediaType: string;
+}
+
+/**
+ * How many pages one photographed import may carry. A printed recipe that
+ * spills over a spread is the case this exists for (#156); the cap is here
+ * rather than in `DRAFT_SCHEMA` because a count in the schema is a keyword
+ * structured outputs refuses, and it stops every import at once.
+ */
+export const MAX_IMAGES = 8;
+
 /**
  * The two routes in, and only two. Nothing is ever fetched from a web address.
  *
- * A photograph is held in memory for the length of one model call and then
- * dropped — never written to D1, and there is no bucket.
+ * A photographed import carries one *or more* pages, in the order the member
+ * chose them, and they make one recipe rather than one each — a recipe printed
+ * across a spread is read as the dish it is. Every page is held in memory for
+ * the length of one model call and then dropped — never written to D1, and
+ * there is no bucket.
  */
 export type IntakeSource =
   | { route: "pasted"; text: string }
-  | { route: "photographed"; imageBase64: string; mediaType: string };
+  | { route: "photographed"; images: IntakeImage[] };
 
 /** The model asked for. Exposed so a streamed draft can be stamped with it. */
 export const STRUCTURED_BY = MODEL;
 
+/**
+ * What a member is told when an import fails and there is nothing more useful
+ * to say. Every message a household reads is Finnish; the `Error.message` next
+ * to it is English and goes to the log.
+ */
+const GENERIC_REFUSAL = "Reseptin jäsennys ei onnistunut. Yritä uudelleen.";
+
 /** Thrown when the model failed in a way that re-running might fix. */
-export class RetryableStructuringError extends Error {}
+export class RetryableStructuringError extends Error {
+  /** The Finnish sentence the screen shows. */
+  readonly memberMessage: string;
+
+  constructor(message: string, memberMessage: string = GENERIC_REFUSAL) {
+    super(message);
+    this.memberMessage = memberMessage;
+  }
+}
+
+/**
+ * The Finnish sentence for any import failure. An error that carries no
+ * member-facing wording is a bug or an outage, and either way the household
+ * only needs to know it can try again — the English detail is logged.
+ */
+export function importFailureMessage(error: unknown): string {
+  console.log(JSON.stringify({
+    event: "intake.failed",
+    detail: String((error as Error)?.message ?? error),
+  }));
+
+  return error instanceof RetryableStructuringError
+    ? error.memberMessage
+    : GENERIC_REFUSAL;
+}
 
 /** How many times one import calls the model before it gives up. */
 const ATTEMPTS = 2;
@@ -132,9 +180,11 @@ export const DRAFT_SCHEMA = {
           },
           // Issue #120: which words in `text` name which of this draft's own
           // ingredient lines. A pointer and the wording, never an amount.
+          // The cap lives in the prompt and in assertDraftWire, not here:
+          // structured outputs reject `maxItems`, and the whole request 400s
+          // if it is present — see dev/check-draft-schema.ts.
           ingredient_refs: {
             type: "array",
-            maxItems: MAX_REFS_PER_STEP,
             items: {
               type: "object",
               properties: {
@@ -215,16 +265,36 @@ Kuvatun sivun lisäsäännöt:
   sijaan että täydentäisit sen arvauksella.
 `;
 
+/**
+ * The rules that only apply once there is more than one page. They say the one
+ * thing a multi-page import can get catastrophically wrong: reading a spread as
+ * two dishes rather than as one dish that ran out of room.
+ */
+const MULTIPAGE_RULES = `
+Monisivuisen reseptin lisäsäännöt:
+
+- Sivut ovat saman reseptin peräkkäisiä sivuja siinä järjestyksessä kuin ne on
+  annettu. Niistä syntyy täsmälleen yksi resepti, ei sivukohtaisia reseptejä.
+- source_text on kaikkien sivujen transkriptio peräkkäin samassa järjestyksessä.
+- Jos ainesluettelo on yhdellä sivulla ja vaiheet toisella, ne kuuluvat samaan
+  reseptiin; älä toista eikä pudota kumpaakaan.
+- Jos sama teksti näkyy kahdella sivulla, kirjoita se vain kerran.
+- Jos jollakin sivulla on jokin muu resepti, ohita se ja pysy pääreseptissä.
+`;
+
 /** The standing rules, from docs/spec.md's intake flow. */
 function systemPrompt(
   ingredients: IngredientSummary[],
-  route: IntakeSource["route"],
+  source: IntakeSource,
 ): string {
   const list = ingredients
     .map((ingredient) => `${ingredient.id}\t${ingredient.name}`)
     .join("\n");
 
-  const extra = route === "photographed" ? PHOTOGRAPHED_RULES : "";
+  const extra =
+    source.route === "photographed"
+      ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
+      : "";
 
   return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
 
@@ -275,30 +345,64 @@ Säännöt, joista ei poiketa:
     luetaan aina ainesriviltä;
   - älä muuta vaiheen tekstiä millään tavalla;
   - yleisiä ilmauksia kuten "lisää loput ainekset" ei tarvitse yhdistää
-    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [].
+    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [];
+  - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.
 ${extra}
 Talouden hyväksytyt ainekset (id, nimi):
 
 ${list || "(ei vielä yhtään)"}`;
 }
 
-/** What the model is handed: a block of text, or a photograph of a page. */
+/**
+ * What the model is handed: a block of text, or the photographed pages in the
+ * order the member chose them.
+ *
+ * Each page after the first is announced by a short line of its own before the
+ * picture, because that is how a model is told which image is which — with
+ * several unlabelled images it has no way to say "the second page" back. A
+ * single page is worded exactly as it was before pages were plural, so the
+ * one-photo import is not quietly a different prompt.
+ */
 function userContent(source: IntakeSource) {
   if (source.route === "pasted") {
     return source.text;
   }
 
-  return [
-    {
-      type: "image" as const,
+  const pages = source.images;
+  const content: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        source: { type: "base64"; media_type: "image/jpeg"; data: string };
+      }
+  > = [];
+
+  pages.forEach((image, index) => {
+    if (pages.length > 1) {
+      content.push({
+        type: "text",
+        text: `Sivu ${index + 1}/${pages.length}:`,
+      });
+    }
+    content.push({
+      type: "image",
       source: {
-        type: "base64" as const,
-        media_type: source.mediaType as "image/jpeg",
-        data: source.imageBase64,
+        type: "base64",
+        media_type: image.mediaType as "image/jpeg",
+        data: image.base64,
       },
-    },
-    { type: "text" as const, text: "Jäsennä tämän sivun resepti." },
-  ];
+    });
+  });
+
+  content.push({
+    type: "text",
+    text:
+      pages.length > 1
+        ? `Jäsennä näiden ${pages.length} sivun resepti. Sivut ovat saman reseptin osia annetussa järjestyksessä.`
+        : "Jäsennä tämän sivun resepti.",
+  });
+
+  return content;
 }
 
 /**
@@ -312,56 +416,26 @@ function keptSourceText(source: IntakeSource, transcribed: unknown): string {
 }
 
 /**
- * Run the model over source text and return a draft. Nothing is written to D1
- * here — a failed import leaves no trace, which is why there is no draft table.
+ * Refuse a response that stopped for a reason other than being finished.
+ *
+ * A draft cut off at `max_tokens` is still valid JSON as far as the transport
+ * is concerned — it just ends mid-document — and a refusal produces no text at
+ * all. Both used to reach the browser looking like a completed import, which
+ * is how a truncated draft became "the model returned unparseable JSON" three
+ * screens later.
  */
-export async function structureDraft(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  const client = anthropic(env);
-
-  let response;
-  try {
-    response = await client.messages.create({
-      ...requestFor(source, ingredients),
-    });
-  } catch (cause) {
-    throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
+function assertFinished(stopReason: string | null): void {
+  if (stopReason === "refusal") {
+    throw new Error(
+      "The model declined to structure this text.",
+    );
   }
-
-  logImportUsage(recipeTitle(response.content), response.usage);
-
-  if (response.stop_reason === "refusal") {
-    throw new Error("The model declined to structure this text.");
-  }
-  if (response.stop_reason === "max_tokens") {
-    throw new RetryableStructuringError("The draft was cut off.");
-  }
-
-  const text = response.content
-    .filter((block) => block.type === "text")
-    .map((block) => (block as { text: string }).text)
-    .join("");
-
-  // Structured outputs constrain the shape, so this should not fail — but the
-  // draft is a human's afternoon either way, so a bad one is retried rather
-  // than shown.
-  return draftFromJson(text, source, response.model);
-}
-
-/** Runs the model, retrying a retryable failure once before anyone sees it. */
-export async function structureDraftWithRetry(
-  env: Env,
-  source: IntakeSource,
-  ingredients: IngredientSummary[],
-): Promise<Draft> {
-  try {
-    return await structureDraft(env, source, ingredients);
-  } catch (error) {
-    if (!(error instanceof RetryableStructuringError)) throw error;
-    return structureDraft(env, source, ingredients);
+  if (stopReason === "max_tokens") {
+    throw new RetryableStructuringError(
+      "The draft was cut off at max_tokens.",
+      "Resepti oli niin pitkä, että jäsennys katkesi kesken. " +
+        "Kokeile kuvata tai liittää vain yhden reseptin verran kerrallaan.",
+    );
   }
 }
 
@@ -448,6 +522,10 @@ export function draftStream(
           }));
           if (retry) continue;
 
+          // The English detail of the last attempt, logged the same way every
+          // other import failure is, so `wrangler tail` shows one shape.
+          importFailureMessage(cause);
+
           // The stream is closed rather than torn down: a terminal record the
           // browser can read stops it handing a half-draft to /intake/correct.
           emit({ type: "failed" });
@@ -485,14 +563,15 @@ async function runAttempt(
     throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
   }
 
-  logImportUsage(recipeTitle(response.content, text), response.usage);
+  logImportUsage(
+    recipeTitle(response.content, text),
+    response.usage,
+    response.stop_reason,
+  );
 
-  if (response.stop_reason === "refusal") {
-    throw new Error("The model declined to structure this text.");
-  }
-  if (response.stop_reason === "max_tokens") {
-    throw new RetryableStructuringError("The draft was cut off.");
-  }
+  // A refusal is not worth calling again and a cut-off answer is; both carry
+  // their own Finnish wording, which is why this is not two inline checks.
+  assertFinished(response.stop_reason ?? null);
 
   // Parsed here, on the server, and the result thrown away — the browser hands
   // the same text back to /intake/correct, which parses it for real. What this
@@ -501,12 +580,21 @@ async function runAttempt(
   draftFromJson(text, source, response.model ?? STRUCTURED_BY);
 }
 
-/** Record the cost-bearing part of a completed model response. */
-export function logImportUsage(title: string | null, usage: unknown): void {
+/**
+ * Record the cost-bearing part of a completed model response, and why it
+ * stopped — without the stop reason, a truncated import is indistinguishable
+ * from a finished one in the log.
+ */
+export function logImportUsage(
+  title: string | null,
+  usage: unknown,
+  stopReason?: string | null,
+): void {
   console.log(JSON.stringify({
     event: "intake.model_usage",
     recipe_title: title,
     usage,
+    stop_reason: stopReason ?? undefined,
   }));
 }
 
@@ -537,7 +625,11 @@ export function draftFromJson(
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new RetryableStructuringError("The model returned unparseable JSON.");
+    throw new RetryableStructuringError(
+      text.trim() === ""
+        ? "The browser handed back an empty draft."
+        : "The model returned unparseable JSON.",
+    );
   }
 
   assertDraftWire(raw);
@@ -708,15 +800,24 @@ function anthropic(env: Env): Anthropic {
   return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 }
 
-function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
+/**
+ * The whole model request for one source. Exported so `dev/check-intake-images.ts`
+ * can assert what a multi-page import actually asks the model — the page order
+ * and the one-recipe rule are the parts of this change a paid call would
+ * otherwise be the only way to see.
+ */
+export function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
   return {
     model: MODEL,
+    // The model's own ceiling, counted across thinking *and* the draft. It is
+    // a limit rather than a spend, so nothing costs more for it being high —
+    // but a budget this large is why both calls have to stream.
     max_tokens: 128000,
     output_config: {
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },
     },
-    system: systemPrompt(ingredients, source.route),
+    system: systemPrompt(ingredients, source),
     messages: [{ role: "user" as const, content: userContent(source) }],
   };
 }

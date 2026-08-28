@@ -28,15 +28,32 @@
       "GOOGLE_CLIENT_SECRET",
       "ANTHROPIC_API_KEY",
       "BACKUP_GITHUB_TOKEN",
-      "SOSTOSLISTA_API_TOKEN"
+      "SOSTOSLISTA_API_TOKEN",
+      "SOSTOSLISTA_HOUSEHOLD_ID"
     ]
   },
 
-  // The shopping-list service this app can push items to. Not a secret — the
-  // bearer token for it is SOSTOSLISTA_API_TOKEN above.
-  "vars": {
-    "SOSTOSLISTA_SERVICE_URL": "https://s-ostoslista-worker.eerovil.workers.dev"
-  },
+  // The shopping-list service this app can push items to, reached over a
+  // service binding rather than its public URL. Both Workers live on
+  // eerovil.workers.dev, and Cloudflare will not route one Worker's fetch to
+  // another Worker on the same zone: it answers with an HTML error page, which
+  // reaches the client as "invalid JSON" on every call. The binding goes
+  // Worker to Worker inside Cloudflare and never leaves the network.
+  //
+  // The bearer token is still SOSTOSLISTA_API_TOKEN above — a binding skips the
+  // public hop, not the service's own authentication. The household gate is
+  // configured separately so this capability is never enabled app-wide.
+  //
+  // There is deliberately no SOSTOSLISTA_SERVICE_URL var here. Setting that
+  // var is what tells the app to call the service over HTTP instead, which is
+  // how the browser tests reach their fixture and how local development can
+  // reach a service that has no binding.
+  "services": [
+    {
+      "binding": "SOSTOSLISTA_SERVICE",
+      "service": "s-ostoslista-worker"
+    }
+  ],
 
   // Nightly offsite backup. Cron Triggers use UTC.
   "triggers": { "crons": ["17 2 * * *"] },

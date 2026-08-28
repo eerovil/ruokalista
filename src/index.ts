@@ -31,7 +31,6 @@ import {
   correctScreen,
   intakeScreen,
   saveScreen,
-  structureScreen,
   structureStream,
 } from "./intake-screens.ts";
 import {
@@ -80,7 +79,13 @@ import {
 } from "./pwa.ts";
 import { pantryRemoveForm, pantryScreen } from "./pantry-screens.ts";
 import { Router, type RouteContext } from "./router.ts";
-import { shoppingPantryForm, shoppingScreen } from "./shopping-screens.ts";
+import {
+  productSearchScreen,
+  saveProductForm,
+  sendShoppingListForm,
+  shoppingPantryForm,
+  shoppingScreen,
+} from "./shopping-screens.ts";
 import {
   completeSignIn,
   devSignIn,
@@ -130,6 +135,9 @@ const router = new Router()
   .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))
   .get("/ostoslista", requireMemberScreen(shoppingScreen))
   .post("/ostoslista/kaappi", requireMemberScreen(shoppingPantryForm))
+  .post("/ostoslista/laheta", requireMemberScreen(sendShoppingListForm))
+  .get("/ostoslista/tuote", requireMemberScreen(productSearchScreen))
+  .post("/ostoslista/tuote", requireMemberScreen(saveProductForm))
   .get("/kaappi", requireMemberScreen(pantryScreen))
   .post("/kaappi/:id/poista", requireMemberScreen(pantryRemoveForm))
   .get("/api/menu", requireMember(apiMenu))
@@ -166,7 +174,6 @@ const router = new Router()
   .post("/ingredients/:id/rename", requireAdminScreen(renameForm))
   .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
-  .post("/intake", requireMemberScreen(structureScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
   .post("/api/intake/structure", requireMember(structureStream))
   .post("/recipes", requireMemberScreen(saveScreen))

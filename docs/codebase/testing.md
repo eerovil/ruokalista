@@ -64,6 +64,13 @@ picker offers; `tests/parts.spec.ts` is the worked example.
 `retries: 0`, on purpose. The one flake this suite ever had turned out to be two
 real faults, and a retry would have kept both hidden.
 
+The S-ostoslista tests proposed by #147 never reach the private service.
+Playwright starts `tests/support/s-ostoslista-server.ts` on the port immediately
+after `PLAYWRIGHT_PORT`, and local Wrangler receives that fixture URL plus a
+harmless token through `--var`. The fixture records writes and can fail the next
+request, which proves EAN/note payloads, pantry exclusion, and recoverable
+outages without putting test rows on the phone's list.
+
 The suite runs two Playwright projects (`playwright.config.ts`): `chromium`
 (Pixel 7, a phone, because a week gets planned at the kitchen table) for
 everything except `keep-awake-legacy.spec.ts`, and `legacy-ipad-fallback`

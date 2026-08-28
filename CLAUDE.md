@@ -97,6 +97,11 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   `scripts/check-restore-roundtrip.ts`. `scripts/check-backup-schema.ts` catches
   only the first one being forgotten. See
   [data-model](docs/codebase/data-model.md).
+- **An unsupported keyword in `DRAFT_SCHEMA` breaks every import at once.**
+  Structured outputs accept a subset of JSON Schema; anything outside it is a
+  400 on every model call, and the member sees a refusal on a screen three hops
+  from the cause. `dev/check-draft-schema.ts` catches it for free. See
+  [intake](docs/codebase/intake.md).
 - **Model calls cost real money and the budget is small.** Almost everything
   about intake is testable without spending anything; only call the model when
   the model call itself changed. See [intake](docs/codebase/intake.md).

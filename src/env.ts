@@ -32,13 +32,33 @@ export interface Env {
 
   /**
    * Bearer token for the S-ostoslista sync service (see
-   * SOSTOSLISTA_SERVICE_URL), which puts things on the household's real
-   * S-ryhmä shopping list. Not an S-ryhmä credential: that service holds
-   * those. Optional in the type because a deployment without it must say the
-   * shopping list is not connected rather than crash.
+   * SOSTOSLISTA_SERVICE), which can read and modify the bound household's
+   * real S-ryhmä shopping list. It cannot authenticate directly to AppSync or
+   * expose the phone's identity token. Optional in the type because a
+   * deployment without it must say the shopping list is not connected rather
+   * than crash.
    */
   SOSTOSLISTA_API_TOKEN?: string;
 
-  /** Where that service lives. A plain var, set in wrangler.jsonc. */
+  /**
+   * The sync service itself, bound Worker to Worker. This is the production
+   * transport: both Workers sit on eerovil.workers.dev, and Cloudflare refuses
+   * to route a Worker's fetch to another Worker on the same zone — it answers
+   * with an HTML error page, which surfaced as "invalid JSON" on every call.
+   */
+  SOSTOSLISTA_SERVICE?: { fetch: typeof fetch };
+
+  /**
+   * Call the service over plain HTTP at this URL instead of over the binding.
+   * Unset in wrangler.jsonc, so production always uses the binding; the browser
+   * tests set it to reach their fixture, and local development can set it to
+   * reach a deployment that has no binding.
+   */
   SOSTOSLISTA_SERVICE_URL?: string;
+
+  /**
+   * The one household allowed to use this integration. Product mappings live
+   * on global ingredients, so this gate must be explicit and server-side.
+   */
+  SOSTOSLISTA_HOUSEHOLD_ID?: string;
 }

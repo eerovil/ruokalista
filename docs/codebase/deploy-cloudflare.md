@@ -44,6 +44,10 @@ briefly live without `SESSION_SECRET`, which is the 503 path, not an open one.
 actually deploying — it prints the bindings table (e.g.
 `env.RECIPE_IMAGES (ruokalista-recipe-images) R2 Bucket`) and exits.
 
+`SESSION_SECRET` is generated during setup and never stored anywhere, so a
+signed-in session on the live Worker cannot be forged from this host — the live
+signed-in path can only be exercised through a real browser sign-in.
+
 ## The shopping-list service
 
 `SOSTOSLISTA_API_TOKEN` is the bearer secret of **s-ostoslista-worker**
@@ -52,26 +56,52 @@ actually deploying — it prints the bindings table (e.g.
 S-ryhmä shopping list in two-way sync with the S-ostoslista phone app, on a
 five-minute cron. It lets this app put things on that real list.
 
-It is **not** an S-ryhmä credential. That service holds the app's AppSync key
-and the phone's identity token; ruokalista only ever holds a bearer token for
-the service's own API, so a leak here cannot touch S-ryhmä accounts and is
-rotated with one `wrangler secret put` on either side.
+It is not a direct S-ryhmä/AppSync credential and does not expose the phone's
+underlying identity token. Its blast radius is still the bound real shopping
+list: the service accepts authenticated reads and writes for that list, and its
+five-minute sync propagates those writes to the list used by the phone. A
+leaked token can therefore read and modify the shopping list through the
+service. Keep it as a Worker secret, and rotate it on both sides if exposed.
 
 `scripts/save-ostoslista-token.sh` stores it the same way as the Anthropic key —
 `.dev.vars` for local development, a Worker secret for the deployed app — and
 then checks it against the service's `/status`, printing only the bound list id
 and item count.
 
-The service's URL is `SOSTOSLISTA_SERVICE_URL`, a plain var in `wrangler.jsonc`
-rather than a secret. Its API is `GET /products?q=` to search the shop's
-catalogue, `POST /items {"ean"}` or `{"note"}` to add, and
-`DELETE /items?ean=`/`?note=` to remove; product images come from
-`https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which needs no
-auth. Its README documents the rest.
+The deployed Worker reaches the service over the `SOSTOSLISTA_SERVICE` **service
+binding** in `wrangler.jsonc`, not over its public URL, and this is not a
+preference. Both Workers live on `eerovil.workers.dev`, and Cloudflare will not
+route one Worker's `fetch` to another Worker on the same zone: it answers with
+an HTML error page instead, which reached `SOstoslistaClient` as *"invalid
+JSON"* on every single call and made the whole integration look broken the first
+time it ran in production. A binding goes Worker to Worker inside Cloudflare and
+never leaves the network. The bearer token is still required — a binding skips
+the public hop, not the service's own authentication.
 
-`SESSION_SECRET` is generated during setup and never stored anywhere, so a
-signed-in session on the live Worker cannot be forged from this host — the live
-signed-in path can only be exercised through a real browser sign-in.
+Setting `SOSTOSLISTA_SERVICE_URL` switches the app back to plain HTTP at that
+URL. There is deliberately no such var in `wrangler.jsonc`, so production always
+uses the binding; the browser tests set it to reach their fixture. The service's
+API is `GET /products?q=` to search the shop's catalogue, `POST /items {"ean"}`
+or `{"note"}` to add, and `DELETE /items?ean=`/`?note=` to remove; product images
+come from `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which
+needs no auth. Its README documents the rest.
+
+The integration also requires `SOSTOSLISTA_HOUSEHOLD_ID`, the one Ruokalista
+household allowed to see or use it, and the remote service must have product
+search enabled. Leaving the token or the household gate unset deliberately hides
+every integration route and control rather than exposing a half-configured
+action — which also means a misconfiguration looks like "the feature is off",
+so check both before concluding the code is at fault.
+
+When something does fail, interpolate the error's message into `console.error`
+rather than passing the `Error` as a second argument. Workers Logs keeps the
+stack frames but drops the message, and the message is the only part that says
+what went wrong.
+
+Local browser tests do not use those credentials. Playwright starts a small
+contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
+`--var` bindings to local Wrangler, so search/add/error coverage can never touch
+the real private list.
 
 ## Backups
 

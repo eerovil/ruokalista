@@ -75,7 +75,12 @@ export const DUPLICATE_AMOUNT_DRAFT = {
 
 /** What the streaming endpoint was asked for, once a stub has answered it. */
 export interface StubbedCall {
-  body: { sourceText?: string; image?: string; mediaType?: string };
+  body: {
+    sourceText?: string;
+    image?: string;
+    mediaType?: string;
+    images?: Array<{ image?: string; mediaType?: string }>;
+  };
 }
 
 /**

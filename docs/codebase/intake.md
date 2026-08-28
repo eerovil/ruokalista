@@ -7,6 +7,28 @@ so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
 
+**`DRAFT_SCHEMA` may only use the JSON Schema subset structured outputs accept.**
+An unsupported keyword is not ignored and does not degrade: the request is a
+400, so *every* model-backed import stops working at once. `maxItems` did
+exactly that after #120 — the cap was added to the schema, nothing about it
+needed a paid call to review, and the first symptom a household saw was
+`Reseptin jäsennys ei onnistunut` on an intake screen three hops from the
+cause. Size and count caps therefore live in the prompt and in
+`assertDraftWire`, never in the schema, and `dev/check-draft-schema.ts` walks
+the schema for the whole unsupported list without spending anything.
+
+**The model call streams and checks `stop_reason`.** `max_tokens` is the
+model's full 128000 — a ceiling rather than a spend, so it costs nothing to
+leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft cut off at
+`max_tokens` is a JSON document that just ends, and a refusal is no text at
+all. Neither condition raises anything in the transport, so before this check
+both reached the browser looking like a finished import and failed one screen
+later at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
+while no byte has been sent — after that the member sees the failure. Failures
+reach a member as Finnish through `importFailureMessage`, which logs the
+English detail; `intake.model_usage` carries `stop_reason` alongside the token
+counts, so a truncated import is visible in `wrangler tail`.
+
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
 `src/sample-draft.ts` to the same `/intake/correct` the streaming island hands
@@ -73,6 +95,51 @@ photo itself is never stored, only held in memory for the one model call. That
 also traces to decision #4: raw text is kept forever, images are discarded, so
 a photo import stays re-runnable but never re-readable.
 
+## Photographing a printed recipe (#156)
+
+Issue #156 proposes two changes to that route, and this pull request makes
+them: a recipe may be photographed **across several pages**, and the photograph
+may be **taken in the app** rather than fetched from the picture library.
+
+`IntakeSource`'s `photographed` arm carries `images: IntakeImage[]` rather than
+one base64 string, and the order of that array is the reading order of the
+printed recipe. Nothing between the browser and the model may sort or dedupe
+it. `MAX_IMAGES` (8) caps it, and the cap lives in `src/intake.ts` next to the
+type rather than in `DRAFT_SCHEMA` — a count keyword in the schema is the
+failure described at the top of this document, where every import stops at once.
+
+`userContent` announces each page with a short `Sivu 2/3:` line of its own
+before the picture. That labelling is not decoration: with several unlabelled
+images the model has no way to refer to "the second page", and the point of the
+whole change is that page two is page two. A **single** page is worded exactly
+as it was before pages were plural, so the one-photo import is not quietly a
+different prompt than the one that has been running.
+
+`MULTIPAGE_RULES` is added to the system prompt only when there is more than one
+page, and it says the one thing a spread can get catastrophically wrong: the
+pages are one recipe in the given order, not one recipe each, and an ingredient
+list on one page belongs to the steps on the other.
+`dev/check-intake-images.ts` asserts the page order, the labelling and which
+rules each shape of import gets — the parts of this that a real model call would
+otherwise be the only way to see, on a key with a small balance.
+
+On the screen (`src/intake-screens.ts`) there are now two file inputs: `camera`
+carries `capture="environment"`, and `photo` carries `multiple`. **Neither one
+holds the list of pages**, because neither one can — a camera capture replaces
+its input's single file every time, so a member shooting page two would lose
+page one. The island owns the list, both inputs only append to it, and each
+input is cleared after it is read so pressing the camera button again for an
+identical next shot still fires a `change`. The chosen pages are drawn as a
+numbered list with a thumbnail and a `Poista` button each, rebuilt whole on
+every change so the numbering always agrees with the list. Pages are downscaled
+one at a time rather than all at once: the order has to survive, and a phone
+decoding eight full-size photographs at the same time is how a tab gets killed.
+
+`readImages` in `src/intake-screens.ts` still accepts the older single-`image`
+body. Ruokalista is an installable PWA (#100), so a browser can be running a
+cached copy of yesterday's island, and its one-photo import must not become a
+400 overnight.
+
 ## Review, not correction
 
 Testing the deployed v1 found that 99% of imports need no change and 99% of
@@ -106,12 +173,13 @@ refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trail
 every recipe; `lineRows` decides which rows are spare by reading the values, as
 "everything after the last row anybody put anything in".
 
-Intake has two paths on purpose. Without JavaScript the form posts to `/intake`
-and the model call is a plain request. With it, the island in
-`src/intake-screens.ts` streams from `/api/intake/structure` so bytes never stop
+Intake requires JavaScript. This pull request proposes removing the plain
+`POST /intake` fallback: the form has no server action and its submit button is
+disabled until the island in `src/intake-screens.ts` finds the browser features
+it needs. The island streams from `/api/intake/structure` so bytes never stop
 flowing, then hands the finished draft to `/intake/correct` — which keeps the
 correction screen server-rendered rather than built in the browser. The camera
-route needs the island either way: downscaling a photograph is a canvas job.
+route also needs the island because downscaling a photograph is a canvas job.
 
 Intake's progress is counted, not dumped: the island reads the streaming JSON
 and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note

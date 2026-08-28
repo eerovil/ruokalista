@@ -39,6 +39,27 @@ test("sign-in", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/01-signin.png`, fullPage: true });
 });
 
+test("intake requires JavaScript", async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  await context.addCookies([sessionCookie(1)]);
+  const page = await context.newPage();
+
+  await page.goto("/intake");
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin tuonti tarvitsee JavaScriptin.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await page.locator("#status").evaluate((element) =>
+    element.scrollIntoView({ block: "center" }),
+  );
+  await expect(page.locator("#status")).toBeInViewport();
+  await page.screenshot({
+    path: `${SHOTS}/57-intake-requires-javascript.png`,
+  });
+
+  await context.close();
+});
+
 test.describe("PWA", () => {
   test.use({ serviceWorkers: "allow" });
 
@@ -434,9 +455,72 @@ test.describe("signed in", () => {
   test("intake", async ({ page }) => {
     await page.goto("/intake");
     await expect(
-      page.getByLabel("…tai ota tai valitse kuva painetusta sivusta"),
+      page.getByLabel("…tai ota kuva painetusta sivusta"),
+    ).toBeVisible();
+    await expect(
+      page.getByLabel("…tai valitse kuvia kuvakirjastosta"),
     ).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/07-intake.png`, fullPage: true });
+  });
+
+  test("a recipe photographed across a spread", async ({ page }) => {
+    await page.goto("/intake");
+
+    // Two pages of a printed recipe, added the way a person adds them: the
+    // first shot with the camera, the second picked from the library.
+    await page.evaluate(async () => {
+      const shoot = async (inputId: string, heading: string, body: string[]) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 900;
+        canvas.height = 1200;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = "#f4efe6";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#221c14";
+        context.font = "bold 74px Georgia, serif";
+        context.fillText(heading, 70, 190);
+        context.font = "48px Georgia, serif";
+        body.forEach((line, index) => {
+          context.fillText(line, 70, 330 + index * 90);
+        });
+
+        const blob = await new Promise<Blob>((resolve) =>
+          canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.9),
+        );
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([blob], `${heading}.jpg`, { type: "image/jpeg" }),
+        );
+        const input = document.getElementById(inputId) as HTMLInputElement;
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+
+      await shoot("camera", "Uunikaali", [
+        "4 annosta",
+        "1 valkokaali",
+        "2 rkl öljyä",
+        "1 tl suolaa",
+        "2 dl kermaa",
+      ]);
+      await shoot("photo", "Näin teet", [
+        "Lämmitä uuni 200",
+        "asteeseen. Lohko kaali",
+        "ja levitä vuokaan.",
+        "Valuta öljy päälle ja",
+        "paista 45 minuuttia.",
+      ]);
+    });
+
+    // Both pages really landed in the list, numbered in reading order.
+    await expect(page.locator("#chosen li .page-name")).toHaveText([
+      "Sivu 1",
+      "Sivu 2",
+    ]);
+    await page.screenshot({
+      path: `${SHOTS}/56-intake-two-pages.png`,
+      fullPage: true,
+    });
   });
 
   test("check and correct", async ({ page }) => {
@@ -581,9 +665,23 @@ test.describe("signed in", () => {
     );
     await page.screenshot({ path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
 
-    await page.locator(".shopping-picker > summary").click();
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
+    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+    const product = page.locator(".s-product-results > li", {
+      hasText: "Kotimaista rasvaton maito",
+    });
+    await expect(product).toBeVisible();
+    await page.screenshot({
+      path: `${SHOTS}/57-s-ostoslista-product-search.png`,
+      fullPage: true,
+    });
+
+    await page.goBack();
+    await milk.evaluate((details: HTMLDetailsElement) => {
+      details.open = true;
+    });
+    await page.locator(".shopping-picker > summary").click();
     await expect(milk.locator(".shopping-from li").first()).toBeVisible();
     await page.screenshot({
       path: `${SHOTS}/39-shopping-breakdown.png`,
