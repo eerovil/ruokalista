@@ -23,8 +23,9 @@ leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft
 `max_tokens` is a JSON document that just ends, and a refusal is no text at
 all. Neither condition raises anything in the transport, so before this check
 both reached the browser looking like a finished import and failed one screen
-later at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
-while no byte has been sent — after that the member sees the failure. Failures
+later at `/intake/correct`'s `JSON.parse`. The streaming path retries once
+while no byte has been sent; this pull request proposes letting it retry after
+bytes are out too, which is what the record framing below is for. Failures
 reach a member as Finnish through `importFailureMessage`, which logs the
 English detail; `intake.model_usage` carries `stop_reason` alongside the token
 counts, so a truncated import is visible in `wrangler tail`.
@@ -213,6 +214,17 @@ fake responses — a cut-off first attempt, an unparseable one that stopped
 cleanly, a refusal that must not be retried, and two failures in a row — with
 no model call and nothing spent. `tests/intake.spec.ts` covers the island's
 half from the same fixtures.
+
+A terminal failure closes the body on a `failed` record rather than tearing the
+stream down. A body that simply stops is indistinguishable from a dropped
+connection, and the browser cannot tell whether what it holds is a whole draft.
+`importFailureMessage` still logs the English detail as `intake.failed`, so
+`wrangler tail` shows one shape for every import failure however it arrived.
+
+The island shows its own Finnish wording for a failure it framed, and the fixed
+`Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.` for anything else. That
+split is deliberate: a 503's body or a transport error is English, or worse
+somebody else's Finnish, and neither belongs on a member's screen.
 
 ## Marking the ingredients a step names (issue #120)
 
