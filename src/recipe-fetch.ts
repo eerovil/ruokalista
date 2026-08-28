@@ -261,16 +261,20 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
   }
 
   const text = visibleText(markup);
-  if (text.length < MIN_FALLBACK_TEXT) {
+  if (
+    text === "" ||
+    (recipe === null && text.length < MIN_FALLBACK_TEXT)
+  ) {
     throw new PageRefused("no_recipe", "The page yielded no readable text.");
   }
 
   return { url, sourceText: capped(text), title: null, structured: false };
 }
 
-/** The two fields without which structured data is not a usable recipe. */
+/** The three fields without which structured data is not a usable recipe. */
 function recipeDataIsComplete(recipe: JsonObject): boolean {
   return (
+    stringField(recipe["name"]) !== null &&
     stringList(recipe["recipeIngredient"]).length > 0 &&
     instructionLines(recipe["recipeInstructions"], 0).some(
       (line) => !line.heading,

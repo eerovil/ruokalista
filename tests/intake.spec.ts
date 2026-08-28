@@ -159,7 +159,7 @@ test("a web address is fetched, shown, structured and kept on the recipe", async
   await expect(link).toHaveAttribute("href", LINKED_PAGE.url);
 });
 
-test("the fetched text lands in the paste box, so a partial page is fixable", async ({
+test("a partial fetched page is preserved through the review", async ({
   page,
 }) => {
   await stubLinkFetch(page, {
@@ -178,7 +178,7 @@ test("the fetched text lands in the paste box, so a partial page is fixable", as
     page.getByRole("heading", { name: "Tarkista resepti" }),
   ).toBeVisible();
   // An import that got only half the page is still an import: what was found
-  // reached the box a member types in, on the way past.
+  // remains the source text carried into review and save.
   await expect(page.locator('input[name="sourceText"]')).toHaveValue(
     "Uunikaali\n1 valkokaali",
   );

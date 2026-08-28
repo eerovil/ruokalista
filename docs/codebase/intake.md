@@ -98,11 +98,12 @@ That is what keeps there being one importer rather than two.
 Four things about it are load-bearing:
 
 - **The fetch is its own route, `POST /api/intake/fetch`, and spends nothing.**
-  It returns text; `/api/intake/structure` then structures it as usual. The
-  member therefore sees what the page gave up — in the paste box, editable —
-  before a paid call happens. Folding the fetch into the streaming route would
-  have paid for a page nobody had looked at yet, and would have had to report a
-  fetch failure by unwinding a stream already in flight.
+  It returns text; `/api/intake/structure` then structures it as usual. A fetch
+  refusal therefore happens before a paid call begins, and the fetched text
+  enters the same source-text, review and save path as a paste. Folding the
+  fetch into the streaming route would have paid for a page nobody had looked
+  at yet, and would have had to report a fetch failure by unwinding a stream
+  already in flight.
 - **A refusal is one of five words, never prose.** `FetchFailure` is
   `invalid_url`, `unreachable`, `not_a_page`, `too_large` or `no_recipe`, and
   the island turns it into Finnish. A fetched page's own error text — or worse,

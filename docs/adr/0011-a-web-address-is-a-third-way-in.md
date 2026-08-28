@@ -27,9 +27,9 @@ is still the model's job, for the reason #4 gave: there is no parser for Finnish
 ingredient lines.
 
 **The fetch is its own route and spends nothing.** `POST /api/intake/fetch`
-returns text; the ordinary streaming route then structures it. So the member
-sees what the page gave up, in the paste box, before a paid call happens — and
-can fix it.
+returns text; the ordinary streaming route then structures it. A fetch refusal
+therefore happens before a paid call begins, and the fetched text enters the
+same source-text, review and save path as an ordinary paste.
 
 **The address is kept on the recipe.** `recipe.source_url`, and
 `recipe.source_route` gains `linked` so how a recipe arrived is still recorded

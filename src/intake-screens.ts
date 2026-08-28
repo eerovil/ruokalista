@@ -128,8 +128,8 @@ const STREAMING_ISLAND = `
   }
 
   // The page, read on the server and handed back as text. No model runs here —
-  // what comes back goes into the paste box, so the member sees exactly what
-  // the model will be given and can fix it before anything is spent.
+  // what comes back goes into the ordinary source-text field before the model
+  // starts, so the fetched text stays with the draft and the saved recipe.
   function readLink(address) {
     status.textContent = 'Haetaan sivua…';
     return fetch('/api/intake/fetch', {
@@ -314,8 +314,8 @@ const STREAMING_ISLAND = `
       prepared = readLink(link).then(function (page) {
         text = page.sourceText;
         address = typeof page.url === 'string' ? page.url : link;
-        // Put it where the member can see and edit it: an import that got only
-        // half the page is still worth saving, and this is where they fix it.
+        // Put it in the ordinary source field so even a partial reading is
+        // preserved through review and save rather than disappearing here.
         form.sourceText.value = text;
         status.textContent = 'Sivulta luettiin resepti — malli jäsentää sen.';
         return { sourceText: text, url: address };
@@ -628,7 +628,6 @@ export async function fetchPageForIntake(
     console.log(JSON.stringify({
       event: "intake.page_refused",
       reason: error.reason,
-      detail: error.message,
     }));
     return fetchRefusal(error.reason);
   }

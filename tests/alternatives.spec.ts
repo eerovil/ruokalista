@@ -328,6 +328,7 @@ test("the recipe JSON keeps its shape, alternatives included", async ({
     "revision",
     "sourceRoute",
     "sourceText",
+    "sourceUrl",
     "steps",
     "title",
     "yieldPortions",

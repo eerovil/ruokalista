@@ -206,17 +206,34 @@ test("an incomplete structured recipe falls back to the visible recipe", () => {
     <h2>Ainekset</h2>
     <ul><li>1 kg valkokaalia</li><li>400 g jauhelihaa</li><li>2 dl riisiä</li></ul>
     <h2>Valmistus</h2>
-    <p>Suikaloi kaali ja kuullota se pannulla. Ruskista jauheliha ja keitä riisi.</p>
-    <p>Sekoita kaikki vuokaan, mausta huolellisesti ja paista 200 asteessa noin
-       tunnin ajan. Tarjoile puolukkahillon kanssa lämpimänä.</p></main>
+    <p>Suikaloi kaali. Ruskista jauheliha ja keitä riisi. Sekoita kaikki vuokaan
+       ja paista 200 asteessa tunnin ajan.</p></main>
     </body></html>`;
 
   const page = readRecipeFromPage(markup, "https://kotikokki.example/kaali");
 
   assert.equal(page.structured, false);
   assert.equal(page.title, null);
+  assert.ok(page.sourceText.length < 200, page.sourceText);
   assert.ok(page.sourceText.includes("1 kg valkokaalia"), page.sourceText);
   assert.ok(page.sourceText.includes("Ruskista jauheliha"), page.sourceText);
+});
+
+test("structured ingredients and instructions do not hide a visible title", () => {
+  const markup = `<html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      recipeIngredient: ["2 munaa", "ripaus suolaa"],
+      recipeInstructions: "Vatkaa munat ja paista pannulla.",
+    })}</script></head><body><main>
+    <h1>Munakas</h1><p>2 munaa</p><p>ripaus suolaa</p>
+    <p>Vatkaa munat ja paista pannulla.</p>
+    </main></body></html>`;
+
+  const page = readRecipeFromPage(markup, "https://kotikokki.example/munakas");
+
+  assert.equal(page.structured, false);
+  assert.ok(page.sourceText.startsWith("Munakas"), page.sourceText);
 });
 
 test("a page that yields almost nothing is a refusal, not an empty import", () => {
