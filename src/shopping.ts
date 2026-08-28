@@ -1,3 +1,17 @@
+import {
+  backfillPackageSizes,
+  overrideKey,
+  overridesForRecipes,
+  productSize,
+  productsForIngredients,
+  type ProductChoice,
+} from "./ingredient-products.ts";
+import {
+  baseAmount,
+  formatBaseAmount,
+  planPackages,
+  type BaseAmount,
+} from "./packaging.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
 import { scaleMeasurement, sourceWorthShowing } from "./scaling.ts";
 
@@ -34,11 +48,14 @@ export interface ShoppingLine extends Measurement {
   multiplier: number;
   /** The named part this line sits in, or null when it is the dish's own. */
   partTitle: string | null;
+  /** The dish, even for a part's line: an override is set per dish (#161). */
+  recipeId: number;
   ingredientId: number;
   ingredientName: string;
-  ean: string | null;
-  externalProductName: string | null;
-  externalProductImageUrl: string | null;
+  /** What this ingredient can be bought as, in the order they were added. */
+  products: ProductChoice[];
+  /** The one product this dish insists on for this ingredient, if any. */
+  override: ProductChoice | null;
   sourceLine: string;
 }
 
@@ -58,16 +75,40 @@ export interface ShoppingContribution {
   sourceLine: string;
 }
 
+/** One product to buy, and how many of it. */
+export interface ChosenPackage {
+  product: ProductChoice;
+  count: number;
+}
+
 export interface ShoppingItem {
+  /**
+   * What a form calls this row. Usually the ingredient, but a row pinned to one
+   * recipe is its own row and needs its own name — `12` and `12:r7` are two
+   * lines on the same list and two different things to buy.
+   */
+  key: string;
   ingredientId: number;
+  /** Set only on a pinned row: the dish whose own product this row follows. */
+  recipeId: number | null;
+  recipeTitle: string | null;
   name: string;
   /** `5 dl + 2 rkl`, or the recipe-says text when no amount was ever stated. */
   total: string;
   /** True when at least one contribution had no stated amount. */
   hasUnstated: boolean;
-  ean: string | null;
-  externalProductName: string | null;
-  externalProductImageUrl: string | null;
+  /** Everything this row could be bought as — one product when it is pinned. */
+  products: ProductChoice[];
+  /**
+   * What to actually buy: the packages that cover the total, or the single
+   * chosen product with no count when the sizes do not allow working one out.
+   * Empty when nothing is mapped and the row goes as a written reminder.
+   */
+  chosen: ChosenPackage[];
+  /** `800 g` — what the chosen packages hold, when a count was worked out. */
+  packageTotal: string | null;
+  /** The dishes this row's amount came from, for the "in this recipe" choice. */
+  recipes: Array<{ id: number; title: string }>;
   contributions: ShoppingContribution[];
 }
 
@@ -83,22 +124,39 @@ export interface ShoppingItem {
  * breakdown a member opens actually adds up to the number above it; a total
  * that disagreed with its own explanation would be worse than a slightly
  * generous one, and in a kitchen slightly generous is the safe direction.
+ *
+ * The one thing that splits a row in two is a recipe's own product (#161). A
+ * kanapasta pinned to a marinated fillet and a kanacurry buying whatever is
+ * generic are not 750 g of the same thing: adding them up would either buy the
+ * curry a marinated fillet or lose the pasta the one it asked for. So a pinned
+ * dish gets its own row, with its own total and its own packages, and the
+ * generic pile is what is left.
  */
 export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
-  const items = new Map<number, Building>();
+  const items = new Map<string, Building>();
 
   for (const line of lines) {
-    let item = items.get(line.ingredientId);
+    const pinned = line.override !== null;
+    const rowKey = pinned
+      ? `${line.ingredientId}:r${line.recipeId}`
+      : String(line.ingredientId);
+    let item = items.get(rowKey);
     if (item === undefined) {
       item = {
+        key: rowKey,
+        ingredientId: line.ingredientId,
+        recipeId: pinned ? line.recipeId : null,
+        recipeTitle: pinned ? line.batchTitle : null,
         name: line.ingredientName,
-        ean: line.ean,
-        externalProductName: line.externalProductName,
-        externalProductImageUrl: line.externalProductImageUrl,
+        products: line.override !== null ? [line.override] : line.products,
+        recipes: [],
         units: new Map(),
         contributions: [],
       };
-      items.set(line.ingredientId, item);
+      items.set(rowKey, item);
+    }
+    if (!item.recipes.some((one) => one.id === line.recipeId)) {
+      item.recipes.push({ id: line.recipeId, title: line.batchTitle });
     }
 
     const scaled = scaleMeasurement(line, line.multiplier);
@@ -136,18 +194,99 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
     }
   }
 
-  return [...items.entries()]
-    .map(([ingredientId, item]) => ({
-      ingredientId,
-      name: item.name,
-      total: totalText(item),
-      hasUnstated: item.contributions.some((one) => one.amount === ""),
-      ean: item.ean,
-      externalProductName: item.externalProductName,
-      externalProductImageUrl: item.externalProductImageUrl,
-      contributions: item.contributions,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, "fi"));
+  return [...items.values()]
+    .map((item) => {
+      const bought = buy(item);
+      return {
+        key: item.key,
+        ingredientId: item.ingredientId,
+        recipeId: item.recipeId,
+        recipeTitle: item.recipeTitle,
+        name: item.name,
+        total: totalText(item),
+        hasUnstated: item.contributions.some((one) => one.amount === ""),
+        products: item.products,
+        chosen: bought.chosen,
+        packageTotal: bought.packageTotal,
+        recipes: item.recipes,
+        contributions: item.contributions,
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(b.name, "fi") ||
+        (a.recipeTitle ?? "").localeCompare(b.recipeTitle ?? "", "fi"),
+    );
+}
+
+/**
+ * Which packages this row is buying.
+ *
+ * The optimisation only happens where all three of its conditions hold: the
+ * row's total is one amount this app can convert (`5 dl`, `700 g` — not
+ * `5 dl + 2 rkl`, and not spoons), and at least one of its products has a
+ * package size in that same family. Otherwise the row falls back to what it has
+ * always done — the chosen product, once, with no count claimed — because a
+ * count worked out from a size nobody knows is worse than none (#161).
+ */
+function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | null } {
+  if (item.products.length === 0) return { chosen: [], packageTotal: null };
+
+  const fallback = {
+    chosen: [{ product: item.products[0]!, count: 1 }],
+    packageTotal: null,
+  };
+
+  const need = neededAmount(item);
+  if (need === null) return fallback;
+
+  const sized = new Map<string, ProductChoice>();
+  const options = [];
+  for (const product of item.products) {
+    const size = productSize(product);
+    if (size === null || sized.has(product.ean)) continue;
+    sized.set(product.ean, product);
+    options.push({ key: product.ean, size });
+  }
+
+  const plan = planPackages(need, options);
+  if (plan === null) return fallback;
+
+  return {
+    chosen: plan.picks.map((pick) => ({
+      product: sized.get(pick.key)!,
+      count: pick.count,
+    })),
+    packageTotal: formatBaseAmount({ family: need.family, amount: plan.total }),
+  };
+}
+
+/**
+ * The row's total as one amount to cover, or null when it is not one amount.
+ *
+ * A ranged total is covered at its top: `1–1½ l` has to be enough at 1½ l, and
+ * buying for the bottom of the range is how somebody ends up short at the hob.
+ * A row with an unstated contribution still counts what *is* stated — the row
+ * goes on saying `+ määrä reseptin mukaan` beside it, so nothing is hidden.
+ */
+function neededAmount(item: Building): BaseAmount | null {
+  let need: BaseAmount | null = null;
+
+  for (const running of item.units.values()) {
+    const base = baseAmount(
+      running.ranged ? running.quantityMax : running.quantity,
+      running.unit,
+    );
+    if (base === null) return null;
+    if (need === null) {
+      need = base;
+      continue;
+    }
+    if (need.family !== base.family) return null;
+    need = { family: need.family, amount: need.amount + base.amount };
+  }
+
+  return need;
 }
 
 interface RunningUnit {
@@ -158,10 +297,13 @@ interface RunningUnit {
 }
 
 interface Building {
+  key: string;
+  ingredientId: number;
+  recipeId: number | null;
+  recipeTitle: string | null;
   name: string;
-  ean: string | null;
-  externalProductName: string | null;
-  externalProductImageUrl: string | null;
+  products: ProductChoice[];
+  recipes: Array<{ id: number; title: string }>;
   units: Map<string, RunningUnit>;
   contributions: ShoppingContribution[];
 }
@@ -210,11 +352,9 @@ interface LineRow {
   unit: string | null;
   alt_quantity: number | null;
   alt_unit: string | null;
+  recipe_id: number;
   ingredient_id: number;
   ingredient_name: string;
-  ean: string | null;
-  external_product_name: string | null;
-  external_product_image_url: string | null;
   source_line: string;
 }
 
@@ -255,11 +395,9 @@ export async function shoppingLinesFor(
               ingredient_line.unit,
               ingredient_line.alt_quantity,
               ingredient_line.alt_unit,
+              dish.id AS recipe_id,
               ingredient.id AS ingredient_id,
               ingredient.name AS ingredient_name,
-              ingredient.ean,
-              ingredient.external_product_name,
-              ingredient.external_product_image_url,
               ingredient_line.source_line
          FROM planned_batch
          JOIN recipe AS dish
@@ -280,6 +418,23 @@ export async function shoppingLinesFor(
     .bind(householdId, ...batchIds)
     .all<LineRow>();
 
+  // The products are a second and a third query rather than two more joins: an
+  // ingredient with three package sizes would otherwise multiply every one of
+  // its lines by three and the totals would have to be de-duplicated back out.
+  const ingredientIds = [...new Set(results.map((row) => row.ingredient_id))];
+  const recipeIds = [...new Set(results.map((row) => row.recipe_id))];
+  const [products, overrides] = await Promise.all([
+    productsForIngredients(db, ingredientIds),
+    overridesForRecipes(db, householdId, recipeIds),
+  ]);
+
+  // Sizes that #147's mapping never had a column for, read once and written
+  // down. After this pass the list is working from stored data again.
+  await backfillPackageSizes(db, [
+    ...[...products.values()].flat(),
+    ...overrides.values(),
+  ]);
+
   return results.map((row) => ({
     batchId: row.batch_id,
     batchTitle: row.batch_title,
@@ -290,34 +445,11 @@ export async function shoppingLinesFor(
     unit: row.unit,
     altQuantity: row.alt_quantity,
     altUnit: row.alt_unit,
+    recipeId: row.recipe_id,
     ingredientId: row.ingredient_id,
     ingredientName: row.ingredient_name,
-    ean: row.ean,
-    externalProductName: row.external_product_name,
-    externalProductImageUrl: row.external_product_image_url,
+    products: products.get(row.ingredient_id) ?? [],
+    override: overrides.get(overrideKey(row.recipe_id, row.ingredient_id)) ?? null,
     sourceLine: row.source_line,
   }));
-}
-
-/**
- * Replace one ingredient's preferred S-group product as one all-field write.
- * The caller has already proved the ingredient is on this household's fresh
- * `Ostettavat` projection and that the product came from a fresh search.
- */
-export async function saveExternalProduct(
-  db: D1Database,
-  ingredientId: number,
-  product: { ean: string; name: string; imageUrl: string },
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE ingredient
-          SET ean = ?,
-              external_product_name = ?,
-              external_product_image_url = ?
-        WHERE id = ?`,
-    )
-    .bind(product.ean, product.name, product.imageUrl, ingredientId)
-    .run();
-  return (result.meta.changes ?? 0) === 1;
 }

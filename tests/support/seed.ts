@@ -11,3 +11,12 @@ export function reseed(): void {
     { cwd: process.cwd(), stdio: "ignore" },
   );
 }
+
+/** Add one test's focused fixture rows without changing the shared seed. */
+export function executeLocalSql(sql: string): void {
+  execFileSync(
+    "npx",
+    ["wrangler", "d1", "execute", "ruokalista", "--local", "--command", sql],
+    { cwd: process.cwd(), stdio: "ignore" },
+  );
+}

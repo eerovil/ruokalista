@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { onePixelPng } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -141,6 +141,37 @@ test("a published recipe's picture is readable by the other household", async ({
   await expect(hero).toBeVisible();
   await expect(hero).toHaveJSProperty("complete", true);
   await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
+});
+
+test("a public recipe uses the reader's product picture without changing JSON", async ({
+  page,
+}) => {
+  await publish(page, 3);
+  executeLocalSql(`
+    INSERT INTO recipe_ingredient_product
+      (household_id, recipe_id, ingredient_id, ean, name, image_url)
+    VALUES
+      (1, 3, 9, 'owner-milk', 'Owner milk', 'https://products.example/owner.png'),
+      (2, 3, 9, 'reader-milk', 'Reader milk', 'https://products.example/reader.png')
+  `);
+  await page.route("https://products.example/**", (route) =>
+    route.fulfill({ contentType: "image/png", body: onePixelPng() }),
+  );
+
+  await signIn(page, 2);
+  await page.goto("/recipes/3");
+  const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+  const thumbnail = milk.locator(".recipe-product-thumb");
+  await expect(thumbnail).toBeVisible();
+  await expect(thumbnail).toHaveAttribute("src", "https://products.example/reader.png");
+
+  const response = await page.request.get("/api/recipes/3");
+  const body = (await response.json()) as {
+    recipe: { parts: Array<{ lines: Array<Record<string, unknown>> }> };
+  };
+  for (const part of body.recipe.parts) {
+    for (const line of part.lines) expect(line).not.toHaveProperty("productImageUrl");
+  }
 });
 
 test("an unpublished recipe stays invisible to the other household", async ({

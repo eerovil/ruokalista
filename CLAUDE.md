@@ -45,6 +45,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |
+| Which shop product an ingredient is, and in what packet | `src/ingredient-products.ts`, `src/packaging.ts`, `src/s-ostoslista.ts` |
 | The cupboard | `src/pantry.ts`, `src/pantry-screens.ts` |
 | Markup and the shell | `src/html.ts` |
 | Schema and backups | `migrations/`, `src/backup.ts`, `src/restore.ts` |

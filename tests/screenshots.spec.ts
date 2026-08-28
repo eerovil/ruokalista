@@ -784,6 +784,85 @@ test.describe("signed in", () => {
   });
 
   /**
+   * #161: an ingredient that knows more than one packet, and a recipe allowed
+   * its own product.
+   *
+   * The fixture is two lasagne cookings, one of them a double batch, so the
+   * milk really does need one and a half litres — the state where a package
+   * count is the whole point rather than decoration.
+   */
+  test("packages and a recipe's own product", async ({ page }) => {
+    const planned = [
+      await createBatch(page, shiftedFromToday(0), "dinner", 3, 1),
+      await createBatch(page, shiftedFromToday(1), "dinner", 3, 2),
+    ];
+
+    await page.goto("/ostoslista");
+    const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
+    await expect(milk.locator(".shopping-total")).toHaveText("15 dl");
+
+    // The panel, with the one question #161 adds to it: how far this reaches.
+    // The shopping-list shot above already chose a product for milk and this
+    // file reseeds once, so the button may read either way by now.
+    await milk.locator("summary").click();
+    await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+    const product = milk.locator(".s-product-results > li", {
+      hasText: "Kotimaista rasvaton maito",
+    });
+    await expect(product).toBeVisible();
+    await expect(milk.locator(".s-product-scope-choice")).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/60-product-scope-choice.png`,
+      fullPage: true,
+    });
+
+    const saved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/ostoslista/tuote"),
+    );
+    await product.getByRole("button", { name: "Valitse" }).click();
+    await saved;
+    await page.reload();
+
+    // 15 dl does not fit in one litre, so the row buys two — and says so.
+    const counted = page.locator(".shopping-item", { hasText: "maito" }).first();
+    await counted.locator("summary").click();
+    await expect(counted.locator(".s-shopping-product-summary")).toContainText(
+      "2 × Kotimaista rasvaton maito 1 l",
+    );
+    await expect(counted.locator(".s-package-total")).toContainText("2 l");
+    await capture(page, {
+      path: `${SHOTS}/61-package-count.png`,
+      fullPage: true,
+    });
+
+    // A second package size, taught from the row itself rather than a settings
+    // page, and listed underneath with the size that was stored for it.
+    await counted.getByRole("button", { name: "Lisää toinen pakkauskoko" }).click();
+    const second = counted.locator(".s-product-results > li", {
+      hasText: "Valio kevytmaito",
+    });
+    await expect(second).toBeVisible();
+    await Promise.all([
+      page.waitForEvent("load"),
+      second.getByRole("button", { name: "Valitse" }).click(),
+    ]);
+
+    const sized = page.locator(".shopping-item", { hasText: "maito" }).first();
+    await sized.locator("summary").click();
+    await expect(sized.locator(".s-product-sizes > li")).toHaveCount(2);
+    await capture(page, {
+      path: `${SHOTS}/62-package-sizes.png`,
+      fullPage: true,
+    });
+
+    for (const id of planned) {
+      await page.request.delete(`/api/batches/${id}`);
+    }
+  });
+
+  /**
    * The cupboard, used rather than empty: two staples put in from the list,
    * the list split into its two sections, and the cupboard's own page.
    */

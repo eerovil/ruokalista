@@ -74,7 +74,11 @@ test.describe("linked product pictures", () => {
 
   test.afterEach(reseed);
 
-  async function linkMilkProduct(page: Page): Promise<void> {
+  async function linkMilkProduct(
+    page: Page,
+    ean = "6415712506032",
+    scope = "aines",
+  ): Promise<void> {
     const date = new Intl.DateTimeFormat("sv-SE", {
       timeZone: "Europe/Helsinki",
     }).format(new Date());
@@ -85,9 +89,11 @@ test.describe("linked product pictures", () => {
     const cookingId = ((await cooking.json()) as { id: number }).id;
 
     const form = new URLSearchParams({
+      rivi: "9",
       aines: "9",
       haku: "maito",
-      ean: "6415712506032",
+      ean,
+      laajuus: scope,
       valittu: "1",
       ateria: String(cookingId),
       muoto: "json",
@@ -98,6 +104,31 @@ test.describe("linked product pictures", () => {
     });
     expect(linked.ok()).toBe(true);
   }
+
+  test("a recipe-specific product picture wins without changing recipe JSON", async ({
+    page,
+  }) => {
+    await linkMilkProduct(page);
+    await linkMilkProduct(page, "6414893386488", "3");
+    await page.goto("/recipes/3");
+
+    const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+    await expect(milk.locator(".recipe-product-thumb")).toHaveAttribute(
+      "src",
+      /cdn\.s-cloud\.fi.*6414893386488/,
+    );
+
+    const response = await page.request.get("/api/recipes/3");
+    const body = (await response.json()) as {
+      recipe: {
+        lines: Array<Record<string, unknown>>;
+        parts: Array<{ lines: Array<Record<string, unknown>> }>;
+      };
+    };
+    const lines = [body.recipe.lines, ...body.recipe.parts.map((part) => part.lines)].flat();
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).not.toHaveProperty("productImageUrl");
+  });
 
   test("a product picture stays compact at phone, tablet, and desktop widths", async ({
     page,

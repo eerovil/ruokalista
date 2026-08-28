@@ -71,3 +71,6 @@ commit what it wrote:
 | `56-intake-two-pages.png` | Proposed intake with a recipe printed across a spread: page one shot with the camera, page two picked from the library, both numbered in reading order and both bound for one recipe |
 | `57-intake-requires-javascript.png` | Proposed intake without JavaScript: the requirement is stated in Finnish and structuring stays unavailable |
 | `59-s-ostoslista-waits-for-product.png` | Proposed S-ostoslista send while an optimistic product choice is still saving: the chosen product stays visible and the send button says it is finishing that choice first |
+| `60-product-scope-choice.png` | Proposed product panel with #161's one extra question: whether this choice is always this ingredient's, or only this recipe's — and each result showing the packet size read off its name |
+| `61-package-count.png` | Proposed shopping row buying two litres of milk because the week needs fifteen decilitres, with what the packets hold said underneath |
+| `62-package-sizes.png` | Proposed same ingredient after a second package size was added from the row itself, each with its stored size and a way to drop it |

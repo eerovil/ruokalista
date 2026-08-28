@@ -15,6 +15,8 @@ export const BACKUP_TABLES = [
   { name: "batch_occurrence", orderBy: "batch_id, date, slot" },
   { name: "pantry_entry", orderBy: "id" },
   { name: "recipe_preference", orderBy: "id" },
+  { name: "ingredient_product", orderBy: "id" },
+  { name: "recipe_ingredient_product", orderBy: "id" },
 ] as const;
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number]["name"];

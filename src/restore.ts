@@ -29,6 +29,10 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "pantry_entry",
   // After recipe, household and member: a preference points at all three.
   "recipe_preference",
+  // After ingredient: a product is what one ingredient is bought as (#161).
+  "ingredient_product",
+  // After household, recipe and ingredient: an override points at all three.
+  "recipe_ingredient_product",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -242,6 +246,12 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
   uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
   uniqueIntegerKey(snapshot.tables.recipe_preference, "id", "recipe_preference");
+  uniqueIntegerKey(snapshot.tables.ingredient_product, "id", "ingredient_product");
+  uniqueIntegerKey(
+    snapshot.tables.recipe_ingredient_product,
+    "id",
+    "recipe_ingredient_product",
+  );
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
@@ -261,6 +271,18 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     snapshot.tables.recipe_preference,
     ["household_id", "recipe_id"],
     "recipe preference",
+  );
+  // One row per package size, and one override per recipe's use of an
+  // ingredient — the same two uniques the schema itself enforces (#161).
+  uniqueComposite(
+    snapshot.tables.ingredient_product,
+    ["ingredient_id", "ean"],
+    "ingredient product",
+  );
+  uniqueComposite(
+    snapshot.tables.recipe_ingredient_product,
+    ["household_id", "recipe_id", "ingredient_id"],
+    "recipe ingredient product",
   );
 
   for (const row of snapshot.tables.member) {
@@ -304,6 +326,24 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     requireReference(row, "household_id", householdIds, "recipe_preference.household_id");
     requireReference(row, "recipe_id", recipeIds, "recipe_preference.recipe_id");
     requireReference(row, "updated_by", memberIds, "recipe_preference.updated_by");
+  }
+  for (const row of snapshot.tables.ingredient_product) {
+    requireReference(row, "ingredient_id", ingredientIds, "ingredient_product.ingredient_id");
+  }
+  for (const row of snapshot.tables.recipe_ingredient_product) {
+    requireReference(
+      row,
+      "household_id",
+      householdIds,
+      "recipe_ingredient_product.household_id",
+    );
+    requireReference(row, "recipe_id", recipeIds, "recipe_ingredient_product.recipe_id");
+    requireReference(
+      row,
+      "ingredient_id",
+      ingredientIds,
+      "recipe_ingredient_product.ingredient_id",
+    );
   }
 }
 

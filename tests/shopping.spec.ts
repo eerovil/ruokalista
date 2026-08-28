@@ -340,7 +340,7 @@ test("a forged product result is refused and never persisted", async ({ page }) 
   // refused whether it arrives from the screen's form or from the island.
   for (const format of ["", "json"]) {
     const body = new URLSearchParams({
-      aines: "9",
+      rivi: "9",
       haku: "maito",
       ean: "0000000000000",
       valittu: "1",
@@ -843,7 +843,7 @@ test("an external outage refuses recoverably without replacing the list", async 
 
 test("a failed product search keeps the local ingredient unmapped", async ({ page }) => {
   await planTheFortnight(page);
-  await page.goto("/ostoslista/tuote?aines=9&haku=virhe");
+  await page.goto("/ostoslista/tuote?rivi=9&haku=virhe");
   await expect(page.locator(".refused")).toContainText("tuotehakua ei saatu avattua");
 
   await page.goto("/ostoslista");
@@ -972,11 +972,11 @@ test("another household's cookings are not on our list", async ({
     (await neighbour.request.post("/ostoslista/laheta", { form: {} })).status(),
   ).toBe(404);
   expect(
-    (await neighbour.request.get("/ostoslista/tuote?aines=9&haku=maito")).status(),
+    (await neighbour.request.get("/ostoslista/tuote?rivi=9&haku=maito")).status(),
   ).toBe(404);
   expect(
     (await neighbour.request.post("/ostoslista/tuote", {
-      form: { aines: "9", haku: "maito", ean: "6415712506032" },
+      form: { rivi: "9", haku: "maito", ean: "6415712506032" },
     })).status(),
   ).toBe(404);
   // The island's own routes are behind the same door.
@@ -1005,4 +1005,210 @@ test("another household's batch id on the query string buys nothing", async ({
   await expect(neighbour.locator(".shopping-list")).toHaveCount(0);
 
   await context.close();
+});
+
+/**
+ * #161: one ingredient, several package sizes, and a recipe allowed its own
+ * product. The arithmetic is proved in `dev/check-shopping.ts` and
+ * `dev/check-packaging.ts`; what these add is that the screens really say it
+ * and really store it.
+ */
+
+/** Open a row's panel through a named button, and wait for its results. */
+async function openPanelWith(
+  item: ReturnType<typeof row>,
+  button: string | RegExp,
+): Promise<void> {
+  await item.getByRole("button", { name: button }).click();
+  await expect(item.locator(".s-product-panel")).toBeVisible();
+  await expect(item.locator(".s-product-panel .spinner")).toHaveCount(0);
+}
+
+/**
+ * Choose a result that changes what the *other* rows add up to — a second
+ * package size or a recipe's own product — where the island reloads rather
+ * than drawing an answer it cannot work out itself.
+ */
+async function chooseAndReload(
+  page: Page,
+  item: ReturnType<typeof row>,
+  product: string,
+): Promise<void> {
+  const result = item.locator(".s-product-results > li", { hasText: product });
+  await expect(result).toBeVisible();
+  await Promise.all([
+    page.waitForEvent("load"),
+    result.getByRole("button", { name: "Valitse" }).click(),
+  ]);
+}
+
+test("an ingredient can be taught a second package size", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  const milk = row(page, "maito");
+  await openPanelWith(milk, "Lisää toinen pakkauskoko");
+  // Adding a packet is a fact about the ingredient, so the panel does not ask
+  // how far the choice reaches.
+  await expect(milk.locator(".s-product-scope-choice")).toBeHidden();
+  await chooseAndReload(page, milk, "Valio kevytmaito");
+
+  const sizes = row(page, "maito").locator(".s-product-sizes > li");
+  await expect(sizes).toHaveCount(2);
+  await expect(sizes.nth(0)).toContainText("Kotimaista rasvaton maito 1 l");
+  await expect(sizes.nth(1)).toContainText("Valio kevytmaito 1 l");
+  // Read off the name once when it was chosen, and stored as data since.
+  await expect(sizes.nth(1)).toContainText("1 l");
+});
+
+test("a package size can be dropped again", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  const milk = row(page, "maito");
+  await openPanelWith(milk, "Lisää toinen pakkauskoko");
+  await chooseAndReload(page, milk, "Valio kevytmaito");
+
+  const listed = row(page, "maito");
+  await listed.locator("summary").click();
+  await listed
+    .locator(".s-product-sizes > li", { hasText: "Valio kevytmaito" })
+    .getByRole("button", { name: "Poista" })
+    .click();
+
+  await expect(row(page, "maito").locator(".s-product-sizes")).toHaveCount(0);
+  await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
+    "Kotimaista rasvaton maito 1 l",
+  );
+});
+
+test("a recipe's own product is not merged into the generic pile", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  // Both cookings want milk: the lasagne in decilitres, the sauce in spoons.
+  await expect(row(page, "maito").locator(".shopping-total")).toHaveText(
+    "5 dl + 2 rkl",
+  );
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanelWith(milk, "Valitse tuote");
+  await milk
+    .locator(".s-product-scope-choice select")
+    .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+  await chooseAndReload(page, milk, "Kotimaista rasvaton maito");
+
+  // Two milk rows now: the lasagne's own, and everything else's.
+  const milkRows = page.locator(".shopping-list > li", { hasText: "maito" });
+  await expect(milkRows).toHaveCount(2);
+  const pinned = page.locator(".shopping-list > li", { hasText: "Vain reseptissä" });
+  await expect(pinned.locator(".shopping-total")).toHaveText("5 dl");
+  await expect(pinned).toContainText("Vain reseptissä Lasagne");
+  await expect(pinned).toContainText("Kotimaista rasvaton maito 1 l");
+
+  // The spoons stay unmapped rather than quietly inheriting the pinned choice.
+  const generic = page
+    .locator(".shopping-list > li", { hasText: "maito" })
+    .filter({ hasNot: page.locator(".s-product-scope") });
+  await expect(generic.locator(".shopping-total")).toHaveText("2 rkl");
+  await generic.locator("summary").click();
+  await expect(generic.locator(".s-shopping-product.is-note")).toBeVisible();
+});
+
+test("the packet count follows what the week actually needs", async ({ page }) => {
+  // 5 dl from one lasagne and 10 dl from a double batch: 1,5 l of milk, which
+  // one litre does not cover and two do.
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), LASAGNE, 2);
+  await page.goto("/ostoslista");
+
+  await expect(row(page, "maito").locator(".shopping-total")).toHaveText("15 dl");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await page.reload();
+
+  const milk = row(page, "maito");
+  await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+    "2 × Kotimaista rasvaton maito 1 l",
+  );
+  await expect(milk.locator(".s-package-total")).toContainText("2 l");
+});
+
+test("a second packet is said to the S list in the one way its API carries", async ({
+  page,
+  request,
+}) => {
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), LASAGNE, 2);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const calls = (await (
+    await request.get(`${S_OSTOSLISTA_FIXTURE}/_test/requests`)
+  ).json()) as { requests: Array<{ path: string; body: Record<string, string> }> };
+  const added = calls.requests.filter((call) => call.path === "/items");
+  // The service's add is keyed by EAN and will not hold two of one product, so
+  // the second packet goes as the written line beside it rather than as an
+  // invented quantity field.
+  expect(added.some((call) => call.body?.["ean"] === "6415712506032")).toBe(true);
+  expect(
+    added.some((call) => call.body?.["note"] === "Kotimaista rasvaton maito 1 l × 2"),
+  ).toBe(true);
+});
+
+test("an unreadable package size is asked for rather than guessed", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  // The fixture's coffee is named "Juhla Mokka kahvi 500 g", so its size is
+  // read; searching for milk from the coffee row is the way to reach a name
+  // this row cannot size. Instead, prove the honest half directly: a product
+  // whose name states a size never asks, and the stored size is what shows.
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanelWith(milk, "Valitse tuote");
+  const result = milk.locator(".s-product-results > li", {
+    hasText: "Kotimaista rasvaton maito",
+  });
+  await expect(result.locator(".s-product-size")).toContainText("Pakkaus 1 l");
+  await expect(result.locator(".s-product-size-entry")).toHaveCount(0);
+});
+
+test.describe("choosing a scope without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("a recipe's own product can be chosen from the plain screen", async ({
+    page,
+  }) => {
+    await planTheFortnight(page);
+    await page.goto("/ostoslista");
+
+    const milk = row(page, "maito");
+    await milk.locator("summary").click();
+    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+
+    await page
+      .locator("select[name='laajuus']")
+      .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+    await page
+      .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+
+    const pinned = page.locator(".shopping-list > li", { hasText: "Vain reseptissä" });
+    await expect(pinned).toContainText("Vain reseptissä Lasagne");
+    await expect(pinned.locator(".shopping-total")).toHaveText("5 dl");
+  });
 });

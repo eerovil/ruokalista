@@ -83,6 +83,11 @@ const STYLES = `
     --tabs-height: 3.75rem;
   }
   * { box-sizing: border-box; }
+  /* The hidden attribute is how the islands hide things, and the browser
+     implements it as a default display:none that any rule of its own beats.
+     Several elements below do have such a rule, so this says the attribute
+     wins. (No backticks in here: this stylesheet is a template literal.) */
+  [hidden] { display: none !important; }
   /* No picture may be wider than the screen it is on. Recipe images arrive from
      outside and are whatever size the tool that made them chose. */
   img { max-width: 100%; height: auto; }
@@ -684,11 +689,17 @@ const STYLES = `
     margin: .6rem 0; padding: .65rem;
     background: var(--surface); border-radius: var(--radius);
   }
+  /* One row may buy more than one packet since #161, so the summary stacks
+     what it is buying and the button column stays where it was. */
   .s-shopping-product-summary {
-    display: flex; flex: 1 1 13rem; align-items: center; gap: .7rem;
+    display: flex; flex: 1 1 13rem; flex-direction: column; gap: .4rem;
     min-width: 0;
   }
-  .s-shopping-product-summary img, .s-product-results img {
+  .s-shopping-product-one {
+    display: flex; align-items: center; gap: .7rem; min-width: 0;
+  }
+  .s-product-scope, .s-package-total { font-size: .85rem; }
+  .s-shopping-product-one img, .s-product-results img {
     flex: none; object-fit: contain; background: #fff;
     border: 1px solid var(--edge); border-radius: .35rem;
   }
@@ -697,7 +708,32 @@ const STYLES = `
     overflow-wrap: break-word;
   }
   .s-shopping-product-body { display: flex; flex: 1 1 13rem; min-width: 0; }
-  .s-shopping-product > form { margin-left: auto; }
+  .s-shopping-product > form.s-product-open:first-of-type { margin-left: auto; }
+
+  /* The package sizes an ingredient knows beyond the one it is buying. Only
+     drawn where there is more than one, so an ordinary row shows none of it. */
+  .s-product-sizes {
+    flex-basis: 100%; display: grid; gap: .3rem;
+    margin: .2rem 0 0; padding-top: .5rem;
+    border-top: 1px solid var(--edge);
+  }
+  .s-product-sizes > li {
+    display: flex; align-items: center; gap: .5rem; font-size: .85rem;
+  }
+  .s-product-size-name { flex: 1 1 8rem; min-width: 0; overflow-wrap: break-word; }
+  .s-product-sizes form { margin-left: auto; }
+  .s-product-sizes button { min-height: var(--tap-compact); }
+
+  /* How far a choice reaches — asked once above the results, not per product. */
+  .s-product-scope-choice {
+    display: block; margin: 0 0 .7rem; font-size: .85rem; color: var(--muted);
+  }
+  .s-product-scope-choice select { width: 100%; }
+  .s-product-size-entry {
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: .4rem;
+    font-size: .8rem; color: var(--muted);
+  }
+  .s-product-size-entry input { width: 4.5rem; }
 
   /* The one loading indicator, shared by everything on this screen that waits
      on the network (#159): a saving row, the send button, and the read of the
@@ -750,6 +786,7 @@ const STYLES = `
     border: 1px solid var(--edge); border-radius: var(--radius);
   }
   .s-product-results form { flex: 0 0 auto; margin-left: auto; }
+  .s-product-results > li > button { flex: 0 0 auto; margin-left: auto; }
 
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;
