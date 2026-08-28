@@ -63,6 +63,8 @@ import {
   recipeImageSplitter,
 } from "./recipe-image-admin.ts";
 import {
+  apiAdminPutRecipeImage,
+  apiAdminRecipeImage,
   apiDeleteRecipeImage,
   apiPutRecipeImage,
   apiRecipeImage,
@@ -205,6 +207,8 @@ const router = new Router()
   .get("/admin/recipe-images", requireAdminScreen(recipeImageAdminScreen))
   .get("/admin/recipe-images/confirm", requireAdminScreen(recipeImageConfirmScreen))
   .get("/admin/recipe-images/split.js", requireAdminScreen(recipeImageSplitter))
+  .get("/api/admin/recipe-images/:id", requireAdmin(apiAdminRecipeImage))
+  .put("/api/admin/recipe-images/:id", requireAdmin(apiAdminPutRecipeImage))
   .get("/api/admin/status", requireAdmin(adminStatus));
 
 export default {

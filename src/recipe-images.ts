@@ -83,6 +83,39 @@ export async function apiRecipeImage(
     return problem(404, "No image for that recipe.");
   }
 
+  return serveRecipeImage(env, request, row);
+}
+
+/** GET /api/admin/recipe-images/:id — admin-only private thumbnail access. */
+export async function apiAdminRecipeImage(
+  { env, request, params }: RouteContext,
+  _member: Member,
+): Promise<Response> {
+  const recipeId = parseRecipeId(params["id"]);
+  if (recipeId === null) return problem(404, "No such recipe.");
+
+  const row = await env.DB
+    .prepare(
+      `SELECT image_key
+         FROM recipe
+        WHERE id = ? AND parent_id IS NULL`,
+    )
+    .bind(recipeId)
+    .first<ImageRow>();
+  if (row === null || row.image_key === null) {
+    return problem(404, "No image for that recipe.");
+  }
+
+  return serveRecipeImage(env, request, row);
+}
+
+async function serveRecipeImage(
+  env: RouteContext["env"],
+  request: Request,
+  row: ImageRow,
+): Promise<Response> {
+  if (row.image_key === null) return problem(404, "No image for that recipe.");
+
   // A key is unique per upload, but the URL that reaches it is not: replacing
   // an image leaves `/api/recipes/:id/image` pointing at different bytes. So
   // the browser revalidates every time and pays for the body only when the
@@ -128,6 +161,64 @@ export async function apiPutRecipeImage(
   const row = await imageRow(env.DB, member.householdId, recipeId);
   if (row === null) return problem(404, "No such recipe.");
 
+  return putRecipeImage(
+    env,
+    request,
+    url,
+    member.householdId,
+    recipeId,
+    row,
+  );
+}
+
+/**
+ * PUT /api/admin/recipe-images/:id — the admin image manager's only write.
+ *
+ * This route deliberately resolves the recipe's owner instead of using the
+ * admin's household. It is separately protected by `requireAdmin` in the route
+ * table, accepts generated pictures only, and limits the exception to dishes
+ * the admin screen can actually select. The ordinary image API above keeps its
+ * household predicate unchanged.
+ */
+export async function apiAdminPutRecipeImage(
+  { env, request, url, params }: RouteContext,
+  _member: Member,
+): Promise<Response> {
+  const recipeId = parseRecipeId(params["id"]);
+  if (recipeId === null) return problem(404, "No such recipe.");
+
+  const owner = await env.DB
+    .prepare(
+      `SELECT household_id, image_key
+         FROM recipe
+        WHERE id = ? AND parent_id IS NULL`,
+    )
+    .bind(recipeId)
+    .first<{ household_id: number; image_key: string | null }>();
+  if (owner === null) return problem(404, "No such recipe.");
+
+  if (url.searchParams.get("origin") !== "generated") {
+    return problem(400, "Admin image generation requires origin=generated.");
+  }
+
+  return putRecipeImage(
+    env,
+    request,
+    url,
+    owner.household_id,
+    recipeId,
+    owner,
+  );
+}
+
+async function putRecipeImage(
+  env: RouteContext["env"],
+  request: Request,
+  url: URL,
+  householdId: number,
+  recipeId: number,
+  row: ImageRow,
+): Promise<Response> {
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_IMAGE_BYTES) {
     return problem(413, tooLarge().english);
@@ -141,7 +232,7 @@ export async function apiPutRecipeImage(
   let provenance: ImageProvenance = MANUAL;
   if (origin === "generated") {
     const stated = url.searchParams.get("fingerprint");
-    const fingerprint = stated ?? (await currentFingerprint(env.DB, member.householdId, recipeId));
+    const fingerprint = stated ?? (await currentFingerprint(env.DB, householdId, recipeId));
     if (fingerprint === null) return problem(404, "No such recipe.");
     provenance = {
       origin: "generated",
@@ -157,7 +248,7 @@ export async function apiPutRecipeImage(
 
   const refusal = await storeRecipeImage(
     env,
-    member.householdId,
+    householdId,
     recipeId,
     expectedKey,
     await request.arrayBuffer(),
