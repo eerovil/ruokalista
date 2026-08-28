@@ -252,6 +252,49 @@ test("a long recipe splits the ingredients in two rather than shrinking to the f
   }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
 });
 
+test("an instructions-heavy recipe is not split, because widening the ingredients would cost the long side", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, wordyRecipe());
+  await expect(page.getByRole("heading", { name: "Karjalanpaisti" }))
+    .toBeVisible();
+
+  // Splitting here would take width from the column that did not fit, so the
+  // receiver measures the overflow, sees it get no smaller, and puts the
+  // single-column layout back.
+  await expect(page.locator(".columns")).toHaveClass("columns");
+  const items = page.locator(".ingredients li");
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBe(first!.x);
+
+  const kept = await scale(page);
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+
+  // What the receiver avoided: forcing the split on this recipe and shrinking
+  // from there ends up smaller than what it kept. This is the property, not a
+  // fixed number — a split is only worth having when it buys bigger type.
+  const forced = await page.evaluate(() => {
+    const root = document.getElementById("recipe")!;
+    root.querySelector(".columns")!.className = "columns split";
+    let scale = 1;
+    root.style.setProperty("--fit", String(scale));
+    while (root.scrollHeight > root.clientHeight && scale > 0.58) {
+      scale = Math.round((scale - 0.04) * 100) / 100;
+      root.style.setProperty("--fit", String(scale));
+    }
+    return scale;
+  });
+  expect(kept).toBeGreaterThan(forced);
+});
+
 test("a short recipe keeps one ingredient column at full size on a small receiver", async ({
   page,
 }) => {
@@ -353,6 +396,43 @@ function longRecipe(): object {
         "Lisää kerma ja sinappi, tarkista maku.",
         "Pilko salaatti, tomaatti ja kurkku kulhoon.",
         "Tarjoa stroganoff perunoiden, tillin ja salaatin kanssa.",
+      ],
+    }],
+  };
+}
+
+/** The other way round: four ingredients and a page of method (#180). */
+function wordyRecipe(): object {
+  return {
+    version: 1,
+    title: "Karjalanpaisti",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "1 kg naudan lapaa",
+        "2 kpl sipulia",
+        "2 kpl porkkanaa",
+        "1 rkl kokonaisia maustepippureita",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Ota liha huoneenlämpöön hyvissä ajoin ennen kuin alat valmistaa paistia, jotta se kypsyy tasaisesti.",
+        "Leikkaa liha reiluiksi paloiksi ja poista suurimmat kalvot, mutta jätä rasva paikoilleen makua antamaan.",
+        "Kuori sipulit ja lohko ne neljään osaan, kuori porkkanat ja paloittele ne paksuiksi kiekoiksi.",
+        "Ripottele padan pohjalle osa mausteista, lado sitten liha ja kasvikset kerroksittain padan täyteen.",
+        "Ripottele loput maustepippurit ja suola päällimmäisen kerroksen päälle.",
+        "Kaada pataan kylmää vettä sen verran, että se juuri peittää lihat, äläkä sekoita sen jälkeen.",
+        "Kuumenna uuni 150 asteeseen ja nosta pata kannen kanssa uunin alatasolle.",
+        "Anna paistin hautua rauhassa vähintään kolme tuntia, mieluummin neljä, kunnes liha hajoaa haarukalla.",
+        "Tarkista puolivälissä, että nestettä on yhä riittävästi, ja lisää tarvittaessa kuumaa vettä.",
+        "Ota kansi pois viimeisen puolen tunnin ajaksi, jos haluat pinnalle hieman väriä.",
+        "Nosta pata uunista ja anna sen tasaantua liedellä kymmenen minuuttia ennen tarjoilua.",
+        "Maista ja lisää suolaa vasta nyt, sillä liemi väkevöityy pitkän haudutuksen aikana.",
+        "Tarjoa paisti perunamuusin tai keitettyjen perunoiden ja puolukkasurvoksen kanssa.",
+        "Säilytä tähteet liemessään jääkaapissa, sillä paisti maistuu seuraavana päivänä vielä paremmalta.",
       ],
     }],
   };
