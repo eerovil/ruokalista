@@ -15,6 +15,7 @@ import {
   type SharingDraft,
 } from "./recipe-publish.ts";
 import {
+  askedCategory,
   findReadableRecipe,
   ownRecipeList,
   renderRecipe,
@@ -87,7 +88,15 @@ export async function publishForm(
 
   return page(
     "Reseptit",
-    await ownRecipeList(env.DB, member, query, doneNotice(action, outcome)),
+    await ownRecipeList(
+      env.DB,
+      member,
+      query,
+      doneNotice(action, outcome),
+      // The list came back to the same category it was filtered to, so a bulk
+      // publish does not silently move the reader somewhere else (#196).
+      askedCategory(String(form.get("kategoria") ?? "") || null),
+    ),
     "recipes",
     member,
   );

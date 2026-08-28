@@ -1728,3 +1728,57 @@ test.describe("ingredient alternatives", () => {
     });
   });
 });
+
+test.describe("categories (#196)", () => {
+  test("picking, reading and filtering by a category", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // The picker as it sits in the editor: one tap per category, no heavier
+    // than the fields around it.
+    await page.goto("/recipes/1/edit");
+    const picker = page.locator(".category-choices");
+    await picker.getByLabel("Uuniruoka").check();
+    await picker.getByLabel("Lisuke").check();
+    await capture(page, {
+      path: `${SHOTS}/75-recipe-category-editor.png`,
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/1$/);
+
+    // The recipe, carrying both categories under its title.
+    const tags = page.locator(".category-tags");
+    await expect(tags).toContainText("Uuniruoka");
+    await expect(tags).toContainText("Lisuke");
+    await capture(page, {
+      path: `${SHOTS}/76-recipe-categories.png`,
+      fullPage: true,
+    });
+
+    // A second dish in one of them, so the filter has something to choose
+    // between rather than a single chip standing on its own.
+    await page.goto("/recipes/3/edit");
+    await page.locator(".category-choices").getByLabel("Uuniruoka").check();
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/3$/);
+
+    // The list standing in a category: the chip row above it, and only the
+    // recipes that are in it below.
+    await page.goto("/recipes");
+    const filter = page.locator(".category-filter");
+    await expect(filter.getByRole("link")).toHaveText([
+      "Kaikki",
+      "Uuniruoka",
+      "Lisuke",
+    ]);
+    await filter.getByRole("link", { name: "Uuniruoka" }).click();
+    await expect(page.locator(".recipes li")).toHaveCount(2);
+    await capture(page, {
+      path: `${SHOTS}/77-recipes-category-filter.png`,
+      fullPage: true,
+    });
+  });
+});

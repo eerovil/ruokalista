@@ -7,6 +7,7 @@ import {
   normalizeGroups,
   type AlternativeGroup,
 } from "./alternatives.ts";
+import { isCategorySlug } from "./categories.ts";
 import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
 
 /**
@@ -85,6 +86,14 @@ export interface RecipeToSave {
   structuredBy: string | null;
   steps: StepToSave[];
   lines: LineToSave[];
+  /**
+   * What kind of food this is (#196), as slugs from `src/categories.ts`.
+   *
+   * The dish's own, and only the dish's: a part is a recipe row (ADR-0002) but
+   * it is not a thing anybody browses for, so `saveRecipe` writes these on the
+   * parent and gives each part none.
+   */
+  categories: string[];
 }
 
 export class SaveRefused extends Error {}
@@ -127,6 +136,7 @@ export async function saveRecipe(
       position: null,
     }),
     ...childrenOf(db, recipeId, lines, recipe.steps, null),
+    ...categoryStatements(db, recipeId, recipe.categories),
   ];
 
   // Each named part becomes a recipe of its own, hanging off the dish.
@@ -210,7 +220,9 @@ export async function replaceRecipe(
     ...ingredientStatements(db, member, newIngredients, guard),
     guardedDelete(db, "recipe_step", recipeId, guard),
     guardedDelete(db, "ingredient_line", recipeId, guard),
+    guardedDelete(db, "recipe_category", recipeId, guard),
     ...childrenOf(db, recipeId, lines, recipe.steps, null, guard),
+    ...categoryStatements(db, recipeId, recipe.categories, guard),
   ];
 
   const results = await db.batch(statements);
@@ -530,9 +542,48 @@ function ingredientStatements(
   });
 }
 
+/**
+ * A recipe's categories (#196), replaced wholesale like its other children.
+ *
+ * `readCategories` has already dropped anything outside the vocabulary and
+ * collapsed duplicates, so nothing here can collide on the table's
+ * `(recipe_id, category)` key.
+ */
+function categoryStatements(
+  db: D1Database,
+  recipeId: number,
+  categories: readonly string[],
+  guard?: RecipeGuard,
+): D1PreparedStatement[] {
+  return categories.map((category) => {
+    if (guard === undefined) {
+      return db
+        .prepare(`INSERT INTO recipe_category (recipe_id, category) VALUES (?, ?)`)
+        .bind(recipeId, category);
+    }
+
+    return db
+      .prepare(
+        `INSERT INTO recipe_category (recipe_id, category)
+         SELECT ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM recipe
+             WHERE id = ? AND household_id = ? AND edit_token = ?
+          )`,
+      )
+      .bind(
+        recipeId,
+        category,
+        guard.recipeId,
+        guard.householdId,
+        guard.writeToken,
+      );
+  });
+}
+
 function guardedDelete(
   db: D1Database,
-  table: "recipe_step" | "ingredient_line",
+  table: "recipe_step" | "ingredient_line" | "recipe_category",
   recipeId: number,
   guard: RecipeGuard,
 ): D1PreparedStatement {
@@ -661,6 +712,12 @@ export function validateRecipe(
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
+  }
+  // Enforced here as well as on the form, for the same reason the ingredient
+  // gate is: an AgentDeck bundle (#82) reaches this function without passing a
+  // screen, and a category nobody can filter by is not worth storing.
+  if (recipe.categories.some((slug) => !isCategorySlug(slug))) {
+    throw new SaveRefused("Tuntematon kategoria.");
   }
   // Both halves of a choice are used at the same moment, so they belong to the
   // same part and the same cooking-order section (#183). Letting one span two

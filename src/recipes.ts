@@ -7,6 +7,15 @@ import {
   sharedSource,
   type AlternativeGroup,
 } from "./alternatives.ts";
+import {
+  CATEGORY_STYLE,
+  categoriesForRecipe,
+  categoriesForRecipes,
+  categoryFilter,
+  categoryLabel,
+  categoryTags,
+  isCategorySlug,
+} from "./categories.ts";
 import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
@@ -78,6 +87,12 @@ export interface RecipeSummary {
   publishedAt: string | null;
   /** Selected households that may read it while it is not public. */
   shareCount: number;
+  /**
+   * What kind of food this is (#196), as slugs from `src/categories.ts`, in
+   * vocabulary order. Empty is the ordinary state, not missing data — it is
+   * what every recipe stored before #196 carries.
+   */
+  categories: string[];
 }
 
 export interface RecipeLine extends Measurement {
@@ -164,7 +179,7 @@ export async function recipeSummaries(
     .bind(householdId)
     .all<SummaryRow>();
 
-  return filterByTitle(results.map(toSummary), query);
+  return withCategories(db, filterByTitle(results.map(toSummary), query));
 }
 
 /**
@@ -199,7 +214,47 @@ export async function publicRecipeSummaries(
     .bind(householdId, householdId)
     .all<SummaryRow>();
 
-  return filterByTitle(results.map(toSummary), query);
+  return withCategories(db, filterByTitle(results.map(toSummary), query));
+}
+
+/**
+ * Fill in each summary's categories (#196).
+ *
+ * One query for the whole list rather than a join on `SUMMARY_SELECT`: a
+ * recipe has several categories, so joining would multiply the rows and every
+ * caller would have to fold them back up. Asked after the title filter, so a
+ * search pays only for what it is going to show.
+ */
+async function withCategories(
+  db: D1Database,
+  summaries: RecipeSummary[],
+): Promise<RecipeSummary[]> {
+  const byRecipe = await categoriesForRecipes(
+    db,
+    summaries.map((summary) => summary.id),
+  );
+  return summaries.map((summary) => ({
+    ...summary,
+    categories: byRecipe.get(summary.id) ?? [],
+  }));
+}
+
+/**
+ * The category a list was asked to show, or null for all of them.
+ *
+ * An unknown slug is read as no filter rather than as an empty list: a stale
+ * bookmark should show the recipes, not an empty screen with no way back.
+ */
+export function askedCategory(value: string | null): string | null {
+  return value !== null && isCategorySlug(value) ? value : null;
+}
+
+function inCategory(
+  summaries: RecipeSummary[],
+  category: string | null,
+): RecipeSummary[] {
+  if (category === null) return summaries;
+  return summaries.filter((recipe) => recipe.categories.includes(category));
 }
 
 /**
@@ -231,6 +286,8 @@ function toSummary(row: SummaryRow): RecipeSummary {
     householdName: row.household_name,
     publishedAt: row.published_at,
     shareCount: row.share_count,
+    // Filled in by `withCategories`, which asks for a whole list at once.
+    categories: [],
   };
 }
 
@@ -392,9 +449,15 @@ async function loadRecipe(
   // Product overrides belong to the planned dish. A part is loaded as its own
   // recipe row, but the shopping list stores its choice against the parent.
   const productRecipeId = row.parent_id ?? row.id;
-  const [products, overrides] = await Promise.all([
+  const [products, overrides, categories] = await Promise.all([
     productsForIngredients(db, ingredientIds),
     overridesForRecipes(db, productHouseholdId, [productRecipeId]),
+    // Only a dish is categorised (#196). A part is a recipe row (ADR-0002) but
+    // it is not a thing anybody browses for, so asking would be a query per
+    // part for an answer that is always empty.
+    row.parent_id === null
+      ? categoriesForRecipe(db, row.id)
+      : Promise.resolve<string[]>([]),
   ]);
 
   // One level only: a part cannot itself have parts, so this never recurses
@@ -421,6 +484,7 @@ async function loadRecipe(
     householdName: row.household_name,
     publishedAt: row.published_at,
     shareCount: row.share_count,
+    categories,
     parentId: row.parent_id,
     parts,
     steps: steps.map((step) => ({
@@ -503,6 +567,7 @@ function summaryForApi(summary: RecipeSummary): object {
     householdName: _householdName,
     publishedAt: _publishedAt,
     shareCount: _shareCount,
+    categories: _categories,
     ...wire
   } = summary;
   return wire;
@@ -532,6 +597,12 @@ export async function apiShowRecipe(
  * plainer one. Lines sharing a number, within one recipe object, are options
  * for each other and the first is the default.
  *
+ * `categories` (#196) is stripped for the first reason rather than the second.
+ * It says what kind of food a dish is, which is how somebody *finds* a recipe
+ * on the list screen; it changes nothing about what the recipe is or how it is
+ * cooked, so a caller adding these lines up reads exactly the same dish with or
+ * without it.
+ *
  * `tests/alternatives.spec.ts` pins the exact key set of both objects against
  * the live route, so nothing joins or leaves this shape by accident again.
  */
@@ -541,6 +612,7 @@ function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
     householdName: _householdName,
     publishedAt: _publishedAt,
     shareCount: _shareCount,
+    categories: _categories,
     parentId: _parentId,
     ...wire
   } = recipe;
@@ -574,7 +646,13 @@ export async function recipeListScreen(
   const query = url.searchParams.get("q") ?? "";
   return page(
     "Reseptit",
-    await ownRecipeList(env.DB, member, query, null),
+    await ownRecipeList(
+      env.DB,
+      member,
+      query,
+      null,
+      askedCategory(url.searchParams.get("kategoria")),
+    ),
     "recipes",
     member,
   );
@@ -591,8 +669,10 @@ export async function ownRecipeList(
   member: Member,
   query: string,
   notice: ListNotice | null,
+  category: string | null = null,
 ): Promise<Raw> {
-  const recipes = await recipeSummaries(db, member.householdId, query);
+  const matching = await recipeSummaries(db, member.householdId, query);
+  const recipes = inCategory(matching, category);
 
   return html`<h1>Reseptit</h1>
     <p class="public-link"><a href="/recipes/julkiset">Jaetut reseptit</a></p>
@@ -604,19 +684,27 @@ export async function ownRecipeList(
         placeholder="Hae nimellä"
         aria-label="Hae nimellä"
       />
+      <!-- The chosen category is a place, so a name search made while standing
+           in one stays in it rather than silently widening the list. -->
+      ${category === null
+        ? ""
+        : html`<input type="hidden" name="kategoria" value="${category}" />`}
       <button type="submit">Hae</button>
     </form>
+    ${categoryFilter("/recipes", query, category, availableCategories(matching))}
     ${noticeLine(notice)}
     ${recipes.length === 0
       ? // An empty state that only states the emptiness leaves the reader to
         // work out what to do about it. Both of these say the next move.
         html`<div class="nothing">
           <p class="empty">
-            ${query.trim() === ""
-              ? "Reseptejä ei ole vielä yhtään."
-              : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
+            ${category !== null
+              ? `Kategoriassa ${categoryLabel(category)} ei ole yhtään reseptiä.`
+              : query.trim() === ""
+                ? "Reseptejä ei ole vielä yhtään."
+                : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
           </p>
-          ${query.trim() === ""
+          ${category === null && query.trim() === ""
             ? html`<p><a class="button" href="/intake">Lisää ensimmäinen</a></p>`
             : html`<p><a href="/recipes">Näytä kaikki reseptit</a></p>`}
         </div>`
@@ -628,6 +716,9 @@ export async function ownRecipeList(
         // a whole list with its actions underneath.
         html`<form method="post" action="/recipes/julkaisu" class="stacked">
           <input type="hidden" name="q" value="${query}" />
+          ${category === null
+            ? ""
+            : html`<input type="hidden" name="kategoria" value="${category}" />`}
           <ul class="recipes is-selectable">
             ${recipes.map(
               (recipe) => html`<li>
@@ -643,7 +734,7 @@ export async function ownRecipeList(
                   <span class="recipes-text">
                     ${recipe.title}
                     <span class="meta"
-                      >${finnishDate(recipe.createdAt)} · ${recipe.createdBy}</span
+                      >${metaLine(recipe)}</span
                     >
                   </span>
                   ${sharingBadge(recipe)}
@@ -660,7 +751,8 @@ export async function ownRecipeList(
             </button>
           </p>
         </form>`}
-    ${PUBLISH_STYLE}`;
+    ${PUBLISH_STYLE}
+    ${CATEGORY_STYLE}`;
 }
 
 /**
@@ -675,7 +767,13 @@ export async function publicRecipeListScreen(
   member: Member,
 ): Promise<Response> {
   const query = url.searchParams.get("q") ?? "";
-  const recipes = await publicRecipeSummaries(env.DB, member.householdId, query);
+  const category = askedCategory(url.searchParams.get("kategoria"));
+  const matching = await publicRecipeSummaries(
+    env.DB,
+    member.householdId,
+    query,
+  );
+  const recipes = inCategory(matching, category);
 
   return page(
     "Jaetut reseptit",
@@ -693,16 +791,27 @@ export async function publicRecipeListScreen(
           placeholder="Hae nimellä"
           aria-label="Hae nimellä"
         />
+        ${category === null
+          ? ""
+          : html`<input type="hidden" name="kategoria" value="${category}" />`}
         <button type="submit">Hae</button>
       </form>
+      ${categoryFilter(
+        "/recipes/julkiset",
+        query,
+        category,
+        availableCategories(matching),
+      )}
       ${recipes.length === 0
         ? html`<div class="nothing">
             <p class="empty">
-              ${query.trim() === ""
-                ? "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille."
-                : `Haku "${query.trim()}" ei löytänyt yhtään jaettua reseptiä.`}
+              ${category !== null
+                ? `Kategoriassa ${categoryLabel(category)} ei ole yhtään jaettua reseptiä.`
+                : query.trim() === ""
+                  ? "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille."
+                  : `Haku "${query.trim()}" ei löytänyt yhtään jaettua reseptiä.`}
             </p>
-            ${query.trim() === ""
+            ${category === null && query.trim() === ""
               ? ""
               : html`<p><a href="/recipes/julkiset">Näytä kaikki jaetut</a></p>`}
           </div>`
@@ -713,7 +822,11 @@ export async function publicRecipeListScreen(
                   ${recipeImage(recipe, "thumb")}
                   <span class="recipes-text">
                     ${recipe.title}
-                    <span class="meta">${recipe.householdName}</span>
+                    <span class="meta"
+                      >${recipe.categories.length === 0
+                        ? recipe.householdName
+                        : `${recipe.householdName} · ${recipe.categories.map(categoryLabel).join(", ")}`}</span
+                    >
                   </span>
                   <span class="badge is-published">
                     ${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}
@@ -722,10 +835,33 @@ export async function publicRecipeListScreen(
               </li>`,
             )}
           </ul>`}
-      ${PUBLISH_STYLE}`,
+      ${PUBLISH_STYLE}
+    ${CATEGORY_STYLE}`,
     "recipes",
     member,
   );
+}
+
+/**
+ * Which categories are worth offering as chips: the ones something in this
+ * list actually has. A chip that leads to an empty screen is a chip that made
+ * the reader do the work of finding out it was empty.
+ */
+function availableCategories(recipes: readonly RecipeSummary[]): string[] {
+  return [...new Set(recipes.flatMap((recipe) => recipe.categories))];
+}
+
+/**
+ * A row's second line. The categories ride on the line that is already there
+ * rather than on chips of their own, because a list of a few hundred recipes
+ * with a chip row inside every row is a list nobody can scan.
+ */
+function metaLine(recipe: RecipeSummary): string {
+  const parts = [finnishDate(recipe.createdAt), recipe.createdBy];
+  if (recipe.categories.length > 0) {
+    parts.push(recipe.categories.map(categoryLabel).join(", "));
+  }
+  return parts.join(" · ");
 }
 
 function sharingBadge(recipe: RecipeSummary): Raw {
@@ -1068,6 +1204,10 @@ function recipeBody(
           : html`<p class="meta source-yield">
               Lähteessä ${recipe.yieldPortions} annosta
             </p>`}
+        <!-- What kind of food this is (#196). Under the title with the rest of
+             the recipe's own facts, not beside the edit link: it is part of
+             reading the recipe, not part of changing it. -->
+        ${categoryTags(recipe.categories)}
         ${castSender(recipe, multiplier, castApplicationId)}
       </div>
     </div>
@@ -1116,6 +1256,7 @@ function recipeBody(
     ${RECIPE_VIEW_STYLE}
     ${MENTION_STYLE}
     ${PUBLISH_STYLE}
+    ${CATEGORY_STYLE}
     ${canRevealAmounts ? html`<script>${raw(REVEAL_ALL_ISLAND)}</script>` : ""}
 
     ${sharingSection(recipe, view)}

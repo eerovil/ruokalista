@@ -253,6 +253,54 @@ number and each option's own ingredient. It is optional on the wire so an
 AgentDeck bundle written before this still imports. See
 [intake](intake.md).
 
+## What kind of food a recipe is (issue #196)
+
+Proposed here: a recipe carries any number of categories — *Pasta*, *Keitto*,
+*Uuniruoka* — and the list filters by one. `src/categories.ts` owns the whole
+idea and is the file to read first;
+[ADR-0012](../adr/0012-a-category-belongs-to-the-recipe-not-the-household.md)
+holds the two decisions behind its shape and what they cost.
+
+**No category is the ordinary state**, not missing data. Every recipe stored
+before this has none, and every screen is written to read it that way: no tags
+under the title, no extra segment on a list row, and no filter row at all until
+something in the list is categorised.
+
+- **A category belongs to the dish, not to the household.** The table carries no
+  `household_id`, so a recipe shared under #143 or #185 says the same thing in
+  every kitchen that can read it. The vocabulary is closed and lives in code for
+  exactly that reason — a household-coined name would mean nothing to whoever
+  the recipe was shared with. A household's own habit still belongs on
+  `recipe_preference`, which is the other kind of fact and is scoped the other
+  way.
+- **Only a dish is categorised.** A part is a recipe row (ADR-0002) but nobody
+  browses for a *juustokastike*, so the editor renders the picker only where
+  `parentId` is null and `loadRecipe` does not ask for a part's categories.
+- **The picker is checkboxes and no script**, the standing rule on the editing
+  path. It is on the editor, and on the import review screen *outside* its
+  `Muokkaa ennen tallennusta` disclosure — the 99% of imports that need no
+  correction (#53) would otherwise save with no category at all, and the moment
+  somebody is looking at a freshly imported dish is the moment they know what it
+  is. Nothing asks the model for one.
+- **The filter is a place, not a control.** `/recipes?kategoria=<slug>` is a
+  link, so it survives the back button, a bookmark and a reload with no script.
+  A name search made inside a category keeps it, a bulk publish comes back to
+  it, and an unknown slug reads as no filter so a stale bookmark shows the
+  recipes rather than an empty screen.
+- **Only categories the list actually has get a chip.** A chip that leads
+  nowhere makes the reader do the work of finding out it was empty. The chip
+  being stood on is the exception and stays, or unticking the last recipe in a
+  category would take away the only way back.
+- **The chip row scrolls sideways rather than wrapping**, because the point of a
+  filter above a list on a phone is that the list is still visible under it.
+
+`categories` is deliberately **not** on the `/api/recipes` wire. Unlike
+`alternativeGroup`, which changes what a recipe means, a category only changes
+how somebody finds it, so a caller reads the same dish with or without it — and
+`tests/alternatives.spec.ts` pins that key set. `dev/check-categories.ts` covers
+the vocabulary and the filter's links; `tests/categories.spec.ts` covers the
+screens.
+
 ## Publishing a recipe (issue #143)
 
 Proposed here: a household may publish a dish, and a published dish is readable
