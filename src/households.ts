@@ -1,4 +1,4 @@
-import { isGoogleSub } from "./google.ts";
+import { isGoogleSub, type GoogleIdentity } from "./google.ts";
 
 /**
  * The only cross-household queries in the app, and the one place they are
@@ -47,6 +47,12 @@ export interface HouseholdMember {
   googleSub: string;
 }
 
+export interface InvitedHouseholdMember {
+  id: number;
+  householdId: number;
+  email: string;
+}
+
 interface HouseholdRow {
   id: number;
   name: string;
@@ -60,6 +66,12 @@ interface HouseholdMemberRow {
   email: string | null;
   google_sub: string;
   is_admin: number;
+}
+
+interface InvitedHouseholdMemberRow {
+  id: number;
+  household_id: number;
+  email: string;
 }
 
 const HOUSEHOLD_MEMBER_COLUMNS =
@@ -151,6 +163,46 @@ export async function membersOfHousehold(
   return results.map(toHouseholdMember);
 }
 
+/** Email-only memberships waiting for their verified Google account to arrive. */
+export async function invitationsOfHousehold(
+  db: D1Database,
+  householdId: number,
+): Promise<InvitedHouseholdMember[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, household_id, email FROM member_invitation
+        WHERE household_id = ? ORDER BY id`,
+    )
+    .bind(householdId)
+    .all<InvitedHouseholdMemberRow>();
+
+  return results.map((row) => ({
+    id: row.id,
+    householdId: row.household_id,
+    email: row.email,
+  }));
+}
+
+/** Revoke an invitation before the email address can claim it. */
+export async function removeMemberInvitation(
+  db: D1Database,
+  householdId: number,
+  invitationId: number,
+): Promise<void> {
+  const removed = Number.isInteger(invitationId)
+    ? await db
+        .prepare(
+          `DELETE FROM member_invitation WHERE id = ? AND household_id = ?`,
+        )
+        .bind(invitationId, householdId)
+        .run()
+    : null;
+
+  if (removed === null || removed.meta.changes === 0) {
+    throw new HouseholdRefused("Tuntematon odottava jäsenyys.");
+  }
+}
+
 /** The new household's id, so the caller can send the operator straight to it. */
 export async function createHousehold(
   db: D1Database,
@@ -191,22 +243,93 @@ export interface MemberInput {
  * wall. This is that INSERT, with the mistakes it is easy to make in a terminal
  * caught first.
  */
-export async function addMember(
+export async function inviteMember(
   db: D1Database,
   householdId: number,
-  input: MemberInput,
-): Promise<number> {
-  const fields = await memberFields(db, input, null);
+  rawEmail: string,
+  createdBy: number,
+): Promise<void> {
+  const email = normalizeMemberEmail(rawEmail);
+  const clash = await emailClash(db, email, null);
+  if (clash !== null) throw duplicateEmail(clash);
 
-  const inserted = await db
+  const result = await db
     .prepare(
-      `INSERT INTO member (household_id, google_sub, display_name, email)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO member_invitation (household_id, email, created_by)
+       SELECT ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM member
+           WHERE removed_at IS NULL AND email IS NOT NULL
+             AND lower(trim(email)) = ?
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM member_invitation WHERE email = ? COLLATE NOCASE
+          )`,
     )
-    .bind(householdId, fields.googleSub, fields.displayName, fields.email)
+    .bind(householdId, email, createdBy, email, email)
     .run();
 
-  return Number(inserted.meta.last_row_id);
+  // D1 serializes this statement with member edits. If one claimed the email
+  // after the friendly preflight above, the conditional insert changes no row.
+  if (result.meta.changes === 0) {
+    const raced = await emailClash(db, email, null);
+    if (raced !== null) throw duplicateEmail(raced);
+    throw new HouseholdRefused("Sähköpostia ei voitu lisätä. Yritä uudelleen.");
+  }
+}
+
+/**
+ * Turn an email-only invitation into the real member row on first sign-in.
+ *
+ * The caller has already tried the permanent Google `sub` first. Email is used
+ * only here, once, and only when Google says it verified the address. The D1
+ * batch is one transaction: either the member is inserted and the invitation
+ * consumed, or neither happens.
+ */
+export async function claimMemberInvitation(
+  db: D1Database,
+  identity: GoogleIdentity,
+): Promise<void> {
+  if (
+    !identity.emailVerified ||
+    !identity.emailAuthoritative ||
+    identity.email === null
+  ) return;
+
+  let email: string;
+  try {
+    email = normalizeMemberEmail(identity.email);
+  } catch {
+    return;
+  }
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO member
+           (household_id, google_sub, display_name, email)
+         SELECT invitation.household_id, ?, ?, invitation.email
+           FROM member_invitation invitation
+          WHERE invitation.email = ? COLLATE NOCASE
+            AND NOT EXISTS (
+              SELECT 1 FROM member
+               WHERE removed_at IS NULL AND email IS NOT NULL
+                 AND lower(trim(email)) = ?
+            )`,
+      )
+      .bind(identity.sub, identity.name.trim() || "Tuntematon", email, email),
+    db
+      .prepare(
+        `DELETE FROM member_invitation
+          WHERE email = ? COLLATE NOCASE
+            AND EXISTS (
+              SELECT 1 FROM member
+               WHERE google_sub = ? AND removed_at IS NULL
+                 AND lower(trim(email)) = ?
+            )`,
+      )
+      .bind(email, identity.sub, email),
+  ]);
 }
 
 /**
@@ -231,10 +354,29 @@ export async function updateMember(
     throw new HouseholdRefused(adminRowGuard(row.display_name, "sub"));
   }
 
-  await db
+  const updated = await db
     .prepare(
       `UPDATE member SET display_name = ?, email = ?, google_sub = ?
-        WHERE id = ? AND household_id = ?`,
+        WHERE id = ? AND household_id = ?
+          AND is_admin = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM member other
+             WHERE other.google_sub = ? AND other.id <> ?
+          )
+          AND (
+            ? IS NULL
+            OR (
+              NOT EXISTS (
+                SELECT 1 FROM member other
+                 WHERE other.removed_at IS NULL AND other.email IS NOT NULL
+                   AND lower(trim(other.email)) = ? AND other.id <> ?
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM member_invitation
+                 WHERE email = ? COLLATE NOCASE
+              )
+            )
+          )`,
     )
     .bind(
       fields.displayName,
@@ -242,8 +384,32 @@ export async function updateMember(
       fields.googleSub,
       memberId,
       householdId,
+      row.is_admin,
+      fields.googleSub,
+      memberId,
+      fields.email,
+      fields.email,
+      memberId,
+      fields.email,
     )
     .run();
+
+  // Keep the duplicate check and write in one serialized statement. An invite
+  // may have claimed the address after memberFields() produced its friendly
+  // preflight refusal.
+  if (updated.meta.changes === 0) {
+    const current = await memberRowOf(db, householdId, memberId);
+    if (current.is_admin === 1 && fields.googleSub !== current.google_sub) {
+      throw new HouseholdRefused(adminRowGuard(current.display_name, "sub"));
+    }
+    const raced = await googleSubClash(db, fields.googleSub, memberId);
+    if (raced !== null) throw duplicateGoogleSub(raced);
+    if (fields.email !== null) {
+      const emailRace = await emailClash(db, fields.email, memberId);
+      if (emailRace !== null) throw duplicateEmail(emailRace);
+    }
+    throw new HouseholdRefused("Jäsentä ei voitu päivittää. Yritä uudelleen.");
+  }
 }
 
 /**
@@ -281,16 +447,24 @@ export async function removeMember(
     throw new HouseholdRefused(adminRowGuard(row.display_name, "delete"));
   }
 
-  await db
+  const removed = await db
     .prepare(
       `UPDATE member
           SET removed_at = datetime('now'),
               removed_google_sub = google_sub,
               google_sub = ${REMOVED_SUB}
-        WHERE id = ? AND household_id = ? AND removed_at IS NULL`,
+        WHERE id = ? AND household_id = ? AND removed_at IS NULL AND is_admin = 0`,
     )
     .bind(memberId, householdId)
     .run();
+
+  if (removed.meta.changes === 0) {
+    const current = await memberRowOf(db, householdId, memberId);
+    if (current.is_admin === 1) {
+      throw new HouseholdRefused(adminRowGuard(current.display_name, "delete"));
+    }
+    throw new HouseholdRefused("Jäsentä ei voitu poistaa. Yritä uudelleen.");
+  }
 
   return toHouseholdMember(row);
 }
@@ -378,6 +552,32 @@ async function memberFields(
     );
   }
 
+  const clash = await googleSubClash(db, googleSub, exceptMemberId);
+
+  if (clash !== null) throw duplicateGoogleSub(clash);
+
+  const email = input.email.trim();
+
+  if (email !== "") {
+    const normalizedEmail = normalizeMemberEmail(email);
+    const emailClashRow = await emailClash(db, normalizedEmail, exceptMemberId);
+    if (emailClashRow !== null) throw duplicateEmail(emailClashRow);
+    return { displayName, email: normalizedEmail, googleSub };
+  }
+
+  return { displayName, email: null, googleSub };
+}
+
+interface GoogleSubClash {
+  id: number;
+  household_name: string;
+}
+
+async function googleSubClash(
+  db: D1Database,
+  googleSub: string,
+  exceptMemberId: number | null,
+): Promise<GoogleSubClash | null> {
   const clash = await db
     .prepare(
       `SELECT m.id, h.name AS household_name FROM member m
@@ -385,17 +585,70 @@ async function memberFields(
         WHERE m.google_sub = ? AND m.${STILL_A_MEMBER}`,
     )
     .bind(googleSub)
-    .first<{ id: number; household_name: string }>();
+    .first<GoogleSubClash>();
 
-  if (clash !== null && clash.id !== exceptMemberId) {
-    throw new HouseholdRefused(
-      `Tämä Google-tunniste on jo taloudessa ${clash.household_name}.`,
-    );
+  return clash !== null && clash.id !== exceptMemberId ? clash : null;
+}
+
+function duplicateGoogleSub(clash: GoogleSubClash): HouseholdRefused {
+  return new HouseholdRefused(
+    `Tämä Google-tunniste on jo taloudessa ${clash.household_name}.`,
+  );
+}
+
+interface EmailClash {
+  household_name: string;
+}
+
+async function emailClash(
+  db: D1Database,
+  email: string,
+  exceptMemberId: number | null,
+): Promise<EmailClash | null> {
+  return db
+    .prepare(
+      `SELECT household_name FROM (
+         SELECT h.name AS household_name, 0 AS source_order
+           FROM member m
+           JOIN household h ON h.id = m.household_id
+          WHERE m.removed_at IS NULL AND m.email IS NOT NULL
+            AND lower(trim(m.email)) = ?
+            AND (? IS NULL OR m.id <> ?)
+         UNION ALL
+         SELECT h.name AS household_name, 1 AS source_order
+           FROM member_invitation invitation
+           JOIN household h ON h.id = invitation.household_id
+          WHERE invitation.email = ? COLLATE NOCASE
+       ) ORDER BY source_order LIMIT 1`,
+    )
+    .bind(email, exceptMemberId, exceptMemberId, email)
+    .first<EmailClash>();
+}
+
+function duplicateEmail(clash: EmailClash): HouseholdRefused {
+  return new HouseholdRefused(
+    `Tämä sähköposti on jo lisätty talouteen ${clash.household_name}.`,
+  );
+}
+
+/** The one stored and compared spelling for an invitation email. */
+export function normalizeMemberEmail(raw: string): string {
+  const email = raw.trim().toLowerCase();
+  if (
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+$/.test(email) ||
+    email.startsWith(".") ||
+    email.includes("..")
+  ) {
+    throw new HouseholdRefused("Anna kelvollinen sähköpostiosoite.");
   }
 
-  const email = input.email.trim();
+  const [local, domain] = email.split("@");
+  if (!local || local.length > 64 || !domain || domain.startsWith(".") || domain.endsWith(".")) {
+    throw new HouseholdRefused("Anna kelvollinen sähköpostiosoite.");
+  }
 
-  return { displayName, email: email === "" ? null : email, googleSub };
+  return email;
 }
 
 function householdName(rawName: string): string {
