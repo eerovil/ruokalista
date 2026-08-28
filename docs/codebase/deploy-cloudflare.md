@@ -50,25 +50,33 @@ signed-in path can only be exercised through a real browser sign-in.
 
 ## Google Cast receiver
 
-Issue #176 proposes hosting a custom Web Receiver at
-`https://ruokalista.eerovil.workers.dev/cast/receiver`. Before that change can
-be used on real devices, register that exact HTTPS URL as a Custom Receiver in
-the Google Cast SDK Developer Console, register a test device while the app is
-unpublished, and store the resulting application id in the Worker:
+The custom Web Receiver at
+`https://ruokalista.eerovil.workers.dev/cast/receiver` (#176) is registered in
+the Google Cast SDK Developer Console as application `0B89A6BA` and published,
+and that id is stored in the Worker:
 
     ./scripts/node.sh --cloudflare npx wrangler secret put CAST_APP_ID
 
-The application id is an identifier rather than a credential; a Worker secret
-is used here so it can be configured without baking a not-yet-created id into
-`wrangler.jsonc`. Leaving it unset keeps the Cast action absent and avoids
-loading Google's sender SDK. For a local device test, pass the registered id to
-the containerized `wrangler dev` command as `--var CAST_APP_ID:<id>`; the
-harmless `test-cast-app` value used by Playwright is served only to its stubbed
-SDK and cannot launch a device.
+The application id is an identifier rather than a credential — every sender
+page carries it in plain HTML; a Worker secret is used only so it could be
+configured without baking a not-yet-created id into `wrangler.jsonc`. Leaving
+it unset keeps the Cast action absent and avoids loading Google's sender SDK.
+For a local device test, pass the id to the containerized `wrangler dev`
+command as `--var CAST_APP_ID:<id>`; the harmless `test-cast-app` value used by
+Playwright is served only to its stubbed SDK and cannot launch a device.
 
 Registration and publishing happen in Google's console, outside this repo.
-Publishing makes the receiver available to unregistered Cast devices, so it is
-a release step rather than part of this pull request.
+
+**A Cast device only learns about the app when it restarts.** Registering the
+device, or publishing the receiver, changes nothing on a device that has been
+up for hours: the browser then reports `NO_DEVICES_AVAILABLE` even though
+Chrome's own Cast menu lists the TV, because that menu ignores which app is
+being asked for. Unplug the device for ten seconds. To tell a device-side
+problem from a page-side one without a browser, ask the device directly from
+this host — `pychromecast`'s `start_app` on the receiver's id fails while
+`start_app("CC1AD845")`, Google's default receiver, succeeds. Its
+`/setup/eureka_info` also reports `uptime`, which is how long it has been since
+the device last picked up a change.
 
 ## The shopping-list service
 

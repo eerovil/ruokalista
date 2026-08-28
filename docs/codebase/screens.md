@@ -252,13 +252,22 @@ wrap normally and make the page taller when they need to, and the visible
 
 ## Casting a recipe to a TV
 
-Issue #176 proposes an optional Google Cast action on the cooking view. When a
+The cooking view carries an optional Google Cast action (#176). When a
 `CAST_APP_ID` is configured and Google's sender SDK reports support, its native
 Cast launcher appears under the title. Starting or resuming a session sends a
 versioned, display-only recipe message: title, formatted multiplier, scaled
 ingredient strings and instructions. Navigating to another recipe or multiplier
 while the origin-scoped Cast session remains active sends that newly rendered
 state as soon as the page joins the session.
+
+Whether that row is on the screen at all follows the SDK's cast state, and
+nothing else: `NO_DEVICES_AVAILABLE` hides it, any other state shows it. This
+change proposes taking that decision away from the launcher element. Google's
+launcher hides itself with an inline `display: none` and does not reliably undo
+it when a device turns up later, which left the row's `Lähetä televisioon`
+label standing next to an invisible button — the shape a member first saw on a
+live TV-less page. An author `!important` in the island's own `<style>` outranks
+that inline style, so the button is visible whenever the row is.
 
 `GET /cast/receiver` is deliberately public because a Chromecast has none of
 the member's session cookie. It is also deliberately data-free: it reads no D1

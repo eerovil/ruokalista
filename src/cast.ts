@@ -121,7 +121,6 @@ export function castSender(
         tabindex="0"
         aria-label="Näytä Cast-laitteet"
         title="Näytä Cast-laitteet"
-        hidden
       ></google-cast-launcher>
       <span>Lähetä televisioon</span>
     </div>
@@ -137,7 +136,17 @@ export function castSender(
         display: flex; align-items: center; gap: .55rem; margin: 0 0 1rem;
         color: var(--muted); font-size: .85rem;
       }
+      /* A display rule beats the browser's own [hidden], so say it again. */
+      .cast-action[hidden] { display: none; }
+      /*
+        The launcher hides itself with an inline style whenever it decides
+        there is nothing to cast to, and it does not always undo that once a
+        device turns up. Whether the row belongs on the screen is decided by
+        the cast state below, so the button is kept visible from here — an
+        author !important outranks the SDK's inline display.
+      */
       google-cast-launcher {
+        display: inline-block !important;
         width: var(--tap); height: var(--tap); padding: .55rem;
         --connected-color: var(--accent);
         --disconnected-color: var(--muted);
@@ -165,6 +174,17 @@ const CAST_SENDER_ISLAND = `
     return;
   }
 
+  // No device to send to is the one state the row has nothing to say in.
+  function showAction(context) {
+    var absent = (cast.framework.CastState &&
+      cast.framework.CastState.NO_DEVICES_AVAILABLE) || 'NO_DEVICES_AVAILABLE';
+    var current = typeof context.getCastState === 'function'
+      ? context.getCastState()
+      : null;
+    if (current === absent) action.setAttribute('hidden', 'hidden');
+    else action.removeAttribute('hidden');
+  }
+
   function sendRecipe(context) {
     var session = context.getCurrentSession();
     if (!session || typeof session.sendMessage !== 'function') return;
@@ -186,8 +206,11 @@ const CAST_SENDER_ISLAND = `
       receiverApplicationId: state.getAttribute('data-application-id'),
       autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
     });
-    launcher.removeAttribute('hidden');
-    action.removeAttribute('hidden');
+    showAction(context);
+    context.addEventListener(
+      cast.framework.CastContextEventType.CAST_STATE_CHANGED,
+      function () { showAction(context); }
+    );
 
     context.addEventListener(
       cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
