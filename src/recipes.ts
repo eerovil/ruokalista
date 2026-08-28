@@ -830,17 +830,19 @@ function body(
             ${lines.map((line) => {
               const amount = formatMeasurement(scaleMeasurement(line, multiplier));
               return html`<li class="recipe-ingredient">
-                ${line.productImageUrl === null
-                  ? ""
-                  : html`<img
-                      class="recipe-product-thumb"
-                      src="${line.productImageUrl}"
-                      alt=""
-                      width="26"
-                      height="26"
-                      loading="lazy"
-                      onerror="this.hidden=true"
-                    />`}
+                <span class="recipe-product-slot" aria-hidden="true">
+                  ${line.productImageUrl === null
+                    ? ""
+                    : html`<img
+                        class="recipe-product-thumb"
+                        src="${line.productImageUrl}"
+                        alt=""
+                        width="26"
+                        height="26"
+                        loading="lazy"
+                        onerror="this.hidden=true"
+                      />`}
+                </span>
                 <span class="recipe-ingredient-copy">
                   ${amount === ""
                     ? ""
@@ -1145,8 +1147,9 @@ const RECIPE_VIEW_STYLE = html`<style>
   .recipe-ingredient {
     display: flex; align-items: center; gap: .5rem;
   }
+  .recipe-product-slot { flex: 0 0 1.6rem; width: 1.6rem; }
   .recipe-product-thumb {
-    flex: 0 0 1.6rem; width: 1.6rem; height: 1.6rem;
+    display: block; width: 1.6rem; height: 1.6rem;
     object-fit: contain; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
   }

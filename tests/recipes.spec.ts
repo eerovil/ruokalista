@@ -142,24 +142,29 @@ test.describe("linked product pictures", () => {
     await expect(thumb).toBeVisible();
     await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);
     await expect(cheese.locator("img")).toHaveCount(0);
+    await expect(cheese.locator(".recipe-product-slot")).toHaveCount(1);
 
     for (const width of [375, 768, 1024]) {
       await page.setViewportSize({ width, height: 900 });
-      const [rowBox, copyBox, imageBox, amountBox, plainBox] = await Promise.all([
-        milk.boundingBox(),
-        milk.locator(".recipe-ingredient-copy").boundingBox(),
-        thumb.boundingBox(),
-        milk.locator(".amount").boundingBox(),
-        cheese.boundingBox(),
-      ]);
+      const [rowBox, copyBox, imageBox, amountBox, plainBox, plainCopyBox] =
+        await Promise.all([
+          milk.boundingBox(),
+          milk.locator(".recipe-ingredient-copy").boundingBox(),
+          thumb.boundingBox(),
+          milk.locator(".amount").boundingBox(),
+          cheese.boundingBox(),
+          cheese.locator(".recipe-ingredient-copy").boundingBox(),
+        ]);
       expect(rowBox).not.toBeNull();
       expect(copyBox).not.toBeNull();
       expect(imageBox).not.toBeNull();
       expect(amountBox).not.toBeNull();
       expect(plainBox).not.toBeNull();
+      expect(plainCopyBox).not.toBeNull();
       expect(imageBox!.width).toBeLessThanOrEqual(26);
       expect(imageBox!.height).toBeLessThanOrEqual(26);
       expect(copyBox!.x).toBeGreaterThanOrEqual(imageBox!.x + imageBox!.width);
+      expect(copyBox!.x).toBeCloseTo(plainCopyBox!.x, 1);
       expect(amountBox!.x + amountBox!.width).toBeLessThanOrEqual(
         rowBox!.x + rowBox!.width,
       );
@@ -169,7 +174,7 @@ test.describe("linked product pictures", () => {
     }
   });
 
-  test("a product whose picture cannot load leaves no placeholder", async ({ page }) => {
+  test("a product whose picture cannot load keeps the text aligned", async ({ page }) => {
     await page.route("**/6415712506032_kuva1.jpg", (route) =>
       route.fulfill({ status: 404, contentType: "image/jpeg", body: "" }),
     );
@@ -177,8 +182,16 @@ test.describe("linked product pictures", () => {
     await page.goto("/recipes/3");
 
     const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+    const cheese = page.locator(".recipe-ingredient", { hasText: "juusto" });
     await expect(milk.locator(".recipe-product-thumb")).toBeHidden();
     await expect(milk).toContainText("5 dl maito");
+    const [milkCopy, cheeseCopy] = await Promise.all([
+      milk.locator(".recipe-ingredient-copy").boundingBox(),
+      cheese.locator(".recipe-ingredient-copy").boundingBox(),
+    ]);
+    expect(milkCopy).not.toBeNull();
+    expect(cheeseCopy).not.toBeNull();
+    expect(milkCopy!.x).toBeCloseTo(cheeseCopy!.x, 1);
   });
 });
 
