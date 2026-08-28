@@ -139,9 +139,13 @@ test("editing is reachable, but it is not what the screen is for", async ({
   expect(editBox!.y).toBeGreaterThan(method!.y);
 });
 
-test("a recipe with a known yield shows it", async ({ page }) => {
+test("a recipe with a known yield shows it as source metadata", async ({
+  page,
+}) => {
   await page.goto("/recipes/1");
-  await expect(page.locator(".yield")).toContainText("4 annosta");
+  await expect(page.locator(".source-yield")).toHaveText("Lähteessä 4 annosta");
+  // And the scaling line says what the amounts on screen are, not that.
+  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
 });
 
 test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
@@ -154,9 +158,12 @@ test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
   expect(body.recipe.lines[0]).not.toHaveProperty("phase");
 });
 
-test("a recipe with no yield says it cannot be scaled", async ({ page }) => {
+test("a recipe with no stated yield says nothing about one (#165)", async ({
+  page,
+}) => {
   await page.goto("/recipes/2");
-  await expect(page.locator(".yield")).toContainText("ei voi skaalata");
+  await expect(page.locator(".source-yield")).toHaveCount(0);
+  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
 });
 
 test("another household's recipe is a 404, not a peek", async ({ browser }) => {

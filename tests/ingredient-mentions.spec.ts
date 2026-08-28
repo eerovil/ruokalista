@@ -253,7 +253,7 @@ test.describe("without JavaScript", () => {
 test("the revealed amount is this meal's, not the page's", async ({ page }) => {
   // Kaalilaatikko yields four. Cooking for eight doubles every line, and the
   // mention has no stored amount of its own to fall out of step.
-  await page.goto("/recipes/1?portions=8");
+  await page.goto("/recipes/1?multiplier=2");
 
   const oljy = mention(page, "öljyssä");
   await oljy.locator("label").click();
@@ -295,7 +295,7 @@ test("a part's step reveals the part's own amount, scaled with the dish", async 
   await expect(jauheliha.locator(".mention-amount")).toHaveText("400 g");
 
   // A part has no yield of its own, so it scales by the dish's factor.
-  await page.goto("/recipes/3?portions=12");
+  await page.goto("/recipes/3?multiplier=2");
   const doubled = mention(page, "jauhelihan");
   await doubled.locator("label").click();
   await expect(doubled.locator(".mention-amount")).toHaveText("800 g");

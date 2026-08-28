@@ -188,28 +188,51 @@ turns out to be wrong.
 ### A default that belongs to the kitchen
 
 `recipe_preference` (`src/recipe-preference.ts`) holds one number per household
-per recipe: the portions the picker starts from. `recipe.yield_portions` is what
-the source page said and travels with the recipe when it is published; this is
-the household's own habit, and it is set and read by whoever is looking. The
+per recipe: the portion count the picker starts from. Issue #165 proposes
+changing that number to `default_multiplier`. `recipe.yield_portions` is what the
+source page said and travels with the recipe when it is published; this is the
+household's own habit, and it is set and read by whoever is looking. The
 publisher has no more say over another household's number than the other way
-round. A blank box clears it — the absence of a row is "no particular default",
-the same shape the cupboard uses.
+round. Under the proposal, a blank box and Tallenna clears it — the absence of
+a row is "no particular default", the same shape the cupboard uses.
 
 ## Scaling
 
-A recipe opened from a day carries that day's portions. The week itself is for
-reading, so the link is one step further in: a planned meal opens
-`/batches/:id`, and *that* screen links to `/recipes/:id?portions=N` — it is
-also where portions get changed and a meal gets taken off the list. The week
-holds no inputs and no delete buttons on purpose (decision #36).
+Issue #165 proposes replacing the portion count with a **multiplier**, and this
+section describes what that change introduces. A recipe's stored amounts are 1×
+the recipe. A planned batch stores how much of it gets cooked — 0,5×, 1,5×, 2×,
+or any other positive number — and that is the only thing scaling
+starts from. `recipe.yield_portions` stays as source metadata, printed under the
+title as `Lähteessä 4 annosta` and computed with nowhere. See
+[ADR-0007](../adr/0007-a-batch-is-scaled-by-a-multiplier.md).
+
+One consequence is worth stating on its own: **a recipe whose source never said
+what it makes scales exactly like one that did.** Roughly a fifth of imports are
+like that, and before #165 the screen could only apologise.
+
+A recipe opened from a cooking carries that cooking's multiplier. The week
+itself is for reading, so the link is one step further in: a planned meal opens
+`/batches/:id`, and *that* screen links to `/recipes/:id?multiplier=N` — it is
+also where the multiplier gets changed and a meal gets taken off the list. The
+week holds no inputs and no delete buttons on purpose (decision #36).
 
 (That screen used to be `/meal-entries/:id`. #57/#86 replaced the whole
 meal-entry model with planned batches and occurrences, and the routes moved with
 it — see [data-model](docs/codebase/data-model.md).)
 
-`src/scaling.ts` turns those portions into a factor, and a
-dish's factor reaches into its parts — a part has no yield of its own because it
-is a piece of the dish.
+The multiplier control is `html.ts::multiplierField`: four one-tap chips
+(`0,5× 1× 1,5× 2×`) posting `preset`, beside a box posting `multiplier` for
+anything else. A browser sends only the pressed submit button's value, so a
+handler reading `preset` first knows a chip was tapped — no script, which is the
+standing rule on the planning path. The picker uses one compact field with the
+four common values as datalist suggestions, because four buttons on every row
+of a recipe list would bury the list while a closed select would forbid a new
+custom value.
+
+`src/scaling.ts` applies that multiplier, and a dish's multiplier reaches into
+its parts — a part is a piece of the dish. 1× returns a line exactly as stored,
+because pushing the recipe as written through the kitchen rounding would quietly
+edit a line nobody asked to change.
 
 Amounts round to what a cook can measure rather than to what the arithmetic
 says: 5 dl times 1⅓ reads 6½ dl, not 6,666. Small amounts keep quarters, larger
@@ -218,14 +241,12 @@ ones go to halves and then whole numbers, weights go to the nearest 5 or 10 g.
 The recipe screen is cook-first (decision #37), so a source line is not repeated
 under every ingredient. `sourceWorthShowing` surfaces it in
 exactly two cases: a line with **no stated amount**, because "hieman" and "maun
-mukaan" have no field to live in, and a line whose amount **the factor changed**,
+mukaan" have no field to live in, and a line whose amount **the multiplier
+changed**,
 because the number on screen is no longer the number on the page. Ranges and
 second measurements round-trip through the fields intact, so they carry no copy.
 The full source text sits behind `Näytä alkuperäinen`, still stored, still one
 tap away.
-
-A recipe with no stated yield cannot be scaled and says so — there is nothing to
-scale *from*.
 
 That rule used to live in `src/recipes.ts`. Issue #123 proposes moving it to
 `src/scaling.ts`, unchanged: it is a question about what scaling changed, and

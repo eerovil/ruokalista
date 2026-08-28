@@ -72,7 +72,7 @@ test("a batch spanning three days is one card with three occurrence rows", async
   const card = page.locator(`.batch-card[data-batch-id="${spanning}"]`);
   await expect(card).toHaveCount(1);
   await expect(card.locator(".entry-title")).toHaveText("Kaalilaatikko");
-  await expect(card.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(card.locator(".batch-start")).toHaveText("Kokataan · 1×");
   await expect(card.locator(".batch-when-weekday")).toHaveText([
     "ma",
     "ti",
@@ -191,7 +191,7 @@ test("a batch open at either visible edge says so instead of ending", async ({
 
   const carried = page.locator(`.batch-card[data-batch-id="${fromPreviousWeek}"]`);
   await expect(carried.locator(".batch-carried")).toHaveText(
-    "Kokattu 28.2. · 4 annosta",
+    "Kokattu 28.2. · 1×",
   );
   await expect(carried.locator(".batch-start")).toHaveCount(0);
   await expect(carried.locator(".batch-end")).toHaveText("viimeinen annos");
@@ -205,7 +205,7 @@ test("a batch open at either visible edge says so instead of ending", async ({
   );
 
   const onward = page.locator(`.batch-card[data-batch-id="${intoNextWeek}"]`);
-  await expect(onward.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+  await expect(onward.locator(".batch-start")).toHaveText("Kokataan · 1×");
   await expect(onward.locator(".batch-onward")).toHaveText("jatkuu ensi viikolle");
   await expect(onward.locator(".batch-end")).toHaveCount(0);
 });
@@ -309,11 +309,13 @@ test("a week of grouped cards keeps usable phone-width cards", async ({
  * Last in the file, because it renames a seeded recipe and the tests above
  * still expect the seed titles.
  *
- * The card head is a flex row of a fixed thumbnail, the title and a portions
+ * The card head is a flex row of a fixed thumbnail, the title and a multiplier
  * pill, inside a card that clips what overflows it. A long Finnish compound
- * beside the widest pill — the carried `Kokattu 6.12. · 4 annosta` — is what
- * runs that row out of width, and the check has to be that nothing is cut off
- * inside the card, not merely that the page does not scroll sideways.
+ * beside the widest pill — the carried `Kokattu 6.12. · 1×` — is what runs that
+ * row out of width. #165 made that pill narrower than the portion count it
+ * replaced, so this has more slack than it did; the check is still that nothing
+ * is cut off inside the card, not merely that the page does not scroll
+ * sideways.
  */
 test("a long recipe name wraps in the card head instead of being cut off", async ({
   page,
@@ -342,7 +344,7 @@ test("a long recipe name wraps in the card head instead of being cut off", async
   await page.goto(`/?week=${MONDAY}`);
   await expect(
     page.locator(`.batch-card[data-batch-id="${carried}"] .batch-carried`),
-  ).toHaveText("Kokattu 6.12. · 4 annosta");
+  ).toHaveText("Kokattu 6.12. · 1×");
 
   const overflow = await page.evaluate(() => {
     const cards = [...document.querySelectorAll(".batch-card")];
@@ -421,7 +423,7 @@ async function createBatch(
   recipeId: number,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot, recipeId, portions: 4 },
+    data: { date, slot, recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;

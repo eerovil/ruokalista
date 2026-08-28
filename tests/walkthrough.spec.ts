@@ -35,8 +35,8 @@ test("import the sample and cook what it made", async ({ page }) => {
   await page
     .locator(".pick li", { hasText: "Uunikaali" })
     .first()
-    .locator("input[name=portions]")
-    .fill("8");
+    .locator("input[name=multiplier]")
+    .fill("2");
   await page
     .locator(".pick li", { hasText: "Uunikaali" })
     .first()
