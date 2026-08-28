@@ -175,7 +175,7 @@ function fakeDatabase(): {
     },
   ];
   const tableRows: Record<string, Record<string, unknown>[]> = {
-    household: [{ id: 1, name: "Koti" }],
+    household: [{ id: 1, name: "Koti" }, { id: 2, name: "Naapuri" }],
     member: [{ id: 1, household_id: 1, display_name: "Eero" }],
     member_invitation: [
       { id: 1, household_id: 1, email: "uusi@example.com", created_by: 1 },
@@ -187,6 +187,14 @@ function fakeDatabase(): {
         household_id: 1,
         title: "Kaalilaatikko",
         source_text: "Kaalilaatikko\n½ dl öljyä",
+      },
+    ],
+    recipe_share: [
+      {
+        recipe_id: 1,
+        household_id: 2,
+        shared_at: "2026-08-25 00:00:00",
+        shared_by: 1,
       },
     ],
     recipe_step: [{ recipe_id: 1, position: 1, text: "Paista." }],

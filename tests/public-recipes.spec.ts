@@ -33,10 +33,31 @@ async function signIn(page: Page, memberId: number): Promise<void> {
 async function publish(page: Page, recipeId: number): Promise<void> {
   await signIn(page, 1);
   await page.goto(`/recipes/${recipeId}`);
-  await page.getByRole("button", { name: "Julkaise resepti" }).click();
+  await page.getByLabel("Julkinen").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".recipe-sharing")).toContainText(
-    "näkyy kaikille talouksille",
+    "näkyy kaikille kirjautuneille talouksille",
   );
+}
+
+async function makePrivate(page: Page, recipeId: number): Promise<void> {
+  await signIn(page, 1);
+  await page.goto(`/recipes/${recipeId}`);
+  await page.getByLabel("Oma").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+}
+
+async function shareWith(
+  page: Page,
+  recipeId: number,
+  householdNames: string[],
+): Promise<void> {
+  await signIn(page, 1);
+  await page.goto(`/recipes/${recipeId}`);
+  await page.getByLabel("Valituille").check();
+  const picker = page.locator(".recipient-picker");
+  for (const name of householdNames) await picker.getByLabel(name).check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
 }
 
 test("a published recipe reaches the other household, and can be planned", async ({
@@ -64,6 +85,203 @@ test("a published recipe reaches the other household, and can be planned", async
   );
 });
 
+test("selected households can be found, added and safely removed", async ({
+  page,
+}) => {
+  executeLocalSql(`
+    INSERT INTO household (id, name) VALUES (3, 'Mökki');
+    INSERT INTO member
+      (id, household_id, google_sub, display_name, email, is_admin)
+    VALUES (4, 3, 'dev-seed-mokki', 'Salla', 'salla@example.com', 0)
+  `);
+
+  await signIn(page, 1);
+  await page.goto("/recipes/1");
+  const picker = page.locator(".recipient-picker");
+  await expect(picker).toContainText("Naapuri");
+  await expect(picker).toContainText("Mökki");
+  await expect(picker).not.toContainText("Salla");
+  await expect(picker).not.toContainText("salla@example.com");
+
+  await picker.getByLabel("Hae vastaanottavaa taloutta").fill("mö");
+  await expect(picker.getByLabel("Mökki")).toBeVisible();
+  await expect(picker.getByLabel("Naapuri")).toBeHidden();
+  await picker.getByLabel("Hae vastaanottavaa taloutta").fill("");
+
+  await page.getByLabel("Valituille").check();
+  await picker.getByLabel("Naapuri").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".recipe-sharing")).toContainText(
+    "Tämä resepti on jaettu: Naapuri.",
+  );
+
+  await page.goto("/recipes");
+  await expect(
+    page.locator(".recipes li", { hasText: "Kaalilaatikko" }),
+  ).toContainText("Jaettu 1 taloudelle");
+
+  await signIn(page, 2);
+  await page.goto("/recipes/julkiset");
+  const shared = page.locator(".recipes li", { hasText: "Kaalilaatikko" });
+  await expect(shared).toContainText("Jaettu sinulle");
+  await shared.getByRole("link").click();
+  await expect(page.locator(".shared-from")).toContainText("Koti");
+  const api = await page.request.get("/api/recipes/1");
+  expect(api.status()).toBe(200);
+  const body = (await api.json()) as { recipe: { createdBy: string } };
+  expect(body.recipe.createdBy).toBe("Koti");
+  expect(JSON.stringify(body)).not.toContain("Eero");
+
+  await plan(page, 2, today(), 1);
+  await page.goto("/ostoslista");
+  const cabbage = page.locator(".shopping-list > li", { hasText: "valkokaali" });
+  await expect(cabbage).toHaveCount(1);
+  await cabbage.locator("summary").click();
+  await cabbage.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+  await page.goto("/kaappi");
+  await expect(page.locator("body")).toContainText("valkokaali");
+
+  await signIn(page, 4);
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
+  expect((await page.request.get("/api/recipes/1")).status()).toBe(404);
+  expect(
+    (await page.request.post("/api/batches", {
+      data: { date: "2099-02-01", slot: "lunch", recipeId: 1, multiplier: 1 },
+    })).status(),
+  ).toBe(400);
+
+  await signIn(page, 1);
+  await page.goto("/recipes/1");
+  await picker.getByLabel("Mökki").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".recipe-sharing")).toContainText("Mökki, Naapuri");
+
+  await signIn(page, 4);
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
+
+  await signIn(page, 1);
+  await page.goto("/recipes/1");
+  await picker.getByLabel("Naapuri").uncheck();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
+  await expect(picker.getByLabel("Mökki")).toBeChecked();
+  await expect(picker.getByLabel("Naapuri")).not.toBeChecked();
+
+  executeLocalSql(`
+    DELETE FROM batch_occurrence
+     WHERE batch_id IN (
+       SELECT id FROM planned_batch WHERE household_id = 2 AND recipe_id = 1
+     );
+    DELETE FROM planned_batch WHERE household_id = 2 AND recipe_id = 1
+  `);
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+
+  await signIn(page, 2);
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
+  await signIn(page, 4);
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
+  await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+});
+
+test("planning and revocation cannot both win the same race", async ({ page }) => {
+  await shareWith(page, 1, ["Naapuri"]);
+  const browser = page.context().browser();
+  expect(browser).not.toBeNull();
+  const owner = await browser!.newContext();
+  const recipient = await browser!.newContext();
+  const origin = new URL(page.url()).origin;
+  await owner.addCookies([sessionCookie(1)]);
+  await recipient.addCookies([sessionCookie(2)]);
+
+  try {
+    const [revoke, planning] = await Promise.all([
+      owner.request.post(`${origin}/recipes/julkaisu`, {
+        form: { action: "save", recipeId: "1", visibility: "private" },
+        maxRedirects: 0,
+      }),
+      recipient.request.post(`${origin}/api/batches`, {
+        data: {
+          date: "2099-04-01",
+          slot: "dinner",
+          recipeId: 1,
+          multiplier: 1,
+        },
+      }),
+    ]);
+
+    if (planning.status() === 201) {
+      expect(revoke.status()).toBe(400);
+      expect((await recipient.request.get(`${origin}/recipes/1`)).status()).toBe(200);
+    } else {
+      expect(planning.status()).toBe(400);
+      expect(revoke.status()).toBe(303);
+      expect((await recipient.request.get(`${origin}/recipes/1`)).status()).toBe(404);
+    }
+  } finally {
+    await owner.close();
+    await recipient.close();
+  }
+});
+
+test("a revoked historical batch cannot be moved back into the future", async ({
+  page,
+}) => {
+  await shareWith(page, 1, ["Naapuri"]);
+  await signIn(page, 2);
+  const planned = await page.request.post("/api/batches", {
+    data: { date: "2020-01-06", slot: "dinner", recipeId: 1, multiplier: 1 },
+  });
+  expect(planned.status()).toBe(201);
+  const { id } = (await planned.json()) as { id: number };
+
+  await makePrivate(page, 1);
+  await signIn(page, 2);
+  const moved = await page.request.patch(`/api/batches/${id}`, {
+    data: { occurrences: [{ date: "2099-04-02", slot: "dinner" }] },
+  });
+  expect(moved.status()).toBe(400);
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
+  await page.goto("/ostoslista");
+  await expect(page.locator("body")).not.toContainText("valkokaali");
+});
+
+test("selected sharing has an explicit recipient cap", async ({ page }) => {
+  const households = Array.from({ length: 51 }, (_, index) => ({
+    id: index + 10,
+    name: `Talous ${index + 1}`,
+  }));
+  executeLocalSql(
+    `INSERT INTO household (id, name) VALUES ${households
+      .map((household) => `(${household.id}, '${household.name}')`)
+      .join(", ")}`,
+  );
+  await signIn(page, 1);
+  await page.goto("/recipes/1");
+  await page.getByLabel("Valituille").check();
+  const picker = page.locator(".recipient-picker");
+  for (const household of households) {
+    await picker.getByLabel(household.name, { exact: true }).check();
+  }
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".refused")).toContainText("enintään 50");
+
+  // The exact boundary is a valid save and must also fit D1's 100-parameter
+  // statement limit.
+  await picker.getByLabel(households[50]!.name, { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(picker.locator('input[name="recipientId"]:checked')).toHaveCount(50);
+  await expect(page.locator(".recipe-sharing > p.empty")).not.toContainText("Talous 51");
+
+  // The checked recipients are preserved after refusal, but are irrelevant to
+  // a public target and therefore must not hit D1's binding limit.
+  await page.getByLabel("Julkinen").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
+  await expect(page.locator(".recipe-sharing")).toContainText(
+    "näkyy kaikille kirjautuneille talouksille",
+  );
+});
+
 test("the other household cannot edit a published recipe", async ({ page }) => {
   await publish(page, 1);
   await signIn(page, 2);
@@ -71,7 +289,7 @@ test("the other household cannot edit a published recipe", async ({ page }) => {
   // No way in from the screen…
   await page.goto("/recipes/1");
   await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
-  await expect(page.locator(".recipe-sharing")).not.toContainText("Julkaisu");
+  await expect(page.locator(".recipe-sharing")).not.toContainText("Jakaminen");
 
   // …and none by typing the address either. Editing, deleting and unpublishing
   // are all the owner's, and each refuses on its own rather than relying on the
@@ -102,7 +320,7 @@ test("a published recipe's picture is readable by the other household", async ({
     expect(put.status()).toBe(204);
   }
   await publish(page, 1);
-  await publish(page, 3);
+  await shareWith(page, 3, ["Naapuri"]);
 
   await signIn(page, 2);
   // The published dish, and a part of a published dish — a part is never
@@ -146,7 +364,7 @@ test("a published recipe's picture is readable by the other household", async ({
 test("a public recipe uses the reader's product picture without changing JSON", async ({
   page,
 }) => {
-  await publish(page, 3);
+  await shareWith(page, 3, ["Naapuri"]);
   executeLocalSql(`
     INSERT INTO recipe_ingredient_product
       (household_id, recipe_id, ingredient_id, ean, name, image_url)
@@ -233,11 +451,11 @@ test("publishing and unpublishing work on a selection of recipes", async ({
   await expect(page.locator(".badge.is-published")).toHaveCount(0);
 });
 
-test("a multipart dish is published as one dish, parts and all", async ({
+test("a multipart dish is shared as one dish, parts and all", async ({
   page,
 }) => {
   // Recipe 3 is the lasagne; 4 and 5 are its parts.
-  await publish(page, 3);
+  await shareWith(page, 3, ["Naapuri"]);
   await signIn(page, 2);
 
   await page.goto("/recipes/julkiset");
@@ -270,16 +488,17 @@ test("unpublishing is refused while another household plans it for a day still t
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
-  await page.getByRole("button", { name: "Poista julkaisu" }).click();
+  await page.getByLabel("Oma").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
   await expect(page.locator(".recipe-sharing")).toContainText(
-    "näkyy kaikille talouksille",
+    "näkyy kaikille kirjautuneille talouksille",
   );
 
   // Deleting is refused one step earlier and says which step comes first, so
   // the two rules cannot drift apart.
   await page.goto("/recipes/1/delete");
-  await expect(page.locator(".refused")).toContainText("on julkaistu");
+  await expect(page.locator(".refused")).toContainText("on jaettu");
 });
 
 test("a cooking that already happened does not block unpublishing", async ({
@@ -290,7 +509,8 @@ test("a cooking that already happened does not block unpublishing", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
-  await page.getByRole("button", { name: "Poista julkaisu" }).click();
+  await page.getByLabel("Oma").check();
+  await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".recipe-sharing")).toContainText(
     "näkyy vain omalle taloudelle",
   );
@@ -325,13 +545,12 @@ test("a published recipe cannot be deleted until it is private again", async ({
   await signIn(page, 1);
 
   await page.goto("/recipes/2/delete");
-  await expect(page.locator(".refused")).toContainText("Poista ensin");
+  await expect(page.locator(".refused")).toContainText("Muuta se ensin");
   expect(
     (await page.request.delete("/api/recipes/2")).status(),
   ).toBe(409);
 
-  await page.goto("/recipes/2");
-  await page.getByRole("button", { name: "Poista julkaisu" }).click();
+  await makePrivate(page, 2);
   await page.goto("/recipes/2/delete");
   await page.getByRole("button", { name: "Poista lopullisesti" }).click();
   await expect(page).toHaveURL(/\/recipes$/);

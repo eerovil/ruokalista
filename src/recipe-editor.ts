@@ -315,7 +315,9 @@ export async function deleteRecipeForm(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound(member);
 
-  if (recipe.publishedAt !== null) return stillPublished(member, recipe);
+  if (recipe.publishedAt !== null || recipe.shareCount > 0) {
+    return stillShared(member, recipe);
+  }
 
   const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
@@ -333,8 +335,8 @@ export async function apiDeleteRecipe(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return problem(404, "No such recipe.");
 
-  if (recipe.publishedAt !== null) {
-    return problem(409, "That recipe is published. Unpublish it first.");
+  if (recipe.publishedAt !== null || recipe.shareCount > 0) {
+    return problem(409, "That recipe is shared. Make it private first.");
   }
 
   const onMenu = await countOnMenu(env.DB, recipe.id);
@@ -697,7 +699,9 @@ export async function confirmDeleteScreen(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound(member);
 
-  if (recipe.publishedAt !== null) return stillPublished(member, recipe);
+  if (recipe.publishedAt !== null || recipe.shareCount > 0) {
+    return stillShared(member, recipe);
+  }
 
   const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
@@ -750,14 +754,14 @@ function stillPlanned(member: Member, recipe: Recipe, onMenu: number): Response 
  * inherits that protection instead of carrying a second copy of it that could
  * drift.
  */
-function stillPublished(member: Member, recipe: Recipe): Response {
+function stillShared(member: Member, recipe: Recipe): Response {
   return page(
     "Ei voi poistaa",
     html`<h1>Ei voi poistaa</h1>
       <p class="refused">
-        ${recipe.title} on julkaistu, joten sitä ei voi poistaa. Poista ensin
-        julkaisu — se onnistuu, kun resepti ei ole toisten talouksien tulevilla
-        ruokalistoilla.
+        ${recipe.title} on jaettu, joten sitä ei voi poistaa. Muuta se ensin
+        omaksi — se onnistuu, kun resepti ei ole pääsyn menettävien talouksien
+        tulevilla ruokalistoilla.
       </p>
       <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
     "recipes",

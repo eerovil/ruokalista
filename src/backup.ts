@@ -10,6 +10,7 @@ export const BACKUP_TABLES = [
   { name: "member_invitation", orderBy: "id" },
   { name: "ingredient", orderBy: "id" },
   { name: "recipe", orderBy: "id" },
+  { name: "recipe_share", orderBy: "recipe_id, household_id" },
   { name: "recipe_step", orderBy: "recipe_id, position" },
   { name: "ingredient_line", orderBy: "id" },
   { name: "planned_batch", orderBy: "id" },

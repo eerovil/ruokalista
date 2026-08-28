@@ -1,5 +1,6 @@
 import type { RouteContext } from "./router.ts";
 import type { Member } from "./members.ts";
+import { readableRecipeCondition } from "./recipe-publish.ts";
 
 /**
  * An ingredient is a shared record for one foodstuff, referred to by every line
@@ -56,13 +57,13 @@ export async function ingredientsFor(
                 ON ingredient_line.ingredient_id = ingredient.id
          LEFT JOIN recipe
                 ON recipe.id = ingredient_line.recipe_id
-               AND (recipe.household_id = ? OR recipe.published_at IS NOT NULL
+               AND (${readableRecipeCondition("recipe")}
                     OR EXISTS (SELECT 1 FROM recipe AS dish
                                 WHERE dish.id = recipe.parent_id
-                                  AND dish.published_at IS NOT NULL))
+                                  AND ${readableRecipeCondition("dish")}))
         GROUP BY ingredient.id, ingredient.name`,
     )
-    .bind(householdId)
+    .bind(householdId, householdId, householdId, householdId)
     .all<IngredientRow>();
 
   // Sorted here rather than in SQL: SQLite's NOCASE is ASCII-only, so it files

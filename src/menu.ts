@@ -1,6 +1,7 @@
 import { problem } from "./auth.ts";
-import { addDays, isDate } from "./dates.ts";
+import { addDays, isDate, today } from "./dates.ts";
 import type { Member } from "./members.ts";
+import { readableRecipeCondition } from "./recipe-publish.ts";
 import type { RouteContext } from "./router.ts";
 import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
@@ -154,22 +155,37 @@ export async function addPlannedBatch(
 ): Promise<number> {
   const occurrence = validateOccurrence(entry.date, entry.slot);
   const multiplier = validateMultiplier(entry.multiplier);
-  await requireDish(db, member.householdId, entry.recipeId);
+  validateRecipeId(entry.recipeId);
 
   const [inserted] = await db.batch([
     db.prepare(
       `INSERT INTO planned_batch
          (household_id, recipe_id, multiplier, created_by)
-       VALUES (?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?
+         FROM recipe
+        WHERE recipe.id = ?
+          AND recipe.parent_id IS NULL
+          AND ${readableRecipeCondition("recipe")}`,
     )
-      .bind(member.householdId, entry.recipeId, multiplier, member.id),
+      .bind(
+        member.householdId,
+        entry.recipeId,
+        multiplier,
+        member.id,
+        entry.recipeId,
+        member.householdId,
+        member.householdId,
+      ),
     db.prepare(
       `INSERT INTO batch_occurrence (batch_id, date, slot)
-       VALUES (last_insert_rowid(), ?, ?)`,
+       SELECT last_insert_rowid(), ?, ? WHERE changes() > 0`,
     ).bind(occurrence.date, occurrence.slot),
   ]);
 
   if (inserted === undefined) throw new Error("Batch insert returned no result.");
+  if ((inserted.meta.changes ?? 0) === 0) {
+    throw new MenuRefused("Tuntematon resepti.");
+  }
   const id = Number(inserted.meta.last_row_id);
   return id;
 }
@@ -182,21 +198,46 @@ export async function replaceOccurrences(
 ): Promise<boolean> {
   const occurrences = validateCoverage(proposed);
   const owned = await db
-    .prepare("SELECT id FROM planned_batch WHERE id = ? AND household_id = ?")
+    .prepare(
+      "SELECT id, recipe_id FROM planned_batch WHERE id = ? AND household_id = ?",
+    )
     .bind(id, member.householdId)
-    .first<{ id: number }>();
+    .first<{ id: number; recipe_id: number }>();
   if (owned === null) return false;
 
-  await db.batch([
-    db.prepare("DELETE FROM batch_occurrence WHERE batch_id = ?").bind(id),
+  const needsAccess = occurrences.some((occurrence) => occurrence.date >= today());
+  if (needsAccess) await requireDish(db, member.householdId, owned.recipe_id);
+  const access = needsAccess
+    ? `EXISTS (
+         SELECT 1
+           FROM planned_batch AS access_batch
+           JOIN recipe ON recipe.id = access_batch.recipe_id
+          WHERE access_batch.id = ?
+            AND access_batch.household_id = ?
+            AND recipe.parent_id IS NULL
+            AND ${readableRecipeCondition("recipe")}
+       )`
+    : "1 = 1";
+  const accessBindings = needsAccess
+    ? [id, member.householdId, member.householdId, member.householdId]
+    : [];
+
+  const [removed] = await db.batch([
+    db.prepare(
+      `DELETE FROM batch_occurrence WHERE batch_id = ? AND ${access}`,
+    ).bind(id, ...accessBindings),
     ...occurrences.map((occurrence) =>
       db
         .prepare(
-          "INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (?, ?, ?)",
+          `INSERT INTO batch_occurrence (batch_id, date, slot)
+           SELECT ?, ?, ? WHERE ${access}`,
         )
-        .bind(id, occurrence.date, occurrence.slot),
+        .bind(id, occurrence.date, occurrence.slot, ...accessBindings),
     ),
   ]);
+  if ((removed?.meta.changes ?? 0) === 0) {
+    throw new MenuRefused("Resepti ei ole enää tämän talouden käytettävissä.");
+  }
   return true;
 }
 
@@ -234,9 +275,23 @@ export async function changeRecipe(
   await requireDish(db, member.householdId, recipeId);
   const result = await db
     .prepare(
-      "UPDATE planned_batch SET recipe_id = ? WHERE id = ? AND household_id = ?",
+      `UPDATE planned_batch SET recipe_id = ?
+        WHERE id = ? AND household_id = ?
+          AND EXISTS (
+                SELECT 1 FROM recipe
+                 WHERE recipe.id = ?
+                   AND recipe.parent_id IS NULL
+                   AND ${readableRecipeCondition("recipe")}
+              )`,
     )
-    .bind(recipeId, id, member.householdId)
+    .bind(
+      recipeId,
+      id,
+      member.householdId,
+      recipeId,
+      member.householdId,
+      member.householdId,
+    )
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -314,21 +369,25 @@ async function requireDish(
   householdId: number,
   recipeId: number,
 ): Promise<void> {
-  if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
-    throw new MenuRefused("Tuntematon resepti.");
-  }
-  // Own, or anybody's published dish (#143). A part is still refused whoever
-  // owns it: only a dish gets planned.
+  validateRecipeId(recipeId);
+  // Own, public, or selected for this household. A part is still refused
+  // whoever owns it: only a dish gets planned.
   const recipe = await db
     .prepare(
       `SELECT id FROM recipe
         WHERE id = ?
           AND parent_id IS NULL
-          AND (household_id = ? OR published_at IS NOT NULL)`,
+          AND ${readableRecipeCondition("recipe")}`,
     )
-    .bind(recipeId, householdId)
+    .bind(recipeId, householdId, householdId)
     .first<{ id: number }>();
   if (recipe === null) throw new MenuRefused("Tuntematon resepti.");
+}
+
+function validateRecipeId(recipeId: number): void {
+  if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
+    throw new MenuRefused("Tuntematon resepti.");
+  }
 }
 
 function compareOccurrences(a: BatchOccurrence, b: BatchOccurrence): number {

@@ -65,6 +65,7 @@ commit what it wrote:
 | `50-recipes-select-to-publish.png` | Proposed recipe list with two recipes selected for the bulk publish action |
 | `51-recipes-published.png` | Proposed same list afterwards: what was published says so on the row, and the action reports what happened |
 | `52-recipe-owner-sharing.png` | Proposed owner's view of a published recipe: this household's own default multiplier, and the control to take the publication back |
+| `68-recipe-selected-sharing.png` | Proposed owner view after sharing a recipe with one selected household, including the searchable household-only recipient picker |
 | `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
 | `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
 | `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |
