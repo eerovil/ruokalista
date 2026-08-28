@@ -26,11 +26,12 @@ import {
  * second set of them to keep in step, which is exactly the drift this repository
  * keeps being bitten by.
  *
- * Storing goes through `PUT /api/recipes/:id/image`, the bulk route #89 already
- * had, with #95's `origin=generated&fingerprint=…&model=…`. One request per
- * recipe, and no new endpoint: the freshness bookkeeping and the
- * compare-and-swap that protects a picture somebody uploaded in the meantime
- * are the code that was already there and already tested.
+ * Storing goes through the admin-only `PUT /api/admin/recipe-images/:id`, with
+ * #95's `origin=generated&fingerprint=…&model=…`. One request per recipe; the
+ * freshness bookkeeping and the compare-and-swap that protects a picture
+ * somebody uploaded in the meantime are the code that was already there and
+ * already tested. The separate route is what lets this one admin tool resolve
+ * the recipe's owning household without widening the ordinary upload API.
  *
  * Two ordering rules are carried over from #96 unchanged, and both matter:
  *
@@ -251,7 +252,7 @@ async function upload(cell: Cell, png: Uint8Array, model: string): Promise<strin
 
   let response: Response;
   try {
-    response = await fetch(`/api/recipes/${cell.recipeId}/image${query}`, {
+    response = await fetch(`/api/admin/recipe-images/${cell.recipeId}${query}`, {
       method: "PUT",
       headers: {
         "content-type": "image/png",
@@ -321,7 +322,8 @@ function showPicture(cell: Cell): void {
   if (holder === null) return;
 
   const image = document.createElement("img");
-  image.src = `/api/recipes/${cell.recipeId}/image?stored=${cell.fingerprint}`;
+  image.src =
+    `/api/admin/recipe-images/${cell.recipeId}?stored=${cell.fingerprint}`;
   image.alt = "";
 
   holder.textContent = "";

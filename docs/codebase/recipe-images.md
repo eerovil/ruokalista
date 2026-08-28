@@ -182,9 +182,17 @@ Missing and stale recipes are preselected up to sixteen. Current generated
 pictures sit behind a closed disclosure and a manually-managed upload has no
 checkbox at all; replacing a photograph a person chose stays the editor's job.
 
-`imageCandidates` in `src/recipe-image-admin.ts` reads the whole list in two
-queries and fingerprints in memory rather than calling `findRecipe` per recipe.
-It also carries the captured image key into the manifest for the conditional PUT.
+This PR proposes that `imageCandidates` in `src/recipe-image-admin.ts` read every
+household's dishes in two queries and fingerprint them in memory rather than
+calling `findRecipe` per recipe. The screen and confirmation routes would stay
+admin-gated. The browser would store each crop through the separately
+admin-gated `PUT /api/admin/recipe-images/:id`, which would resolve the recipe's
+owning household server-side before using the existing conditional image write.
+Private thumbnails and the post-upload preview would use the matching
+admin-gated GET instead of widening the ordinary readable-image rule.
+The ordinary `PUT /api/recipes/:id/image` would remain scoped to the signed-in
+member's household. The manifest would also carry the captured image key into
+the write.
 
 The Copy button uses the clipboard promise only when it succeeds, falls back to
 `execCommand` on rejection, and otherwise leaves the prompt selected for a

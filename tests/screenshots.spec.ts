@@ -1261,7 +1261,23 @@ test.describe("signed in as an admin", () => {
     );
 
     await page.goto("/admin/recipe-images");
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
+    const neighbour = page.locator(".image-list li").filter({
+      hasText: "Naapurin uunikala",
+    });
+    await expect(neighbour).toBeVisible();
+    const neighbourBox = await neighbour.boundingBox();
+    const checkboxBox = await neighbour.locator('input[type="checkbox"]').boundingBox();
+    const titleBox = await neighbour.getByText("Naapurin uunikala").boundingBox();
+    const continueBox = await page
+      .getByRole("button", { name: "Jatka kehotteeseen" })
+      .boundingBox();
+    expect(neighbourBox).not.toBeNull();
+    expect(checkboxBox).not.toBeNull();
+    expect(titleBox).not.toBeNull();
+    expect(continueBox).not.toBeNull();
+    expect(titleBox!.x).toBeGreaterThan(checkboxBox!.x + checkboxBox!.width);
+    expect(continueBox!.y).toBeGreaterThan(neighbourBox!.y + neighbourBox!.height);
     await page.locator("details.image-current > summary").click();
     await capture(page, {
       path: `${SHOTS}/32-admin-recipe-images.png`,
