@@ -6,6 +6,7 @@ import {
   requireMemberScreen,
 } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
+import { categoryBulkForm } from "./category-bulk.ts";
 import { castReceiver } from "./cast.ts";
 import {
   batchIntakeScreen,
@@ -170,6 +171,7 @@ const router = new Router()
   // otherwise swallow it.
   .get("/recipes/julkiset", requireMemberScreen(publicRecipeListScreen))
   .post("/recipes/julkaisu", requireMemberScreen(publishForm))
+  .post("/recipes/kategoriat", requireMemberScreen(categoryBulkForm))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
