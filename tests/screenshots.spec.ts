@@ -245,9 +245,14 @@ test.describe("signed in", () => {
   });
 
   test("one recipe", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/recipes/1");
     await expect(page.locator(".lines li").first()).toBeVisible();
-    await capture(page, { path: `${SHOTS}/05-recipe.png`, fullPage: true });
+    await expect(page.getByRole("heading", { name: "Valmistus" })).toBeVisible();
+    await expect(page.locator(".steps li").last()).toBeInViewport();
+    await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+      .toBeInViewport();
+    await capture(page, { path: `${SHOTS}/05-recipe.png` });
   });
 
   /**

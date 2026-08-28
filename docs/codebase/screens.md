@@ -183,6 +183,20 @@ Two things follow from making removal a one-tap action:
   that forces it through. The rule is pure and tested in
   `dev/check-line-removal.ts`.
 
+## The cooking view on a wider screen
+
+Issue #160 proposes using a tablet's width for the recipe itself, without
+changing the phone-first shell. At 48rem and above, each cooking block places
+its ingredients on the left and its preparation steps on the right. Multipart
+dishes keep their existing parent-before-parts, named-parts, parent-after-parts
+order; each block becomes two columns rather than flattening that cooking order.
+
+The picture stays whole and above the cooking content, while its wide-screen
+band becomes shorter so the useful cooking information gets more of the
+viewport. The columns have no fixed height and do not hide overflow. Long steps
+wrap normally and make the page taller when they need to, and the visible
+`Näytä kaikki määrät` control remains after the final preparation block.
+
 ### Server-rendered inline script islands
 
 Three screens ship a hand-written `<script>` rather than a build step, and all
