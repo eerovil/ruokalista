@@ -36,6 +36,17 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
           </a>
         </li>
         <li>
+          <a href="/admin/kategoriat">
+            <span class="recipes-text">
+              Kategoriat
+              <span class="meta">
+                Lisää, nimeä uudelleen, järjestä ja poista reseptien
+                kategoriat. Sama lista kaikille talouksille.
+              </span>
+            </span>
+          </a>
+        </li>
+        <li>
           <a href="/admin/households">
             <span class="recipes-text">
               Householdit

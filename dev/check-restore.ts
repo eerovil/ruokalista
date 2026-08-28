@@ -20,6 +20,7 @@ const TABLES: readonly BackupTableName[] = [
   "intake_job",
   "member_invitation",
   "ingredient",
+  "category",
   "recipe",
   "recipe_share",
   "recipe_category",
@@ -307,6 +308,10 @@ async function validSnapshot() {
         revision: 0,
         edit_token: null,
       },
+    ],
+    category: [
+      { slug: "uuniruoka", label: "Uuniruoka", position: 1 },
+      { slug: "pasta", label: "Pasta", position: 2 },
     ],
     recipe_share: [
       {

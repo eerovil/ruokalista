@@ -203,6 +203,10 @@ function fakeDatabase(): {
         source_text: "Kaalilaatikko\n½ dl öljyä",
       },
     ],
+    category: [
+      { slug: "lisuke", label: "Lisuke", position: 1 },
+      { slug: "uuniruoka", label: "Uuniruoka", position: 2 },
+    ],
     recipe_share: [
       {
         recipe_id: 1,

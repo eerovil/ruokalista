@@ -92,3 +92,5 @@ commit what it wrote:
 | `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
 | `81-recipes-bulk-category.png` | Proposed recipe list with two recipes ticked: the count saying how many the action will hit, and the category control above the publish buttons (#199) |
 | `82-recipes-bulk-category-done.png` | The same list after one press: both recipes carry **Keitto**, the chip row has gained it, and the notice counts what moved |
+| `83-admin-categories.png` | Proposed admin category screen: the vocabulary as rows with slug and recipe count, ↑/↓ ordering, and a freshly added **Wokki** (#199) |
+| `84-admin-category-delete.png` | Proposed removal confirmation: the recipes that would lose **Keitto**, named before anything happens |

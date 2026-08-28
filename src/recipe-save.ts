@@ -7,7 +7,7 @@ import {
   normalizeGroups,
   type AlternativeGroup,
 } from "./alternatives.ts";
-import { isCategorySlug } from "./categories.ts";
+import { loadVocabulary } from "./categories.ts";
 import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
 
 /**
@@ -122,6 +122,7 @@ export async function saveRecipe(
   recipe: RecipeToSave,
 ): Promise<number> {
   validateRecipe(recipe);
+  await assertKnownCategories(db, recipe.categories);
   const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
 
   const parts = partNames(recipe);
@@ -185,6 +186,7 @@ export async function replaceRecipe(
   options: ValidateOptions = {},
 ): Promise<void> {
   validateRecipe(recipe, options);
+  await assertKnownCategories(db, recipe.categories);
   if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
     throw new StaleRecipe("Reseptiä ei enää ole.");
   }
@@ -694,6 +696,27 @@ function savedScope(line: LineToSave): string {
     : `part ${section}`;
 }
 
+/**
+ * Every category has to be one the vocabulary still has (#196, #199).
+ *
+ * Enforced here as well as on the form, for the same reason the ingredient gate
+ * is: an AgentDeck bundle (#82) reaches these functions without passing a
+ * screen, and a category nobody can filter by is not worth storing. It is a
+ * query rather than a constant since #199, so it sits beside the write instead
+ * of inside the synchronous `validateRecipe` — and it costs nothing at all for
+ * the recipes that carry no category, which is most of them.
+ */
+async function assertKnownCategories(
+  db: D1Database,
+  categories: readonly string[],
+): Promise<void> {
+  if (categories.length === 0) return;
+  const vocabulary = await loadVocabulary(db);
+  if (categories.some((slug) => !vocabulary.has(slug))) {
+    throw new SaveRefused("Tuntematon kategoria.");
+  }
+}
+
 export function validateRecipe(
   recipe: RecipeToSave,
   options: ValidateOptions = {},
@@ -712,12 +735,6 @@ export function validateRecipe(
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
-  }
-  // Enforced here as well as on the form, for the same reason the ingredient
-  // gate is: an AgentDeck bundle (#82) reaches this function without passing a
-  // screen, and a category nobody can filter by is not worth storing.
-  if (recipe.categories.some((slug) => !isCategorySlug(slug))) {
-    throw new SaveRefused("Tuntematon kategoria.");
   }
   // Both halves of a choice are used at the same moment, so they belong to the
   // same part and the same cooking-order section (#183). Letting one span two

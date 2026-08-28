@@ -10,6 +10,9 @@ export const BACKUP_TABLES = [
   { name: "intake_job", orderBy: "created_at, id" },
   { name: "member_invitation", orderBy: "id" },
   { name: "ingredient", orderBy: "id" },
+  // The category vocabulary (#199). Migration-seeded, but an admin curates it,
+  // so what it holds is data and not schema.
+  { name: "category", orderBy: "position, slug" },
   { name: "recipe", orderBy: "id" },
   { name: "recipe_share", orderBy: "recipe_id, household_id" },
   { name: "recipe_category", orderBy: "recipe_id, category" },

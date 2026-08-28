@@ -1,3 +1,4 @@
+import { loadVocabulary } from "./categories.ts";
 import { html, page } from "./html.ts";
 import type { Member } from "./members.ts";
 import {
@@ -86,16 +87,18 @@ export async function publishForm(
 
   if (back !== null) return seeOther(back);
 
+  const vocabulary = await loadVocabulary(env.DB);
   return page(
     "Reseptit",
     await ownRecipeList(
       env.DB,
+      vocabulary,
       member,
       query,
       doneNotice(action, outcome),
       // The list came back to the same category it was filtered to, so a bulk
       // publish does not silently move the reader somewhere else (#196).
-      askedCategory(String(form.get("kategoria") ?? "") || null),
+      askedCategory(vocabulary, String(form.get("kategoria") ?? "") || null),
     ),
     "recipes",
     member,
@@ -226,7 +229,13 @@ async function refuse(
 
   return page(
     "Reseptit",
-    await ownRecipeList(env.DB, member, query, { message, refused: true }),
+    await ownRecipeList(
+      env.DB,
+      await loadVocabulary(env.DB),
+      member,
+      query,
+      { message, refused: true },
+    ),
     "recipes",
     member,
     400,

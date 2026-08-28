@@ -215,3 +215,30 @@ the app answering.
   area error, not ~2% — `dev/check-contact-sheet.ts` uses 0.04.
 
 See also `docs/agents/verification.md` for which spec covers what.
+
+## The dev checks run without a TypeScript compiler
+
+`npm run check` runs `node --experimental-strip-types --test dev/*.ts`. Types are
+*erased*, never compiled, so anything that needs code generation is a hard error
+at import time — and it is an error in whichever `src/` module the check imports,
+not in the check itself.
+
+The one that has already cost a session: a constructor parameter property.
+
+```ts
+// Fails the check with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+constructor(readonly categories: readonly Category[]) {}
+
+// Fine.
+readonly categories: readonly Category[];
+constructor(categories: readonly Category[]) { this.categories = categories; }
+```
+
+It typechecks, and it runs under `npx tsx`, which is what makes it confusing:
+running the one check file directly with `tsx` passes while `npm run check`
+reports the whole file as failed with no assertion in sight. Reach for
+`node --experimental-strip-types --test dev/check-<name>.ts` when a check fails
+in the suite but not on its own.
+
+Enums and namespaces are the other members of that family. Nothing in `src/`
+uses them today.

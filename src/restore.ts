@@ -24,6 +24,9 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   // After household and member: an invitation belongs to one and records who made it.
   "member_invitation",
   "ingredient",
+  // Before recipe_category, which names a category by slug. It points at
+  // nothing itself (#199).
+  "category",
   "recipe",
   // After recipe, household and member: a selective share points at all three.
   "recipe_share",
@@ -118,7 +121,12 @@ export function assertCompatibleTarget(
   }
 
   for (const table of EXPECTED_TABLES) {
-    if (target.rowCounts[table] !== 0) {
+    // `category` is the one table a migration seeds (#199), so a freshly
+    // migrated target already holds the vocabulary that shipped with the code.
+    // The snapshot's vocabulary replaces it wholesale — `generateRestoreSql`
+    // clears it first — so its rows are not evidence of a dirty target the way
+    // any other table's would be.
+    if (table !== "category" && target.rowCounts[table] !== 0) {
       throw new Error(`target table ${table} is not empty`);
     }
     const expectedColumns = [...target.columns[table]].sort();
@@ -132,7 +140,13 @@ export function assertCompatibleTarget(
 }
 
 export function generateRestoreSql(snapshot: BackupSnapshot): string {
-  const lines = ["PRAGMA foreign_keys = ON;", "BEGIN TRANSACTION;"];
+  const lines = [
+    "PRAGMA foreign_keys = ON;",
+    "BEGIN TRANSACTION;",
+    // The only table a migration seeds. Everything else is restored into an
+    // empty target; this one is restored over the vocabulary the code shipped.
+    "DELETE FROM \"category\";",
+  ];
   const tables = { ...snapshot.tables };
   tables.recipe = sortRecipesParentFirst(snapshot.tables.recipe);
 
@@ -263,6 +277,8 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     ["recipe_id", "category"],
     "recipe category",
   );
+  const categorySlugs = uniqueTextKey(snapshot.tables.category, "slug", "category");
+  uniqueComposite(snapshot.tables.category, ["label"], "category label");
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
   uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
@@ -344,6 +360,15 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   }
   for (const row of snapshot.tables.recipe_category) {
     requireReference(row, "recipe_id", recipeIds, "recipe_category.recipe_id");
+    // The vocabulary is a table since #199, so a snapshot naming a category it
+    // does not also carry would restore recipes into a category nobody can
+    // filter by. There is no foreign key doing this in the schema.
+    requireTextReference(
+      row,
+      "category",
+      categorySlugs,
+      "recipe_category.category",
+    );
   }
   for (const row of snapshot.tables.recipe_step) {
     requireReference(row, "recipe_id", recipeIds, "recipe_step.recipe_id");
@@ -447,6 +472,32 @@ function uniqueIntegerKey(rows: BackupRow[], column: string, label: string): Set
     values.add(value);
   }
   return values;
+}
+
+function uniqueTextKey(rows: BackupRow[], column: string, label: string): Set<string> {
+  const values = new Set<string>();
+  for (const row of rows) {
+    const value = row[column];
+    if (typeof value !== "string" || value === "") {
+      throw new Error(`snapshot ${label}.${column} must be a non-empty string`);
+    }
+    if (values.has(value)) {
+      throw new Error(`snapshot has duplicate ${label} ${column} ${value}`);
+    }
+    values.add(value);
+  }
+  return values;
+}
+
+function requireTextReference(
+  row: BackupRow,
+  column: string,
+  values: Set<string>,
+  label: string,
+): void {
+  const value = row[column];
+  if (typeof value !== "string") throw new Error(`snapshot ${label} must be text`);
+  if (!values.has(value)) throw new Error(`snapshot has orphan ${label}=${value}`);
 }
 
 function uniqueComposite(rows: BackupRow[], columns: string[], label: string): void {

@@ -1814,3 +1814,40 @@ test.describe("bulk category editing (#199)", () => {
     });
   });
 });
+
+test.describe("curating the categories (#199)", () => {
+  test("the admin screen, and what removing one would do", async ({
+    page,
+    context,
+  }) => {
+    // Member 3 is Koti's admin; this whole screen is behind that.
+    await context.addCookies([sessionCookie(3)]);
+
+    // One recipe in Keitto first, so the row's count and the removal warning
+    // are about something real rather than an empty list.
+    await page.goto("/recipes/1/edit");
+    await page.locator(".category-choices").getByLabel("Keitto").check();
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page.locator(".category-tags")).toContainText("Keitto");
+
+    await page.goto("/admin/kategoriat");
+    await page.getByLabel("Uusi kategoria").fill("Wokki");
+    await page.getByRole("button", { name: "Lisää kategoria" }).click();
+    await expect(page.locator(".done")).toContainText("Wokki");
+    await expect(page.locator(".category-admin li")).toHaveCount(10);
+    await capture(page, {
+      path: `${SHOTS}/83-admin-categories.png`,
+      fullPage: true,
+    });
+
+    await page.goto("/admin/kategoriat/keitto/poista");
+    // The bulk-category shot above put two recipes in Keitto, which is exactly
+    // the state worth photographing here — so this asserts the list contains
+    // the recipe rather than that it is the only one.
+    await expect(page.locator(".recipes")).toContainText("Kaalilaatikko");
+    await capture(page, {
+      path: `${SHOTS}/84-admin-category-delete.png`,
+      fullPage: true,
+    });
+  });
+});

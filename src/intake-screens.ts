@@ -43,7 +43,8 @@ import { saveRecipe, SaveRefused } from "./recipe-save.ts";
 import {
   CATEGORY_STYLE,
   categoryChoices,
-  readCategories,
+  loadVocabulary,
+  type Vocabulary,
 } from "./categories.ts";
 import { isLocalOrigin } from "./public-origin.ts";
 import { normaliseRecipeUrl } from "./recipe-fetch.ts";
@@ -570,13 +571,16 @@ export async function intakeJobReviewScreen(
     : job.sourceRoute === "linked"
       ? { route: "linked", url: address, text: job.sourceText ?? "" }
       : { route: "pasted", text: job.sourceText ?? "" };
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
 
   try {
     const draft = draftFromJson(job.draftJson, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, job.sourceRoute, address, job.id),
+      correctionForm(draft, ingredients, vocabulary, job.sourceRoute, address, job.id),
       "intake",
       member,
     );
@@ -614,13 +618,16 @@ export async function correctScreen(
         ? { route, url: address, text: pasted }
         : { route, text: pasted };
 
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
 
   try {
     const draft = draftFromJson(json, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, route, address),
+      correctionForm(draft, ingredients, vocabulary, route, address),
       "intake",
       member,
     );
@@ -635,7 +642,10 @@ export async function saveScreen(
   member: Member,
 ): Promise<Response> {
   const form = await request.formData();
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
 
   try {
     const lineCount = readLineCount(form.get("lineCount"));
@@ -650,7 +660,7 @@ export async function saveScreen(
       structuredBy: String(form.get("structuredBy") ?? "") || null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
-      categories: readCategories(form),
+      categories: vocabulary.read(form),
     });
 
     const intakeJobId = String(form.get("intakeJobId") ?? "");
@@ -681,7 +691,7 @@ export async function saveScreen(
     return page(
       "Tarkista resepti",
       html`<p class="refused">${error.message}</p>
-        ${correctionFormFromSubmission(form, ingredients)}`,
+        ${correctionFormFromSubmission(form, ingredients, vocabulary)}`,
       "intake",
       member,
       400,
@@ -694,6 +704,7 @@ export async function saveScreen(
 function correctionForm(
   draft: Draft,
   ingredients: IngredientSummary[],
+  vocabulary: Vocabulary,
   sourceRoute: SourceRoute,
   sourceUrl = "",
   intakeJobId = "",
@@ -729,12 +740,14 @@ function correctionForm(
       categories: [],
     },
     ingredients,
+    vocabulary,
   );
 }
 
 function correctionFormFromSubmission(
   form: FormData,
   ingredients: IngredientSummary[],
+  vocabulary: Vocabulary,
 ): Raw {
   const lineCount = lineCountForRendering(form);
   return renderCorrection(
@@ -750,9 +763,10 @@ function correctionFormFromSubmission(
         lineValuesFromForm(form, index),
       ),
       steps: stepValuesForRendering(form),
-      categories: readCategories(form),
+      categories: vocabulary.read(form),
     },
     ingredients,
+    vocabulary,
   );
 }
 
@@ -948,6 +962,7 @@ function isLineFormValues(
 function renderCorrection(
   view: CorrectionView,
   ingredients: IngredientSummary[],
+  vocabulary: Vocabulary,
 ): Raw {
   const multipart = view.rows.some((row) =>
     (isLineFormValues(row) ? row.section : row.section ?? "").trim() !== ""
@@ -968,7 +983,7 @@ function renderCorrection(
            other field on this screen: 99% of imports need no correction and
            would save with no category at all if this were one tap further in,
            and this is the one moment somebody knows what kind of dish it is. -->
-      ${categoryChoices(view.categories)}
+      ${categoryChoices(vocabulary, view.categories)}
 
       <button type="submit" class="button save-draft">Tallenna resepti</button>
 

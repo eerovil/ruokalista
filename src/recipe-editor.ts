@@ -2,7 +2,8 @@ import { problem } from "./auth.ts";
 import {
   CATEGORY_STYLE,
   categoryChoices,
-  readCategories,
+  loadVocabulary,
+  type Vocabulary,
 } from "./categories.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
@@ -161,10 +162,13 @@ export async function editorScreen(
   const recipe = await load(env.DB, member, params["id"]);
   if (recipe === null) return notFound(member);
 
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
   return page(
     `Muokkaa: ${recipe.title}`,
-    editorForm(recipe, ingredients),
+    editorForm(recipe, ingredients, vocabulary),
     "recipes",
     member,
   );
@@ -203,7 +207,7 @@ export async function saveEditForm(
       lines: readLines(form, lineCount),
       // A part shows no category picker, so it submits none and keeps none —
       // the dish is what gets browsed for (#196).
-      categories: readCategories(form),
+      categories: (await loadVocabulary(env.DB)).read(form),
     },
     // A dish written entirely in named parts has no ingredient lines of its
     // own, and it is still a whole recipe (issue #184).
@@ -217,11 +221,14 @@ export async function saveEditForm(
     if (latest === null) return notFound(member);
 
     const stale = error instanceof StaleRecipe;
-    const ingredients = await ingredientsFor(env.DB, member.householdId);
+    const [ingredients, vocabulary] = await Promise.all([
+      ingredientsFor(env.DB, member.householdId),
+      loadVocabulary(env.DB),
+    ]);
     return page(
       `Muokkaa: ${latest.title}`,
       html`<p class="refused">${error.message}</p>
-        ${editorForm(latest, ingredients, {
+        ${editorForm(latest, ingredients, vocabulary, {
           form,
           lineCount: lineCountForRendering(form),
           // A stale form must deliberately submit against the version now on
@@ -258,7 +265,10 @@ async function addedLine(
   recipe: Recipe,
   form: FormData,
 ): Promise<Response> {
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
   const lineCount = lineCountForRendering(form);
   const revision = revisionForRendering(form, recipe.revision);
 
@@ -266,7 +276,7 @@ async function addedLine(
     return page(
       `Muokkaa: ${recipe.title}`,
       html`<p class="refused">Ainesrivejä voi olla enintään ${MAX_LINES}.</p>
-        ${editorForm(recipe, ingredients, { form, lineCount, revision })}`,
+        ${editorForm(recipe, ingredients, vocabulary, { form, lineCount, revision })}`,
       "recipes",
       member,
       400,
@@ -275,7 +285,7 @@ async function addedLine(
 
   return page(
     `Muokkaa: ${recipe.title}`,
-    editorForm(recipe, ingredients, {
+    editorForm(recipe, ingredients, vocabulary, {
       form,
       lineCount: lineCount + 1,
       revision,
@@ -418,15 +428,16 @@ async function imageRefused(
   message: string,
   status: number,
 ): Promise<Response> {
-  const [ingredients, row] = await Promise.all([
+  const [ingredients, row, vocabulary] = await Promise.all([
     ingredientsFor(env.DB, member.householdId),
     imageRow(env.DB, member.householdId, recipe.id),
+    loadVocabulary(env.DB),
   ]);
 
   return page(
     `Muokkaa: ${recipe.title}`,
     html`<p class="refused">${message}</p>
-      ${editorForm({ ...recipe, imageKey: row?.image_key ?? null }, ingredients)}`,
+      ${editorForm({ ...recipe, imageKey: row?.image_key ?? null }, ingredients, vocabulary)}`,
     "recipes",
     member,
     status,
@@ -445,6 +456,7 @@ function seeEditor(recipeId: number): Response {
 function editorForm(
   recipe: Recipe,
   ingredients: IngredientSummary[],
+  vocabulary: Vocabulary,
   attempted?: EditorAttempt,
 ): Raw {
   const rows: Array<DraftLine | LineFormValues> = attempted
@@ -534,7 +546,7 @@ function editorForm(
   // A refused save re-renders what was ticked, not what is stored: the point of
   // the refusal is that the member's own edit is still in front of them.
   const categories = attempted
-    ? readCategories(attempted.form)
+    ? vocabulary.read(attempted.form)
     : recipe.categories;
 
   return html`<h1>Muokkaa reseptiä</h1>
@@ -604,7 +616,7 @@ function editorForm(
 
       <!-- Only a dish carries categories. A part is a recipe row (ADR-0002),
            but nobody browses the store for a juustokastike. -->
-      ${recipe.parentId === null ? categoryChoices(categories) : ""}
+      ${recipe.parentId === null ? categoryChoices(vocabulary, categories) : ""}
 
       <h2>Ainekset</h2>
       ${lineRows(rows, ingredients, {

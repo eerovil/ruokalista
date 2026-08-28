@@ -478,14 +478,43 @@ the same lasagne is a *Uuniruoka* to everybody who can read it. That only works
 because the vocabulary is closed, so the two decisions were taken together in
 [ADR-0012](../adr/0012-a-category-belongs-to-the-recipe-not-the-household.md).
 
-Storing the slug rather than the label means renaming *Jälkiruoka* is a code
-change and never a data migration. Only a dish is categorised: a part is a
+Storing the slug rather than the label means renaming *Jälkiruoka* never
+rewrites a recipe row. Only a dish is categorised: a part is a
 recipe row (ADR-0002) but nobody browses for a *juustokastike*, so `saveRecipe`
 writes these on the parent only and `loadRecipe` does not ask for a part's.
 `ON DELETE CASCADE` matches `recipe_step` and `ingredient_line`, so deleting a
 recipe takes its categories with it and `deleteRecipeTree` needs no change.
 
 This **is** a table addition, so it goes through the manifest lockstep below.
+
+### The vocabulary itself becomes a table (issue #199)
+
+`migrations/0019_category_vocabulary.sql`, proposed here, adds
+`category(slug, label, position)` and seeds it with the seven #196 shipped plus
+`Kastike` and `Pizza/piirakka`. The list was a constant in `src/categories.ts`;
+it is now data an admin curates from `/admin/kategoriat`. What a recipe stores
+does not change at all — `recipe_category.category` is still the slug — which is
+why a rename is still not a data migration.
+[ADR-0013](../adr/0013-the-category-vocabulary-is-curated-not-compiled.md) holds
+the decision and what it costs; ADR-0012's other half is untouched.
+
+Three things about this table are worth knowing before changing it:
+
+- **There is no foreign key from `recipe_category`.** Adding one would mean
+  rebuilding that table for little gain: the only writer validates against the
+  vocabulary first, removing a category detaches its recipes in the same batch,
+  and an orphaned slug already renders as itself and reads as no filter.
+  `validateRelationships` in `src/restore.ts` checks the relationship where it
+  actually matters, so a snapshot naming a category it does not carry is refused.
+- **It is the one backup table a migration seeds.** Every other table is restored
+  into an empty target; a freshly migrated one already holds this vocabulary. So
+  `generateRestoreSql` clears `category` first and `assertCompatibleTarget`
+  exempts it from the emptiness check — both named in the code.
+- **`position` may have gaps.** Everything reads `ORDER BY position`, and the ↑/↓
+  buttons swap two rows' positions rather than renumbering the list, so a gap
+  left by a removal is harmless.
+
+This is a second table addition, so it goes through the same lockstep.
 
 ## Backup and restore: the manifest lockstep rule
 
@@ -494,7 +523,8 @@ capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `intake_job`, `member_invitation`, `ingredient`,
 `recipe`, `recipe_share`, `recipe_step`, `ingredient_line`, `planned_batch`,
 `batch_occurrence`, `pantry_entry`, `recipe_preference`, `ingredient_product`,
-`recipe_ingredient_product`, and — proposed by #196 — `recipe_category`.
+`recipe_ingredient_product`, — proposed by #196 — `recipe_category`, and —
+proposed by #199 — `category`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.
