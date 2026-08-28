@@ -7,10 +7,10 @@ request can be looked at without running the app.
 Taken on a Pixel 7 viewport, because a week gets planned at the kitchen table
 and a recipe gets read at the hob.
 
-Because nothing compares them, capturing them is deliberate rather than part of
-an ordinary suite run: this change makes `screenshots.spec.ts` skip unless
-`PLAYWRIGHT_SCREENSHOTS=1` is set. Regenerate after a change that alters a
-screen, and commit what it wrote:
+The flows and assertions in `screenshots.spec.ts` run in every ordinary suite.
+Writing these review artifacts is deliberate because nothing compares their PNG
+bytes: set `PLAYWRIGHT_SCREENSHOTS=1` after a change that alters a screen, and
+commit what it wrote:
 
     PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
 

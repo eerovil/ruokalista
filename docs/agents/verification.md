@@ -110,17 +110,17 @@ render differently.
 Every pull request gets the typecheck, `npm run check`, the backup-schema check
 and the complete browser suite. That is the gate; it has not moved.
 
-Two things this proposal takes out of the ordinary pull-request run, because
-they were paid for on every change and earned nothing on most of them:
+One thing this proposal takes out of the ordinary pull-request run, because it
+was paid for on every change and earned nothing on most of them:
 
 - The restore round-trip costs minutes next to seconds for everything else in
   the check tier, and it can only tell you something when the schema, the backup
   format, the restore path or their fixtures moved. So on a pull request it runs
   only when one of those files changed. On a push to `main` — the run that
   applies migrations to the live database and deploys — it always runs.
-- `tests/screenshots.spec.ts` writes review artifacts. Nothing compares them, so
-  it could never fail a build; it only spent time. It no longer runs by default,
-  in CI or locally. Capture is opt-in:
+- `tests/screenshots.spec.ts` remains part of every ordinary browser run because
+  it contains behavioural flows and assertions. Its PNG bytes are not compared,
+  so only writing those review artifacts is opt-in:
   `PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`.
   Commit what it wrote, the same as before.
 

@@ -72,9 +72,9 @@ jobs:
       - name: Restore round-trip
         if: steps.roundtrip.outputs.needed == 'true'
         run: npm run check:restore-roundtrip
-      # Every behavioural spec, on every pull request — this is the gate. Only
-      # tests/screenshots.spec.ts is out, and it is out because nothing compares
-      # what it writes, so it could never have failed this job.
+      # Every behavioural spec, on every pull request — this is the gate.
+      # tests/screenshots.spec.ts still runs its flows and assertions; only its
+      # review-artifact writes are opt-in.
       - name: Browser tests
         run: npx playwright test
       - name: Keep the traces from a failure

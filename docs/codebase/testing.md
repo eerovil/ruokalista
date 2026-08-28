@@ -146,11 +146,11 @@ the Playwright container can also exceed the config's 120s
 of racing a fresh boot.
 
 Screenshots land in `docs/screenshots/` and are committed as review artifacts —
-nothing compares them, so they cannot fail a build. Because they cannot fail a
-build, this proposal stops running them by default: `screenshots.spec.ts` is
-ignored unless `PLAYWRIGHT_SCREENSHOTS=1` is set, the same shape
-`PLAYWRIGHT_WALKTHROUGH` already had, and `scripts/playwright.sh` forwards it
-into the container. Regenerate with
+nothing compares their PNG bytes, so rendering differences do not fail a build.
+The flows and assertions in `screenshots.spec.ts` are still behavioural coverage
+and run in every ordinary suite. Only its calls that write review artifacts are
+conditional on `PLAYWRIGHT_SCREENSHOTS=1`, which `scripts/playwright.sh`
+forwards into the container. Regenerate with
 `PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`
 and commit what it wrote. They have caught
 real layout bugs the assertions missed (a shared flex rule misplacing a save

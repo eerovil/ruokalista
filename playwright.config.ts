@@ -20,10 +20,6 @@ if (sOstoslistaPort > 65_535) {
 }
 const sOstoslistaOrigin = `http://127.0.0.1:${sOstoslistaPort}`;
 const runWalkthrough = process.env["PLAYWRIGHT_WALKTHROUGH"] === "1";
-// Screenshots are review artifacts: nothing compares them, so they can never
-// fail a build, and running them on every CI job and every local suite bought
-// nothing. Capture is deliberate now — see docs/agents/verification.md.
-const runScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
 
 /**
  * Browser tests run against a real `wrangler dev` with the seeded local
@@ -61,7 +57,6 @@ export default defineConfig({
       testIgnore: [
         /keep-awake-legacy\.spec\.ts/,
         ...(runWalkthrough ? [] : [/walkthrough\.spec\.ts/]),
-        ...(runScreenshots ? [] : [/screenshots\.spec\.ts/]),
       ],
       use: {
         // A phone, because a week gets planned at the kitchen table.
