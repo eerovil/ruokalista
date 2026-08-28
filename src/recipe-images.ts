@@ -7,6 +7,7 @@ import {
   type StoredImage,
 } from "./image-freshness.ts";
 import type { Member } from "./members.ts";
+import { readableRecipeCondition } from "./recipe-publish.ts";
 import { recipeFingerprint } from "./recipe-fingerprint.ts";
 import { findRecipe } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
@@ -468,11 +469,16 @@ async function readableImageRow(
          FROM recipe
          LEFT JOIN recipe AS parent ON parent.id = recipe.parent_id
         WHERE recipe.id = ?
-          AND (recipe.household_id = ?
-               OR recipe.published_at IS NOT NULL
-               OR parent.published_at IS NOT NULL)`,
+          AND (${readableRecipeCondition("recipe")}
+               OR ${readableRecipeCondition("parent")})`,
     )
-    .bind(recipeId, householdId)
+    .bind(
+      recipeId,
+      householdId,
+      householdId,
+      householdId,
+      householdId,
+    )
     .first<ImageRow>();
 }
 

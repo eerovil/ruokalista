@@ -21,6 +21,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "member",
   "ingredient",
   "recipe",
+  // After recipe, household and member: a selective share points at all three.
+  "recipe_share",
   "recipe_step",
   "ingredient_line",
   "planned_batch",
@@ -242,6 +244,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   const memberIds = uniqueIntegerKey(snapshot.tables.member, "id", "member");
   const ingredientIds = uniqueIntegerKey(snapshot.tables.ingredient, "id", "ingredient");
   const recipeIds = uniqueIntegerKey(snapshot.tables.recipe, "id", "recipe");
+  uniqueComposite(
+    snapshot.tables.recipe_share,
+    ["recipe_id", "household_id"],
+    "recipe share",
+  );
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
   uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
@@ -302,6 +309,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     }
   }
   sortRecipesParentFirst(snapshot.tables.recipe);
+  for (const row of snapshot.tables.recipe_share) {
+    requireReference(row, "recipe_id", recipeIds, "recipe_share.recipe_id");
+    requireReference(row, "household_id", householdIds, "recipe_share.household_id");
+    requireReference(row, "shared_by", memberIds, "recipe_share.shared_by");
+  }
   for (const row of snapshot.tables.recipe_step) {
     requireReference(row, "recipe_id", recipeIds, "recipe_step.recipe_id");
   }

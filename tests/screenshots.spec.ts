@@ -1442,10 +1442,50 @@ test.describe("public recipes", () => {
       page.locator(".multiplier-choice button.is-current"),
     ).toHaveText("1,5×");
     await expect(
-      page.getByRole("button", { name: "Poista julkaisu" }),
-    ).toBeVisible();
+      page.getByLabel("Julkinen"),
+    ).toBeChecked();
     await capture(page, {
       path: `${SHOTS}/52-recipe-owner-sharing.png`,
+      fullPage: true,
+    });
+
+    // The same dish narrowed to one named household: this is the new #185
+    // state, shown after save so the summary and checked recipient agree.
+    await page.getByLabel("Valituille").check();
+    await page.locator(".recipient-picker").getByLabel("Naapuri").check();
+    await page.getByRole("button", { name: "Tallenna jako" }).click();
+    await expect(page.locator(".recipe-sharing")).toContainText(
+      "Tämä resepti on jaettu: Naapuri.",
+    );
+    const sharing = page.locator(".recipe-sharing");
+    const search = sharing.getByLabel("Hae vastaanottavaa taloutta");
+    const recipient = sharing.getByLabel("Naapuri");
+    const saveSharing = sharing.getByRole("button", { name: "Tallenna jako" });
+    const [sharingBox, searchBox, recipientBox, saveBox] = await Promise.all([
+      sharing.boundingBox(),
+      search.boundingBox(),
+      recipient.boundingBox(),
+      saveSharing.boundingBox(),
+    ]);
+    expect(sharingBox).not.toBeNull();
+    expect(searchBox).not.toBeNull();
+    expect(recipientBox).not.toBeNull();
+    expect(saveBox).not.toBeNull();
+    expect(searchBox!.x).toBeGreaterThanOrEqual(sharingBox!.x);
+    expect(searchBox!.x + searchBox!.width).toBeLessThanOrEqual(
+      sharingBox!.x + sharingBox!.width,
+    );
+    expect(recipientBox!.y).toBeGreaterThan(searchBox!.y + searchBox!.height);
+    expect(saveBox!.y + saveBox!.height).toBeLessThanOrEqual(
+      sharingBox!.y + sharingBox!.height,
+    );
+    const width = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      content: document.documentElement.scrollWidth,
+    }));
+    expect(width.content).toBeLessThanOrEqual(width.viewport);
+    await capture(page, {
+      path: `${SHOTS}/68-recipe-selected-sharing.png`,
       fullPage: true,
     });
 
@@ -1486,7 +1526,8 @@ test.describe("public recipes", () => {
     await context.clearCookies();
     await context.addCookies([sessionCookie(1)]);
     await page.goto("/recipes/1");
-    await page.getByRole("button", { name: "Poista julkaisu" }).click();
+    await page.getByLabel("Oma").check();
+    await page.getByRole("button", { name: "Tallenna jako" }).click();
     await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
     await capture(page, {
       path: `${SHOTS}/55-unpublish-refused.png`,

@@ -155,6 +155,16 @@ and plannable by every other household while staying editable only by its owner.
 `src/recipe-publish.ts` owns the rules and `src/publish-screens.ts` the two forms
 that reach them; `src/recipes.ts` holds the two scopes everything reads through.
 
+### Household-targeted sharing (#185, proposed)
+
+This pull request proposes three owner-selected states: private, shared with
+selected households, and public. `recipe.published_at` continues to mean public;
+`recipe_share` records selected recipient households. `src/recipe-publish.ts`
+owns transitions and refuses only when a household losing access has a future
+plan. All readable/plannable query paths use its shared SQL condition, while
+`findRecipe` and every write stay owner-only. See
+[ADR-0009](../adr/0009-recipe-sharing-targets-households.md).
+
 - **`findRecipe`** is own-only, and every write path uses it — editing,
   deleting, uploading a picture. **`findReadableRecipe`** adds "or published".
   Keeping them as two named functions rather than one flag is the point: a new
