@@ -68,19 +68,35 @@ service. Keep it as a Worker secret, and rotate it on both sides if exposed.
 then checks it against the service's `/status`, printing only the bound list id
 and item count.
 
-The service's URL is `SOSTOSLISTA_SERVICE_URL`, a plain var in `wrangler.jsonc`
-rather than a secret. Its API is `GET /products?q=` to search the shop's
-catalogue, `POST /items {"ean"}` or `{"note"}` to add, and
-`DELETE /items?ean=`/`?note=` to remove; product images come from
-`https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which needs no
-auth. Its README documents the rest.
+The deployed Worker reaches the service over the `SOSTOSLISTA_SERVICE` **service
+binding** in `wrangler.jsonc`, not over its public URL, and this is not a
+preference. Both Workers live on `eerovil.workers.dev`, and Cloudflare will not
+route one Worker's `fetch` to another Worker on the same zone: it answers with
+an HTML error page instead, which reached `SOstoslistaClient` as *"invalid
+JSON"* on every single call and made the whole integration look broken the first
+time it ran in production. A binding goes Worker to Worker inside Cloudflare and
+never leaves the network. The bearer token is still required — a binding skips
+the public hop, not the service's own authentication.
 
-The integration proposed by #147 also requires
-`SOSTOSLISTA_HOUSEHOLD_ID`, the one Ruokalista household allowed to see or use
-it. The remote service must have product search enabled before this is useful.
-Set the token and household gate before merging the proposal: `main` deploys
-immediately, and leaving either unset deliberately hides every integration
-route and control rather than exposing a half-configured action.
+Setting `SOSTOSLISTA_SERVICE_URL` switches the app back to plain HTTP at that
+URL. There is deliberately no such var in `wrangler.jsonc`, so production always
+uses the binding; the browser tests set it to reach their fixture. The service's
+API is `GET /products?q=` to search the shop's catalogue, `POST /items {"ean"}`
+or `{"note"}` to add, and `DELETE /items?ean=`/`?note=` to remove; product images
+come from `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which
+needs no auth. Its README documents the rest.
+
+The integration also requires `SOSTOSLISTA_HOUSEHOLD_ID`, the one Ruokalista
+household allowed to see or use it, and the remote service must have product
+search enabled. Leaving the token or the household gate unset deliberately hides
+every integration route and control rather than exposing a half-configured
+action — which also means a misconfiguration looks like "the feature is off",
+so check both before concluding the code is at fault.
+
+When something does fail, interpolate the error's message into `console.error`
+rather than passing the `Error` as a second argument. Workers Logs keeps the
+stack frames but drops the message, and the message is the only part that says
+what went wrong.
 
 Local browser tests do not use those credentials. Playwright starts a small
 contract fixture on the port after `PLAYWRIGHT_PORT` and passes harmless
