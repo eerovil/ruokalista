@@ -1,0 +1,21 @@
+-- A recipe line may offer alternatives: lihaliemikuutio *tai* fondiannos.
+--
+-- Each option stays a whole ingredient_line, so it keeps its own quantity,
+-- unit, second measurement and phase, and it points at a real ingredient rather
+-- than at a "hunaja tai sokeri" phrase in the global dictionary. Lines of one
+-- recipe row sharing a group number are options for each other; the lowest
+-- position in a group is the one a shopping list buys.
+--
+-- NULL is what every existing row is, and it means "an ordinary line that
+-- stands alone" rather than "unclassified" — a line offering no alternative is
+-- not a group of one.
+--
+-- Group numbers are scoped to the recipe row, not to the household or the
+-- database: a part is a recipe row of its own (ADR-0002), so its groups are its
+-- own. Nothing joins on this column and no other table references it.
+--
+-- A column addition, so no table is rebuilt and the backup/restore manifest
+-- lockstep does not move: backup captures SELECT * and restore builds its
+-- INSERT from the row's own keys.
+ALTER TABLE ingredient_line ADD COLUMN alternative_group INTEGER
+  CHECK (alternative_group IS NULL OR alternative_group > 0);

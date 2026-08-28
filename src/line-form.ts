@@ -1,3 +1,4 @@
+import { alternativeGroup } from "./alternatives.ts";
 import { html, raw, type Raw } from "./html.ts";
 import { decodeDraftRefs } from "./ingredient-refs.ts";
 import type { IngredientSummary } from "./ingredients.ts";
@@ -34,6 +35,11 @@ export interface LineFormValues {
   altUnit: string;
   section: string;
   phase: string;
+  /**
+   * The alternative group this row is an option in (#183), as typed. Any
+   * positive whole number will do: what matters is that two rows share it.
+   */
+  alternativeGroup: string;
   ingredientChoice: string;
   newName: string;
   sourceLine: string;
@@ -112,6 +118,7 @@ function hasUncommonValues(
     values.altUnit.trim() !== "" ||
     values.section.trim() !== "" ||
     values.phase.trim() !== "" ||
+    values.alternativeGroup.trim() !== "" ||
     // A compact row keeps its remove box in the open, so a ticked one is not a
     // reason to unfold anything.
     (!compact && values.remove) ||
@@ -267,6 +274,12 @@ export function lineRow(
               values.section,
             )
           : ""}
+        ${field(
+          `line.${index}.alternativeGroup`,
+          "Vaihtoehtoryhmä (sama numero = tai)",
+          values.alternativeGroup,
+          "numeric",
+        )}
         ${options.phases && values.section.trim() === ""
           ? phaseSelect(`line.${index}.phase`, values.phase)
           : ""}
@@ -385,6 +398,7 @@ export function emptyLine(): DraftLine {
     unit: null,
     altQuantity: null,
     altUnit: null,
+    alternativeGroup: null,
     ingredientId: null,
     ingredientName: "",
     sourceLine: "",
@@ -409,6 +423,8 @@ export function lineValuesFromDraft(
     altUnit: line.altUnit ?? "",
     section: line.section ?? "",
     phase: line.phase ?? "",
+    alternativeGroup:
+      line.alternativeGroup === null ? "" : String(line.alternativeGroup),
     // A name the model proposed is preselected as "create it". Unmatched
     // ingredients are almost always genuinely new, so asking once per line
     // charged for a decision nobody was really making (#53). The names are
@@ -440,6 +456,7 @@ export function lineValuesFromForm(
     altUnit: formField(form, `line.${index}.altUnit`),
     section: formField(form, `line.${index}.section`),
     phase: formField(form, `line.${index}.phase`),
+    alternativeGroup: formField(form, `line.${index}.alternativeGroup`),
     ingredientChoice: formField(form, `line.${index}.ingredient`),
     newName: formField(form, `line.${index}.newName`),
     sourceLine: formField(form, `line.${index}.source`),
@@ -527,6 +544,7 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
         sourceLine: values.sourceLine.trim(),
         section: readText(values.section),
         phase: readPhase(values.phase),
+        alternativeGroup: readAlternativeGroup(values.alternativeGroup),
         // The row this came from, kept because a step's mention points at it.
         // What this function returns is sorted by the position boxes and has
         // the removed rows taken out, so a place in that array is not a row.
@@ -666,6 +684,26 @@ export function readText(value: FormDataEntryValue | null): string | null {
   return text === "" ? null : text;
 }
 
+/**
+ * A row's alternative group, refusing what somebody plainly meant as a number.
+ *
+ * `alternatives.ts::alternativeGroup` is total by design — it is also read on
+ * the column and on the model's JSON, where an unusable value has to degrade to
+ * "no group". A form is the one edge where that would be wrong: somebody typing
+ * `-1` or `kaksi` in the box is asking for a grouping, and silently saving the
+ * line ungrouped would lose the edit without saying so.
+ */
+export function readAlternativeGroup(value: string): number | null {
+  if (value.trim() === "") return null;
+  const group = alternativeGroup(value);
+  if (group === null) {
+    throw new FormRefused(
+      "Vaihtoehtoryhmän pitää olla positiivinen kokonaisluku.",
+    );
+  }
+  return group;
+}
+
 export function readPhase(value: FormDataEntryValue | null): RecipePhase {
   const phase = String(value ?? "").trim();
   if (phase === "") return null;
@@ -723,6 +761,7 @@ function untouched(values: LineFormValues): boolean {
     values.altUnit.trim() === "" &&
     values.section.trim() === "" &&
     values.phase.trim() === "" &&
+    values.alternativeGroup.trim() === "" &&
     values.sourceLine.trim() === ""
   );
 }

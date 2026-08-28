@@ -1,5 +1,12 @@
 import { problem } from "./auth.ts";
 import { castSender } from "./cast.ts";
+import {
+  ALTERNATIVE_WORD,
+  alternativeGroup,
+  alternativeSets,
+  sharedSource,
+  type AlternativeGroup,
+} from "./alternatives.ts";
 import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
@@ -81,6 +88,11 @@ export interface RecipeLine extends Measurement {
   productImageUrl: string | null;
   sourceLine: string;
   phase: RecipePhase;
+  /**
+   * Which alternative group this line is an option in, or null when it stands
+   * alone. Lines of this recipe row sharing a number are read as `tai` (#183).
+   */
+  alternativeGroup: AlternativeGroup;
 }
 
 export interface RecipeStep {
@@ -260,6 +272,7 @@ interface LineRow {
   ingredient: string;
   source_line: string;
   phase: RecipePhase;
+  alternative_group: number | null;
 }
 
 /**
@@ -358,6 +371,7 @@ async function loadRecipe(
                 ingredient_line.alt_unit,
                 ingredient_line.source_line,
                 ingredient_line.phase,
+                ingredient_line.alternative_group,
                 ingredient.name AS ingredient
            FROM ingredient_line
            JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
@@ -424,6 +438,7 @@ async function loadRecipe(
         )?.imageUrl?.trim() || null,
       sourceLine: line.source_line,
       phase: line.phase,
+      alternativeGroup: alternativeGroup(line.alternative_group),
     })),
   };
 }
@@ -502,6 +517,17 @@ export async function apiShowRecipe(
  * internal cooking-view concerns, and neither has ever been on the wire.
  * Ownership, publication and linked product pictures are new for the same
  * reason: the screens need them, the API's callers did not ask for them.
+ *
+ * `alternativeGroup` is the one field added on purpose (#183), and it is not
+ * the same kind of thing as the ones above. A phase decides where a line is
+ * drawn; a group decides what the list of lines *means*. Without it the JSON
+ * says a recipe needs kermaa **and** kookosmaitoa, when it needs one of them —
+ * so any caller adding these lines up would be reading a wrong recipe, not a
+ * plainer one. Lines sharing a number, within one recipe object, are options
+ * for each other and the first is the default.
+ *
+ * `tests/alternatives.spec.ts` pins the exact key set of both objects against
+ * the live route, so nothing joins or leaves this shape by accident again.
  */
 function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
   const {
@@ -879,15 +905,29 @@ function body(
       ? ""
       : html`<h3 class="ingredients-heading">Ainekset</h3>
           <ul class="lines recipe-ingredients">
-            ${lines.map((line) => {
-              const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-              return html`<li class="recipe-ingredient">
+            ${alternativeSets(lines).map((set) => {
+              // The thumbnail follows the default option, because that is the
+              // one the shopping list buys. Two pictures on one row would say
+              // "buy both", which is exactly what a `tai` line does not mean.
+              const shown = set.options[0]!;
+              // Import gives every option of a group the same source sentence,
+              // and a scaled cooking makes each of them worth showing — so the
+              // set states it once at the end rather than repeating the whole
+              // choice under every option (#183).
+              const shared = sharedSource(set.options, (line) =>
+                sourceWorthShowing(line, multiplier),
+              );
+              return html`<li
+                class="${set.group === null
+                  ? "recipe-ingredient"
+                  : "recipe-ingredient is-alternative"}"
+              >
                 <span class="recipe-product-slot" aria-hidden="true">
-                  ${line.productImageUrl === null
+                  ${shown.productImageUrl === null
                     ? ""
                     : html`<img
                         class="recipe-product-thumb"
-                        src="${line.productImageUrl}"
+                        src="${shown.productImageUrl}"
                         alt=""
                         width="26"
                         height="26"
@@ -896,13 +936,24 @@ function body(
                       />`}
                 </span>
                 <span class="recipe-ingredient-copy">
-                  ${amount === ""
+                  ${set.options.map((line, index) => {
+                    const amount = formatMeasurement(
+                      scaleMeasurement(line, multiplier),
+                    );
+                    return html`${index === 0
+                      ? ""
+                      : html` <span class="alt-or">${ALTERNATIVE_WORD}</span> `}
+                    ${amount === ""
+                      ? ""
+                      : html`<span class="amount">${amount}</span> `}
+                    ${line.ingredient}
+                    ${shared === "" && sourceWorthShowing(line, multiplier)
+                      ? html`<span class="source">${line.sourceLine}</span>`
+                      : ""}`;
+                  })}
+                  ${shared === ""
                     ? ""
-                    : html`<span class="amount">${amount}</span> `}
-                  ${line.ingredient}
-                  ${sourceWorthShowing(line, multiplier)
-                    ? html`<span class="source">${line.sourceLine}</span>`
-                    : ""}
+                    : html`<span class="source">${shared}</span>`}
                 </span>
               </li>`;
             })}
@@ -1290,6 +1341,16 @@ const RECIPE_VIEW_STYLE = html`<style>
   }
   .recipe-ingredient-copy { flex: 1; min-width: 0; overflow-wrap: break-word; }
   .recipe-ingredient-copy .amount { white-space: nowrap; }
+
+  /* "tai" is the whole of what an alternative line says, so it is the one word
+     on the row that is not an ingredient or an amount. Dimmed and spaced rather
+     than emphasised: the options are what a cook reads, and the joining word
+     only has to stop them running together. */
+  .alt-or {
+    color: var(--muted);
+    font-style: italic;
+    padding: 0 .15rem;
+  }
 
   @media (min-width: 48rem) {
     .recipe-view {

@@ -17,6 +17,9 @@ function line(overrides: Partial<ShoppingLine>): ShoppingLine {
     multiplier: 1,
     partTitle: null,
     recipeId: 1,
+    sourceRecipeId: 1,
+    alternativeGroup: null,
+    phase: null,
     ingredientId: 1,
     ingredientName: "öljy",
     products: [],
@@ -442,4 +445,142 @@ test("two batches of one pinned recipe share its row and its packets", () => {
   assert.equal(items.length, 1);
   assert.equal(items[0]!.total, "800 g");
   assert.deepEqual(bought(items[0]!), ["2 × Marinoitu kanasuikale 400 g"]);
+});
+
+test("only the first option of a `tai` group is bought", () => {
+  const items = shoppingList([
+    line({
+      ingredientId: 1,
+      ingredientName: "kerma",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+    line({
+      ingredientId: 2,
+      ingredientName: "kookosmaito",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { kerma: "2 dl" });
+});
+
+test("a group in a dish and a group in its part are counted separately", () => {
+  const items = shoppingList([
+    line({
+      sourceRecipeId: 1,
+      ingredientId: 1,
+      ingredientName: "voi",
+      quantity: 1,
+      unit: "rkl",
+      alternativeGroup: 1,
+    }),
+    line({
+      sourceRecipeId: 1,
+      ingredientId: 2,
+      ingredientName: "margariini",
+      quantity: 1,
+      unit: "rkl",
+      alternativeGroup: 1,
+    }),
+    line({
+      sourceRecipeId: 2,
+      partTitle: "juustokastike",
+      ingredientId: 3,
+      ingredientName: "kerma",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+    line({
+      sourceRecipeId: 2,
+      partTitle: "juustokastike",
+      ingredientId: 4,
+      ingredientName: "kookosmaito",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { kerma: "2 dl", voi: "1 rkl" });
+});
+
+test("the same dish planned twice buys its chosen option twice", () => {
+  const options = (batchId: number) => [
+    line({
+      batchId,
+      ingredientId: 1,
+      ingredientName: "kerma",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+    line({
+      batchId,
+      ingredientId: 2,
+      ingredientName: "kookosmaito",
+      quantity: 2,
+      unit: "dl",
+      alternativeGroup: 1,
+    }),
+  ];
+
+  const items = shoppingList([...options(1), ...options(2)]);
+
+  assert.deepEqual(totals(items), { kerma: "4 dl" });
+});
+
+test("a group split across cooking sections is bought whole, as it is read", () => {
+  // The cooking view draws before-parts and after-parts apart, so these are
+  // two lines a cook reads separately. Counting them a pair here would leave
+  // one section's ingredient unbought — the disagreement #183's review found.
+  const items = shoppingList([
+    line({
+      ingredientId: 1,
+      ingredientName: "voi",
+      quantity: 1,
+      unit: "rkl",
+      phase: "before_parts",
+      alternativeGroup: 1,
+    }),
+    line({
+      ingredientId: 2,
+      ingredientName: "margariini",
+      quantity: 1,
+      unit: "rkl",
+      phase: "after_parts",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { margariini: "1 rkl", voi: "1 rkl" });
+});
+
+test("an unclassified option and a before-parts one are still one choice", () => {
+  // The cooking view buckets null with before_parts, so these two are drawn
+  // together and only one of them is bought.
+  const items = shoppingList([
+    line({
+      ingredientId: 1,
+      ingredientName: "voi",
+      quantity: 1,
+      unit: "rkl",
+      phase: null,
+      alternativeGroup: 1,
+    }),
+    line({
+      ingredientId: 2,
+      ingredientName: "margariini",
+      quantity: 1,
+      unit: "rkl",
+      phase: "before_parts",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { voi: "1 rkl" });
 });

@@ -2,7 +2,12 @@ import type { DraftIngredientRef, StepIngredientRef } from "./ingredient-refs.ts
 import { serializeStepRefs } from "./ingredient-refs.ts";
 import { ingredientsFor } from "./ingredients.ts";
 import type { Member } from "./members.ts";
-import type { RecipePhase } from "./recipe-phase.ts";
+import {
+  groupsAcrossScopes,
+  normalizeGroups,
+  type AlternativeGroup,
+} from "./alternatives.ts";
+import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
 
 /**
  * Saving a corrected draft, and editing a saved recipe. One D1 batch either
@@ -34,6 +39,14 @@ export interface LineToSave {
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
   phase: RecipePhase;
+  /**
+   * The alternative group this line is an option in, or null (#183).
+   *
+   * Submitted as written and renumbered on the way in — `childrenOf` runs the
+   * group numbers through `normalizeGroups` per recipe row, so a group of one
+   * dissolves and the rest come out 1, 2, 3 whatever a member typed.
+   */
+  alternativeGroup: AlternativeGroup;
   /**
    * Which row of the draft or form this line came from.
    *
@@ -269,7 +282,20 @@ function childrenOf(
 
   // Keep references inside this recipe row. A step names an ingredient, so
   // duplicate lines for that ingredient deliberately share the same reference.
-  const ownLines = lines.filter((entry) => belongs(entry.line.section));
+  // Group numbers mean something only inside one recipe row and one
+  // cooking-order section: a part is a recipe of its own (ADR-0002), and a
+  // multipart dish's before-parts and after-parts content is drawn apart. So
+  // options are renumbered per bucket here, by the same question the cooking
+  // view and the shopping list ask (#183). `validateRecipe` has already
+  // refused a group that spans two, so nothing reaching this line is dissolved
+  // without the member being told.
+  const ownLines = normalizeGroups(
+    lines.filter((entry) => belongs(entry.line.section)).map((entry) => ({
+      ...entry,
+      alternativeGroup: entry.line.alternativeGroup,
+    })),
+    (entry) => phaseBucket(phaseFor(entry.line.phase)),
+  );
 
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
@@ -325,8 +351,9 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase,
+                  alternative_group)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .bind(
               recipeId,
@@ -339,6 +366,7 @@ function childrenOf(
               entry.ingredientId,
               line.sourceLine,
               phaseFor(line.phase),
+              entry.alternativeGroup,
             ),
         );
       } else {
@@ -347,8 +375,9 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
-               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase,
+                  alternative_group)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 WHERE EXISTS (
                   SELECT 1 FROM recipe
                    WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -365,6 +394,7 @@ function childrenOf(
               entry.ingredientId,
               line.sourceLine,
               phaseFor(line.phase),
+              entry.alternativeGroup,
               guard.recipeId,
               guard.householdId,
               guard.writeToken,
@@ -592,6 +622,21 @@ export interface ValidateOptions {
   hasParts?: boolean;
 }
 
+/**
+ * Where a line will end up once saved: which recipe row, and which section of
+ * the cooking view. This is the boundary an alternative group may not cross.
+ *
+ * A named section becomes a recipe row of its own and its content carries no
+ * phase, which is why the phase is only part of the answer for the dish's own
+ * lines — exactly what `childrenOf`'s `phaseFor` does when it writes them.
+ */
+function savedScope(line: LineToSave): string {
+  const section = line.section?.trim() ?? "";
+  return section === ""
+    ? `dish ${phaseBucket(line.phase)}`
+    : `part ${section}`;
+}
+
 export function validateRecipe(
   recipe: RecipeToSave,
   options: ValidateOptions = {},
@@ -610,6 +655,15 @@ export function validateRecipe(
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
+  }
+  // Both halves of a choice are used at the same moment, so they belong to the
+  // same part and the same cooking-order section (#183). Letting one span two
+  // is the input that made the cooking view and the shopping list disagree:
+  // the screen drew two lone lines and the list still bought only one of them.
+  if (groupsAcrossScopes(recipe.lines, savedScope).length > 0) {
+    throw new SaveRefused(
+      "Saman vaihtoehtoryhmän rivien pitää olla samassa osassa ja vaiheessa.",
+    );
   }
 
   for (const line of recipe.lines) {
