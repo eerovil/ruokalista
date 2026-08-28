@@ -1129,6 +1129,11 @@ const MENTION_STYLE = html`<style>
     position: absolute; width: 1px; height: 1px;
     margin: 0; padding: 0; opacity: 0; pointer-events: none;
   }
+  /* The master checkbox has to precede every mention for the no-JS sibling
+     selector, while its visible label belongs after the instructions. Keep its
+     focus target in the viewport so activating that distant label cannot scroll
+     the recipe back to the checkbox's document position. */
+  .reveal-all { position: fixed; left: 0; bottom: 0; }
   .reveal-all-label {
     display: inline-flex; align-items: center; min-height: var(--tap-compact);
     padding: 0 .75rem; margin: 0 0 .65rem; cursor: pointer;

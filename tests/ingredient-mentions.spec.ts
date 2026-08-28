@@ -89,6 +89,32 @@ test("the recipe-wide toggle follows the preparation instructions", async ({
   });
 });
 
+test("the recipe-wide toggle keeps the reading position still", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3");
+
+  const label = page.locator(".reveal-all-label");
+  const revealAll = page.locator(".reveal-all");
+
+  async function expectToggleNotToScroll(checked: boolean) {
+    await label.evaluate((element) => {
+      element.scrollIntoView({ block: "center" });
+    });
+    const before = await page.evaluate(() => window.scrollY);
+    expect(before).toBeGreaterThan(0);
+
+    await label.click();
+    await expect(revealAll).toBeChecked({ checked });
+
+    const after = await page.evaluate(() => window.scrollY);
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
+  }
+
+  await expectToggleNotToScroll(true);
+  await expectToggleNotToScroll(false);
+});
+
 test("a mention starts closed and opens on a tap", async ({ page }) => {
   await page.goto("/recipes/1");
 
