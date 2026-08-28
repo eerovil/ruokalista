@@ -149,8 +149,8 @@ function notAMemberScreen(email: string | null): Response {
         Kirjautuminen Google-tilillä onnistui${email === null
           ? ""
           : ` (${email})`}, mutta tälle tilille ei ole
-        käyttöoikeutta. Pyydä ylläpitäjää lisäämään Google-tilisi vahvistettu
-        sähköpostiosoite talouteen.
+        käyttöoikeutta. Pyydä ylläpitäjää lisäämään Gmail- tai Google Workspace
+        -osoitteesi talouteen.
       </p>
       <p class="empty">Kirjaudu sen jälkeen uudelleen samalla Google-tilillä.</p>`,
     "signed-out",

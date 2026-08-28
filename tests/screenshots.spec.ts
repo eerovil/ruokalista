@@ -1206,6 +1206,8 @@ test.describe("signed in as an admin", () => {
     await expect(page.locator(".refused")).toContainText(
       "jo lisätty talouteen Koti",
     );
+    await expect(page.locator("#add-email")).toHaveValue("EERO@example.com");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await capture(page, {
       path: `${SHOTS}/47-admin-member-sub-refused.png`,
       fullPage: true,

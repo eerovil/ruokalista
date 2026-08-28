@@ -9,6 +9,7 @@ import {
   inviteMember,
   membersOfHousehold,
   removeMember,
+  removeMemberInvitation,
   renameHousehold,
   updateMember,
   type Household,
@@ -129,6 +130,19 @@ export async function addMemberForm(
 
   return withRefusal(ctx, member, id, { scope: "add", values: { email } }, () =>
     inviteMember(ctx.env.DB, id, email, member.id),
+  );
+}
+
+/** `POST /admin/households/:id/invitations/:invitationId/delete` */
+export async function removeMemberInvitationForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const id = Number(ctx.params["id"]);
+  const invitationId = Number(ctx.params["invitationId"]);
+
+  return withRefusal(ctx, member, id, { scope: "add", values: {} }, () =>
+    removeMemberInvitation(ctx.env.DB, id, invitationId),
   );
 }
 
@@ -310,8 +324,8 @@ function householdBody(
 
     <h2>Lisää jäsen</h2>
     <p class="empty">
-      Syötä sähköposti. Jäsenyys aktivoituu automaattisesti, kun sama vahvistettu
-      Google-tili kirjautuu ensimmäisen kerran.
+      Syötä sähköposti. Jäsenyys aktivoituu automaattisesti, kun sama Gmail- tai
+      Google Workspace -tili kirjautuu ensimmäisen kerran.
     </p>
     ${invitations.length === 0
       ? ""
@@ -320,6 +334,12 @@ function householdBody(
             ${invitations.map(
               (invitation) => html`<li>
                 <span class="ingredient-name">${invitation.email}</span>
+                <form
+                  method="post"
+                  action="/admin/households/${household.id}/invitations/${invitation.id}/delete"
+                >
+                  <button type="submit" class="quiet">Peru kutsu</button>
+                </form>
               </li>`,
             )}
           </ul>`}

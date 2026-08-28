@@ -8,6 +8,7 @@ import {
   HouseholdRefused,
   inviteMember,
   normalizeMemberEmail,
+  removeMemberInvitation,
 } from "../src/households.ts";
 import { completeSignIn } from "../src/signin.ts";
 import { base64UrlEncode, sign } from "../src/signing.ts";
@@ -150,6 +151,7 @@ test("only the matching verified Google email consumes an invitation", async () 
       name: "Väärä",
       email: "uusi@example.com",
       emailVerified: false,
+      emailAuthoritative: false,
     });
     assert.equal(await db.prepare("SELECT count(*) AS count FROM member").first("count"), 1);
 
@@ -158,6 +160,7 @@ test("only the matching verified Google email consumes an invitation", async () 
       name: "Uusi Käyttäjä",
       email: "UUSI@example.com",
       emailVerified: true,
+      emailAuthoritative: true,
     });
     const claimed = await db
         .prepare(
@@ -185,8 +188,29 @@ test("only the matching verified Google email consumes an invitation", async () 
       name: "Toinen",
       email: "uusi@example.com",
       emailVerified: true,
+      emailAuthoritative: true,
     });
     assert.equal(await db.prepare("SELECT count(*) AS count FROM member").first("count"), 2);
+  } finally {
+    dispose();
+  }
+});
+
+test("a revoked invitation cannot be claimed and releases its email", async () => {
+  const { db, dispose } = database();
+  try {
+    await inviteMember(db, 2, "uusi@example.com", 1);
+    const id = await db.prepare("SELECT id FROM member_invitation").first<number>("id");
+    await removeMemberInvitation(db, 2, id!);
+    await claimMemberInvitation(db, {
+      sub: "too-late",
+      name: "Myöhäinen",
+      email: "uusi@example.com",
+      emailVerified: true,
+      emailAuthoritative: true,
+    });
+    assert.equal(await db.prepare("SELECT count(*) AS count FROM member").first("count"), 1);
+    await inviteMember(db, 1, "uusi@example.com", 1);
   } finally {
     dispose();
   }
@@ -201,6 +225,7 @@ test("the real Google callback claims only a matching verified invitation", asyn
       name: "Uusi Käyttäjä",
       email: "UUSI@example.com",
       email_verified: true,
+      hd: "example.com",
     });
     assert.equal(first.status, 302);
     assert.match(first.headers.get("set-cookie") ?? "", /ruokalista_session=/);
@@ -222,15 +247,32 @@ test("the real Google callback claims only a matching verified invitation", asyn
   }
 
   for (const claims of [
-    { sub: "unverified", name: "Uusi", email: "uusi@example.com", email_verified: false },
-    { sub: "different", name: "Uusi", email: "muu@example.com", email_verified: true },
+    {
+      sub: "unverified",
+      name: "Uusi",
+      email: "uusi@example.com",
+      email_verified: false,
+    },
+    {
+      sub: "different",
+      name: "Uusi",
+      email: "muu@example.com",
+      email_verified: true,
+      hd: "example.com",
+    },
+    {
+      sub: "stale-third-party",
+      name: "Uusi",
+      email: "uusi@example.com",
+      email_verified: true,
+    },
   ]) {
     const refused = database();
     try {
       await inviteMember(refused.db, 2, "uusi@example.com", 1);
       const response = await googleCallback(refused.db, claims);
       assert.equal(response.status, 403);
-      assert.match(await response.text(), /vahvistettu\s+sähköpostiosoite/);
+      assert.match(await response.text(), /Gmail- tai Google Workspace/);
       assert.equal(
         await refused.db
           .prepare("SELECT count(*) AS count FROM member_invitation")

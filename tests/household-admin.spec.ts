@@ -130,6 +130,18 @@ test("an admin adds a member with only one normalized email", async ({
   await page.locator("#add-email").fill("eero@example.com");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
   await expect(page.locator(".refused")).toContainText("jo lisätty talouteen Koti");
+
+  await page
+    .locator("li")
+    .filter({ hasText: "vieras@example.com" })
+    .getByRole("button", { name: "Peru kutsu" })
+    .click();
+  await expect(page.getByText("vieras@example.com", { exact: true })).toHaveCount(0);
+
+  // Cancellation releases a typo immediately for a corrected invitation.
+  await page.locator("#add-email").fill("vieras@example.com");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  await expect(page.getByText("vieras@example.com", { exact: true })).toBeVisible();
 });
 
 test("an invalid email is refused by the server with the input intact", async ({

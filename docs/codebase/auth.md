@@ -31,17 +31,22 @@ the admin household screen with one email field. Submitting it creates a
 Google's real stable `sub`.
 
 On first sign-in, an unknown Google `sub` may claim exactly one invitation when
-Google also supplies the same **verified** email. The D1 batch inserts the real
-member with Google's `sub` and display name and consumes the invitation in one
-transaction. An unverified address, a different address or an invitation that
-another sign-in already consumed still reaches the existing wall. Existing
-members continue to match only on `sub`; email is never a replacement login key.
+Google supplies the same email and is still authoritative for its owner: a
+Gmail address, or a verified Google Workspace address with an `hd` claim. A
+verified third-party Google-account email is not enough, because Google warns
+that the mailbox may have changed owners since it first verified the address.
+The D1 batch inserts the real member with Google's `sub` and display name and
+consumes the invitation in one transaction. Every other unknown account still
+reaches the wall. Existing members continue to match only on `sub`; email is
+never a replacement login key.
 
 Invitation addresses are trimmed, lower-cased and unique case-insensitively
 across active members and pending invitations. A duplicate refusal names the
 household that already has it. Removed members do not reserve their former
 email, so the existing remove-then-add move remains possible through a new
 invitation.
+An admin may cancel a pending invitation immediately; this releases the email
+and prevents a later callback from claiming it.
 
 A development server also offers **Kehityskirjautuminen** on `/signin`: a button
 per existing member that issues a session directly. `POST /auth/dev-signin`

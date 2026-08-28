@@ -236,6 +236,8 @@ one invitation into two members.
 
 The new table joins the backup/restore manifest after `member`; restore checks
 both its household and creator references and its unique email.
+Deleting its household cascades the invitation, and the admin household screen
+may delete the invitation directly to revoke it before first sign-in.
 
 ## Public recipes, and a global ingredient dictionary
 
