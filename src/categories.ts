@@ -139,6 +139,57 @@ export function categoryChoices(selected: readonly string[]): Raw {
   </fieldset>`;
 }
 
+/**
+ * The recipe list's bulk category control (#199).
+ *
+ * It rides inside the list form that already exists for publishing, so ticking
+ * rows means one thing on this screen rather than two: the same checkboxes feed
+ * both. The buttons carry `formaction`, which is how one form reaches a second
+ * handler without a second set of checkboxes to keep in step.
+ *
+ * A `<select>` rather than the editor's row of checkboxes, because a bulk edit
+ * is one category at a time on purpose — "add Keitto to these four" is a thing
+ * somebody means, while "make these four be exactly Keitto and Lisuke" would
+ * quietly throw away categories the recipes already carry.
+ *
+ * The list keeps whichever category was last chosen, so a refusal comes back
+ * with the member's own choice still in the box rather than reset to the first
+ * option — and adding one category to two separate selections in a row is two
+ * presses, not two presses and two re-pickings.
+ */
+export function categoryBulkControls(selected: string | null): Raw {
+  return html`<fieldset class="bulk-categories">
+    <legend>Kategoria valituille</legend>
+    <select name="bulkCategory" aria-label="Kategoria">
+      ${CATEGORIES.map(
+        (category) =>
+          html`<option
+            value="${category.slug}"
+            ${category.slug === selected ? raw("selected") : ""}
+          >
+            ${category.label}
+          </option>`,
+      )}
+    </select>
+    <button
+      type="submit"
+      formaction="/recipes/kategoriat"
+      name="action"
+      value="add"
+    >
+      Lisää valituille
+    </button>
+    <button
+      type="submit"
+      formaction="/recipes/kategoriat"
+      name="action"
+      value="remove"
+    >
+      Poista valituilta
+    </button>
+  </fieldset>`;
+}
+
 /** A recipe's categories, as they are printed on the recipe and in a list. */
 export function categoryTags(slugs: readonly string[]): Raw {
   if (slugs.length === 0) return raw("");
@@ -267,4 +318,68 @@ export const CATEGORY_STYLE = html`<style>
     width: auto;
     min-height: 0;
   }
+  .bulk-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.6rem 0.7rem;
+    margin: 0 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--radius);
+  }
+  .bulk-categories legend {
+    padding: 0 0.3rem;
+    font-weight: 600;
+  }
+  .bulk-categories select {
+    flex: 1 1 8rem;
+    margin: 0;
+  }
+  .bulk-categories button {
+    flex: 1 1 9rem;
+  }
+  /* Said before the buttons, so the reader knows what "valituille" means
+     before pressing one. The island below the list keeps the number true. */
+  .selection-count {
+    margin: 1rem 0 0.4rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
 </style>`;
+
+/**
+ * How many recipes the bulk buttons are about to touch (#199).
+ *
+ * Deliberately ES5 and feature-detected: without it the line still says, in
+ * words, that the action applies to the ticked recipes, and every button still
+ * works. With it the line counts.
+ */
+export const SELECTION_COUNT_ISLAND = `
+(function () {
+  if (typeof document.querySelector !== 'function') return;
+
+  var list = document.querySelector('.recipes.is-selectable');
+  var line = document.querySelector('.selection-count');
+  if (!list || !line || typeof list.addEventListener !== 'function') return;
+
+  function refresh() {
+    var boxes = list.getElementsByTagName('input');
+    var chosen = 0;
+    for (var index = 0; index < boxes.length; index += 1) {
+      if (boxes[index].checked) chosen += 1;
+    }
+    var said =
+      chosen === 0
+        ? 'Ei yhtään reseptiä valittuna.'
+        : chosen === 1
+          ? '1 resepti valittuna.'
+          : chosen + ' reseptiä valittuna.';
+    while (line.firstChild) line.removeChild(line.firstChild);
+    line.appendChild(document.createTextNode(said));
+  }
+
+  list.addEventListener('change', refresh, false);
+  refresh();
+}());`;

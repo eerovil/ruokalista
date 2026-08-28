@@ -69,7 +69,7 @@ export interface PublishOutcome {
   blocked: PublishBlock[];
 }
 
-interface DishRow {
+export interface DishRow {
   id: number;
   title: string;
   published_at: string | null;
@@ -100,8 +100,12 @@ export function readableRecipeCondition(alias = "recipe"): string {
  * Everything not owned simply is not here: an id from another household, an id
  * that names a part, and an id nobody ever created are all the same answer, so
  * a bulk form cannot be used to find out which recipes exist.
+ *
+ * Exported because the list's bulk category buttons (#199) have to answer the
+ * same ownership question as its bulk publish buttons, and two definitions of
+ * "a dish this household owns" is exactly one too many.
  */
-async function ownedDishes(
+export async function ownedDishes(
   db: D1Database,
   householdId: number,
   ids: number[],

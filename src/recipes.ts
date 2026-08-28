@@ -9,8 +9,10 @@ import {
 } from "./alternatives.ts";
 import {
   CATEGORY_STYLE,
+  SELECTION_COUNT_ISLAND,
   categoriesForRecipe,
   categoriesForRecipes,
+  categoryBulkControls,
   categoryFilter,
   categoryLabel,
   categoryTags,
@@ -670,6 +672,9 @@ export async function ownRecipeList(
   query: string,
   notice: ListNotice | null,
   category: string | null = null,
+  // The bulk category control's own state (#199), which is not the filter: one
+  // is what the list is showing, the other is what the buttons would change.
+  bulkCategory: string | null = null,
 ): Promise<Raw> {
   const matching = await recipeSummaries(db, member.householdId, query);
   const recipes = inCategory(matching, category);
@@ -742,6 +747,14 @@ export async function ownRecipeList(
               </li>`,
             )}
           </ul>
+          <!-- Said before the buttons rather than after them, so how many
+               recipes are about to move is on the screen while the reader is
+               still deciding. Without JavaScript it stays this sentence, which
+               is true; the island below counts. -->
+          <p class="selection-count">
+            Toiminto kohdistuu valitsemiisi resepteihin.
+          </p>
+          ${categoryBulkControls(bulkCategory)}
           <p class="bulk-actions">
             <button type="submit" name="action" value="publish">
               Julkaise valitut
@@ -750,6 +763,9 @@ export async function ownRecipeList(
               Poista julkaisu valituista
             </button>
           </p>
+          <script>
+            ${raw(SELECTION_COUNT_ISLAND)}
+          </script>
         </form>`}
     ${PUBLISH_STYLE}
     ${CATEGORY_STYLE}`;

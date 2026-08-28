@@ -294,6 +294,14 @@ something in the list is categorised.
 - **The chip row scrolls sideways rather than wrapping**, because the point of a
   filter above a list on a phone is that the list is still visible under it.
 
+Issue #199 proposes one more way in, on top of the picker rather than instead of
+it: the recipe list's existing selection can add or remove **one** category
+across every ticked dish at once (`src/category-bulk.ts`). It never replaces a
+recipe's whole set, so nothing a member cannot see on that screen can be lost to
+a button on it, and the per-recipe picker stays the only place a recipe's
+categories are set wholesale. See
+[screens](screens.md) for the control and the count beside it.
+
 `categories` is deliberately **not** on the `/api/recipes` wire. Unlike
 `alternativeGroup`, which changes what a recipe means, a category only changes
 how somebody finds it, so a caller reads the same dish with or without it — and
