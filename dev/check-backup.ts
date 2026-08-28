@@ -35,7 +35,7 @@ test("snapshot reads schema and every allowlisted table in one D1 batch", async 
   assert.deepEqual(Object.keys(snapshot.tables), BACKUP_TABLES.map(({ name }) => name));
   assert.equal(snapshot.row_counts.recipe, 1);
   assert.equal(snapshot.tables.recipe[0]?.source_text, "Kaalilaatikko\n½ dl öljyä");
-  assert.equal(snapshot.tables.ingredient[0]?.ean, "6415712506032");
+  assert.equal(snapshot.tables.ingredient_product[0]?.ean, "6415712506032");
   assert.match(snapshot.sha256, /^[0-9a-f]{64}$/);
 
   const again = await createBackupSnapshot(
@@ -177,14 +177,7 @@ function fakeDatabase(): {
   const tableRows: Record<string, Record<string, unknown>[]> = {
     household: [{ id: 1, name: "Koti" }],
     member: [{ id: 1, household_id: 1, display_name: "Eero" }],
-    ingredient: [{
-      id: 1,
-      name: "öljy",
-      ean: "6415712506032",
-      external_product_name: "Kotimaista rypsiöljy 500 ml",
-      external_product_image_url:
-        "https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg",
-    }],
+    ingredient: [{ id: 1, name: "öljy" }],
     recipe: [
       {
         id: 1,
@@ -213,6 +206,29 @@ function fakeDatabase(): {
     ],
     recipe_preference: [
       { id: 1, household_id: 1, recipe_id: 1, default_portions: 6 },
+    ],
+    ingredient_product: [
+      {
+        id: 1,
+        ingredient_id: 1,
+        ean: "6415712506032",
+        name: "Kotimaista rypsiöljy 500 ml",
+        image_url:
+          "https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg",
+        package_quantity: 500,
+        package_unit: "ml",
+        position: 1,
+      },
+    ],
+    recipe_ingredient_product: [
+      {
+        id: 1,
+        household_id: 1,
+        recipe_id: 1,
+        ingredient_id: 1,
+        ean: "6415712506049",
+        name: "Keiton oma öljy 250 ml",
+      },
     ],
   };
 

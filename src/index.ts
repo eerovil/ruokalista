@@ -83,6 +83,7 @@ import {
   currentListJson,
   productSearchJson,
   productSearchScreen,
+  removeProductForm,
   saveProductForm,
   sendShoppingListForm,
   shoppingPantryForm,
@@ -140,6 +141,7 @@ const router = new Router()
   .post("/ostoslista/laheta", requireMemberScreen(sendShoppingListForm))
   .get("/ostoslista/tuote", requireMemberScreen(productSearchScreen))
   .post("/ostoslista/tuote", requireMemberScreen(saveProductForm))
+  .post("/ostoslista/tuote/poista", requireMemberScreen(removeProductForm))
   .get("/ostoslista/haku", requireMember(productSearchJson))
   .get("/ostoslista/s-lista", requireMember(currentListJson))
   .get("/kaappi", requireMemberScreen(pantryScreen))

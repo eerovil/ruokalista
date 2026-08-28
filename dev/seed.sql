@@ -3,6 +3,9 @@
 -- Two households on purpose: household 2 exists so that anything leaking across
 -- the household_id filter shows up immediately in what household 1 can see.
 
+-- #161: the two product tables go first, they point at everything below.
+DELETE FROM recipe_ingredient_product;
+DELETE FROM ingredient_product;
 DELETE FROM recipe_preference;
 DELETE FROM pantry_entry;
 DELETE FROM batch_occurrence;

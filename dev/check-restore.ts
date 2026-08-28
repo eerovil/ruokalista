@@ -25,6 +25,8 @@ const TABLES: readonly BackupTableName[] = [
   "batch_occurrence",
   "pantry_entry",
   "recipe_preference",
+  "ingredient_product",
+  "recipe_ingredient_product",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -35,7 +37,7 @@ test("a valid snapshot passes checksum and relationship validation", async () =>
     parsed.tables.recipe.find((row) => row.id === 1)?.source_text,
     "Lasagne\n400 g jauhelihaa",
   );
-  assert.equal(parsed.tables.ingredient[0]?.ean, "6415712506032");
+  assert.equal(parsed.tables.ingredient_product[0]?.ean, "6415712506032");
 });
 
 test("a corrupt checksum is rejected", async () => {
@@ -302,6 +304,31 @@ async function validSnapshot() {
         default_portions: 6,
         updated_at: "2026-08-25 00:00:00",
         updated_by: 1,
+      },
+    ],
+    ingredient_product: [
+      {
+        id: 1,
+        ingredient_id: 1,
+        ean: "6415712506032",
+        name: "Kotimaista rypsiöljy 500 ml",
+        image_url: "https://cdn.s-cloud.fi/kuva.jpg",
+        package_quantity: 500,
+        package_unit: "ml",
+        position: 1,
+      },
+    ],
+    recipe_ingredient_product: [
+      {
+        id: 1,
+        household_id: 1,
+        recipe_id: 1,
+        ingredient_id: 1,
+        ean: "6415712506049",
+        name: "Keiton oma öljy 250 ml",
+        image_url: null,
+        package_quantity: 250,
+        package_unit: "ml",
       },
     ],
   } satisfies BackupSnapshotUnsigned["tables"];

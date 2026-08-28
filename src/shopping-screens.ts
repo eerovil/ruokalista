@@ -10,11 +10,18 @@ import {
   removeFromPantry,
   splitByPantry,
 } from "./pantry.ts";
+import {
+  removeIngredientProduct,
+  removeRecipeProduct,
+  saveIngredientProduct,
+  saveRecipeProduct,
+} from "./ingredient-products.ts";
+import { baseAmount, packageSizeFromName } from "./packaging.ts";
+import { formatDecimal } from "./quantities.ts";
 import type { RouteContext } from "./router.ts";
 import { SOstoslistaClient, type SOstoslistaProduct } from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
-  saveExternalProduct,
   shoppingLinesFor,
   shoppingList,
   type ShoppingItem,
@@ -169,12 +176,20 @@ export async function sendShoppingListForm(
   let sent = 0;
   try {
     for (const item of buy) {
-      if (item.ean === null) {
+      if (item.chosen.length === 0) {
         await client.add({ note: `${item.name} — ${item.total}` });
       } else {
-        // The selected EAN identifies the product. A recipe amount is not a
-        // package count, so no quantity is sent (#147's explicit boundary).
-        await client.add({ ean: item.ean });
+        for (const { product, count } of item.chosen) {
+          await client.add({ ean: product.ean });
+          // The service's own add is keyed by EAN: sending the same one twice
+          // does not put two of it on the phone's list, and #161 says to use
+          // the integration's real semantics rather than assume a quantity
+          // field exists. So a second packet is said in the one way the API
+          // does carry — a written line beside the product.
+          if (count > 1) {
+            await client.add({ note: `${product.name} × ${count}` });
+          }
+        }
       }
       sent += 1;
     }
@@ -243,7 +258,18 @@ export async function productSearchJson(
   if (query === "") return problem(400, "Hakusana puuttuu.");
 
   try {
-    return Response.json({ query, results: await client.search(query) });
+    // The package size is read from the name here, once, and travels with the
+    // result: the browser must not be the thing that decides what `400 g`
+    // means, and the save re-reads it server-side anyway.
+    const results = (await client.search(query)).map((product) => {
+      const size = packageSizeFromName(product.name);
+      return {
+        ...product,
+        packageQuantity: size?.quantity ?? null,
+        packageUnit: size?.unit ?? null,
+      };
+    });
+    return Response.json({ query, results });
   } catch (error) {
     console.error(`S-ostoslista product search failed: ${reason(error)}`);
     return problem(502, "S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.");
@@ -286,9 +312,10 @@ export async function productSearchScreen(
   const client = externalClient(ctx.env, member);
   if (client === null) return new Response("Not found", { status: 404 });
   const state = await shoppingState(ctx, member);
-  const item = selectedBuyItem(state.buy, ctx.url.searchParams.get("aines"));
+  const item = selectedBuyItem(state.buy, ctx.url.searchParams.get("rivi"));
   if (item === null) return new Response("Not found", { status: 404 });
 
+  const mode = chosenMode(ctx.url.searchParams.get("tapa"));
   const query = (ctx.url.searchParams.get("haku") ?? item.name).trim();
   let products: SOstoslistaProduct[] = [];
   let refused: string | null = null;
@@ -300,7 +327,16 @@ export async function productSearchScreen(
     refused = "S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.";
     status = 502;
   }
-  return productPage(member, item, state.selectedIds, query, products, refused, status);
+  return productPage(
+    member,
+    item,
+    state.selectedIds,
+    mode,
+    query,
+    products,
+    refused,
+    status,
+  );
 }
 
 /** Re-search on selection so product metadata is never trusted from the form. */
@@ -315,11 +351,13 @@ export async function saveProductForm(
   const asJson = wantsJson(form);
   const stateCtx = { ...ctx, url: productSelectionUrl(form, ctx.url) };
   const state = await shoppingState(stateCtx, member);
-  const item = selectedBuyItem(state.buy, form.get("aines"));
+  const item = selectedBuyItem(state.buy, form.get("rivi"));
   if (item === null) return new Response("Not found", { status: 404 });
 
+  const mode = chosenMode(form.get("tapa"));
   const query = String(form.get("haku") ?? "").trim();
   const ean = String(form.get("ean") ?? "").trim();
+  const scope = chosenScope(item, form.get("laajuus"));
 
   /**
    * The island shows the choice before this answer arrives, so a refusal has to
@@ -333,7 +371,20 @@ export async function saveProductForm(
   ): Response =>
     asJson
       ? problem(status, message)
-      : productPage(member, item, state.selectedIds, query, products, message, status);
+      : productPage(
+          member,
+          item,
+          state.selectedIds,
+          mode,
+          query,
+          products,
+          message,
+          status,
+        );
+
+  if (scope === null) {
+    return refuse("Valinnan laajuutta ei tunnistettu. Mitään ei tallennettu.", 400, []);
+  }
 
   let products: SOstoslistaProduct[];
   try {
@@ -355,8 +406,26 @@ export async function saveProductForm(
       products,
     );
   }
-  if (!(await saveExternalProduct(ctx.env.DB, item.ingredientId, selected))) {
-    return new Response("Not found", { status: 404 });
+
+  const size = statedSize(form, selected.ean) ?? packageSizeFromName(selected.name);
+  const toSave = {
+    ean: selected.ean,
+    name: selected.name,
+    imageUrl: selected.imageUrl,
+    packageQuantity: size?.quantity ?? null,
+    packageUnit: size?.unit ?? null,
+  };
+
+  if (scope === "ingredient") {
+    await saveIngredientProduct(ctx.env.DB, item.ingredientId, toSave, mode);
+  } else {
+    await saveRecipeProduct(
+      ctx.env.DB,
+      member.householdId,
+      scope.recipeId,
+      item.ingredientId,
+      toSave,
+    );
   }
 
   // The confirmed product, not the one the browser drew: a re-search may have
@@ -364,10 +433,15 @@ export async function saveProductForm(
   if (asJson) {
     return Response.json({
       product: {
-        ean: selected.ean,
-        name: selected.name,
-        imageUrl: selected.imageUrl,
+        ean: toSave.ean,
+        name: toSave.name,
+        imageUrl: toSave.imageUrl,
+        packageQuantity: toSave.packageQuantity,
+        packageUnit: toSave.packageUnit,
       },
+      // An added size or a recipe's own product changes what the *other* rows
+      // add up to, so the browser reloads rather than drawing it itself.
+      reload: mode === "add" || scope !== "ingredient",
     });
   }
 
@@ -375,6 +449,97 @@ export async function saveProductForm(
     status: 303,
     headers: { Location: `/ostoslista?${selectionQueryFromIds(state.selectedIds)}` },
   });
+}
+
+/**
+ * `POST /ostoslista/tuote/poista` — drop one package size, or one recipe's own
+ * product.
+ *
+ * Without this, a mistyped package size or a product chosen on the wrong row
+ * would be permanent, and #161's whole point is that the household keeps
+ * teaching this over time.
+ */
+export async function removeProductForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  if (externalClient(ctx.env, member) === null) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const form = await ctx.request.formData();
+  const stateCtx = { ...ctx, url: selectionUrl(form, ctx.url) };
+  const state = await shoppingState(stateCtx, member);
+  const item = selectedBuyItem(state.buy, form.get("rivi"));
+  if (item === null) return new Response("Not found", { status: 404 });
+
+  const ean = String(form.get("ean") ?? "").trim();
+  if (!item.products.some((product) => product.ean === ean)) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  if (item.recipeId === null) {
+    await removeIngredientProduct(ctx.env.DB, item.ingredientId, ean);
+  } else {
+    await removeRecipeProduct(
+      ctx.env.DB,
+      member.householdId,
+      item.recipeId,
+      item.ingredientId,
+    );
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `/ostoslista?${selectionQueryFromIds(state.selectedIds)}` },
+  });
+}
+
+/** Replace what this ingredient is, or add another packet of the same thing. */
+function chosenMode(value: FormDataEntryValue | string | null): "replace" | "add" {
+  return String(value ?? "") === "lisaa" ? "add" : "replace";
+}
+
+/**
+ * How far the choice reaches: every use of this ingredient, or one dish's.
+ *
+ * The recipe has to be one the row actually came from. A member choosing a
+ * scope from a screen they can see cannot thereby pin an ingredient inside
+ * somebody else's week.
+ */
+function chosenScope(
+  item: ShoppingItem,
+  value: FormDataEntryValue | string | null,
+): "ingredient" | { recipeId: number } | null {
+  const raw = String(value ?? "").trim();
+  if (raw === "" || raw === "aines") return "ingredient";
+  const recipeId = Number(raw);
+  if (!Number.isSafeInteger(recipeId)) return null;
+  return item.recipes.some((one) => one.id === recipeId) ? { recipeId } : null;
+}
+
+/**
+ * A package size the member typed, for a product whose name does not say one.
+ *
+ * The fields are named per EAN because the whole results list is one form —
+ * one scope choice above many products — so `pakkaus` alone would hand the
+ * chosen product whichever size was typed highest up the page.
+ *
+ * Both halves or neither: a number without a unit would be a size that compares
+ * grams against millilitres, and `baseAmount` refusing an unknown unit is what
+ * keeps a typo out of the optimisation rather than into it.
+ */
+function statedSize(
+  form: FormData,
+  ean: string,
+): { quantity: number; unit: string } | null {
+  const quantity = Number(
+    String(form.get(`pakkaus_${ean}`) ?? "").trim().replace(",", "."),
+  );
+  const unit = String(form.get(`pakkausyksikko_${ean}`) ?? "").trim();
+  if (!Number.isFinite(quantity) || quantity <= 0 || unit === "") return null;
+  if (baseAmount(quantity, unit) === null) return null;
+  return { quantity, unit };
 }
 
 /**
@@ -439,10 +604,8 @@ function selectionUrl(form: FormData, base: URL): URL {
 
 function productSelectionUrl(form: FormData, base: URL): URL {
   const url = selectionUrl(form, base);
-  const ingredientId = Number(form.get("aines"));
-  if (Number.isSafeInteger(ingredientId)) {
-    url.searchParams.set("aines", String(ingredientId));
-  }
+  const row = String(form.get("rivi") ?? "").trim();
+  if (row !== "") url.searchParams.set("rivi", row);
   const query = String(form.get("haku") ?? "").trim();
   if (query !== "") url.searchParams.set("haku", query);
   return url;
@@ -550,6 +713,7 @@ function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
 
 const rawOpen = raw("open");
 const rawChecked = raw("checked");
+const rawHidden = raw("hidden");
 
 /**
  * The list in two parts: what to buy, then what the cupboard already covers.
@@ -607,6 +771,7 @@ function itemList(
         <details
           class="shopping-item"
           data-aines="${item.ingredientId}"
+          data-rivi="${item.key}"
           data-haku="${item.name}"
         >
           <summary>
@@ -650,9 +815,10 @@ function itemList(
  * missing — reads exactly as it did before rather than as a broken box.
  */
 function thumbnail(item: ShoppingItem): Raw {
-  if (item.externalProductImageUrl === null) return html``;
+  const image = item.chosen[0]?.product.imageUrl ?? null;
+  if (image === null) return html``;
   return html`<img
-    src="${item.externalProductImageUrl}"
+    src="${image}"
     alt=""
     width="26"
     height="26"
@@ -667,7 +833,7 @@ function externalSendPanel(
   external: boolean,
 ): Raw {
   if (!external) return html``;
-  const mapped = buy.filter((item) => item.ean !== null).length;
+  const mapped = buy.filter((item) => item.chosen.length > 0).length;
   const notes = buy.length - mapped;
   return html`<section class="s-shopping-send" aria-labelledby="s-shopping-title">
     <h2 id="s-shopping-title">S-ostoslista</h2>
@@ -703,6 +869,15 @@ function currentListPanel(): Raw {
   </div>`;
 }
 
+/**
+ * What this row is buying, and the two buttons that change it.
+ *
+ * The intelligence stays behind the row (#161): a member reads the product,
+ * how many of it, and — where a recipe has its own — which dish this row
+ * belongs to. There is no rule editor and no settings page; the two things
+ * anybody needs to say are said by opening the product panel from here, either
+ * to change the product or to teach the ingredient another package size.
+ */
 function externalProductBlock(
   item: ShoppingItem,
   selectedIds: Set<number>,
@@ -711,15 +886,9 @@ function externalProductBlock(
 ): Raw {
   if (!external) return html``;
 
-  const mapped = item.ean !== null && item.externalProductName !== null;
-  if (inPantry) {
-    return mapped
-      ? productSummary(item)
-      : html``;
-  }
+  const mapped = item.chosen.length > 0;
+  if (inPantry) return mapped ? productSummary(item) : html``;
 
-  // The body is one container the island can replace wholesale when a choice is
-  // made, so an optimistic row and a server-rendered one are the same markup.
   return html`<div class="s-shopping-product ${mapped ? "is-mapped" : "is-note"}">
     <div class="s-shopping-product-body">
       ${mapped
@@ -729,31 +898,134 @@ function externalProductBlock(
             <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
           </div>`}
     </div>
-    <form method="get" action="/ostoslista/tuote" class="inline s-product-open">
-      <input type="hidden" name="aines" value="${item.ingredientId}" />
-      <input type="hidden" name="haku" value="${item.name}" />
-      ${selectionFields(selectedIds)}
-      <button type="submit">${mapped ? "Vaihda tuote" : "Valitse tuote"}</button>
-    </form>
+    ${openForm(item, selectedIds, "korvaa", mapped ? "Vaihda tuote" : "Valitse tuote")}
+    ${item.recipeId === null
+      ? openForm(item, selectedIds, "lisaa", "Lisää toinen pakkauskoko", !mapped)
+      : ""}
+    ${knownProducts(item, selectedIds)}
+    ${scopeSource(item)}
   </div>`;
 }
 
+/**
+ * The scope choice, drawn by the server and hidden, for the island to lift into
+ * its panel.
+ *
+ * It sits outside every form on the row on purpose — a hidden `<select>` inside
+ * the cupboard or open-panel form would be posted along with them — and it is
+ * rendered here rather than built in JavaScript so a dish's title is escaped by
+ * the same `html` tag as everything else.
+ */
+function scopeSource(item: ShoppingItem): Raw {
+  if (item.recipeId !== null || item.recipes.length === 0) return html``;
+  return html`<div class="s-scope-source" hidden>${scopeChoice(item, "replace")}</div>`;
+}
+
+/**
+ * One button that opens the product panel — in the browser, or as a plain
+ * navigation to `/ostoslista/tuote` where it cannot.
+ *
+ * `tapa` is the difference between the two: `korvaa` means this ingredient is
+ * something else than we thought, `lisaa` means it is the same thing in a
+ * second packet. Both end up in the same panel; only what the save does with
+ * the answer differs.
+ *
+ * There is nothing to add a second size *to* until something is chosen, so that
+ * button ships hidden on an unmapped row. The island unhides it the moment a
+ * choice is drawn, which is what keeps an optimistic row offering the same two
+ * things a reloaded one does.
+ */
+function openForm(
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+  mode: "korvaa" | "lisaa",
+  label: string,
+  hidden = false,
+): Raw {
+  return html`<form
+    method="get"
+    action="/ostoslista/tuote"
+    class="inline s-product-open"
+    data-tapa="${mode}"
+    ${hidden ? rawHidden : ""}
+  >
+    <input type="hidden" name="rivi" value="${item.key}" />
+    <input type="hidden" name="tapa" value="${mode}" />
+    <input type="hidden" name="haku" value="${item.name}" />
+    ${selectionFields(selectedIds)}
+    <button type="submit">${label}</button>
+  </form>`;
+}
+
+/**
+ * The package sizes this row knows beyond the one it is buying, each with the
+ * one thing that can go wrong made fixable: a size nobody could read, and a
+ * choice somebody made by mistake.
+ *
+ * It is only drawn when there is more than one product or a recipe's own — the
+ * ordinary row, one ingredient with one packet, shows nothing extra at all.
+ */
+function knownProducts(item: ShoppingItem, selectedIds: Set<number>): Raw {
+  const pinned = item.recipeId !== null;
+  if (!pinned && item.products.length < 2) return html``;
+
+  return html`<ul class="s-product-sizes">
+    ${item.products.map(
+      (product) => html`<li>
+        <span class="s-product-size-name">${product.name}</span>
+        <span class="meta"
+          >${product.packageQuantity === null || product.packageUnit === null
+            ? "pakkauskoko tuntematon"
+            : `${formatDecimal(product.packageQuantity)} ${product.packageUnit}`}</span
+        >
+        <form method="post" action="/ostoslista/tuote/poista" class="inline">
+          <input type="hidden" name="rivi" value="${item.key}" />
+          <input type="hidden" name="ean" value="${product.ean}" />
+          ${selectionFields(selectedIds)}
+          <button type="submit">${pinned ? "Poista poikkeus" : "Poista"}</button>
+        </form>
+      </li>`,
+    )}
+  </ul>`;
+}
+
+/**
+ * The row's answer to "what do I put in the trolley": every chosen packet, and
+ * how many of it. A single packet reads exactly as it did before #161 — the
+ * count only appears where there is one to say.
+ */
 function productSummary(item: ShoppingItem): Raw {
   return html`<div class="s-shopping-product-summary">
-    ${item.externalProductImageUrl === null
+    ${item.recipeTitle === null
       ? ""
-      : html`<img
-          src="${item.externalProductImageUrl}"
-          alt=""
-          width="64"
-          height="64"
-          loading="lazy"
-          onerror="this.hidden=true"
-        />`}
-    <span class="s-shopping-product-copy">
-      <strong>${item.externalProductName ?? item.ean}</strong>
-      <span class="meta">EAN ${item.ean}</span>
-    </span>
+      : html`<span class="s-product-scope meta"
+          >Vain reseptissä ${item.recipeTitle}</span
+        >`}
+    ${item.chosen.map(
+      ({ product, count }) => html`<span class="s-shopping-product-one">
+        ${product.imageUrl === null
+          ? ""
+          : html`<img
+              src="${product.imageUrl}"
+              alt=""
+              width="64"
+              height="64"
+              loading="lazy"
+              onerror="this.hidden=true"
+            />`}
+        <span class="s-shopping-product-copy">
+          <strong
+            >${count > 1 ? `${count} × ` : ""}${product.name}</strong
+          >
+          <span class="meta">EAN ${product.ean}</span>
+        </span>
+      </span>`,
+    )}
+    ${item.packageTotal === null
+      ? ""
+      : html`<span class="s-package-total meta"
+          >Pakkauksissa yhteensä ${item.packageTotal}</span
+        >`}
   </div>`;
 }
 
@@ -761,19 +1033,25 @@ function productPage(
   member: Member,
   item: ShoppingItem,
   selectedIds: Set<number>,
+  mode: "replace" | "add",
   query: string,
   products: SOstoslistaProduct[],
   refused: string | null,
   status: number,
 ): Response {
   const back = `/ostoslista?${selectionQueryFromIds(selectedIds)}`;
+  const heading =
+    mode === "add"
+      ? `Lisää pakkauskoko: ${item.name}`
+      : `Valitse tuote: ${item.name}`;
   return page(
-    `Valitse tuote: ${item.name}`,
+    heading,
     html`<p><a href="${back}">← Takaisin ostoslistaan</a></p>
-      <h1>Valitse tuote: ${item.name}</h1>
+      <h1>${heading}</h1>
       ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
       <form method="get" action="/ostoslista/tuote" class="stacked product-search-form">
-        <input type="hidden" name="aines" value="${item.ingredientId}" />
+        <input type="hidden" name="rivi" value="${item.key}" />
+        <input type="hidden" name="tapa" value="${mode === "add" ? "lisaa" : "korvaa"}" />
         ${selectionFields(selectedIds)}
         <label>
           Haku
@@ -783,66 +1061,139 @@ function productPage(
       </form>
       ${products.length === 0 && refused === null
         ? html`<p class="empty">Haulla ei löytynyt tuotteita.</p>`
-        : productResults(item, selectedIds, query, products)}`,
+        : productResults(item, selectedIds, mode, query, products)}`,
     "shopping",
     member,
     status,
   );
 }
 
+/**
+ * How wide a choice reaches, asked in one line above the results.
+ *
+ * A dropdown rather than a pair of buttons on every result: the answer is
+ * almost always the default, the results are already busy, and a row that draws
+ * two batches' worth of dishes needs to be able to say *which* dish anyway.
+ * Adding a second package size is not a scope question at all — it is by
+ * definition about the ingredient — so the choice is not offered there.
+ */
+function scopeChoice(item: ShoppingItem, mode: "replace" | "add"): Raw {
+  if (mode === "add" || item.recipeId !== null || item.recipes.length === 0) {
+    return html``;
+  }
+
+  return html`<label class="s-product-scope-choice">
+    Valinnan laajuus
+    <select name="laajuus">
+      <option value="aines">Käytä aina tälle ainekselle</option>
+      ${item.recipes.map(
+        (recipe) => html`<option value="${recipe.id}">
+          Käytä tässä reseptissä: ${recipe.title}
+        </option>`,
+      )}
+    </select>
+  </label>`;
+}
+
 function productResults(
   item: ShoppingItem,
   selectedIds: Set<number>,
+  mode: "replace" | "add",
   query: string,
   products: SOstoslistaProduct[],
 ): Raw {
-  return html`<ul class="s-product-results">
-    ${products.map(
-      (product) => html`<li>
-        <img
-          src="${product.imageUrl}"
-          alt=""
-          width="80"
-          height="80"
-          loading="lazy"
-          onerror="this.hidden=true"
-        />
-        <div class="s-product-result-copy">
-          <strong>${product.name}</strong>
-          <span class="meta">EAN ${product.ean}</span>
-          ${product.price === null
-            ? ""
-            : html`<span class="meta"
-                >${product.price.toLocaleString("fi-FI", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })} €${product.priceUnit === null
-                  ? ""
-                  : ` / ${product.priceUnit.toLocaleLowerCase("fi-FI")}`}</span
-              >`}
-          ${product.available === false
-            ? html`<span class="meta">Ei saatavilla valitussa kaupassa</span>`
-            : ""}
-        </div>
-        <form method="post" action="/ostoslista/tuote">
-          <input type="hidden" name="aines" value="${item.ingredientId}" />
-          <input type="hidden" name="haku" value="${query}" />
-          <input type="hidden" name="ean" value="${product.ean}" />
-          ${selectionFields(selectedIds)}
-          <button type="submit" class="primary">Valitse</button>
-        </form>
-      </li>`,
-    )}
-  </ul>`;
+  return html`<form method="post" action="/ostoslista/tuote" class="s-product-choice">
+    <input type="hidden" name="rivi" value="${item.key}" />
+    <input type="hidden" name="haku" value="${query}" />
+    <input type="hidden" name="tapa" value="${mode === "add" ? "lisaa" : "korvaa"}" />
+    ${selectionFields(selectedIds)}
+    ${scopeChoice(item, mode)}
+    <ul class="s-product-results">
+      ${products.map((product) => productResult(product))}
+    </ul>
+  </form>`;
+}
+
+function productResult(product: SOstoslistaProduct): Raw {
+  const size = packageSizeFromName(product.name);
+  return html`<li>
+    <img
+      src="${product.imageUrl}"
+      alt=""
+      width="80"
+      height="80"
+      loading="lazy"
+      onerror="this.hidden=true"
+    />
+    <div class="s-product-result-copy">
+      <strong>${product.name}</strong>
+      <span class="meta">EAN ${product.ean}</span>
+      ${product.price === null
+        ? ""
+        : html`<span class="meta"
+            >${product.price.toLocaleString("fi-FI", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })} €${product.priceUnit === null
+              ? ""
+              : ` / ${product.priceUnit.toLocaleLowerCase("fi-FI")}`}</span
+          >`}
+      ${product.available === false
+        ? html`<span class="meta">Ei saatavilla valitussa kaupassa</span>`
+        : ""}
+      ${size === null ? "" : html`<span class="meta s-product-size">Pakkaus ${formatDecimal(size.quantity)} ${size.unit}</span>`}
+    </div>
+    ${size === null ? packageSizeFields(product) : ""}
+    <button
+      type="submit"
+      class="primary"
+      name="ean"
+      value="${product.ean}"
+    >
+      Valitse
+    </button>
+  </li>`;
+}
+
+/**
+ * The one field this screen ever asks for, and only where the shop's own name
+ * does not answer it: `Kanan rintafilee marinoitu` says nothing about grams.
+ *
+ * Left empty, the product is still perfectly choosable — it just never gets a
+ * package count, which is the safe half of #161's bargain. Filled in, it is
+ * stored once as data like every other size.
+ */
+function packageSizeFields(product: SOstoslistaProduct): Raw {
+  return html`<span class="s-product-size-entry">
+    <label
+      >Pakkauskoko
+      <input
+        type="text"
+        inputmode="decimal"
+        name="pakkaus_${product.ean}"
+        size="5"
+        data-ean="${product.ean}"
+      />
+    </label>
+    <label
+      >Yksikkö
+      <select name="pakkausyksikko_${product.ean}" data-ean="${product.ean}">
+        <option value="">–</option>
+        ${["g", "kg", "ml", "dl", "l", "kpl"].map(
+          (unit) => html`<option value="${unit}">${unit}</option>`,
+        )}
+      </select>
+    </label>
+  </span>`;
 }
 
 function selectedBuyItem(
   buy: ShoppingItem[],
-  rawId: FormDataEntryValue | string | null,
+  rawKey: FormDataEntryValue | string | null,
 ): ShoppingItem | null {
-  const ingredientId = Number(rawId);
-  if (!Number.isSafeInteger(ingredientId)) return null;
-  return buy.find((item) => item.ingredientId === ingredientId) ?? null;
+  const key = String(rawKey ?? "").trim();
+  if (key === "") return null;
+  return buy.find((item) => item.key === key) ?? null;
 }
 
 /**
@@ -1026,18 +1377,24 @@ const SHOPPING_ISLAND = `
   // ------------------------------------------------------------- the rows
 
   function collect() {
-    var items = document.querySelectorAll('.shopping-item[data-aines]');
+    var items = document.querySelectorAll('.shopping-item[data-rivi]');
     for (var index = 0; index < items.length; index += 1) {
       var details = items[index];
       var block = details.querySelector('.s-shopping-product');
-      var opener = block ? block.querySelector('form.s-product-open') : null;
-      if (!block || !opener) continue;
+      var openers = block ? block.querySelectorAll('form.s-product-open') : [];
+      if (!block || openers.length === 0) continue;
       rows.push({
         details: details,
         block: block,
         body: block.querySelector('.s-shopping-product-body'),
         thumb: details.querySelector('.shopping-thumb'),
-        opener: opener,
+        openers: openers,
+        // The first opener is the one that replaces; its hidden fields carry
+        // the row key and the week's selection, which every request needs.
+        opener: openers[0],
+        scopeSource: block.querySelector('.s-scope-source'),
+        scope: null,
+        mode: 'korvaa',
         name: details.getAttribute('data-haku') || '',
         query: details.getAttribute('data-haku') || '',
         panel: null,
@@ -1095,6 +1452,18 @@ const SHOPPING_ISLAND = `
     });
     panel.appendChild(form);
 
+    // The scope choice the server drew, moved rather than rebuilt: a dish's
+    // title is already escaped in it, and building it here would be a second
+    // place for the option values to drift from what the save accepts.
+    if (row.scopeSource) {
+      row.scope = row.scopeSource.querySelector('.s-product-scope-choice');
+      if (row.scope) {
+        row.scopeSource.parentNode.removeChild(row.scopeSource);
+        row.scopeSource = null;
+        panel.appendChild(row.scope);
+      }
+    }
+
     row.state = el('p', 's-product-panel-state', '');
     panel.appendChild(row.state);
     row.results = el('div', 's-product-panel-results');
@@ -1107,6 +1476,9 @@ const SHOPPING_ISLAND = `
 
   function openPanel(row) {
     panelFor(row).hidden = false;
+    // Adding a second package size is a fact about the ingredient, so there is
+    // no scope to choose there; changing the product is where the question is.
+    if (row.scope) row.scope.hidden = row.mode === 'lisaa';
     runSearch(row);
     prefetchNext(row);
   }
@@ -1161,6 +1533,35 @@ const SHOPPING_ISLAND = `
     row.results.appendChild(list);
   }
 
+  var SIZE_UNITS = ['g', 'kg', 'ml', 'dl', 'l', 'kpl'];
+
+  /**
+   * Where a name says nothing about the packet, ask. Left empty it stays
+   * unknown, and an unknown size simply never produces a package count.
+   */
+  function sizeFields(item) {
+    var wrap = el('span', 's-product-size-entry');
+    var amountLabel = el('label', '', 'Pakkauskoko ');
+    var amount = document.createElement('input');
+    amount.type = 'text';
+    amount.setAttribute('inputmode', 'decimal');
+    amount.size = 5;
+    amountLabel.appendChild(amount);
+    wrap.appendChild(amountLabel);
+
+    var unitLabel = el('label', '', 'Yksikkö ');
+    var unit = document.createElement('select');
+    unit.appendChild(new Option('–', ''));
+    for (var index = 0; index < SIZE_UNITS.length; index += 1) {
+      unit.appendChild(new Option(SIZE_UNITS[index], SIZE_UNITS[index]));
+    }
+    unitLabel.appendChild(unit);
+    wrap.appendChild(unitLabel);
+
+    item.appendChild(wrap);
+    return { amount: amount, unit: unit };
+  }
+
   function resultRow(row, query, product) {
     var item = document.createElement('li');
     item.appendChild(productImage(product.imageUrl, 80));
@@ -1172,11 +1573,25 @@ const SHOPPING_ISLAND = `
     if (product.available === false) {
       copy.appendChild(el('span', 'meta', 'Ei saatavilla valitussa kaupassa'));
     }
+    var known = typeof product.packageQuantity === 'number' && product.packageUnit;
+    if (known) {
+      copy.appendChild(
+        el(
+          'span',
+          'meta s-product-size',
+          'Pakkaus ' +
+            String(product.packageQuantity).split('.').join(',') +
+            ' ' +
+            product.packageUnit
+        )
+      );
+    }
     item.appendChild(copy);
+    var fields = known ? null : sizeFields(item);
     var choose = el('button', 'primary', 'Valitse');
     choose.type = 'button';
     choose.addEventListener('click', function () {
-      chooseProduct(row, query, product);
+      chooseProduct(row, query, product, fields);
     });
     item.appendChild(choose);
     return item;
@@ -1193,19 +1608,81 @@ const SHOPPING_ISLAND = `
 
   // ------------------------------------------------- choosing, optimistically
 
-  function chooseProduct(row, query, product) {
+  function chooseProduct(row, query, product, fields) {
     if (row.saving) return;
+    var extra = {
+      tapa: row.mode,
+      laajuus: row.scope && !row.scope.hidden ? scopeValue(row) : 'aines'
+    };
+    if (fields) {
+      var typed = fields.amount.value;
+      if (typed && typed.replace(' ', '') !== '' && fields.unit.value) {
+        extra['pakkaus_' + product.ean] = typed;
+        extra['pakkausyksikko_' + product.ean] = fields.unit.value;
+      }
+    }
     closePanel(row);
+
+    // A second package size, or a product pinned to one recipe, changes what
+    // this row and its neighbours add up to — that arithmetic is the server's,
+    // so the browser waits for the answer rather than drawing a guess.
+    if (extra.tapa === 'lisaa' || extra.laajuus !== 'aines') {
+      row.saving = true;
+      status(row, 'Tallennetaan…');
+      send(row, query, product, extra, function (ok, payload) {
+        row.saving = false;
+        if (ok) {
+          window.location.reload();
+          return;
+        }
+        status(row, null);
+        showError(
+          row,
+          (payload && payload.error) || 'Tuotteen tallennus epäonnistui.',
+          function () { chooseProduct(row, query, product, fields); }
+        );
+        saveSettled(false);
+      });
+      return;
+    }
+
     // Everything the optimistic draw touches, kept so a refusal can put the row
     // back exactly as the server still has it.
     var before = {
       body: row.body.innerHTML,
       thumb: row.thumb ? row.thumb.innerHTML : null,
       blockClass: row.block.className,
-      openLabel: openerLabel(row)
+      openLabel: openerLabel(row),
+      hiddenOpeners: openerVisibility(row)
     };
     showProduct(row, product);
-    persist(row, query, product, before);
+    persist(row, query, product, extra, before);
+  }
+
+  function scopeValue(row) {
+    var select = row.scope ? row.scope.querySelector('select') : null;
+    return select ? select.value : 'aines';
+  }
+
+  function send(row, query, product, extra, done) {
+    var body = { haku: query, ean: product.ean, muoto: 'json' };
+    for (var key in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, key)) body[key] = extra[key];
+    }
+    request(
+      'POST',
+      '/ostoslista/tuote',
+      fieldsOf(row.opener, body, { haku: 1, tapa: 1 }),
+      done
+    );
+  }
+
+  function openerVisibility(row) {
+    var hidden = [];
+    for (var index = 0; index < row.openers.length; index += 1) {
+      hidden.push(row.openers[index].hidden);
+    }
+    return hidden;
   }
 
   function openerLabel(row) {
@@ -1224,20 +1701,18 @@ const SHOPPING_ISLAND = `
     row.body.innerHTML = before.body;
     if (row.thumb && before.thumb !== null) row.thumb.innerHTML = before.thumb;
     row.block.className = before.blockClass;
+    for (var index = 0; index < row.openers.length; index += 1) {
+      row.openers[index].hidden = before.hiddenOpeners[index];
+    }
     var button = row.opener.querySelector('button');
     if (button && before.openLabel !== null) button.innerHTML = before.openLabel;
   }
 
-  function persist(row, query, product, before) {
+  function persist(row, query, product, extra, before) {
     row.saving = true;
     clearError(row);
     status(row, 'Tallennetaan…');
-    var body = fieldsOf(
-      row.opener,
-      { haku: query, ean: product.ean, muoto: 'json' },
-      { haku: 1 }
-    );
-    request('POST', '/ostoslista/tuote', body, function (ok, payload) {
+    send(row, query, product, extra, function (ok, payload) {
       row.saving = false;
       status(row, null);
       if (ok && payload && payload.product) {
@@ -1254,7 +1729,7 @@ const SHOPPING_ISLAND = `
         (payload && payload.error) || 'Tuotteen tallennus epäonnistui.',
         function () {
           showProduct(row, product);
-          persist(row, query, product, before);
+          persist(row, query, product, extra, before);
         }
       );
       saveSettled(false);
@@ -1296,6 +1771,10 @@ const SHOPPING_ISLAND = `
     }
 
     setOpenerLabel(row, 'Vaihda tuote');
+    // The row has something to add a second size to now.
+    for (var which = 0; which < row.openers.length; which += 1) {
+      row.openers[which].hidden = false;
+    }
   }
 
   function status(row, text) {
@@ -1498,14 +1977,22 @@ const SHOPPING_ISLAND = `
   collect();
   for (var index = 0; index < rows.length; index += 1) {
     (function (row) {
-      row.opener.addEventListener('submit', function (event) {
-        event.preventDefault();
-        if (row.panel && !row.panel.hidden) {
-          closePanel(row);
-          return;
-        }
-        openPanel(row);
-      });
+      for (var which = 0; which < row.openers.length; which += 1) {
+        (function (form) {
+          form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var mode = form.getAttribute('data-tapa') || 'korvaa';
+            // The same button again closes the panel; the other one switches
+            // what the open panel is for rather than opening a second.
+            if (row.panel && !row.panel.hidden && row.mode === mode) {
+              closePanel(row);
+              return;
+            }
+            row.mode = mode;
+            openPanel(row);
+          });
+        })(row.openers[which]);
+      }
     })(rows[index]);
   }
   wireSend();

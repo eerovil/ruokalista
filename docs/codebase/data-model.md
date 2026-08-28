@@ -249,18 +249,46 @@ recipe_id)` row holding the default portions the picker starts from.
 recipe; "we always make this for nine" is a fact about a kitchen, and putting it
 on the shared row would push the publisher's habit onto everyone who plans it.
 
-Issue #147 proposes three nullable columns on that global `ingredient` row:
-`ean`, `external_product_name`, and `external_product_image_url`. Together they
-cache the one S-group product selected for an ingredient. This deliberately
-does not add a provider or household mapping table: the integration is enabled
-for one server-configured household only, and that is the boundary that makes a
-global preference acceptable for this version.
+### What an ingredient is bought as
 
-The three values are replaced together only after a fresh S-ostoslista product
-search confirms the submitted EAN. The image is a stable public CDN URL derived
-from that EAN rather than a temporary signed search result. As a column-only
-addition, the backup table manifest does not change; backup and restore already
-carry every column on an ingredient row.
+Issue #147 put three nullable columns on that global `ingredient` row — `ean`,
+`external_product_name` and `external_product_image_url` — caching the one
+S-group product selected for an ingredient. It deliberately added no provider or
+household mapping table: the integration is enabled for one server-configured
+household only, and that is the boundary that made a global preference
+acceptable.
+
+Issue #161 proposes replacing those columns with two tables
+(`migrations/0013_ingredient_products.sql`), because one product per ingredient
+cannot say what jauheliha needs said — it is sold as 400 g, 700 g and 1 kg, and
+which to buy depends on the week rather than on the foodstuff.
+[ADR-0008](../adr/0008-an-ingredient-knows-several-products.md) holds the
+reasoning; the shape is:
+
+- **`ingredient_product`** — several rows per ingredient, each an EAN, a name,
+  an image and a **structured package size** (`package_quantity` +
+  `package_unit`, null together when unknown). The size is stored data. It is
+  read off the product's name once, at the moment somebody chooses it, and is
+  never re-derived while a shopping list is built. `UNIQUE (ingredient_id,
+  ean)`.
+- **`recipe_ingredient_product`** — one product for one recipe's use of one
+  ingredient, per household. `UNIQUE (household_id, recipe_id, ingredient_id)`.
+  Keyed by recipe and ingredient rather than by `ingredient_line.id` on
+  purpose: `recipe-save.ts` deletes and re-inserts a recipe's lines on every
+  save, so a line-id key would lose each override the next time somebody fixed
+  a typo. Household-scoped because a published dish is plannable by everybody
+  (#143) and each household picks its own product for it.
+
+The migration copies every existing `ingredient.ean` mapping across before
+dropping the columns, so nothing selected under #147 is lost; those rows arrive
+with no package size, and `ingredient-products.ts::backfillPackageSizes` fills
+one in the first time the app reads a name it can parse. A product whose name
+cannot be parsed simply stays unsized and never contributes a package count.
+
+Both product values are still written only after a fresh S-ostoslista search
+confirms the submitted EAN, and the image is still the stable public CDN URL
+derived from that EAN. Unlike #147, this **is** a table addition, so it goes
+through the manifest lockstep below.
 
 ### Rebuilding a table in a D1 migration
 
@@ -288,8 +316,9 @@ sequence ever leaves a constraint violated, so none of it depends on a pragma.
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`, and
-`recipe_preference`.
+`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
+`recipe_preference`, and — proposed by #161 — `ingredient_product` and
+`recipe_ingredient_product`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.
