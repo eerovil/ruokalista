@@ -239,15 +239,16 @@ async function readCapped(response: Response): Promise<string> {
 /**
  * Markup in, recipe text out.
  *
- * Structured `schema.org/Recipe` data first — decision #2 found most Finnish
- * recipe sites publish it, and it is the difference between reading a recipe
- * and reading a page that has one on it somewhere. Where there is none, the
- * page's visible text is stripped out and handed over instead, which is the
- * same thing a member would have pasted by hand.
+ * Complete structured `schema.org/Recipe` data first — decision #2 found most
+ * Finnish recipe sites publish it, and it is the difference between reading a
+ * recipe and reading a page that has one on it somewhere. A structured node is
+ * complete only when it carries both ingredients and instructions; where it is
+ * absent or incomplete, the page's visible text is stripped out and handed
+ * over instead, which is the same thing a member would have pasted by hand.
  */
 export function readRecipeFromPage(markup: string, url: string): FetchedPage {
   const recipe = findRecipeData(markup);
-  if (recipe !== null) {
+  if (recipe !== null && recipeDataIsComplete(recipe)) {
     const sourceText = recipeText(recipe);
     if (sourceText.trim() !== "") {
       return {
@@ -265,6 +266,16 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
   }
 
   return { url, sourceText: capped(text), title: null, structured: false };
+}
+
+/** The two fields without which structured data is not a usable recipe. */
+function recipeDataIsComplete(recipe: JsonObject): boolean {
+  return (
+    stringList(recipe["recipeIngredient"]).length > 0 &&
+    instructionLines(recipe["recipeInstructions"], 0).some(
+      (line) => !line.heading,
+    )
+  );
 }
 
 function capped(text: string): string {

@@ -194,6 +194,31 @@ test("a page with no structured recipe gives up its visible text instead", () =>
   assert.ok(!page.sourceText.includes("color:red"));
 });
 
+test("an incomplete structured recipe falls back to the visible recipe", () => {
+  const markup = `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      name: "Kaalilaatikko",
+      description: "Helppo arkiruoka.",
+      recipeYield: "4 annosta",
+    })}</script></head><body>
+    <main><h1>Kaalilaatikko</h1>
+    <h2>Ainekset</h2>
+    <ul><li>1 kg valkokaalia</li><li>400 g jauhelihaa</li><li>2 dl riisiä</li></ul>
+    <h2>Valmistus</h2>
+    <p>Suikaloi kaali ja kuullota se pannulla. Ruskista jauheliha ja keitä riisi.</p>
+    <p>Sekoita kaikki vuokaan, mausta huolellisesti ja paista 200 asteessa noin
+       tunnin ajan. Tarjoile puolukkahillon kanssa lämpimänä.</p></main>
+    </body></html>`;
+
+  const page = readRecipeFromPage(markup, "https://kotikokki.example/kaali");
+
+  assert.equal(page.structured, false);
+  assert.equal(page.title, null);
+  assert.ok(page.sourceText.includes("1 kg valkokaalia"), page.sourceText);
+  assert.ok(page.sourceText.includes("Ruskista jauheliha"), page.sourceText);
+});
+
 test("a page that yields almost nothing is a refusal, not an empty import", () => {
   assert.throws(
     () => readRecipeFromPage("<html><body><p>Ei mitään.</p></body></html>", "https://x.example/"),
