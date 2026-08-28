@@ -8,8 +8,11 @@ import {
   blockedMessage,
   PublishRefused,
   publishRecipes,
+  setRecipeSharing,
   unpublishRecipes,
   type PublishOutcome,
+  type RecipeVisibility,
+  type SharingDraft,
 } from "./recipe-publish.ts";
 import {
   findReadableRecipe,
@@ -40,6 +43,24 @@ export async function publishForm(
   const query = String(form.get("q") ?? "");
   const back = returnPath(form.get("palaa"));
   const ids = form.getAll("recipeId").map((value) => Number(String(value)));
+
+  if (action === "save") {
+    const visibility = String(form.get("visibility") ?? "");
+    const draft: SharingDraft = {
+      visibility: isVisibility(visibility) ? visibility : "private",
+      recipientIds: form.getAll("recipientId").map((value) => Number(String(value))),
+    };
+    if (!isVisibility(visibility) || ids.length !== 1) {
+      return refuse(env, member, back, query, "Tuntematon jakotapa.", draft);
+    }
+    try {
+      await setRecipeSharing(env.DB, member, ids[0]!, draft);
+    } catch (error) {
+      if (!(error instanceof PublishRefused)) throw error;
+      return refuse(env, member, back, query, error.message, draft);
+    }
+    return seeOther(back ?? `/recipes/${ids[0]}`);
+  }
 
   if (action !== "publish" && action !== "unpublish") {
     return refuse(env, member, back, query, "Tuntematon toiminto.");
@@ -173,6 +194,7 @@ async function refuse(
   back: string | null,
   query: string,
   message: string,
+  sharingDraft?: SharingDraft,
 ): Promise<Response> {
   if (back !== null) {
     const recipe = await findReadableRecipe(
@@ -188,6 +210,7 @@ async function refuse(
         DEFAULT_MULTIPLIER,
         message,
         env.CAST_APP_ID,
+        sharingDraft,
       );
     }
   }
@@ -199,6 +222,10 @@ async function refuse(
     member,
     400,
   );
+}
+
+function isVisibility(value: string): value is RecipeVisibility {
+  return value === "private" || value === "selected" || value === "public";
 }
 
 /**
