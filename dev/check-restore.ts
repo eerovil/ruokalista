@@ -18,6 +18,7 @@ const TABLES: readonly BackupTableName[] = [
   "household",
   "member",
   "intake_job",
+  "member_invitation",
   "ingredient",
   "recipe",
   "recipe_share",
@@ -80,6 +81,30 @@ test("duplicate ids are rejected before restore", async () => {
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(duplicate)),
     /duplicate member id 1/,
+  );
+});
+
+test("active members and invitations cannot share a normalized email", async () => {
+  const snapshot = await validSnapshot();
+  let unsigned = unsignedOf(snapshot);
+  unsigned.tables.member_invitation[0]!.email = "EERO@example.com";
+  let duplicate = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(duplicate)),
+    /duplicate member invitation email/,
+  );
+
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.member_invitation.push({
+    ...unsigned.tables.member_invitation[0]!,
+    id: 2,
+    email: "UUSI@example.com",
+  });
+  unsigned.row_counts.member_invitation += 1;
+  duplicate = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(duplicate)),
+    /duplicate member invitation email/,
   );
 });
 
@@ -219,6 +244,15 @@ async function validSnapshot() {
         error_message: "Jäsennys epäonnistui.",
         created_at: "2026-08-25 00:00:00",
         updated_at: "2026-08-25 00:01:00",
+      },
+    ],
+    member_invitation: [
+      {
+        id: 1,
+        household_id: 1,
+        email: "uusi@example.com",
+        created_at: "2026-08-25 00:00:00",
+        created_by: 1,
       },
     ],
     ingredient: [

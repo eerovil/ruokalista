@@ -20,6 +20,7 @@ import {
   householdListScreen,
   householdScreen,
   removeMemberForm,
+  removeMemberInvitationForm,
   renameHouseholdForm,
 } from "./household-admin.ts";
 import {
@@ -204,6 +205,10 @@ const router = new Router()
   .get("/admin/households/:id", requireAdminScreen(householdScreen))
   .post("/admin/households/:id/name", requireAdminScreen(renameHouseholdForm))
   .post("/admin/households/:id/members", requireAdminScreen(addMemberForm))
+  .post(
+    "/admin/households/:id/invitations/:invitationId/delete",
+    requireAdminScreen(removeMemberInvitationForm),
+  )
   .post("/admin/households/:id/members/:memberId", requireAdminScreen(editMemberForm))
   .post(
     "/admin/households/:id/members/:memberId/delete",

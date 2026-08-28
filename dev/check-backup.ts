@@ -191,6 +191,9 @@ function fakeDatabase(): {
       created_at: "2026-08-25 00:00:00",
       updated_at: "2026-08-25 00:01:00",
     }],
+    member_invitation: [
+      { id: 1, household_id: 1, email: "uusi@example.com", created_by: 1 },
+    ],
     ingredient: [{ id: 1, name: "öljy" }],
     recipe: [
       {

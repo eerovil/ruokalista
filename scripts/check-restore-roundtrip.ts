@@ -73,6 +73,14 @@ try {
   if (target.intake_job[0]?.source_text !== "Uunikaali" || target.intake_job[0]?.status !== "failed") {
     throw new Error("round-trip did not preserve the retained intake job");
   }
+  const invitation = target.member_invitation[0];
+  if (
+    invitation?.household_id !== 2 ||
+    invitation.email !== "odottaa@example.com" ||
+    invitation.created_by !== 3
+  ) {
+    throw new Error("round-trip did not preserve the pending member invitation");
+  }
   const share = target.recipe_share[0];
   if (share?.recipe_id !== 1 || share.household_id !== 2 || share.shared_by !== 1) {
     throw new Error("round-trip did not preserve the selected recipe recipient");

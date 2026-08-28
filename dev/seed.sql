@@ -16,6 +16,7 @@ DELETE FROM ingredient_line;
 DELETE FROM recipe_step;
 DELETE FROM recipe;
 DELETE FROM ingredient;
+DELETE FROM member_invitation;
 DELETE FROM member;
 DELETE FROM household;
 
@@ -29,8 +30,13 @@ INSERT INTO household (id, name) VALUES
 -- sides to be proved against.
 INSERT INTO member (id, household_id, google_sub, display_name, email, is_admin) VALUES
   (1, 1, 'dev-seed-koti',    'Eero',        'eero@example.com', 0),
-  (2, 2, 'dev-seed-naapuri', 'Naapuri',     NULL,               0),
+  (2, 2, 'dev-seed-naapuri', 'Naapuri',     'naapuri@example.com', 0),
   (3, 1, 'dev-seed-admin',   'Ylläpitäjä',  NULL,               1);
+
+-- An email-only membership waiting for first verified Google sign-in (#187).
+-- It keeps the admin screen and backup fixtures in a realistic used state.
+INSERT INTO member_invitation (id, household_id, email, created_by) VALUES
+  (1, 2, 'odottaa@example.com', 3);
 
 -- The dictionary is global since #143: one row per foodstuff for every
 -- household. `naapurin suola` is still here and is still household 2's doing,

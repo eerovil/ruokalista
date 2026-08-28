@@ -21,6 +21,10 @@ export interface GoogleIdentity {
   sub: string;
   name: string;
   email: string | null;
+  /** Only a verified address may claim an email-only membership invitation. */
+  emailVerified: boolean;
+  /** Google is still authoritative for this mailbox (Gmail or Workspace). */
+  emailAuthoritative: boolean;
 }
 
 export interface GoogleCredentials {
@@ -119,16 +123,38 @@ export function readIdentity(
     return null;
   }
 
-  const { iss, aud, exp, sub, name, email } = claims;
+  const {
+    iss,
+    aud,
+    exp,
+    sub,
+    name,
+    email,
+    email_verified: emailVerified,
+    hd: hostedDomain,
+  } = claims;
 
   if (typeof iss !== "string" || !ISSUERS.includes(iss)) return null;
   if (aud !== clientId) return null;
   if (typeof exp !== "number" || exp <= nowSeconds) return null;
   if (typeof sub !== "string" || !isGoogleSub(sub)) return null;
 
+  const verified = emailVerified === true;
+  const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
+
   return {
     sub,
     name: typeof name === "string" && name !== "" ? name : "Tuntematon",
     email: typeof email === "string" ? email : null,
+    emailVerified: verified,
+    // Google documents Gmail and Workspace (`hd`) addresses as the cases in
+    // which it remains authoritative for the mailbox's current owner. A
+    // verified third-party address may have changed hands since enrollment.
+    emailAuthoritative:
+      verified &&
+      normalizedEmail !== null &&
+      ((typeof hostedDomain === "string" && hostedDomain.trim() !== "") ||
+        normalizedEmail?.endsWith("@gmail.com") === true ||
+        normalizedEmail?.endsWith("@googlemail.com") === true),
   };
 }
