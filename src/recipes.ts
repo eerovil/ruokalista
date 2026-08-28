@@ -775,10 +775,11 @@ function body(
   // done after the parts still mentions an ingredient listed before them.
   const amounts = amountsByIngredient(recipe.lines, factor);
 
-  return html`${lines.length === 0
+  return html`<section class="recipe-section">
+    ${lines.length === 0
       ? ""
-      : html`<h3>Ainekset</h3>
-          <ul class="lines">
+      : html`<h3 class="ingredients-heading">Ainekset</h3>
+          <ul class="lines recipe-ingredients">
             ${lines.map((line) => {
               const amount = formatMeasurement(scaleMeasurement(line, factor));
               return html`<li>
@@ -794,14 +795,15 @@ function body(
           </ul>`}
     ${steps.length === 0
       ? ""
-      : html`<h3>Valmistus</h3>
-          <ol class="steps">
+      : html`<h3 class="method-heading">Valmistus</h3>
+          <ol class="steps recipe-method">
             ${steps.map(
               (step, index) => html`<li>
                 ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
-          </ol>`}`;
+          </ol>`}
+  </section>`;
 }
 
 /** Everything rendering a picture needs to know. A `Recipe` is one of these. */
@@ -860,62 +862,69 @@ function recipeBody(
   const factor = scaleFactor(recipe.yieldPortions, portions);
   const canRevealAmounts = hasRevealableMention(recipe, factor);
 
-  return html`${recipeImage(recipe)}
-    <h1>${recipe.title}</h1>
-    ${view.refusal === null
-      ? ""
-      : html`<p class="refused">${view.refusal}</p>`}
-    ${view.owned
-      ? ""
-      : // Said before the ingredients rather than beside the missing edit link
-        // at the bottom: whose recipe this is changes how it should be read,
-        // and the reader deserves that before they start cooking from it.
-        html`<p class="meta shared-from">
-          ${recipe.householdName} on julkaissut tämän reseptin. Voit käyttää
-          sitä, mutta vain sen oma talous voi muokata sitä.
-        </p>`}
-    <!-- Whether the amounts below are the page's or this meal's is the first
-         thing a cook needs to know, so it sits under the title and says which. -->
-    <p class="${factor === null ? "yield" : "yield is-scaled"}">
-      ${recipe.yieldPortions === null
-        ? // A recipe with no yield says so where a scale control would be: you
-          // cannot scale it, and hiding that would be worse than saying it.
-          "Annosmäärää ei tiedetä, joten reseptiä ei voi skaalata."
-        : factor === null
-          ? `${recipe.yieldPortions} annosta`
-          : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
-    </p>
+  return html`<div class="recipe-view">
+    <div class="recipe-summary">
+      ${recipeImage(recipe)}
+      <div class="recipe-intro">
+        <h1>${recipe.title}</h1>
+        ${view.refusal === null
+          ? ""
+          : html`<p class="refused">${view.refusal}</p>`}
+        ${view.owned
+          ? ""
+          : // Said before the ingredients rather than beside the missing edit link
+            // at the bottom: whose recipe this is changes how it should be read,
+            // and the reader deserves that before they start cooking from it.
+            html`<p class="meta shared-from">
+              ${recipe.householdName} on julkaissut tämän reseptin. Voit käyttää
+              sitä, mutta vain sen oma talous voi muokata sitä.
+            </p>`}
+        <!-- Whether the amounts below are the page's or this meal's is the first
+             thing a cook needs to know, so it sits under the title and says which. -->
+        <p class="${factor === null ? "yield" : "yield is-scaled"}">
+          ${recipe.yieldPortions === null
+            ? // A recipe with no yield says so where a scale control would be: you
+              // cannot scale it, and hiding that would be worse than saying it.
+              "Annosmäärää ei tiedetä, joten reseptiä ei voi skaalata."
+            : factor === null
+              ? `${recipe.yieldPortions} annosta`
+              : `Määrät ${portions} annokselle — reseptissä ${recipe.yieldPortions}`}
+        </p>
+      </div>
+    </div>
 
-    ${canRevealAmounts
-      ? html`<input
-            type="checkbox"
-            id="reveal-all-amounts"
-            class="reveal-all"
-          />`
-      : ""}
+    <div class="recipe-cooking">
+      ${canRevealAmounts
+        ? html`<input
+              type="checkbox"
+              id="reveal-all-amounts"
+              class="reveal-all"
+            />`
+        : ""}
 
-    ${recipe.parts.length === 0
-      ? body(recipe, factor)
-      : body(recipe, factor, [null, "before_parts"])}
-    ${recipe.parts.map(
-      (part) => html`<section class="part">
-        <h2>${part.title}</h2>
-        <!-- A part has no yield of its own, so it scales by the dish's factor. -->
-        ${body(part, factor)}
-      </section>`,
-    )}
-    <!-- A different bucket letter, because this is the same recipe rendered a
-         second time and two mentions may not share a checkbox id. -->
-    ${recipe.parts.length === 0
-      ? ""
-      : body(recipe, factor, ["after_parts"], "b")}
+      ${recipe.parts.length === 0
+        ? body(recipe, factor)
+        : body(recipe, factor, [null, "before_parts"])}
+      ${recipe.parts.map(
+        (part) => html`<section class="part">
+          <h2>${part.title}</h2>
+          <!-- A part has no yield of its own, so it scales by the dish's factor. -->
+          ${body(part, factor)}
+        </section>`,
+      )}
+      <!-- A different bucket letter, because this is the same recipe rendered a
+           second time and two mentions may not share a checkbox id. -->
+      ${recipe.parts.length === 0
+        ? ""
+        : body(recipe, factor, ["after_parts"], "b")}
 
-    ${canRevealAmounts
-      ? html`<label for="reveal-all-amounts" class="reveal-all-label"
-          ><span class="reveal-all-show">Näytä kaikki määrät</span
-          ><span class="reveal-all-hide">Piilota määrät</span></label
-        >`
-      : ""}
+      ${canRevealAmounts
+        ? html`<label for="reveal-all-amounts" class="reveal-all-label"
+            ><span class="reveal-all-show">Näytä kaikki määrät</span
+            ><span class="reveal-all-hide">Piilota määrät</span></label
+          >`
+        : ""}
+    </div>
 
     <!-- Still stored, still one tap away, but not competing with the cooking. -->
     <details class="source-original">
@@ -924,6 +933,7 @@ function recipeBody(
     </details>
 
     ${keepAwake()}
+    ${RECIPE_VIEW_STYLE}
     ${MENTION_STYLE}
     ${PUBLISH_STYLE}
     ${canRevealAmounts ? html`<script>${raw(REVEAL_ALL_ISLAND)}</script>` : ""}
@@ -934,7 +944,8 @@ function recipeBody(
       ? html`<p class="recipe-edit">
           <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
         </p>`
-      : ""}`;
+      : ""}
+  </div>`;
 }
 
 /**
@@ -1058,6 +1069,55 @@ const PUBLISH_STYLE = html`<style>
   .recipe-sharing form { margin: 0; }
   .portions-preference { display: flex; align-items: flex-end; gap: .5rem; }
   .portions-preference input { width: 5rem; }
+</style>`;
+
+/**
+ * The cooking view uses the extra width a tablet offers without changing the
+ * phone-first shell. Nothing here fixes a height or hides overflow: a long
+ * instruction is allowed to wrap and make the page taller.
+ */
+const RECIPE_VIEW_STYLE = html`<style>
+  .recipe-method { min-width: 0; }
+  .recipe-method li { overflow-wrap: break-word; }
+
+  @media (min-width: 48rem) {
+    .recipe-view {
+      width: calc(100vw - 2rem);
+      max-width: 64rem;
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .recipe-summary {
+      margin-bottom: 1rem;
+    }
+    .recipe-summary .recipe-image.is-hero {
+      height: 12rem;
+      margin-bottom: .75rem;
+    }
+    .recipe-summary .recipe-image.is-hero.is-empty { height: 8rem; }
+    .recipe-intro { min-width: 0; }
+    .recipe-intro h1 { margin-bottom: .5rem; }
+    .recipe-intro .yield { margin-bottom: 0; }
+    .recipe-section {
+      display: grid;
+      grid-template-columns: minmax(14rem, .8fr) minmax(0, 1.2fr);
+      grid-template-areas:
+        "ingredients-heading method-heading"
+        "ingredients method";
+      column-gap: 2rem;
+      align-items: start;
+    }
+    .recipe-section > .ingredients-heading {
+      grid-area: ingredients-heading;
+    }
+    .recipe-section > .recipe-ingredients { grid-area: ingredients; }
+    .recipe-section > .method-heading { grid-area: method-heading; }
+    .recipe-section > .recipe-method { grid-area: method; }
+    .recipe-section > h3 { margin-top: 0; }
+    .recipe-section .lines li { padding: .35rem 0; font-size: 1rem; }
+    .recipe-section .steps li { padding: .25rem 0; line-height: 1.45; }
+    .recipe-cooking > .reveal-all-label { margin-top: .5rem; }
+  }
 </style>`;
 
 const MENTION_STYLE = html`<style>
