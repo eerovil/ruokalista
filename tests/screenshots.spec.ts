@@ -9,7 +9,7 @@ import {
   stubStructuring,
   TRUNCATED_ATTEMPT,
 } from "./support/draft";
-import { addIngredientRow, openDraftEditor } from "./support/lines";
+import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
 import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -1581,6 +1581,108 @@ test.describe("public recipes", () => {
     await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
     await capture(page, {
       path: `${SHOTS}/55-unpublish-refused.png`,
+      fullPage: true,
+    });
+  });
+});
+
+test.describe("ingredient alternatives", () => {
+  // The block above publishes a recipe and leaves it planned by the other
+  // household, so these start from a database put back to the seed.
+  test.beforeEach(reseed);
+
+  test("a recipe line that offers a choice (#183)", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // The choice is built the way a member builds one: two ordinary rows given
+    // the same group number in the editor.
+    await page.goto("/recipes/1/edit");
+    const oil = page.locator(".line").first();
+    await openMore(oil);
+    await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+
+    await addIngredientRow(page);
+    const added = page.locator(".line").nth(4);
+    await added.locator("select").selectOption({ label: "Luo uusi aines" });
+    await added.locator("input[name$=quantity]").fill("0,5");
+    await openMore(added);
+    await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
+    await added.getByLabel("Uuden aineksen nimi").fill("margariini");
+    await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+    await capture(page, {
+      path: `${SHOTS}/69-alternative-editor.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/1$/);
+
+    // The state worth photographing: one row, both amounts, the word between.
+    const choice = page.locator(".recipe-ingredient.is-alternative");
+    await expect(choice).toHaveCount(1);
+    await expect(choice.locator(".alt-or")).toHaveText("tai");
+    await expect(choice).toContainText("½ dl öljy");
+    await expect(choice).toContainText("½ dl margariini");
+    await capture(page, {
+      path: `${SHOTS}/70-alternative-recipe.png`,
+      fullPage: true,
+    });
+
+    // And the shopping list, which buys one of them.
+    const today = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Helsinki",
+    }).format(new Date());
+    const created = await page.request.post("/api/batches", {
+      data: { date: today, slot: "dinner", recipeId: 1, multiplier: 1 },
+    });
+    expect(created.status()).toBe(201);
+
+    await page.goto("/ostoslista");
+    await expect(page.locator(".shopping-item[data-haku='öljy']")).toHaveCount(1);
+    await expect(
+      page.locator(".shopping-item[data-haku='margariini']"),
+    ).toHaveCount(0);
+    await capture(page, {
+      path: `${SHOTS}/71-alternative-shopping.png`,
+      fullPage: true,
+    });
+  });
+
+  test("an imported choice, doubled (#183 review)", async ({ page, context }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // Import gives every option of a group the same source sentence, so this
+    // shot is the one that would have shown the whole `tai` phrase repeated
+    // under each option before the review fix.
+    const sentence = "½ dl öljyä tai voita";
+    await page.goto("/recipes/1/edit");
+    const oil = page.locator(".line").first();
+    await openMore(oil);
+    await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+    await oil.getByLabel("Lähderivi").fill(sentence);
+
+    await addIngredientRow(page);
+    const added = page.locator(".line").nth(4);
+    await added.locator("select").selectOption({ label: "Luo uusi aines" });
+    await added.locator("input[name$=quantity]").fill("0,5");
+    await openMore(added);
+    await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
+    await added.getByLabel("Uuden aineksen nimi").fill("voi");
+    await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+    await added.getByLabel("Lähderivi").fill(sentence);
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/1$/);
+
+    await page.goto("/recipes/1?multiplier=2");
+    const choice = page.locator(".recipe-ingredient.is-alternative");
+    await expect(choice).toContainText("1 dl öljy");
+    await expect(choice).toContainText("1 dl voi");
+    await expect(choice.locator(".source")).toHaveCount(1);
+    await capture(page, {
+      path: `${SHOTS}/72-alternative-scaled-source.png`,
       fullPage: true,
     });
   });

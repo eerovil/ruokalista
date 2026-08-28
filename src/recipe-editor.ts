@@ -458,6 +458,7 @@ function editorForm(
           // carry one.
           section: null,
           phase: line.phase,
+          alternativeGroup: line.alternativeGroup,
           // A note is about an import, not about a saved recipe.
           note: null,
         } satisfies DraftLine));

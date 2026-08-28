@@ -1,4 +1,9 @@
 import {
+  alternativeGroup,
+  chosenAlternatives,
+  type AlternativeGroup,
+} from "./alternatives.ts";
+import {
   backfillPackageSizes,
   overrideKey,
   overridesForRecipes,
@@ -13,6 +18,7 @@ import {
   type BaseAmount,
 } from "./packaging.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
+import { phaseBucket, recipePhase, type RecipePhase } from "./recipe-phase.ts";
 import { scaleMeasurement, sourceWorthShowing } from "./scaling.ts";
 
 /**
@@ -50,6 +56,22 @@ export interface ShoppingLine extends Measurement {
   partTitle: string | null;
   /** The dish, even for a part's line: an override is set per dish (#161). */
   recipeId: number;
+  /**
+   * The recipe row this line is actually stored on — the dish, or one of its
+   * parts. `recipeId` is the dish for everything, which is right for a product
+   * override and wrong for an alternative group: group numbers are scoped to
+   * the row, so a dish and its part can both be using group 1.
+   */
+  sourceRecipeId: number;
+  /** The alternative group this line is an option in, or null (#183). */
+  alternativeGroup: AlternativeGroup;
+  /**
+   * The line's cooking-order phase. The list never renders one, and carries it
+   * for one reason: a group's boundary is the recipe row *and* the section the
+   * cooking view draws it in, so counting a pair the screen showed apart would
+   * buy one ingredient too few.
+   */
+  phase: RecipePhase;
   ingredientId: number;
   ingredientName: string;
   /** What this ingredient can be bought as, in the order they were added. */
@@ -135,7 +157,21 @@ export interface ShoppingItem {
 export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
   const items = new Map<string, Building>();
 
-  for (const line of lines) {
+  // A "kerma tai kookosmaito" line is one thing to buy, not two, so only the
+  // first option of each group reaches the list (#183). Scoped to the cooking,
+  // the recipe row it is stored on and the cooking-order section it renders
+  // in: the same dish planned twice is two cookings that each need their
+  // choice bought, a dish's group 1 has nothing to do with its part's, and two
+  // options a cook reads in different sections are two lines rather than a
+  // choice. That last one is the same question `recipe-save.ts` refuses to let
+  // a group cross, so this can only ever agree with the screen.
+  const buying = chosenAlternatives(
+    lines,
+    (line) =>
+      `${line.batchId}:${line.sourceRecipeId}:${phaseBucket(line.phase)}`,
+  );
+
+  for (const line of buying) {
     const pinned = line.override !== null;
     const rowKey = pinned
       ? `${line.ingredientId}:r${line.recipeId}`
@@ -353,9 +389,12 @@ interface LineRow {
   alt_quantity: number | null;
   alt_unit: string | null;
   recipe_id: number;
+  source_recipe_id: number;
   ingredient_id: number;
   ingredient_name: string;
   source_line: string;
+  alternative_group: number | null;
+  phase: string | null;
 }
 
 /**
@@ -396,9 +435,12 @@ export async function shoppingLinesFor(
               ingredient_line.alt_quantity,
               ingredient_line.alt_unit,
               dish.id AS recipe_id,
+              source.id AS source_recipe_id,
               ingredient.id AS ingredient_id,
               ingredient.name AS ingredient_name,
-              ingredient_line.source_line
+              ingredient_line.source_line,
+              ingredient_line.alternative_group,
+              ingredient_line.phase
          FROM planned_batch
          JOIN recipe AS dish
            ON dish.id = planned_batch.recipe_id
@@ -446,6 +488,9 @@ export async function shoppingLinesFor(
     altQuantity: row.alt_quantity,
     altUnit: row.alt_unit,
     recipeId: row.recipe_id,
+    sourceRecipeId: row.source_recipe_id,
+    alternativeGroup: alternativeGroup(row.alternative_group),
+    phase: recipePhase(row.phase),
     ingredientId: row.ingredient_id,
     ingredientName: row.ingredient_name,
     products: products.get(row.ingredient_id) ?? [],

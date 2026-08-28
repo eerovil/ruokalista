@@ -4,6 +4,7 @@ import type { Env } from "./env.ts";
 import type { DraftIngredientRef } from "./ingredient-refs.ts";
 import { MAX_REFS_PER_STEP, mentionResolves } from "./ingredient-refs.ts";
 import type { IngredientSummary } from "./ingredients.ts";
+import { alternativeGroup, type AlternativeGroup } from "./alternatives.ts";
 import { recipePhase, type RecipePhase } from "./recipe-phase.ts";
 
 /**
@@ -41,6 +42,12 @@ export interface DraftLine {
   section: string | null;
   /** When parent-level content belongs in a multipart dish's cooking order. */
   phase: RecipePhase;
+  /**
+   * The alternative group this line is an option in, or null (#183). A page
+   * saying "1 lihaliemikuutio tai 1 annos fondia" becomes two lines carrying
+   * the same number, each with its own amount and its own ingredient.
+   */
+  alternativeGroup: AlternativeGroup;
   /**
    * The model's own doubt about this line, in one short Finnish sentence, or
    * null when it is sure. Null on nearly every line.
@@ -221,6 +228,7 @@ export const DRAFT_SCHEMA = {
               { type: "null" },
             ],
           },
+          alternative_group: nullable("integer"),
           note: nullable("string"),
         },
         required: [
@@ -234,6 +242,7 @@ export const DRAFT_SCHEMA = {
           "source_line",
           "section",
           "phase",
+          "alternative_group",
           "note",
         ],
         additionalProperties: false,
@@ -308,6 +317,16 @@ Säännöt, joista ei poiketa:
 - Käytä alt_quantity ja alt_unit kun rivi mittaa saman asian kahdesti eri
   yksiköissä ("½ (500 g) valkokaali"). Säilytä lähteen kirjoitusjärjestys.
   Molemmat tai ei kumpaakaan.
+- Kun rivi tarjoaa vaihtoehtoja ("1 lihaliemikuutio tai 1 annos fondia",
+  "voita tai margariinia"), kirjoita jokainen vaihtoehto omaksi rivikseen ja
+  anna niille sama alternative_group-numero. Numerot alkavat ykkösestä ja
+  kasvavat reseptin sisällä. Jokaisella vaihtoehdolla on oma quantity ja unit
+  sen mukaan mitä teksti sanoo, ja oma ingredient_name — älä koskaan kirjoita
+  "hunaja tai sokeri" yhdeksi ainekseksi. source_line on kaikilla saman ryhmän
+  riveillä sama alkuperäinen rivi sanatarkasti. Ryhmässä on aina vähintään kaksi
+  riviä; muuten alternative_group on null. Saman ryhmän riveillä on aina sama
+  section ja sama phase — vaihtoehdot käytetään samassa kohdassa, joten ryhmä ei
+  jakaudu kahteen osaan eikä ennen/jälkeen-vaiheeseen.
 - Aseta yield_portions vain jos teksti kertoo annosmäärän.
 - source_text on annettu teksti sellaisenaan.
 - Yhdistä jokainen rivi olemassa olevaan ainekseen sen id:llä kun jokin selvästi
@@ -683,7 +702,10 @@ function assertDraftWire(raw: unknown): void {
       "section",
       "phase",
       "note",
-    ]);
+    ],
+    // Optional: a bundle written before issue #183 offers no alternatives, and
+    // refusing it would break every draft AgentDeck has already generated.
+    ["alternative_group"]);
     requireNumberOrNull(line["quantity"], `lines[${index}].quantity`);
     requireNumberOrNull(line["quantity_max"], `lines[${index}].quantity_max`);
     requireStringOrNull(line["unit"], `lines[${index}].unit`);
@@ -704,6 +726,10 @@ function assertDraftWire(raw: unknown): void {
     requireString(line["source_line"], `lines[${index}].source_line`);
     requireStringOrNull(line["section"], `lines[${index}].section`);
     requirePhase(line["phase"], `lines[${index}].phase`);
+    requireAlternativeGroup(
+      line["alternative_group"],
+      `lines[${index}].alternative_group`,
+    );
     requireStringOrNull(line["note"], `lines[${index}].note`);
   });
 }
@@ -741,6 +767,14 @@ function requireStringOrNull(value: unknown, label: string): void {
 function requireNumberOrNull(value: unknown, label: string): void {
   if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
     invalid(`${label} must be a number or null`);
+  }
+}
+
+/** A group is a positive whole number when it is there at all. */
+function requireAlternativeGroup(value: unknown, label: string): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    invalid(`${label} must be a positive integer or null`);
   }
 }
 
@@ -926,6 +960,7 @@ function toDraftLine(raw: unknown): DraftLine {
       typeof line["source_line"] === "string" ? line["source_line"] : "",
     section: textOrNull(line["section"]),
     phase: recipePhase(line["phase"]),
+    alternativeGroup: alternativeGroup(line["alternative_group"]),
   };
 }
 

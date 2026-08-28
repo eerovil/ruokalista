@@ -278,6 +278,7 @@ function recipeToSave(
       sourceLine: line.sourceLine,
       section: line.section,
       phase: line.phase,
+      alternativeGroup: line.alternativeGroup,
       // A bundle is taken in the order it was written, so the row a step's
       // mention points at is simply where the line sits in the draft.
       formIndex: index,
