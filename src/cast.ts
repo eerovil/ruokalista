@@ -380,29 +380,37 @@ const CAST_RECEIVER_ISLAND = `
     return section;
   }
 
-  function overflowing() {
-    return root.scrollHeight - root.clientHeight;
-  }
-
-  // Shrinking the type is the last resort. A recipe that does not fit is first
-  // given the two-column ingredient layout, which spends the space the
-  // instructions column was leaving empty; only a recipe long enough to
-  // overflow even then gets scaled down.
-  function fit() {
-    var columns = root.querySelector('.columns');
+  // Shrink the shared type scale until the taller column fits, and report the
+  // scale the current layout needed.
+  function shrinkToFit() {
     var scale = 1;
-    if (columns) columns.className = 'columns';
     root.style.setProperty('--fit', String(scale));
-
-    if (columns && overflowing() > 0) {
-      var single = overflowing();
-      columns.className = 'columns split';
-      if (overflowing() >= single) columns.className = 'columns';
-    }
-
-    while (overflowing() > 0 && scale > .58) {
+    while (root.scrollHeight > root.clientHeight && scale > .58) {
       scale = Math.round((scale - .04) * 100) / 100;
       root.style.setProperty('--fit', String(scale));
+    }
+    return scale;
+  }
+
+  /*
+    Shrinking the type is the last resort, and which layout shrinks least is
+    not something a single measurement can be trusted with: the split widens
+    the ingredients but narrows the instructions, and every line re-wraps as
+    the scale changes. So both layouts are taken all the way to the scale they
+    actually need, and the one that ends up with the bigger type wins. A tie
+    keeps the single column, and a recipe that already fits never tries the
+    split at all.
+  */
+  function fit() {
+    var columns = root.querySelector('.columns');
+    if (columns) columns.className = 'columns';
+    var single = shrinkToFit();
+    if (!columns || single === 1) return;
+
+    columns.className = 'columns split';
+    if (shrinkToFit() <= single) {
+      columns.className = 'columns';
+      root.style.setProperty('--fit', String(single));
     }
   }
 

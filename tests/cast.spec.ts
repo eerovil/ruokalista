@@ -244,12 +244,17 @@ test("a long recipe splits the ingredients in two rather than shrinking to the f
   expect(last!.x).toBeGreaterThan(first!.x + first!.width);
 
   // Nowhere near the .58 floor: with the width spent, it does not shrink at
-  // all. Before the split this recipe rendered at .76.
-  expect(await scale(page)).toBe(1);
+  // all.
+  const kept = await scale(page);
+  expect(kept).toBe(1);
   expect(await page.evaluate(() => ({
     clientHeight: document.getElementById("recipe")!.clientHeight,
     scrollHeight: document.getElementById("recipe")!.scrollHeight,
   }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+
+  // The layout it turned down: one ingredient column needs .76 for the same
+  // recipe, which is what this change buys.
+  expect(kept).toBeGreaterThan(await scaleForLayout(page, "columns"));
 });
 
 test("an instructions-heavy recipe is not split, because widening the ingredients would cost the long side", async ({
@@ -263,9 +268,9 @@ test("an instructions-heavy recipe is not split, because widening the ingredient
   await expect(page.getByRole("heading", { name: "Karjalanpaisti" }))
     .toBeVisible();
 
-  // Splitting here would take width from the column that did not fit, so the
-  // receiver measures the overflow, sees it get no smaller, and puts the
-  // single-column layout back.
+  // Splitting here would take width from the column that did not fit. The
+  // receiver takes both layouts all the way to the scale each needs, finds the
+  // split ends smaller, and keeps the single column.
   await expect(page.locator(".columns")).toHaveClass("columns");
   const items = page.locator(".ingredients li");
   const first = await items.first().boundingBox();
@@ -279,20 +284,10 @@ test("an instructions-heavy recipe is not split, because widening the ingredient
   }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
 
   // What the receiver avoided: forcing the split on this recipe and shrinking
-  // from there ends up smaller than what it kept. This is the property, not a
-  // fixed number — a split is only worth having when it buys bigger type.
-  const forced = await page.evaluate(() => {
-    const root = document.getElementById("recipe")!;
-    root.querySelector(".columns")!.className = "columns split";
-    let scale = 1;
-    root.style.setProperty("--fit", String(scale));
-    while (root.scrollHeight > root.clientHeight && scale > 0.58) {
-      scale = Math.round((scale - 0.04) * 100) / 100;
-      root.style.setProperty("--fit", String(scale));
-    }
-    return scale;
-  });
-  expect(kept).toBeGreaterThan(forced);
+  // from there ends up smaller than what it kept (.76 against .84 as this is
+  // written). The property, not a fixed number — the layout that ships is
+  // never smaller than the one the receiver turned down.
+  expect(kept).toBeGreaterThan(await scaleForLayout(page, "columns split"));
 });
 
 test("a short recipe keeps one ingredient column at full size on a small receiver", async ({
@@ -312,6 +307,26 @@ test("a short recipe keeps one ingredient column at full size on a small receive
   expect(last!.x).toBe(first!.x);
   expect(await scale(page)).toBe(1);
 });
+
+/**
+ * The scale the other layout would have needed. Runs the receiver's own shrink
+ * loop against a forced layout, so a test can say "what shipped is no smaller
+ * than what was turned down" without hard-coding either number. Destructive:
+ * call it after the assertions about what the receiver actually chose.
+ */
+async function scaleForLayout(page: Page, className: string): Promise<number> {
+  return page.evaluate((layout) => {
+    const root = document.getElementById("recipe")!;
+    root.querySelector(".columns")!.className = layout;
+    let scale = 1;
+    root.style.setProperty("--fit", String(scale));
+    while (root.scrollHeight > root.clientHeight && scale > 0.58) {
+      scale = Math.round((scale - 0.04) * 100) / 100;
+      root.style.setProperty("--fit", String(scale));
+    }
+    return scale;
+  }, className);
+}
 
 async function scale(page: Page): Promise<number> {
   return page.evaluate(() =>
