@@ -365,7 +365,7 @@ unit, range, second measurement, source wording and phase, and it points at a
 real `ingredient`. The workaround it replaces named the whole phrase as an
 ingredient, and since #143 made that dictionary global, `hunaja tai sokeri` was
 a row every household saw and nothing could ever buy. See
-[ADR-0009](../adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md) for
+[ADR-0010](../adr/0010-an-alternative-is-a-line-not-a-substitution-rule.md) for
 the survey behind that and the two shapes it rejected.
 
 Group numbers are scoped to the recipe row **and** the cooking-order section

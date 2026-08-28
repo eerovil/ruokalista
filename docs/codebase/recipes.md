@@ -181,7 +181,7 @@ it and no screen reader announces it, but it *is* in `textContent`. See
 Proposed here: an ingredient line may be one of several options — *1
 lihaliemikuutio **tai** 1 annos fondia*, voita tai margariinia. `src/alternatives.ts`
 owns the whole idea and is the file to read first;
-[ADR-0009](../adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md) has
+[ADR-0010](../adr/0010-an-alternative-is-a-line-not-a-substitution-rule.md) has
 the survey of real recipes that decided its shape and the two alternatives it
 rejected.
 

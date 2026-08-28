@@ -1613,7 +1613,7 @@ test.describe("ingredient alternatives", () => {
     await added.getByLabel("Uuden aineksen nimi").fill("margariini");
     await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
     await capture(page, {
-      path: `${SHOTS}/68-alternative-editor.png`,
+      path: `${SHOTS}/69-alternative-editor.png`,
       fullPage: true,
     });
 
@@ -1627,7 +1627,7 @@ test.describe("ingredient alternatives", () => {
     await expect(choice).toContainText("½ dl öljy");
     await expect(choice).toContainText("½ dl margariini");
     await capture(page, {
-      path: `${SHOTS}/69-alternative-recipe.png`,
+      path: `${SHOTS}/70-alternative-recipe.png`,
       fullPage: true,
     });
 
@@ -1646,7 +1646,7 @@ test.describe("ingredient alternatives", () => {
       page.locator(".shopping-item[data-haku='margariini']"),
     ).toHaveCount(0);
     await capture(page, {
-      path: `${SHOTS}/70-alternative-shopping.png`,
+      path: `${SHOTS}/71-alternative-shopping.png`,
       fullPage: true,
     });
   });
@@ -1682,7 +1682,7 @@ test.describe("ingredient alternatives", () => {
     await expect(choice).toContainText("1 dl voi");
     await expect(choice.locator(".source")).toHaveCount(1);
     await capture(page, {
-      path: `${SHOTS}/71-alternative-scaled-source.png`,
+      path: `${SHOTS}/72-alternative-scaled-source.png`,
       fullPage: true,
     });
   });

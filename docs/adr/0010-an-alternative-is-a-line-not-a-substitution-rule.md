@@ -1,4 +1,4 @@
-# 9. An alternative is a line, not a substitution rule
+# 10. An alternative is a line, not a substitution rule
 
 Date: 2026-08-28
 

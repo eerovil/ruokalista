@@ -112,7 +112,7 @@ own amount, its own unit and its own ingredient, and the group belongs to that
 recipe alone: it never says that the two foodstuffs are interchangeable
 anywhere else. The first option is the default, and it is the only one the
 shopping list buys. Proposed by #183; see
-[ADR-0009](docs/adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md).
+[ADR-0010](docs/adr/0010-an-alternative-is-a-line-not-a-substitution-rule.md).
 _Avoid_: Substitution, substitute, equivalence, swap, variant
 
 **Ingredient**:
