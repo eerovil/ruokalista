@@ -292,6 +292,14 @@ const CAST_RECEIVER_STYLE = `
     display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
     gap: 4vw; min-height: 0;
   }
+  /*
+    A long ingredient list is one tall narrow column while the instructions
+    end halfway down. Before shrinking the type, the list is flowed into two
+    sub-columns and the ingredients side takes the width the instructions
+    were not using. The receiver adds .split only when the recipe overflows.
+  */
+  .columns.split { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .columns.split .ingredients .groups { column-count: 2; column-gap: 2.4vw; }
   section { min-width: 0; }
   h2 {
     margin: 0 0 .35em; color: var(--accent);
@@ -301,11 +309,12 @@ const CAST_RECEIVER_STYLE = `
     margin: .65em 0 .15em; color: var(--muted);
     font-size: calc(clamp(1rem, 1.45vw, 1.8rem) * var(--fit));
     text-transform: uppercase; letter-spacing: .05em;
+    break-after: avoid;
   }
   ul, ol { margin: 0; padding-left: 1.15em; }
   ul { list-style: none; padding-left: 0; }
   li {
-    margin: 0 0 .3em; overflow-wrap: break-word;
+    margin: 0 0 .3em; overflow-wrap: break-word; break-inside: avoid;
     font-size: calc(clamp(1rem, 1.65vw, 2rem) * var(--fit)); line-height: 1.25;
   }
   .ingredients li { padding: .16em 0; border-bottom: 1px solid #304039; }
@@ -356,22 +365,42 @@ const CAST_RECEIVER_ISLAND = `
     var section = document.createElement('section');
     section.className = className;
     section.appendChild(text('h2', title));
+    var flow = document.createElement('div');
+    flow.className = 'groups';
     for (var index = 0; index < groups.length; index += 1) {
       var group = groups[index];
-      if (group.title) section.appendChild(text('h3', group.title));
+      if (group.title) flow.appendChild(text('h3', group.title));
       var list = document.createElement(listTag);
       for (var item = 0; item < group.items.length; item += 1) {
         list.appendChild(text('li', group.items[item]));
       }
-      section.appendChild(list);
+      flow.appendChild(list);
     }
+    section.appendChild(flow);
     return section;
   }
 
+  function overflowing() {
+    return root.scrollHeight - root.clientHeight;
+  }
+
+  // Shrinking the type is the last resort. A recipe that does not fit is first
+  // given the two-column ingredient layout, which spends the space the
+  // instructions column was leaving empty; only a recipe long enough to
+  // overflow even then gets scaled down.
   function fit() {
+    var columns = root.querySelector('.columns');
     var scale = 1;
+    if (columns) columns.className = 'columns';
     root.style.setProperty('--fit', String(scale));
-    while (root.scrollHeight > root.clientHeight && scale > .58) {
+
+    if (columns && overflowing() > 0) {
+      var single = overflowing();
+      columns.className = 'columns split';
+      if (overflowing() >= single) columns.className = 'columns';
+    }
+
+    while (overflowing() > 0 && scale > .58) {
       scale = Math.round((scale - .04) * 100) / 100;
       root.style.setProperty('--fit', String(scale));
     }

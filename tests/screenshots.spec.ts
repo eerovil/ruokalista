@@ -95,6 +95,71 @@ test("Cast receiver", async ({ page }) => {
   await capture(page, { path: `${SHOTS}/63-cast-receiver.png` });
 });
 
+test("Cast receiver, long recipe on a Nest Hub", async ({ page }) => {
+  await page.route(
+    "https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js",
+    async (route) =>
+      route.fulfill({ contentType: "application/javascript", body: "" }),
+  );
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __ruokalistaCastReceive(recipe: unknown): void;
+      }
+    ).__ruokalistaCastReceive({
+      version: 1,
+      title: "Mausteinen makkarastroganoff, perunoita ja raikasta salaattia",
+      multiplier: "1×",
+      ingredients: [{
+        title: "",
+        items: [
+          "400 g nautamakkaraa",
+          "2 kpl sipulia",
+          "3 kynttä valkosipulia",
+          "2 rkl tomaattipyreetä",
+          "2 dl kermaa",
+          "2 dl lihalientä",
+          "1 rkl sinappia",
+          "1 tl paprikajauhetta",
+          "1 tl savupaprikaa",
+          "½ tl chilirouhetta",
+          "1 tl kuivattua timjamia",
+          "2 laakerinlehteä",
+          "1 rkl voita",
+          "1 rkl öljyä",
+          "800 g perunoita",
+          "1 nippu tilliä",
+          "1 kpl jäävuorisalaattia",
+          "2 kpl tomaattia",
+          "1 kpl kurkkua",
+          "hieman suolaa ja mustapippuria",
+        ],
+      }],
+      instructions: [{
+        title: "",
+        items: [
+          "Kuori perunat ja keitä ne kypsiksi suolatussa vedessä.",
+          "Kuutioi makkara ja ruskista se voi-öljyseoksessa.",
+          "Lisää sipuli ja valkosipuli, kuullota pehmeiksi.",
+          "Lisää tomaattipyree ja kypsennä hetki.",
+          "Kaada joukkoon lihaliemi ja mausteet.",
+          "Hauduta kastiketta noin 20 minuuttia.",
+          "Lisää kerma ja sinappi, tarkista maku.",
+          "Pilko salaatti, tomaatti ja kurkku kulhoon.",
+          "Tarjoa stroganoff perunoiden, tillin ja salaatin kanssa.",
+        ],
+      }],
+    });
+  });
+  await expect(page.locator(".columns")).toHaveClass("columns split");
+  await expect(page.locator(".ingredients li")).toHaveCount(20);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight))
+    .toBeLessThanOrEqual(600);
+  await capture(page, { path: `${SHOTS}/64-cast-receiver-long.png` });
+});
+
 test("intake requires JavaScript", async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   await context.addCookies([sessionCookie(1)]);

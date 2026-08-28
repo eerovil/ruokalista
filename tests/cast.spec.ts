@@ -165,9 +165,7 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
   await expect(page).toHaveURL(/\/recipes$/);
 });
 
-test("the public receiver renders a normal recipe in one 16:9 screen", async ({
-  page,
-}) => {
+async function stubReceiverSdk(page: Page): Promise<void> {
   await page.route(RECEIVER_SDK, async (route) => {
     await route.fulfill({
       contentType: "application/javascript",
@@ -183,16 +181,23 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
 } } } };`,
     });
   });
+}
+
+async function receive(page: Page, recipe: object): Promise<void> {
+  await page.evaluate((sent) => {
+    window.__castReceiverListener({ data: sent });
+  }, recipe);
+}
+
+test("the public receiver renders a normal recipe in one 16:9 screen", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
   await page.setViewportSize({ width: 1920, height: 1080 });
   const response = await page.goto("/cast/receiver");
   expect(response?.status()).toBe(200);
 
-  await page.evaluate((recipe) => {
-    const receiver = window as typeof window & {
-      __castReceiverListener(event: { data: unknown }): void;
-    };
-    receiver.__castReceiverListener({ data: recipe });
-  }, normalRecipe());
+  await receive(page, normalRecipe());
 
   await expect(page.getByRole("heading", { name: "Kaalilaatikko" })).toBeVisible();
   await expect(page.getByText("1,5×")).toBeVisible();
@@ -216,6 +221,63 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
     recipeScrollHeight: 1080,
   }));
 });
+
+test("a long recipe splits the ingredients in two rather than shrinking to the floor", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, longRecipe());
+  await expect(page.getByRole("heading", { name: "Makkarastroganoff" }))
+    .toBeVisible();
+
+  await expect(page.locator(".columns")).toHaveClass("columns split");
+
+  // Two sub-columns means the second half of the list sits beside the first,
+  // not under it.
+  const items = page.locator(".ingredients li");
+  await expect(items).toHaveCount(20);
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBeGreaterThan(first!.x + first!.width);
+
+  // Nowhere near the .58 floor: with the width spent, it does not shrink at
+  // all. Before the split this recipe rendered at .76.
+  expect(await scale(page)).toBe(1);
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+});
+
+test("a short recipe keeps one ingredient column at full size on a small receiver", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, normalRecipe());
+  await expect(page.getByRole("heading", { name: "Kaalilaatikko" })).toBeVisible();
+
+  await expect(page.locator(".columns")).toHaveClass("columns");
+  const items = page.locator(".ingredients li");
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBe(first!.x);
+  expect(await scale(page)).toBe(1);
+});
+
+async function scale(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Number(
+      getComputedStyle(document.getElementById("recipe")!)
+        .getPropertyValue("--fit"),
+    )
+  );
+}
 
 async function sentMessages(page: Page): Promise<Array<Record<string, unknown>>> {
   return page.evaluate(() =>
@@ -243,6 +305,54 @@ function normalRecipe(): object {
         "Kuullota kaali öljyssä.",
         "Lisää vesi ja sitruunaruoho.",
         "Hauduta kaalilaatikko kypsäksi.",
+      ],
+    }],
+  };
+}
+
+/** The kitchen's worst case: 20 ingredient lines and 9 steps (#180). */
+function longRecipe(): object {
+  return {
+    version: 1,
+    title: "Mausteinen makkarastroganoff, perunoita ja raikasta salaattia",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "400 g nautamakkaraa",
+        "2 kpl sipulia",
+        "3 kynttä valkosipulia",
+        "2 rkl tomaattipyreetä",
+        "2 dl kermaa",
+        "2 dl lihalientä",
+        "1 rkl sinappia",
+        "1 tl paprikajauhetta",
+        "1 tl savupaprikaa",
+        "½ tl chilirouhetta",
+        "1 tl kuivattua timjamia",
+        "2 laakerinlehteä",
+        "1 rkl voita",
+        "1 rkl öljyä",
+        "800 g perunoita",
+        "1 nippu tilliä",
+        "1 kpl jäävuorisalaattia",
+        "2 kpl tomaattia",
+        "1 kpl kurkkua",
+        "hieman suolaa ja mustapippuria",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Kuori perunat ja keitä ne kypsiksi suolatussa vedessä.",
+        "Kuutioi makkara ja ruskista se voi-öljyseoksessa.",
+        "Lisää sipuli ja valkosipuli, kuullota pehmeiksi.",
+        "Lisää tomaattipyree ja kypsennä hetki.",
+        "Kaada joukkoon lihaliemi ja mausteet.",
+        "Hauduta kastiketta noin 20 minuuttia.",
+        "Lisää kerma ja sinappi, tarkista maku.",
+        "Pilko salaatti, tomaatti ja kurkku kulhoon.",
+        "Tarjoa stroganoff perunoiden, tillin ja salaatin kanssa.",
       ],
     }],
   };
