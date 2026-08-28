@@ -2,7 +2,11 @@ import { html, raw, type Raw } from "./html.ts";
 import { formatMeasurement } from "./quantities.ts";
 import type { Recipe, RecipeLine, RecipeStep } from "./recipes.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import { formatMultiplier, scaleMeasurement } from "./scaling.ts";
+import {
+  formatMultiplier,
+  scaleMeasurement,
+  sourceWorthShowing,
+} from "./scaling.ts";
 
 /** The private protocol shared by Ruokalista's web sender and web receiver. */
 export const CAST_NAMESPACE = "urn:x-cast:fi.eerovil.ruokalista.recipe";
@@ -77,7 +81,16 @@ function ingredientGroup(
     title,
     items: lines.map((line) => {
       const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-      return amount === "" ? line.ingredient : `${amount} ${line.ingredient}`;
+      const display = amount === ""
+        ? line.ingredient
+        : `${amount} ${line.ingredient}`;
+      if (!sourceWorthShowing(line, multiplier)) return display;
+
+      // An unstated amount often carries its cooking instruction only in the
+      // source wording: "hieman", "maun mukaan", "tarvittaessa". On the TV
+      // that wording replaces the bare ingredient rather than becoming a
+      // detached evidence line underneath it.
+      return amount === "" ? line.sourceLine : `${display} · ${line.sourceLine}`;
     }),
   }];
 }

@@ -94,7 +94,12 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
       version: 1,
       title: "Kaalilaatikko",
       multiplier: "1,5×",
-      ingredients: [{ items: expect.arrayContaining(["¾ dl öljy"]) }],
+      ingredients: [{
+        items: expect.arrayContaining([
+          "¾ dl öljy · ½ dl öljyä",
+          "hieman sitruunaruohoa",
+        ]),
+      }],
     },
   });
 
@@ -181,7 +186,7 @@ function normalRecipe(): object {
         "¾ dl öljy",
         "1½–2¼ l vesi",
         "¾ kpl (750 g) valkokaali",
-        "sitruunaruoho",
+        "hieman sitruunaruohoa",
       ],
     }],
     instructions: [{

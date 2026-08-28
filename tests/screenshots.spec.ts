@@ -74,7 +74,7 @@ test("Cast receiver", async ({ page }) => {
             "¾ dl öljy",
             "1½–2¼ l vesi",
             "¾ kpl (750 g) valkokaali",
-            "sitruunaruoho",
+            "hieman sitruunaruohoa",
           ],
         }],
         instructions: [{
