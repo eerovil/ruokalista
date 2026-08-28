@@ -730,6 +730,56 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/11-editor.png`, fullPage: true });
   });
 
+  /**
+   * Issue #184's two halves, both of them viewport shots rather than full-page
+   * ones: a full-page capture paints a sticky element at the end of its
+   * container, which is exactly the position this change exists to stop it
+   * being in.
+   */
+  test("the editor's save bar rides the scroll on a phone", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 720 });
+    await page.goto("/recipes/1/edit");
+    await page.getByRole("heading", { name: "Ainekset" }).scrollIntoViewIfNeeded();
+
+    // The intended state, asserted before the shutter: the ingredient rows are
+    // what is being looked at, and Tallenna is on screen anyway.
+    await expect(page.locator(".line").first()).toBeInViewport();
+    await expect(
+      page.getByRole("button", { name: "Tallenna muutokset" }),
+    ).toBeInViewport();
+    await capture(page, { path: `${SHOTS}/65-editor-save-bar.png` });
+  });
+
+  test("editing a dish that has no ingredients of its own", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 720 });
+
+    // Take the lasagne's one own line away, leaving a dish whose ingredients
+    // all sit on its two parts.
+    await page.goto("/recipes/3/edit");
+    await page.locator(".line").first().locator("> details.line-more > summary").click();
+    await page.locator(".line").first().locator("input[name$=remove]").check();
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/3$/);
+
+    // The editor of that dish: no ingredient rows at all, and it opens fine.
+    await page.goto("/recipes/3/edit");
+    await expect(page.locator(".line")).toHaveCount(0);
+    await page.getByRole("heading", { name: "Ainekset" }).scrollIntoViewIfNeeded();
+    // A viewport shot again, for the same reason as the one above.
+    await capture(page, { path: `${SHOTS}/66-parts-only-editor.png` });
+
+    // Saved, not refused: the old "Reseptissä pitää olla ainakin yksi aines."
+    // is what this shot is here to show the absence of.
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL(/\/recipes\/3$/);
+    await expect(page.locator(".refused")).toHaveCount(0);
+    await expect(page.locator(".part")).toHaveCount(2);
+    await capture(page, { path: `${SHOTS}/67-parts-only-dish.png`, fullPage: true });
+
+    // This spec seeds once for the whole file, so put back what was removed.
+    reseed();
+  });
+
   test("a removal the steps still argue with", async ({ page }) => {
     await page.goto("/recipes/1/edit");
     // A fifth row asked for by hand, so the shot shows the add button having

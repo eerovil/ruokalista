@@ -142,7 +142,11 @@ export async function saveRecipe(
  *
  * source_text and source_route are not editable and are not touched here. Parts
  * are recipes of their own and are edited on their own screens, so this leaves
- * them alone too.
+ * them alone too — but whether there are any is still this call's business,
+ * because a dish whose ingredients all live on its parts has none of its own
+ * and must still be saveable (issue #184). The caller says so rather than this
+ * function counting them: the editor has already loaded the recipe's parts, and
+ * a second query would only ask the same question again.
  */
 export async function replaceRecipe(
   db: D1Database,
@@ -150,8 +154,9 @@ export async function replaceRecipe(
   recipeId: number,
   expectedRevision: number,
   recipe: RecipeToSave,
+  options: ValidateOptions = {},
 ): Promise<void> {
-  validateRecipe(recipe);
+  validateRecipe(recipe, options);
   if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
     throw new StaleRecipe("Reseptiä ei enää ole.");
   }
@@ -571,7 +576,26 @@ async function resolveIngredients(
   return { newIngredients, lines };
 }
 
-export function validateRecipe(recipe: RecipeToSave): void {
+export interface ValidateOptions {
+  /**
+   * Whether this recipe already has parts of its own (issue #184).
+   *
+   * A dish written entirely in named parts keeps nothing but a title, its
+   * method and its parts — every ingredient sits on a part, which is a recipe
+   * row of its own (ADR-0002). Such a dish is not empty, so the one-ingredient
+   * rule below does not apply to it.
+   *
+   * False on an import, and rightly so: there the parts do not exist yet and a
+   * draft's `lines` carries every part's lines along with the dish's, so an
+   * empty array there really is an empty recipe.
+   */
+  hasParts?: boolean;
+}
+
+export function validateRecipe(
+  recipe: RecipeToSave,
+  options: ValidateOptions = {},
+): void {
   if (recipe.title.trim() === "") {
     throw new SaveRefused("Reseptillä pitää olla nimi.");
   }
@@ -581,8 +605,8 @@ export function validateRecipe(recipe: RecipeToSave): void {
   ) {
     throw new SaveRefused("Annosmäärän pitää olla positiivinen kokonaisluku.");
   }
-  if (recipe.lines.length === 0) {
-    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines.");
+  if (recipe.lines.length === 0 && options.hasParts !== true) {
+    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines tai osa.");
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
