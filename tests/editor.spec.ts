@@ -439,3 +439,89 @@ async function putOnMenu(
     .click();
   await expect(page).toHaveURL(/\/\?week=/);
 }
+
+/**
+ * A dish written entirely in named parts (issue #184). Every ingredient sits on
+ * a part, which is a recipe row of its own, so the dish itself has none — and
+ * that is a whole recipe, not an empty one.
+ */
+test("a dish whose ingredients all sit on its parts can still be saved", async ({
+  page,
+}) => {
+  // Lasagne has two parts and exactly one line of its own, the lasagne sheets.
+  await page.goto("/recipes/3/edit");
+  await expect(page.locator(".line")).toHaveCount(1);
+
+  await openMore(page.locator(".line").first());
+  await page.locator(".line").first().locator("input[name$=remove]").check();
+  await page.locator("#title").fill("Lasagne ilman levyjä");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/recipes\/3$/);
+  await expect(page.getByRole("heading", { name: "Lasagne ilman levyjä" })).toBeVisible();
+
+  // The dish now carries nothing of its own; both parts are untouched.
+  const parts = page.locator(".part");
+  await expect(parts).toHaveCount(2);
+  await expect(parts.nth(0)).toContainText("400 g");
+  await expect(parts.nth(1)).toContainText("5 dl");
+
+  // And it opens again and saves again, which is what was actually broken.
+  await page.goto("/recipes/3/edit");
+  await expect(page.locator(".line")).toHaveCount(0);
+  await page.locator("#title").fill("Lasagne");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(/\/recipes\/3$/);
+  await expect(page.getByRole("heading", { name: "Lasagne" })).toBeVisible();
+});
+
+test("a recipe with no parts still needs at least one ingredient", async ({
+  page,
+}) => {
+  // Öljykastike has two lines, no parts, and one step nothing is linked to.
+  await page.goto("/recipes/2/edit");
+  for (const index of [0, 1]) {
+    const line = page.locator(".line").nth(index);
+    await openMore(line);
+    await line.locator("input[name$=remove]").check();
+  }
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page.locator(".refused")).toContainText(
+    "Reseptissä pitää olla ainakin yksi aines tai osa.",
+  );
+
+  // Nothing was written: both lines are still there.
+  await page.goto("/recipes/2");
+  await expect(page.locator(".lines li")).toHaveCount(2);
+});
+
+test("Tallenna stays on screen while the long editor is scrolled", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 720 });
+  await page.goto("/recipes/1/edit");
+
+  const save = page.getByRole("button", { name: "Tallenna muutokset" });
+  const bar = page.locator(".editor-actions");
+
+  // The form is taller than the phone, so without the sticky bar the button
+  // would be somewhere far below the fold.
+  const pageHeight = await page.evaluate(() => document.body.scrollHeight);
+  expect(pageHeight).toBeGreaterThan(720);
+
+  await expect(save).toBeInViewport();
+  // Clear of the fixed tab strip, so the tabs never cover it.
+  const barBox = await bar.boundingBox();
+  const tabsBox = await page.locator(".tabs").boundingBox();
+  expect(barBox).not.toBeNull();
+  expect(tabsBox).not.toBeNull();
+  expect(barBox!.y + barBox!.height).toBeLessThanOrEqual(tabsBox!.y + 1);
+
+  // Still there once the whole form has been scrolled through, and it saves.
+  await page.mouse.wheel(0, pageHeight);
+  await expect(save).toBeInViewport();
+  await save.click();
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+});

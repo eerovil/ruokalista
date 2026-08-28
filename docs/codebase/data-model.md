@@ -359,15 +359,19 @@ a row every household saw and nothing could ever buy. See
 [ADR-0009](../adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md) for
 the survey behind that and the two shapes it rejected.
 
-Group numbers are scoped to the recipe row, so a dish and one of its parts may
-both be using group 1 and mean different things — `shopping.ts` keys on the
-source recipe row for exactly that reason, not on the dish. Nothing joins on
-this column and no other table references it.
+Group numbers are scoped to the recipe row **and** the cooking-order section
+that row's content renders in, so a dish and one of its parts may both be using
+group 1 and mean different things — `shopping.ts` keys on the source recipe row
+and `recipe-phase.ts::phaseBucket` for exactly that reason, not on the dish.
+Nothing joins on this column and no other table references it.
 
-Two rules a `CHECK` cannot hold, because a `CHECK` sees one row at a time, live
-in `src/alternatives.ts::normalizeGroups` and run on every save: a group of one
-is dissolved back to NULL, and what is left is renumbered 1, 2, 3 in order of
-first appearance. `dev/check-alternatives.ts` is the regression.
+Three rules a `CHECK` cannot hold, because a `CHECK` sees one row at a time,
+live in `src/alternatives.ts` and run on every save: a group of one is
+dissolved back to NULL, a group whose options straddle two sections is
+*refused* rather than dissolved, and what is left is renumbered 1, 2, 3 in
+order of first appearance — across the whole row, so a recipe carrying a group
+in each section can be saved again. `dev/check-alternatives.ts` is the
+regression.
 
 A column addition, so the manifest lockstep below does not move: backup captures
 `SELECT *` and restore builds its INSERT from the row's own keys.

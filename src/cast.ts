@@ -1,4 +1,8 @@
-import { ALTERNATIVE_WORD, alternativeSets } from "./alternatives.ts";
+import {
+  ALTERNATIVE_WORD,
+  alternativeSets,
+  sharedSource,
+} from "./alternatives.ts";
 import { html, raw, type Raw } from "./html.ts";
 import { formatMeasurement } from "./quantities.ts";
 import type { Recipe, RecipeLine, RecipeStep } from "./recipes.ts";
@@ -84,26 +88,57 @@ function ingredientGroup(
     // joined by the word itself: "1 lihaliemikuutio tai 1 annos fondia". A cook
     // reading a TV across the kitchen needs the choice on one line, not two
     // items that look like two things to fetch.
-    items: alternativeSets(lines).map((set) =>
-      set.options
-        .map((line) => castLine(line, multiplier))
-        .join(` ${ALTERNATIVE_WORD} `)
-    ),
+    items: alternativeSets(lines).map((set) => castSet(set.options, multiplier)),
   }];
+}
+
+/**
+ * One item on the receiver's ingredient list: a line, or a whole choice.
+ *
+ * The shared source is stated once after the joined options rather than inside
+ * each of them. Import gives every option of a group the same sentence, and a
+ * scaled cooking makes each option worth showing — so the old per-option
+ * version put the entire `tai` phrase inside each string and then joined those
+ * with another ` tai `, which on a TV read as four things rather than a choice
+ * between two (#183).
+ */
+function castSet(options: readonly RecipeLine[], multiplier: number): string {
+  // An ordinary line is unaffected by any of this, including the rule that an
+  // unstated amount lets its source wording replace the ingredient outright.
+  if (options.length === 1) return castLine(options[0]!, multiplier);
+
+  const shared = sharedSource(options, (line) =>
+    sourceWorthShowing(line, multiplier),
+  );
+  if (shared === "") {
+    // Options carrying genuinely different wording each keep their own.
+    return options
+      .map((line) => castLine(line, multiplier))
+      .join(` ${ALTERNATIVE_WORD} `);
+  }
+
+  const joined = options
+    .map((line) => display(line, multiplier))
+    .join(` ${ALTERNATIVE_WORD} `);
+  return `${joined} · ${shared}`;
+}
+
+/** `2 dl maito`, or the bare ingredient when the source stated no amount. */
+function display(line: RecipeLine, multiplier: number): string {
+  const amount = formatMeasurement(scaleMeasurement(line, multiplier));
+  return amount === "" ? line.ingredient : `${amount} ${line.ingredient}`;
 }
 
 function castLine(line: RecipeLine, multiplier: number): string {
   const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-  const display = amount === ""
-    ? line.ingredient
-    : `${amount} ${line.ingredient}`;
-  if (!sourceWorthShowing(line, multiplier)) return display;
+  const shown = amount === "" ? line.ingredient : `${amount} ${line.ingredient}`;
+  if (!sourceWorthShowing(line, multiplier)) return shown;
 
   // An unstated amount often carries its cooking instruction only in the
   // source wording: "hieman", "maun mukaan", "tarvittaessa". On the TV
   // that wording replaces the bare ingredient rather than becoming a
   // detached evidence line underneath it.
-  return amount === "" ? line.sourceLine : `${display} · ${line.sourceLine}`;
+  return amount === "" ? line.sourceLine : `${shown} · ${line.sourceLine}`;
 }
 
 function instructionGroup(

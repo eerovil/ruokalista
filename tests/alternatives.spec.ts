@@ -155,3 +155,202 @@ test("only the first option of a group reaches the shopping list", async ({
     page.locator(".shopping-item[data-haku='margariini']"),
   ).toHaveCount(0);
 });
+
+/**
+ * The Cast payload the recipe screen is holding, read off the sender's own
+ * data attribute rather than through the SDK stub — this is the same JSON the
+ * receiver is handed, and none of these cases is about the sending itself.
+ */
+async function castPayload(page: Page): Promise<{
+  ingredients: Array<{ title: string; items: string[] }>;
+}> {
+  const encoded = await page
+    .locator("#cast-recipe")
+    .getAttribute("data-recipe");
+  return JSON.parse(decodeURIComponent(encoded ?? ""));
+}
+
+const LASAGNE = 3;
+
+test("a group cannot be split across the cooking sections", async ({ page }) => {
+  // Lasagne is written in named parts, so its own lines carry a phase and the
+  // cooking view draws before-parts and after-parts apart.
+  await page.goto(`/recipes/${LASAGNE}/edit`);
+
+  const sheets = page.locator(".line").first();
+  await openMore(sheets);
+  await sheets.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await sheets
+    .getByLabel("Milloin tämä tehdään?")
+    .selectOption("after_parts");
+
+  await addIngredientRow(page);
+  const added = page.locator(".line").nth(1);
+  await added.locator("select").first().selectOption({ label: "ananas" });
+  await added.locator("input[name$=quantity]").fill("1");
+  await openMore(added);
+  await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await added
+    .getByLabel("Milloin tämä tehdään?")
+    .selectOption("before_parts");
+
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  // Refused rather than saved as two lone lines that the shopping list would
+  // still have counted as a pair.
+  await expect(page.locator(".refused")).toContainText(
+    "Saman vaihtoehtoryhmän rivien pitää olla samassa osassa ja vaiheessa",
+  );
+  await expect(page).toHaveURL(new RegExp(`/recipes/${LASAGNE}$`));
+
+  // And the recipe is untouched: still one own line, still no `tai` anywhere.
+  await page.goto(`/recipes/${LASAGNE}`);
+  await expect(page.locator(".recipe-ingredient.is-alternative")).toHaveCount(0);
+  await expect(page.locator(".alt-or")).toHaveCount(0);
+});
+
+test("a group inside one section still saves on a multipart dish", async ({
+  page,
+}) => {
+  await page.goto(`/recipes/${LASAGNE}/edit`);
+
+  const sheets = page.locator(".line").first();
+  await openMore(sheets);
+  await sheets.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await sheets
+    .getByLabel("Milloin tämä tehdään?")
+    .selectOption("after_parts");
+
+  await addIngredientRow(page);
+  const added = page.locator(".line").nth(1);
+  await added.locator("select").first().selectOption({ label: "ananas" });
+  await added.locator("input[name$=quantity]").fill("1");
+  await openMore(added);
+  await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await added
+    .getByLabel("Milloin tämä tehdään?")
+    .selectOption("after_parts");
+
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(new RegExp(`/recipes/${LASAGNE}$`));
+
+  const choice = page.locator(".recipe-ingredient.is-alternative");
+  await expect(choice).toHaveCount(1);
+  await expect(choice.locator(".alt-or")).toHaveText("tai");
+});
+
+/**
+ * Give Kaalilaatikko's oil an alternative that shares its source sentence, the
+ * way an import writes one: the page said one thing, and each option is a
+ * reading of it.
+ */
+async function addImportedAlternative(page: Page): Promise<void> {
+  const sentence = "½ dl öljyä tai voita";
+
+  await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
+  const oil = page.locator(".line").first();
+  await openMore(oil);
+  await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await oil.getByLabel("Lähderivi").fill(sentence);
+
+  await addIngredientRow(page);
+  const added = page.locator(".line").nth(4);
+  await added.locator("select").selectOption({ label: "Luo uusi aines" });
+  await added.locator("input[name$=quantity]").fill("0,5");
+  await openMore(added);
+  await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
+  await added.getByLabel("Uuden aineksen nimi").fill("voi");
+  await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+  await added.getByLabel("Lähderivi").fill(sentence);
+
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(new RegExp(`/recipes/${KAALILAATIKKO}$`));
+}
+
+test("a scaled imported alternative states its source sentence once", async ({
+  page,
+}) => {
+  await addImportedAlternative(page);
+  await page.goto(`/recipes/${KAALILAATIKKO}?multiplier=2`);
+
+  const choice = page.locator(".recipe-ingredient.is-alternative");
+  await expect(choice).toContainText("1 dl öljy");
+  await expect(choice).toContainText("1 dl voi");
+
+  // Both options are worth showing at 2x, and both name the same sentence. It
+  // is said once for the row, not repeated under each option.
+  await expect(choice.locator(".source")).toHaveCount(1);
+  await expect(choice.locator(".source")).toHaveText("½ dl öljyä tai voita");
+  // One `tai` joining the options, and no second one nested inside a source.
+  await expect(choice.locator(".alt-or")).toHaveCount(1);
+});
+
+test("the scaled Cast line is one choice, not a choice inside a choice", async ({
+  page,
+}) => {
+  await addImportedAlternative(page);
+  await page.goto(`/recipes/${KAALILAATIKKO}?multiplier=2`);
+
+  const payload = await castPayload(page);
+  const items = payload.ingredients.flatMap((group) => group.items);
+  const choice = items.find((item) => item.includes("öljy"));
+
+  expect(choice).toBe("1 dl öljy tai 1 dl voi · ½ dl öljyä tai voita");
+  // The options are joined by exactly one ` tai `, and the source sentence
+  // appears once rather than inside each option.
+  expect(choice!.split(" · ")).toHaveLength(2);
+  expect(choice!.split(" · ")[0]!.split(" tai ")).toHaveLength(2);
+});
+
+test("the recipe JSON keeps its shape, alternatives included", async ({
+  page,
+}) => {
+  await addImportedAlternative(page);
+
+  const response = await page.request.get(`/api/recipes/${KAALILAATIKKO}`);
+  expect(response.ok()).toBe(true);
+  const { recipe } = (await response.json()) as {
+    recipe: Record<string, unknown> & {
+      lines: Array<Record<string, unknown>>;
+    };
+  };
+
+  // The wire shape is pinned, not inferred: a field joining or leaving it is a
+  // decision somebody has to make here rather than a spread quietly carrying
+  // one through.
+  expect(Object.keys(recipe).sort()).toEqual([
+    "createdAt",
+    "createdBy",
+    "id",
+    "imageKey",
+    "lines",
+    "parts",
+    "revision",
+    "sourceRoute",
+    "sourceText",
+    "steps",
+    "title",
+    "yieldPortions",
+  ]);
+  expect(Object.keys(recipe.lines[0]!).sort()).toEqual([
+    "altQuantity",
+    "altUnit",
+    "alternativeGroup",
+    "ingredient",
+    "position",
+    "quantity",
+    "quantityMax",
+    "sourceLine",
+    "unit",
+  ]);
+
+  // And the group is really on the wire: without it a caller adding these
+  // lines up would buy both the oil and the butter.
+  const grouped = recipe.lines.filter(
+    (line) => line["alternativeGroup"] !== null,
+  );
+  expect(grouped.map((line) => line["ingredient"])).toEqual(["öljy", "voi"]);
+  expect(new Set(grouped.map((line) => line["alternativeGroup"]))).toEqual(
+    new Set([1]),
+  );
+});

@@ -257,6 +257,11 @@ it to write **one line per option**, give them the same number, and give each
 its own quantity, unit and `ingredient_name` — never `hunaja tai sokeri` as a
 single ingredient, which is exactly what it has been producing.
 
+The rules also tell it to keep a group's options in one `section` and one
+`phase`. Both halves of a choice are used at the same moment, and the save
+refuses a group that straddles either — asking the model for the right shape is
+cheaper than a refusal three screens from the cause.
+
 `alternative_group` is **optional on the wire**, the same way `ingredient_refs`
 is: a bundle AgentDeck wrote before #183 carries none, and refusing it would
 break every draft already generated. `dev/check-draft-schema.ts` covers the

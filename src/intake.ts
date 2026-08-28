@@ -324,7 +324,9 @@ Säännöt, joista ei poiketa:
   sen mukaan mitä teksti sanoo, ja oma ingredient_name — älä koskaan kirjoita
   "hunaja tai sokeri" yhdeksi ainekseksi. source_line on kaikilla saman ryhmän
   riveillä sama alkuperäinen rivi sanatarkasti. Ryhmässä on aina vähintään kaksi
-  riviä; muuten alternative_group on null.
+  riviä; muuten alternative_group on null. Saman ryhmän riveillä on aina sama
+  section ja sama phase — vaihtoehdot käytetään samassa kohdassa, joten ryhmä ei
+  jakaudu kahteen osaan eikä ennen/jälkeen-vaiheeseen.
 - Aseta yield_portions vain jos teksti kertoo annosmäärän.
 - source_text on annettu teksti sellaisenaan.
 - Yhdistä jokainen rivi olemassa olevaan ainekseen sen id:llä kun jokin selvästi

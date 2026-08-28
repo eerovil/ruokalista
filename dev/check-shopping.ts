@@ -19,6 +19,7 @@ function line(overrides: Partial<ShoppingLine>): ShoppingLine {
     recipeId: 1,
     sourceRecipeId: 1,
     alternativeGroup: null,
+    phase: null,
     ingredientId: 1,
     ingredientName: "öljy",
     products: [],
@@ -531,4 +532,55 @@ test("the same dish planned twice buys its chosen option twice", () => {
   const items = shoppingList([...options(1), ...options(2)]);
 
   assert.deepEqual(totals(items), { kerma: "4 dl" });
+});
+
+test("a group split across cooking sections is bought whole, as it is read", () => {
+  // The cooking view draws before-parts and after-parts apart, so these are
+  // two lines a cook reads separately. Counting them a pair here would leave
+  // one section's ingredient unbought — the disagreement #183's review found.
+  const items = shoppingList([
+    line({
+      ingredientId: 1,
+      ingredientName: "voi",
+      quantity: 1,
+      unit: "rkl",
+      phase: "before_parts",
+      alternativeGroup: 1,
+    }),
+    line({
+      ingredientId: 2,
+      ingredientName: "margariini",
+      quantity: 1,
+      unit: "rkl",
+      phase: "after_parts",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { margariini: "1 rkl", voi: "1 rkl" });
+});
+
+test("an unclassified option and a before-parts one are still one choice", () => {
+  // The cooking view buckets null with before_parts, so these two are drawn
+  // together and only one of them is bought.
+  const items = shoppingList([
+    line({
+      ingredientId: 1,
+      ingredientName: "voi",
+      quantity: 1,
+      unit: "rkl",
+      phase: null,
+      alternativeGroup: 1,
+    }),
+    line({
+      ingredientId: 2,
+      ingredientName: "margariini",
+      quantity: 1,
+      unit: "rkl",
+      phase: "before_parts",
+      alternativeGroup: 1,
+    }),
+  ]);
+
+  assert.deepEqual(totals(items), { voi: "1 rkl" });
 });

@@ -196,7 +196,10 @@ export async function saveEditForm(
       structuredBy: null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
-    });
+    },
+    // A dish written entirely in named parts has no ingredient lines of its
+    // own, and it is still a whole recipe (issue #184).
+    { hasParts: recipe.parts.length > 0 });
   } catch (error) {
     if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
       throw error;
@@ -617,7 +620,13 @@ function editorForm(
         )}
       </ol>
 
-      <button type="submit">Tallenna muutokset</button>
+      <!-- Sticky rather than at the end of the form: the editor is long enough
+           that on a phone the save button used to be several screens below
+           whatever was being changed (issue #184). It rides just above the tab
+           strip while the form scrolls and settles here at the end. -->
+      <div class="editor-actions">
+        <button type="submit" class="primary">Tallenna muutokset</button>
+      </div>
     </form>
 
     <h2>Alkuperäinen teksti</h2>

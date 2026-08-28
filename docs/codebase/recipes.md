@@ -36,6 +36,34 @@ See `docs/adr/0002-a-part-is-a-recipe.md`, including what it deliberately does
 not decide — scaling parts with the parent is still open (parts are shown
 exactly as written, unscaled, alongside a scaled parent).
 
+### A dish can own nothing but its parts (issue #184)
+
+Proposed here. Once the parts are recipe rows of their own, a dish written
+entirely in named parts keeps no ingredient line at all — only a title, its
+method and its parts. `validateRecipe` (`src/recipe-save.ts`) refuses a recipe
+with no lines, which left that dish openable in the editor and impossible to
+save: *Reseptissä pitää olla ainakin yksi aines.* This change gives the
+function a `hasParts` option and the editor passes `recipe.parts.length > 0`,
+so the rule asks the question it meant to ask — is this recipe empty? — rather
+than counting only one of the two places a recipe's content can be. The
+refusal's wording moves with it: *Reseptissä pitää olla ainakin yksi aines tai
+osa.*
+
+The option is off by default, which is what keeps the import path honest. A
+draft's `lines` carries every part's lines along with the dish's, because the
+parts do not exist yet and a `section` name is all that marks them — so an
+empty array there really is an empty recipe. `saveRecipe` and
+`src/batch-intake.ts` therefore refuse exactly what they refused before, and
+only the editor waives the rule, only for a recipe whose parts it has already
+loaded. Passing the answer in rather than counting the parts inside
+`replaceRecipe` avoids a second query for something the editor knows.
+
+The editor's **Tallenna muutokset** moves into a sticky bar in the same change
+(`.editor-actions` in `src/html.ts`), because the editor is long enough that on
+a phone the button sat several screens below whatever was being changed. It is
+CSS only — `position: sticky` clear of the fixed tab strip — so a browser
+without it gets today's behaviour and nothing on this path needs a script.
+
 ### Cooking order has a phase (issue #58, decision #50, ADR-0003)
 
 Parent-level content on a multipart dish — a line or step that belongs to the
@@ -169,6 +197,26 @@ number they share, scoped to their own recipe row.
   input that says something perfectly clear. The recipe screen prints them
   joined by `tai`, and the Cast receiver joins them into one string for the same
   reason — two items on a TV list read as two things to fetch.
+- **A group belongs to one recipe row *and* one cooking-order section, and a
+  save refuses one that spans two.** `recipe-phase.ts::phaseBucket` is that
+  boundary, and it is a bucket rather than a raw phase because the cooking view
+  draws unclassified content with `before_parts`. Every end asks it: the save
+  renumbers by it, the shopping list keys on it, and both screens already
+  filter by it before they group. Getting this wrong was a real fault, not a
+  hypothetical — a group split before/after rendered as two lone lines with no
+  `tai` while the list still bought only the first, so a cook lost an
+  ingredient. Grouping is per section but the *numbers* run across the whole
+  row, so that a recipe with a group in each section can be opened and saved
+  again without tripping the refusal.
+- **A shared source sentence is stated once for the set.** Import gives every
+  option of a group the same `source_line` — the page wrote one sentence and
+  each option is a reading of it — and `sourceWorthShowing` turns true for
+  every option with a stated amount as soon as a cooking is not 1×. Printing it
+  per option repeated the whole choice under each of them, and on Cast embedded
+  it inside each string before those were joined by another ` tai `, so
+  `1 lihaliemikuutio tai 1 annos fondia` at 2× read as a choice inside a
+  choice. `alternatives.ts::sharedSource` answers "is there one sentence here",
+  and where the options genuinely carry different wording each keeps its own.
 - **The thumbnail follows the default option.** A row showing two products would
   say "buy both", which is what a `tai` line does not mean.
 - **The shopping list buys the first option and no other**, per cooking and per
@@ -187,6 +235,13 @@ number they share, scoped to their own recipe row.
   quietly dropped, even though the same value read off a column or off the
   model's JSON degrades to "no group" — a form is the one edge where somebody
   typed it on purpose.
+
+`alternativeGroup` is on the `/api/recipes/:id` wire, and deliberately so. It
+is not the same kind of field as `phase`, which only decides where a line is
+drawn: without the group the JSON says a recipe needs kermaa *and*
+kookosmaitoa, when it needs one of them. `tests/alternatives.spec.ts` pins the
+exact key set of the recipe and line objects so nothing else drifts onto or off
+that shape unnoticed.
 
 Which option a household buys is **not** a member's choice yet. #183 hedges its
 default with "ellei käyttäjä valitse muuta"; this change ships the default only,

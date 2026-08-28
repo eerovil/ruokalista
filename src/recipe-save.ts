@@ -2,8 +2,12 @@ import type { DraftIngredientRef, StepIngredientRef } from "./ingredient-refs.ts
 import { serializeStepRefs } from "./ingredient-refs.ts";
 import { ingredientsFor } from "./ingredients.ts";
 import type { Member } from "./members.ts";
-import { normalizeGroups, type AlternativeGroup } from "./alternatives.ts";
-import type { RecipePhase } from "./recipe-phase.ts";
+import {
+  groupsAcrossScopes,
+  normalizeGroups,
+  type AlternativeGroup,
+} from "./alternatives.ts";
+import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
 
 /**
  * Saving a corrected draft, and editing a saved recipe. One D1 batch either
@@ -151,7 +155,11 @@ export async function saveRecipe(
  *
  * source_text and source_route are not editable and are not touched here. Parts
  * are recipes of their own and are edited on their own screens, so this leaves
- * them alone too.
+ * them alone too — but whether there are any is still this call's business,
+ * because a dish whose ingredients all live on its parts has none of its own
+ * and must still be saveable (issue #184). The caller says so rather than this
+ * function counting them: the editor has already loaded the recipe's parts, and
+ * a second query would only ask the same question again.
  */
 export async function replaceRecipe(
   db: D1Database,
@@ -159,8 +167,9 @@ export async function replaceRecipe(
   recipeId: number,
   expectedRevision: number,
   recipe: RecipeToSave,
+  options: ValidateOptions = {},
 ): Promise<void> {
-  validateRecipe(recipe);
+  validateRecipe(recipe, options);
   if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
     throw new StaleRecipe("Reseptiä ei enää ole.");
   }
@@ -273,14 +282,19 @@ function childrenOf(
 
   // Keep references inside this recipe row. A step names an ingredient, so
   // duplicate lines for that ingredient deliberately share the same reference.
-  // Group numbers mean something only inside one recipe row: a part is a
-  // recipe of its own (ADR-0002), so its options are renumbered from 1 here
-  // rather than inheriting the dish's numbering.
+  // Group numbers mean something only inside one recipe row and one
+  // cooking-order section: a part is a recipe of its own (ADR-0002), and a
+  // multipart dish's before-parts and after-parts content is drawn apart. So
+  // options are renumbered per bucket here, by the same question the cooking
+  // view and the shopping list ask (#183). `validateRecipe` has already
+  // refused a group that spans two, so nothing reaching this line is dissolved
+  // without the member being told.
   const ownLines = normalizeGroups(
     lines.filter((entry) => belongs(entry.line.section)).map((entry) => ({
       ...entry,
       alternativeGroup: entry.line.alternativeGroup,
     })),
+    (entry) => phaseBucket(phaseFor(entry.line.phase)),
   );
 
   steps
@@ -592,7 +606,41 @@ async function resolveIngredients(
   return { newIngredients, lines };
 }
 
-export function validateRecipe(recipe: RecipeToSave): void {
+export interface ValidateOptions {
+  /**
+   * Whether this recipe already has parts of its own (issue #184).
+   *
+   * A dish written entirely in named parts keeps nothing but a title, its
+   * method and its parts — every ingredient sits on a part, which is a recipe
+   * row of its own (ADR-0002). Such a dish is not empty, so the one-ingredient
+   * rule below does not apply to it.
+   *
+   * False on an import, and rightly so: there the parts do not exist yet and a
+   * draft's `lines` carries every part's lines along with the dish's, so an
+   * empty array there really is an empty recipe.
+   */
+  hasParts?: boolean;
+}
+
+/**
+ * Where a line will end up once saved: which recipe row, and which section of
+ * the cooking view. This is the boundary an alternative group may not cross.
+ *
+ * A named section becomes a recipe row of its own and its content carries no
+ * phase, which is why the phase is only part of the answer for the dish's own
+ * lines — exactly what `childrenOf`'s `phaseFor` does when it writes them.
+ */
+function savedScope(line: LineToSave): string {
+  const section = line.section?.trim() ?? "";
+  return section === ""
+    ? `dish ${phaseBucket(line.phase)}`
+    : `part ${section}`;
+}
+
+export function validateRecipe(
+  recipe: RecipeToSave,
+  options: ValidateOptions = {},
+): void {
   if (recipe.title.trim() === "") {
     throw new SaveRefused("Reseptillä pitää olla nimi.");
   }
@@ -602,11 +650,20 @@ export function validateRecipe(recipe: RecipeToSave): void {
   ) {
     throw new SaveRefused("Annosmäärän pitää olla positiivinen kokonaisluku.");
   }
-  if (recipe.lines.length === 0) {
-    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines.");
+  if (recipe.lines.length === 0 && options.hasParts !== true) {
+    throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines tai osa.");
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {
     throw new SaveRefused("Jokaiselle uudelle ainekselle pitää vastata.");
+  }
+  // Both halves of a choice are used at the same moment, so they belong to the
+  // same part and the same cooking-order section (#183). Letting one span two
+  // is the input that made the cooking view and the shopping list disagree:
+  // the screen drew two lone lines and the list still bought only one of them.
+  if (groupsAcrossScopes(recipe.lines, savedScope).length > 0) {
+    throw new SaveRefused(
+      "Saman vaihtoehtoryhmän rivien pitää olla samassa osassa ja vaiheessa.",
+    );
   }
 
   for (const line of recipe.lines) {
