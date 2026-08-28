@@ -1,3 +1,4 @@
+import { problem } from "./auth.ts";
 import { addDays, shortDate, shortDayName, today } from "./dates.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
@@ -37,6 +38,17 @@ import {
  * with checkboxes and a submit button, and each cupboard button is a small
  * POST form, so the screen works with no JavaScript at all, which is the
  * standing frontend requirement from #65.
+ *
+ * Issue #159 proposes making the S-ostoslista half of the screen feel
+ * immediate, and it is added strictly on top of that: every form below is still
+ * the form it was, and a browser that cannot run `SHOPPING_ISLAND` still
+ * navigates to `/ostoslista/tuote`, still posts the send form, and simply never
+ * sees the current S-ostoslista panel. What the island adds is the product
+ * search in a panel inside the row, an optimistic selection saved in the
+ * background, a spinner on everything asynchronous, and the contents of the
+ * S-ostoslista read after the page is already usable. It talks to the three
+ * JSON answers below, and the save still re-searches server-side, so the
+ * browser cannot invent an EAN, a name or an image whichever path it takes.
  */
 
 /** How far ahead there is anything to shop for. */
@@ -88,7 +100,8 @@ export async function shoppingScreen(
               Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
             </p>`
           : html`${externalSendPanel(buy, selectedIds, external)}
-              ${sections(buy, atHome, selectedIds, external)}`}`,
+              ${sections(buy, atHome, selectedIds, external)}`}
+      ${external ? html`<script>${raw(SHOPPING_ISLAND)}</script>` : ""}`,
     "shopping",
     member,
     status,
@@ -144,13 +157,13 @@ export async function sendShoppingListForm(
   const form = await ctx.request.formData();
   const selectedUrl = selectionUrl(form, ctx.url);
   const stateCtx = { ...ctx, url: selectedUrl };
+  const asJson = wantsJson(form);
   const { buy } = await shoppingState(stateCtx, member);
   if (buy.length === 0) {
-    return shoppingScreen(
-      stateCtx,
-      member,
-      "Ostoslistalla ei ole lähetettäviä aineksia.",
-    );
+    const empty = "Ostoslistalla ei ole lähetettäviä aineksia.";
+    return asJson
+      ? problem(400, empty)
+      : shoppingScreen(stateCtx, member, empty);
   }
 
   let sent = 0;
@@ -170,21 +183,99 @@ export async function sendShoppingListForm(
     const progress = sent === 0
       ? "Mitään ei lähetetty."
       : `${sent}/${buy.length} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
-    return shoppingScreen(
-      stateCtx,
-      member,
-      `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`,
-      null,
-      502,
-    );
+    const message = `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`;
+    return asJson
+      ? problem(502, message)
+      : shoppingScreen(stateCtx, member, message, null, 502);
   }
 
+  // Once, after the last item, and only after a send that finished: the sync
+  // pushes the service's copy to the phone, and there is nothing to push part
+  // of. A failure here is not a failed send — the items are on the list, they
+  // are just waiting for the service's own next sweep — so it is said beside
+  // the success rather than instead of it.
+  let synced = true;
+  try {
+    await client.sync();
+  } catch (error) {
+    console.error(`S-ostoslista sync failed: ${reason(error)}`);
+    synced = false;
+  }
+
+  const notSynced =
+    "Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä. Ainekset ovat listalla ja päivittyvät viimeistään seuraavassa synkronoinnissa.";
+
+  if (asJson) {
+    return Response.json({
+      sent,
+      total: buy.length,
+      synced,
+      ...(synced ? {} : { warning: notSynced }),
+    });
+  }
   return shoppingScreen(
     stateCtx,
     member,
-    null,
+    synced ? null : notSynced,
     `${sent} ainesta lähetettiin S-ostoslistaan.`,
+    200,
   );
+}
+
+/**
+ * `GET /ostoslista/haku?haku=…` — the same catalogue search the product screen
+ * runs, as JSON, so the island can search inside the row and warm the next
+ * row's search before anybody asks for it.
+ *
+ * It answers with the query it actually ran, which is what lets the browser
+ * throw away an answer that arrived for a term the member has already moved on
+ * from. Nothing household-scoped is read or written here: the catalogue is the
+ * shop's, and the only gate is that this household has the integration at all.
+ */
+export async function productSearchJson(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  const query = (ctx.url.searchParams.get("haku") ?? "").trim();
+  if (query === "") return problem(400, "Hakusana puuttuu.");
+
+  try {
+    return Response.json({ query, results: await client.search(query) });
+  } catch (error) {
+    console.error(`S-ostoslista product search failed: ${reason(error)}`);
+    return problem(502, "S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.");
+  }
+}
+
+/**
+ * `GET /ostoslista/s-lista` — what is already on the S-ostoslista.
+ *
+ * Read after the screen is drawn rather than while it is being built (#159):
+ * the household's own list is the thing somebody came here for, and a slow or
+ * broken external read must not hold it up or take it down. A failure is one
+ * line and a retry in the browser, not a refusal of the screen.
+ */
+export async function currentListJson(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  try {
+    return Response.json({ items: await client.list() });
+  } catch (error) {
+    console.error(`S-ostoslista list read failed: ${reason(error)}`);
+    return problem(502, "S-ostoslistan sisältöä ei saatu luettua.");
+  }
+}
+
+/** The island asks for JSON with a field, so one route serves both callers. */
+function wantsJson(form: FormData): boolean {
+  return String(form.get("muoto") ?? "") === "json";
 }
 
 /** `GET /ostoslista/tuote` — search and choose a product for one buy row. */
@@ -221,6 +312,7 @@ export async function saveProductForm(
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();
+  const asJson = wantsJson(form);
   const stateCtx = { ...ctx, url: productSelectionUrl(form, ctx.url) };
   const state = await shoppingState(stateCtx, member);
   const item = selectedBuyItem(state.buy, form.get("aines"));
@@ -228,36 +320,55 @@ export async function saveProductForm(
 
   const query = String(form.get("haku") ?? "").trim();
   const ean = String(form.get("ean") ?? "").trim();
+
+  /**
+   * The island shows the choice before this answer arrives, so a refusal has to
+   * be sayable to it. Both callers get the same words and the same status; only
+   * the shape differs, and neither one has saved anything by this point.
+   */
+  const refuse = (
+    message: string,
+    status: number,
+    products: SOstoslistaProduct[],
+  ): Response =>
+    asJson
+      ? problem(status, message)
+      : productPage(member, item, state.selectedIds, query, products, message, status);
+
   let products: SOstoslistaProduct[];
   try {
     products = await client.search(query);
   } catch (error) {
     console.error(`S-ostoslista product selection search failed: ${reason(error)}`);
-    return productPage(
-      member,
-      item,
-      state.selectedIds,
-      query,
-      [],
+    return refuse(
       "Tuotetta ei voitu varmistaa S-ostoslistasta. Mitään ei tallennettu.",
       502,
+      [],
     );
   }
 
   const selected = products.find((product) => product.ean === ean);
   if (selected === undefined) {
-    return productPage(
-      member,
-      item,
-      state.selectedIds,
-      query,
-      products,
+    return refuse(
       "Valittua tuotetta ei löytynyt uudesta hausta. Mitään ei tallennettu.",
       400,
+      products,
     );
   }
   if (!(await saveExternalProduct(ctx.env.DB, item.ingredientId, selected))) {
     return new Response("Not found", { status: 404 });
+  }
+
+  // The confirmed product, not the one the browser drew: a re-search may have
+  // found a newer name, and the row should end up saying what was stored.
+  if (asJson) {
+    return Response.json({
+      product: {
+        ean: selected.ean,
+        name: selected.name,
+        imageUrl: selected.imageUrl,
+      },
+    });
   }
 
   return new Response(null, {
@@ -493,8 +604,13 @@ function itemList(
   return html`<ul class="shopping-list">
     ${items.map(
       (item) => html`<li>
-        <details class="shopping-item">
+        <details
+          class="shopping-item"
+          data-aines="${item.ingredientId}"
+          data-haku="${item.name}"
+        >
           <summary>
+            <span class="shopping-thumb">${thumbnail(item)}</span>
             <span class="shopping-name">${item.name}</span>
             <span class="${item.total === AMOUNT_IN_RECIPE
               ? "shopping-total is-unstated"
@@ -527,26 +643,64 @@ function itemList(
   </ul>`;
 }
 
+/**
+ * The chosen product's picture on the row itself (#159), small enough that the
+ * row it sits in is the height it always was. Without a picture the slot stays
+ * empty and collapses, so an unmapped ingredient — or one whose CDN image is
+ * missing — reads exactly as it did before rather than as a broken box.
+ */
+function thumbnail(item: ShoppingItem): Raw {
+  if (item.externalProductImageUrl === null) return html``;
+  return html`<img
+    src="${item.externalProductImageUrl}"
+    alt=""
+    width="26"
+    height="26"
+    loading="lazy"
+    onerror="this.hidden=true"
+  />`;
+}
+
 function externalSendPanel(
   buy: ShoppingItem[],
   selectedIds: Set<number>,
   external: boolean,
 ): Raw {
-  if (!external || buy.length === 0) return html``;
+  if (!external) return html``;
   const mapped = buy.filter((item) => item.ean !== null).length;
   const notes = buy.length - mapped;
   return html`<section class="s-shopping-send" aria-labelledby="s-shopping-title">
     <h2 id="s-shopping-title">S-ostoslista</h2>
-    <p>
-      ${mapped} ${mapped === 1 ? "tuote" : "tuotetta"}${notes === 0
-        ? ""
-        : ` · ${notes} ${notes === 1 ? "muistutus" : "muistutusta"}`}
-    </p>
-    <form method="post" action="/ostoslista/laheta">
-      ${selectionFields(selectedIds)}
-      <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
-    </form>
+    ${buy.length === 0
+      ? ""
+      : html`<p class="s-send-counts" data-tuotteet="${mapped}" data-muistutukset="${notes}">
+            ${mapped} ${mapped === 1 ? "tuote" : "tuotetta"}${notes === 0
+              ? ""
+              : ` · ${notes} ${notes === 1 ? "muistutus" : "muistutusta"}`}
+          </p>
+          <form method="post" action="/ostoslista/laheta" class="s-send-form">
+            ${selectionFields(selectedIds)}
+            <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
+          </form>`}
+    ${currentListPanel()}
   </section>`;
+}
+
+/**
+ * What the S-ostoslista already holds, filled in by the island.
+ *
+ * It ships hidden and empty on purpose. The contents are an external read, and
+ * #159 asks for them without letting them delay — or break — the household's
+ * own list, so they arrive after the screen does. A browser that runs nothing
+ * simply never sees this block, which is the same bargain every other
+ * enhancement on this screen makes.
+ */
+function currentListPanel(): Raw {
+  return html`<div class="s-current" hidden>
+    <h3>S-ostoslistalla nyt</h3>
+    <p class="s-current-state"></p>
+    <ul class="s-current-items"></ul>
+  </div>`;
 }
 
 function externalProductBlock(
@@ -564,14 +718,18 @@ function externalProductBlock(
       : html``;
   }
 
+  // The body is one container the island can replace wholesale when a choice is
+  // made, so an optimistic row and a server-rendered one are the same markup.
   return html`<div class="s-shopping-product ${mapped ? "is-mapped" : "is-note"}">
-    ${mapped
-      ? productSummary(item)
-      : html`<div class="s-shopping-product-copy">
-          <strong>Muistutus</strong>
-          <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
-        </div>`}
-    <form method="get" action="/ostoslista/tuote" class="inline">
+    <div class="s-shopping-product-body">
+      ${mapped
+        ? productSummary(item)
+        : html`<div class="s-shopping-product-copy">
+            <strong>Muistutus</strong>
+            <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
+          </div>`}
+    </div>
+    <form method="get" action="/ostoslista/tuote" class="inline s-product-open">
       <input type="hidden" name="aines" value="${item.ingredientId}" />
       <input type="hidden" name="haku" value="${item.name}" />
       ${selectionFields(selectedIds)}
@@ -727,6 +885,633 @@ function externalClient(env: RouteContext["env"], member: Member): SOstoslistaCl
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * Everything #159 asks the browser to do, in one island.
+ *
+ * Written in ES5 with no regular expressions, like the other three islands —
+ * it is a template literal shipped untranspiled, see
+ * `docs/codebase/screens.md`. It builds every node with `createElement` and
+ * `createTextNode` rather than by pasting strings together, so a product name
+ * from the shop cannot become markup.
+ *
+ * Four things it is careful about:
+ *
+ *   - **A search answer is bound to its question.** The cache is keyed by the
+ *     search term and the server echoes the term it ran, so a prefetched answer
+ *     for the next ingredient can never be drawn into the row a member is
+ *     looking at.
+ *   - **A save is optimistic but never silent.** The row shows the choice and
+ *     the panel closes at once; a spinner says the save is still going, and a
+ *     failure puts the row back the way it was with the refusal and a retry.
+ *   - **One at a time.** A row that is saving ignores a second choice, and the
+ *     send button refuses a second press until the first has answered.
+ *   - **A failure is not cached.** An error clears its cache entry, so the next
+ *     attempt really asks again.
+ */
+const SHOPPING_ISLAND = `
+(function () {
+  if (
+    !window.XMLHttpRequest || !window.JSON ||
+    typeof document.querySelectorAll !== 'function' ||
+    typeof document.addEventListener !== 'function'
+  ) return;
+
+  var rows = [];
+  var sending = false;
+  var sendAfterSaves = null;
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (typeof text === 'string') node.appendChild(document.createTextNode(text));
+    return node;
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function spinner() {
+    var node = el('span', 'spinner');
+    node.setAttribute('aria-hidden', 'true');
+    return node;
+  }
+
+  function busy(node, text) {
+    clear(node);
+    node.appendChild(spinner());
+    node.appendChild(document.createTextNode(text));
+  }
+
+  function request(method, url, body, done) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.setRequestHeader('accept', 'application/json');
+    if (body !== null) {
+      xhr.setRequestHeader('content-type', 'application/x-www-form-urlencoded');
+    }
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      var payload = null;
+      try {
+        payload = JSON.parse(xhr.responseText);
+      } catch (error) {
+        payload = null;
+      }
+      done(xhr.status >= 200 && xhr.status < 300, payload);
+    };
+    xhr.send(body);
+  }
+
+  function fieldsOf(form, extra, skip) {
+    var parts = [];
+    var fields = form.elements;
+    for (var index = 0; index < fields.length; index += 1) {
+      var field = fields[index];
+      if (!field.name || field.disabled) continue;
+      if (skip && skip[field.name]) continue;
+      if (field.type === 'submit' || field.type === 'button') continue;
+      if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) {
+        continue;
+      }
+      parts.push(
+        encodeURIComponent(field.name) + '=' + encodeURIComponent(field.value)
+      );
+    }
+    for (var key in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, key)) {
+        parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(extra[key]));
+      }
+    }
+    return parts.join('&');
+  }
+
+  // ------------------------------------------------ searches, kept by term
+
+  var searches = {};
+
+  function search(query, callback) {
+    var key = 'q:' + query;
+    var entry = searches[key];
+    if (entry && entry.done) {
+      if (callback) callback(entry.ok, entry.payload);
+      return;
+    }
+    if (entry) {
+      if (callback) entry.waiting.push(callback);
+      return;
+    }
+    entry = { done: false, ok: false, payload: null, waiting: [] };
+    if (callback) entry.waiting.push(callback);
+    searches[key] = entry;
+    request(
+      'GET',
+      '/ostoslista/haku?haku=' + encodeURIComponent(query),
+      null,
+      function (ok, payload) {
+        entry.done = true;
+        entry.ok = ok;
+        entry.payload = payload;
+        if (!ok) searches[key] = null;
+        var waiting = entry.waiting;
+        entry.waiting = [];
+        for (var index = 0; index < waiting.length; index += 1) {
+          waiting[index](ok, payload);
+        }
+      }
+    );
+  }
+
+  // ------------------------------------------------------------- the rows
+
+  function collect() {
+    var items = document.querySelectorAll('.shopping-item[data-aines]');
+    for (var index = 0; index < items.length; index += 1) {
+      var details = items[index];
+      var block = details.querySelector('.s-shopping-product');
+      var opener = block ? block.querySelector('form.s-product-open') : null;
+      if (!block || !opener) continue;
+      rows.push({
+        details: details,
+        block: block,
+        body: block.querySelector('.s-shopping-product-body'),
+        thumb: details.querySelector('.shopping-thumb'),
+        opener: opener,
+        name: details.getAttribute('data-haku') || '',
+        query: details.getAttribute('data-haku') || '',
+        panel: null,
+        results: null,
+        state: null,
+        status: null,
+        error: null,
+        saving: false
+      });
+    }
+  }
+
+  function productImage(url, size) {
+    var image = document.createElement('img');
+    image.setAttribute('alt', '');
+    image.setAttribute('width', String(size));
+    image.setAttribute('height', String(size));
+    image.onerror = function () { this.hidden = true; };
+    image.src = url;
+    return image;
+  }
+
+  function price(product) {
+    if (typeof product.price !== 'number') return null;
+    var text = product.price.toFixed(2).split('.').join(',') + ' euroa';
+    if (typeof product.priceUnit === 'string' && product.priceUnit !== '') {
+      text += ' / ' + product.priceUnit.toLowerCase();
+    }
+    return text;
+  }
+
+  // --------------------------------------------------------- the row's panel
+
+  function panelFor(row) {
+    if (row.panel) return row.panel;
+
+    var panel = el('div', 's-product-panel');
+    var form = el('form', 's-product-search');
+    var label = el('label', '', 'Haku ');
+    var input = document.createElement('input');
+    input.type = 'search';
+    input.name = 'haku';
+    input.value = row.query;
+    label.appendChild(input);
+    form.appendChild(label);
+    var go = el('button', '', 'Hae');
+    go.type = 'submit';
+    form.appendChild(go);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var wanted = input.value.trim ? input.value.trim() : input.value;
+      if (wanted === '') return;
+      row.query = wanted;
+      runSearch(row);
+    });
+    panel.appendChild(form);
+
+    row.state = el('p', 's-product-panel-state', '');
+    panel.appendChild(row.state);
+    row.results = el('div', 's-product-panel-results');
+    panel.appendChild(row.results);
+
+    row.block.parentNode.insertBefore(panel, row.block.nextSibling);
+    row.panel = panel;
+    return panel;
+  }
+
+  function openPanel(row) {
+    panelFor(row).hidden = false;
+    runSearch(row);
+    prefetchNext(row);
+  }
+
+  function closePanel(row) {
+    if (row.panel) row.panel.hidden = true;
+  }
+
+  function say(row, text, working) {
+    if (working) busy(row.state, text);
+    else {
+      clear(row.state);
+      row.state.appendChild(document.createTextNode(text));
+    }
+    row.state.hidden = false;
+  }
+
+  function runSearch(row) {
+    var query = row.query;
+    clear(row.results);
+    say(row, 'Haetaan tuotteita…', true);
+    search(query, function (ok, payload) {
+      // Two guards, and both matter: the row may have moved on to another
+      // term, and an answer only counts for the term the server says it ran.
+      if (row.query !== query) return;
+      if (!ok || !payload || !payload.results) {
+        say(
+          row,
+          (payload && payload.error) ||
+            'S-ostoslistan tuotehakua ei saatu avattua. Yritä uudelleen.',
+          false
+        );
+        return;
+      }
+      if (payload.query !== query) return;
+      if (payload.results.length === 0) {
+        say(row, 'Haulla ei löytynyt tuotteita.', false);
+        return;
+      }
+      clear(row.state);
+      row.state.hidden = true;
+      showResults(row, query, payload.results);
+    });
+  }
+
+  function showResults(row, query, results) {
+    clear(row.results);
+    var list = el('ul', 's-product-results');
+    for (var index = 0; index < results.length; index += 1) {
+      list.appendChild(resultRow(row, query, results[index]));
+    }
+    row.results.appendChild(list);
+  }
+
+  function resultRow(row, query, product) {
+    var item = document.createElement('li');
+    item.appendChild(productImage(product.imageUrl, 80));
+    var copy = el('div', 's-product-result-copy');
+    copy.appendChild(el('strong', '', product.name));
+    copy.appendChild(el('span', 'meta', 'EAN ' + product.ean));
+    var priceText = price(product);
+    if (priceText) copy.appendChild(el('span', 'meta', priceText));
+    if (product.available === false) {
+      copy.appendChild(el('span', 'meta', 'Ei saatavilla valitussa kaupassa'));
+    }
+    item.appendChild(copy);
+    var choose = el('button', 'primary', 'Valitse');
+    choose.type = 'button';
+    choose.addEventListener('click', function () {
+      chooseProduct(row, query, product);
+    });
+    item.appendChild(choose);
+    return item;
+  }
+
+  function prefetchNext(row) {
+    for (var index = 0; index < rows.length; index += 1) {
+      if (rows[index] !== row) continue;
+      var next = rows[index + 1];
+      if (next && next.name !== '') search(next.name, null);
+      return;
+    }
+  }
+
+  // ------------------------------------------------- choosing, optimistically
+
+  function chooseProduct(row, query, product) {
+    if (row.saving) return;
+    closePanel(row);
+    // Everything the optimistic draw touches, kept so a refusal can put the row
+    // back exactly as the server still has it.
+    var before = {
+      body: row.body.innerHTML,
+      thumb: row.thumb ? row.thumb.innerHTML : null,
+      blockClass: row.block.className,
+      openLabel: openerLabel(row)
+    };
+    showProduct(row, product);
+    persist(row, query, product, before);
+  }
+
+  function openerLabel(row) {
+    var button = row.opener.querySelector('button');
+    return button ? button.innerHTML : null;
+  }
+
+  function setOpenerLabel(row, text) {
+    var button = row.opener.querySelector('button');
+    if (!button) return;
+    clear(button);
+    button.appendChild(document.createTextNode(text));
+  }
+
+  function restore(row, before) {
+    row.body.innerHTML = before.body;
+    if (row.thumb && before.thumb !== null) row.thumb.innerHTML = before.thumb;
+    row.block.className = before.blockClass;
+    var button = row.opener.querySelector('button');
+    if (button && before.openLabel !== null) button.innerHTML = before.openLabel;
+  }
+
+  function persist(row, query, product, before) {
+    row.saving = true;
+    clearError(row);
+    status(row, 'Tallennetaan…');
+    var body = fieldsOf(
+      row.opener,
+      { haku: query, ean: product.ean, muoto: 'json' },
+      { haku: 1 }
+    );
+    request('POST', '/ostoslista/tuote', body, function (ok, payload) {
+      row.saving = false;
+      status(row, null);
+      if (ok && payload && payload.product) {
+        showProduct(row, payload.product);
+        // An ingredient that was going as a note is going as a product now, and
+        // the line above the send button says how many of each there are.
+        if (before.blockClass.indexOf('is-note') !== -1) countProduct();
+        saveSettled(true);
+        return;
+      }
+      restore(row, before);
+      showError(
+        row,
+        (payload && payload.error) || 'Tuotteen tallennus epäonnistui.',
+        function () {
+          showProduct(row, product);
+          persist(row, query, product, before);
+        }
+      );
+      saveSettled(false);
+    });
+  }
+
+  /* A queued send starts only when every optimistic row agrees with D1. */
+  function saveSettled(ok) {
+    if (!sendAfterSaves) return;
+    if (!ok) sendAfterSaves.failed = true;
+    if (savesPending()) return;
+    var after = sendAfterSaves;
+    sendAfterSaves = null;
+    after.done(!after.failed);
+  }
+
+  function savesPending() {
+    for (var index = 0; index < rows.length; index += 1) {
+      if (rows[index].saving) return true;
+    }
+    return false;
+  }
+
+  function showProduct(row, product) {
+    row.block.className = 's-shopping-product is-mapped';
+
+    clear(row.body);
+    var summary = el('div', 's-shopping-product-summary');
+    summary.appendChild(productImage(product.imageUrl, 64));
+    var copy = el('span', 's-shopping-product-copy');
+    copy.appendChild(el('strong', '', product.name));
+    copy.appendChild(el('span', 'meta', 'EAN ' + product.ean));
+    summary.appendChild(copy);
+    row.body.appendChild(summary);
+
+    if (row.thumb) {
+      clear(row.thumb);
+      row.thumb.appendChild(productImage(product.imageUrl, 26));
+    }
+
+    setOpenerLabel(row, 'Vaihda tuote');
+  }
+
+  function status(row, text) {
+    if (text === null) {
+      if (row.status && row.status.parentNode) {
+        row.status.parentNode.removeChild(row.status);
+      }
+      row.status = null;
+      return;
+    }
+    if (!row.status) {
+      row.status = el('span', 's-status');
+      row.status.setAttribute('role', 'status');
+      row.block.appendChild(row.status);
+    }
+    busy(row.status, text);
+  }
+
+  function clearError(row) {
+    if (row.error && row.error.parentNode) {
+      row.error.parentNode.removeChild(row.error);
+    }
+    row.error = null;
+  }
+
+  function showError(row, message, retry) {
+    clearError(row);
+    row.error = el('p', 's-shopping-error', message + ' ');
+    var again = el('button', '', 'Yritä uudelleen');
+    again.type = 'button';
+    again.addEventListener('click', function () {
+      clearError(row);
+      retry();
+    });
+    row.error.appendChild(again);
+    row.block.parentNode.insertBefore(row.error, row.block.nextSibling);
+  }
+
+  function countProduct() {
+    var line = document.querySelector('.s-send-counts');
+    if (!line) return;
+    var products = Number(line.getAttribute('data-tuotteet')) + 1;
+    var notes = Number(line.getAttribute('data-muistutukset')) - 1;
+    if (notes < 0) return;
+    line.setAttribute('data-tuotteet', String(products));
+    line.setAttribute('data-muistutukset', String(notes));
+    var text = products + (products === 1 ? ' tuote' : ' tuotetta');
+    if (notes > 0) {
+      text += ' · ' + notes + (notes === 1 ? ' muistutus' : ' muistutusta');
+    }
+    clear(line);
+    line.appendChild(document.createTextNode(text));
+  }
+
+  // ------------------------------------------------------------- the sending
+
+  function wireSend() {
+    var form = document.querySelector('.s-shopping-send form.s-send-form');
+    if (!form) return;
+    var button = form.querySelector('button');
+    if (!button) return;
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (sending) return;
+      sending = true;
+      var label = button.innerHTML;
+      button.disabled = true;
+      note(null, null);
+
+      function releaseSend() {
+        sending = false;
+        button.disabled = false;
+        button.innerHTML = label;
+      }
+
+      function sendNow() {
+        busy(button, 'Lähetetään…');
+        request(
+          'POST',
+          '/ostoslista/laheta',
+          fieldsOf(form, { muoto: 'json' }, null),
+          function (ok, payload) {
+            releaseSend();
+            if (ok && payload && typeof payload.sent === 'number') {
+              note(
+                'shopping-sent',
+                payload.sent + ' ainesta lähetettiin S-ostoslistaan.'
+              );
+              // The items are on the list either way; this only says whether the
+              // phone was told about them now or will be at the next sweep.
+              if (payload.synced === false) {
+                note(
+                  'refused',
+                  payload.warning ||
+                    'Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä.'
+                );
+              }
+              loadCurrent();
+              return;
+            }
+            note(
+              'refused',
+              (payload && payload.error) ||
+                'S-ostoslistaan ei saatu lähetettyä kaikkea.'
+            );
+          }
+        );
+      }
+
+      if (savesPending()) {
+        busy(button, 'Tallennetaan valintoja…');
+        sendAfterSaves = {
+          failed: false,
+          done: function (ready) {
+            if (ready) {
+              sendNow();
+              return;
+            }
+            releaseSend();
+            note(
+              'refused',
+              'Lähetystä ei aloitettu, koska tuotteen tallennus epäonnistui. Korjaa valinta ja yritä uudelleen.'
+            );
+          }
+        };
+        return;
+      }
+
+      sendNow();
+    });
+  }
+
+  var sendNotes = [];
+
+  /* note(null, null) clears what the last send said; anything else adds a line. */
+  function note(className, text) {
+    if (className === null) {
+      for (var index = 0; index < sendNotes.length; index += 1) {
+        var old = sendNotes[index];
+        if (old.parentNode) old.parentNode.removeChild(old);
+      }
+      sendNotes = [];
+      return;
+    }
+    var panel = document.querySelector('.s-shopping-send');
+    if (!panel) return;
+    var line = el('p', className, text);
+    panel.appendChild(line);
+    sendNotes.push(line);
+  }
+
+  // --------------------------------------------- what the S list already has
+
+  function loadCurrent() {
+    var panel = document.querySelector('.s-current');
+    if (!panel) return;
+    var state = panel.querySelector('.s-current-state');
+    var list = panel.querySelector('.s-current-items');
+    panel.hidden = false;
+    clear(list);
+    state.hidden = false;
+    busy(state, 'Luetaan S-ostoslistaa…');
+
+    request('GET', '/ostoslista/s-lista', null, function (ok, payload) {
+      clear(state);
+      if (!ok || !payload || !payload.items) {
+        state.appendChild(
+          document.createTextNode(
+            ((payload && payload.error) ||
+              'S-ostoslistan sisältöä ei saatu luettua.') + ' '
+          )
+        );
+        var again = el('button', '', 'Yritä uudelleen');
+        again.type = 'button';
+        again.addEventListener('click', loadCurrent);
+        state.appendChild(again);
+        return;
+      }
+      var items = payload.items;
+      if (items.length === 0) {
+        state.appendChild(document.createTextNode('S-ostoslista on vielä tyhjä.'));
+        return;
+      }
+      state.hidden = true;
+      for (var index = 0; index < items.length; index += 1) {
+        var entry = document.createElement('li');
+        entry.className = items[index].ean ? 's-current-product' : 's-current-note';
+        entry.appendChild(el('span', 's-current-name', items[index].name));
+        entry.appendChild(
+          el('span', 'meta', items[index].ean ? 'Tuote' : 'Muistutus')
+        );
+        list.appendChild(entry);
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------ wiring
+
+  collect();
+  for (var index = 0; index < rows.length; index += 1) {
+    (function (row) {
+      row.opener.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (row.panel && !row.panel.hidden) {
+          closePanel(row);
+          return;
+        }
+        openPanel(row);
+      });
+    })(rows[index]);
+  }
+  wireSend();
+  loadCurrent();
+})();
+`;
 
 /**
  * The one thing a shopping-list row can be told: we always have this, or we

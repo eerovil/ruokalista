@@ -685,7 +685,7 @@ test.describe("signed in", () => {
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
-    const product = page.locator(".s-product-results > li", {
+    const product = milk.locator(".s-product-results > li", {
       hasText: "Kotimaista rasvaton maito",
     });
     await expect(product).toBeVisible();
@@ -694,7 +694,55 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
-    await page.goBack();
+    // Hold the optimistic save open, then try to send: the screen says it is
+    // finishing the visible choice before it reads that mapping back from D1.
+    let releaseSave: () => void = () => {};
+    const heldSave = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    await page.route("**/ostoslista/tuote", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await heldSave;
+      await route.continue();
+    });
+    await product.getByRole("button", { name: "Valitse" }).click();
+    await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+      "Kotimaista rasvaton maito",
+    );
+    const send = page.locator(".s-send-form button");
+    await send.click();
+    await expect(send).toContainText("Tallennetaan valintoja");
+    await expect(send.locator(".spinner")).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/59-s-ostoslista-waits-for-product.png`,
+      fullPage: true,
+    });
+
+    const sent = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/ostoslista/laheta"),
+    );
+    releaseSave();
+    await sent;
+    await page.unroute("**/ostoslista/tuote");
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    await expect(
+      page.locator(".s-current-items li").filter({ hasText: "Kotimaista rasvaton maito" }),
+    ).toHaveCount(1);
+
+    // The choice itself, back on the list: the picture on the row, and the
+    // S-ostoslista panel saying what the list already holds (#159).
+    await milk.evaluate((details: HTMLDetailsElement) => {
+      details.open = false;
+    });
+    await capture(page, {
+      path: `${SHOTS}/58-s-ostoslista-current.png`,
+      fullPage: true,
+    });
+
     await milk.evaluate((details: HTMLDetailsElement) => {
       details.open = true;
     });

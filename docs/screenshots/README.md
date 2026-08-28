@@ -70,3 +70,4 @@ commit what it wrote:
 | `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |
 | `56-intake-two-pages.png` | Proposed intake with a recipe printed across a spread: page one shot with the camera, page two picked from the library, both numbered in reading order and both bound for one recipe |
 | `57-intake-requires-javascript.png` | Proposed intake without JavaScript: the requirement is stated in Finnish and structuring stays unavailable |
+| `59-s-ostoslista-waits-for-product.png` | Proposed S-ostoslista send while an optimistic product choice is still saving: the chosen product stays visible and the send button says it is finishing that choice first |
