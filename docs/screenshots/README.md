@@ -84,4 +84,4 @@ commit what it wrote:
 | `70-alternative-recipe.png` | Proposed recipe screen reading `½ dl öljy tai ½ dl margariini` as one row: each option with its own amount and unit, joined by the word |
 | `71-alternative-shopping.png` | Proposed shopping list for that cooking: the first option is bought and the second is not there at all |
 | `72-alternative-scaled-source.png` | Proposed imported choice at 2×: both options scaled, and the source sentence they share stated once for the row instead of repeated under each (#183 review) |
-| `75-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |
+| `78-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |

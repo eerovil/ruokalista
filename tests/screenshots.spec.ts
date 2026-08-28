@@ -676,7 +676,7 @@ test.describe("signed in", () => {
     await page.getByText("Alkuperäinen teksti").click();
     await expect(page.getByText("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.")).toBeVisible();
     await capture(page, {
-      path: `${SHOTS}/75-intake-background-failed.png`,
+      path: `${SHOTS}/78-intake-background-failed.png`,
       fullPage: true,
     });
   });
