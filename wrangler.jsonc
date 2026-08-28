@@ -55,8 +55,8 @@
     }
   ],
 
-  // Nightly offsite backup. Cron Triggers use UTC.
-  "triggers": { "crons": ["17 2 * * *"] },
+  // Five-minute intake recovery plus the nightly offsite backup. Crons use UTC.
+  "triggers": { "crons": ["*/5 * * * *", "17 2 * * *"] },
 
   "d1_databases": [
     {
@@ -72,5 +72,23 @@
       "binding": "RECIPE_IMAGES",
       "bucket_name": "ruokalista-recipe-images"
     }
-  ]
+  ],
+
+  // Recipe structuring must survive the browser leaving. The queue invokes the
+  // same Worker independently of the request and gives one import enough wall
+  // time for both of its existing model attempts.
+  "queues": {
+    "producers": [
+      { "binding": "INTAKE_QUEUE", "queue": "ruokalista-intake" }
+    ],
+    "consumers": [
+      {
+        "queue": "ruokalista-intake",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 20,
+        "retry_delay": 60
+      }
+    ]
+  }
 }
