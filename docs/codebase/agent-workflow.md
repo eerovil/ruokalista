@@ -16,8 +16,10 @@ The five canonical triage labels, unchanged: `needs-triage`, `needs-info`,
 
 ### Verification
 
-How much to run before opening a pull request, and what a review pass reruns
-after a fix. See `docs/agents/verification.md`.
+Focused locally, complete in CI: the typecheck, the checks and the specs that
+cover what you changed, then let the pull request's CI run the whole browser
+suite. A review pass reruns what its own fix could have broken, not the
+sequence again. See `docs/agents/verification.md`.
 
 ### Domain docs
 
@@ -68,10 +70,12 @@ what the wayfinder map locked. See `docs/agents/domain.md`.
 - When a PR's branch falls behind `main` mid-review, prefer `git merge
   origin/main` over rebase (no force-push needed to update a branch someone
   else may also be watching), resolve conflicts preserving both intents, then
-  rerun full verification before pushing the merge commit.
+  rerun verification proportional to what the merge actually touched before
+  pushing the merge commit — the conflicted files' specs, not the whole suite,
+  unless the conflicts were broad enough that you cannot say what they reach.
 - A merge conflict that touches `docs/screenshots/*.png` is not a PNG diff to
   resolve by hand: resolve the code first, then regenerate the screenshot from
-  the merged app (`./scripts/playwright.sh npx playwright test screenshots`).
+  the merged app (`PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`).
   Confirmed still current — `docs/screenshots/13-dish-in-parts.png` and
   `14-scaled.png` exist and are exactly the pair one session regenerated after
   a conflict between two PRs that both touched shared recipe rendering.

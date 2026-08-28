@@ -25,9 +25,11 @@ import { sessionCookie } from "./support/session";
  * a fixed element where the viewport left it — so on a long page the tabs show
  * up partway down the picture. That is the screenshot, not the app.
  *
- * Regenerate with:
+ * Because they cannot fail a build, this spec is ignored unless
+ * PLAYWRIGHT_SCREENSHOTS=1 is set — it is not part of an ordinary suite run,
+ * here or in CI. Regenerate with:
  *
- *   ./scripts/playwright.sh npx playwright test screenshots
+ *   PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
  */
 
 const SHOTS = "docs/screenshots";

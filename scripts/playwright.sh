@@ -6,10 +6,11 @@
 #
 #   ./scripts/playwright.sh npx playwright test
 #   ./scripts/playwright.sh npx playwright test --update-snapshots
+#   PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
 #
 # --network=host so the config's own `wrangler dev` is reachable at 127.0.0.1.
 #
-# The two variables playwright.config.ts reads are forwarded into the container.
+# The variables playwright.config.ts reads are forwarded into the container.
 # PLAYWRIGHT_PORT especially: it is the documented remedy for two agent
 # worktrees sharing this host, and until it was passed through, setting it
 # changed nothing. Both worktrees then ran on 8787, and `reuseExistingServer`
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 run_env=()
-for name in PLAYWRIGHT_PORT PLAYWRIGHT_WALKTHROUGH; do
+for name in PLAYWRIGHT_PORT PLAYWRIGHT_WALKTHROUGH PLAYWRIGHT_SCREENSHOTS; do
   [ -n "${!name:-}" ] && run_env+=(-e "$name=${!name}")
 done
 

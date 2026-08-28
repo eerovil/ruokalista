@@ -100,11 +100,16 @@ CI", but nothing in `playwright.config.ts` or `.github/workflows/ci.yml`
 actually excludes it, so it currently runs as part of any full
 `npx playwright test` alongside the real specs.
 
-**The whole suite is not the default before a pull request.** A narrow change
-runs the typecheck, the checks and the spec that covers what it touched, and
-lets CI run everything; a change nobody can draw a blast radius around runs the
-lot locally first. `docs/agents/verification.md` says which is which, and which
-spec covers what. `tests/support/dev-vars.ts::ensureDevVars()` creates
+**Focused locally, complete in CI.** A change runs the typecheck, the checks and
+the specs that cover what it touched, and lets CI run everything else. This
+proposal drops the rule that made a change full-suite for touching `src/html.ts`,
+`src/router.ts`, `src/index.ts`, `src/auth.ts`, `src/env.ts` or a migration: the
+suite still runs on every pull request, so running it here first only bought the
+same answer four minutes earlier. A full local run is now for the cases where it
+tells you something — a failure that could reach flows you did not touch,
+reproducing a CI-only problem, or a change no spec covers.
+`docs/agents/verification.md` has the rule and the table of which spec covers
+what. `tests/support/dev-vars.ts::ensureDevVars()` creates
 `.dev.vars` when it is missing and fills only blank `SESSION_SECRET` and Google
 keys; a real Google client id is left alone, and `ANTHROPIC_API_KEY` is never
 touched. This change makes the suite prepare the other half of its local
@@ -141,8 +146,13 @@ the Playwright container can also exceed the config's 120s
 of racing a fresh boot.
 
 Screenshots land in `docs/screenshots/` and are committed as review artifacts —
-nothing compares them, so they cannot fail a build. Regenerate with
-`./scripts/playwright.sh npx playwright test screenshots`. They have caught
+nothing compares them, so they cannot fail a build. Because they cannot fail a
+build, this proposal stops running them by default: `screenshots.spec.ts` is
+ignored unless `PLAYWRIGHT_SCREENSHOTS=1` is set, the same shape
+`PLAYWRIGHT_WALKTHROUGH` already had, and `scripts/playwright.sh` forwards it
+into the container. Regenerate with
+`PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`
+and commit what it wrote. They have caught
 real layout bugs the assertions missed (a shared flex rule misplacing a save
 button) — the visual diff does work the green checks don't. The bottom
 navigation is `position: fixed`, so a full-page screenshot paints it wherever
@@ -154,6 +164,16 @@ CI (`.github/workflows/ci.yml`) runs typecheck, the checks and the browser suite
 on every pull request, in the same pinned Playwright image. It writes a
 throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
 is calling the model, and that is a test that should not exist.
+
+The restore round-trip is the one step this proposal makes conditional on a pull
+request. It costs minutes where the rest of the check tier costs seconds, and it
+can only say something when the schema, the backup format, the restore path or
+their fixtures moved — so a "Decide whether the restore round-trip applies" step
+diffs the pull request against its base and skips it otherwise. On a push to
+`main` it always runs, because that is the run that migrates the live database
+and deploys. The paths it watches are the same six-files list in `CLAUDE.md` plus
+`scripts/check-backup-schema.ts`, `package.json` and the workflow itself; add to
+that list in the workflow if you add another file the drill depends on.
 
 **Merging to `main` deploys.** The same workflow applies any new migration and
 then deploys, but only on a push to `main` and only after the tests pass. A pull
