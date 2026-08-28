@@ -12,6 +12,7 @@ interface LoggedRequest {
 const requests: LoggedRequest[] = [];
 const items: Array<{ id: string; name: string; ean: string | null }> = [];
 let failNext = false;
+let failSync = false;
 let nextId = 1;
 
 const products = {
@@ -55,11 +56,18 @@ createServer(async (request, response) => {
     requests.length = 0;
     items.length = 0;
     failNext = false;
+    failSync = false;
     nextId = 1;
     return send(response, 200, { ok: true });
   }
   if (request.method === "POST" && url.pathname === "/_test/fail-next") {
     failNext = true;
+    return send(response, 200, { ok: true });
+  }
+  // Separate from fail-next, because a send's own calls come first: this fails
+  // only the sync that follows a send that otherwise worked.
+  if (request.method === "POST" && url.pathname === "/_test/fail-sync") {
+    failSync = true;
     return send(response, 200, { ok: true });
   }
   if (request.method === "GET" && url.pathname === "/_test/requests") {
@@ -78,6 +86,17 @@ createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname === "/items") {
     return send(response, 200, { items });
+  }
+  // The real service answers this by pushing its copy to the phone. Nothing
+  // reads the body, and it replies 204 on purpose so the client is exercised
+  // against a sync that says nothing at all.
+  if (request.method === "POST" && url.pathname === "/sync") {
+    if (failSync) {
+      failSync = false;
+      return send(response, 503, { error: "test sync outage" });
+    }
+    response.writeHead(204);
+    return response.end();
   }
   if (request.method === "POST" && url.pathname === "/items") {
     const record = isRecord(body) ? body : {};

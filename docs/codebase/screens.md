@@ -125,6 +125,59 @@ Finnish refusal without changing the local mapping or computed list. The
 private service calls live in `src/s-ostoslista.ts`; no API token reaches the
 markup.
 
+### Making that half feel immediate (issue #159)
+
+This pull request proposes an inline script island,
+`shopping-screens.ts::SHOPPING_ISLAND`, on top of everything above — not
+instead of it. Every form on the screen is still the form it was: without
+JavaScript the row's button still navigates to `/ostoslista/tuote`, the send
+form still posts, and the only thing missing is the panel a browser has to
+fill. Three JSON answers serve the island, and two of them are new routes:
+
+- `GET /ostoslista/haku?haku=…` (`productSearchJson`) — the catalogue search,
+  echoing the term it ran.
+- `GET /ostoslista/s-lista` (`currentListJson`) — what the S-ostoslista already
+  holds, read *after* the screen is drawn.
+- `POST /ostoslista/tuote` and `POST /ostoslista/laheta` answer JSON instead of
+  a screen when the form carries `muoto=json`. The product save still
+  re-searches before writing on both paths, so the boundary #147 drew is
+  unchanged.
+
+What that buys, and the rules each part follows:
+
+- **The chosen product's picture is on the row itself**, in a
+  `.shopping-thumb` slot inside the summary. It is smaller than the row's
+  existing `--tap` minimum, so no row grows, and the slot collapses when there
+  is no picture (`.shopping-thumb:empty`) rather than leaving an empty box.
+- **Product choice happens in a panel inside the row**, so choosing a product
+  is not a page navigation and coming back is not a page load.
+- **The next buy row's search is prefetched** while a panel is open. The cache
+  is keyed by the search term and the server echoes the term it ran, and the
+  island drops any answer that does not match what the row is currently asking
+  — a prefetched answer cannot be drawn into the wrong ingredient.
+- **A selection is optimistic and never silent.** The row shows the product and
+  the panel closes at once; a `.spinner` says the save is still going; a
+  failure puts the row back exactly as the server still has it and shows the
+  refusal with `Yritä uudelleen`. A row that is saving ignores a second choice.
+- **One spinner for everything asynchronous** — the saving row, the send button
+  (which is disabled for the duration, so the same send cannot be started
+  twice), and the S-ostoslista read.
+- **The current S-ostoslista is a panel that loads after the screen.** It never
+  delays the household's own list, and a failed read is one line and a retry
+  inside that panel. A successful send refreshes it.
+- **A finished send pushes the phone's list.** `sendShoppingListForm` calls
+  `SOstoslistaClient::sync` once, after the last item has been accepted — never
+  per item and never after a partial send, because there is nothing to push
+  half of. The service syncs on its own schedule anyway, so a failed push is
+  not a failed send: the screen keeps its `N ainesta lähetettiin` notice and
+  adds a line saying the phone will catch up at the next sweep, and the JSON
+  answer carries the same fact as `synced: false` so the island can say it too.
+
+The island follows the same discipline as the other three: ES5, no regular
+expressions, feature-detected (it does nothing at all without `XMLHttpRequest`,
+`JSON` or `addEventListener`), and it builds every node with `createElement`
+and `createTextNode` so a product name from the shop can never become markup.
+
 ## The cupboard
 
 This pull request proposes `GET /kaappi` (`src/pantry-screens.ts`) and a
@@ -199,7 +252,7 @@ wrap normally and make the page taller when they need to, and the visible
 
 ### Server-rendered inline script islands
 
-Three screens ship a hand-written `<script>` rather than a build step, and all
+Four screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
 
@@ -215,6 +268,8 @@ transpilation:
   request that resolves after the tab was already backgrounded, and
   `pagehide`/`pageshow` handlers stop and reacquire the lock across Safari's
   back-forward cache.
+- `src/shopping-screens.ts::SHOPPING_ISLAND` — proposed for issue #159, see
+  the shopping list above.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
   whenever the week on screen is the current one, empty or not — seven day
   headings and fourteen add links already outrun a phone, and an empty week is
@@ -224,7 +279,7 @@ transpilation:
   position the browser restored, and a browser without `scrollIntoView` simply
   opens at Monday as before.
 
-All three islands are written in ES5 (`var`, no arrow functions, no regular
+All four islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.
 
 ## Browser compatibility

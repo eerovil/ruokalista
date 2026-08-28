@@ -108,6 +108,19 @@ export class SOstoslistaClient {
     return readItem(payload, "add response");
   }
 
+  /**
+   * Push the service's own copy to the phone's S-ostoslista now.
+   *
+   * The service syncs on its own schedule, so nothing here depends on this
+   * call: what it buys is that a list sent from Ruokalista shows up on the
+   * phone straight away instead of at the next sweep. The response body is not
+   * read — the service says what it did in its own shape, and there is nothing
+   * this app would do differently with it.
+   */
+  async sync(): Promise<void> {
+    await this.#request("sync", { method: "POST" }, false);
+  }
+
   /** Remove every copy added under this EAN or note key. */
   async remove(key: SOstoslistaKey): Promise<string[]> {
     const clean = cleanKey(key);
@@ -121,7 +134,16 @@ export class SOstoslistaClient {
     return record["deleted"] as string[];
   }
 
-  async #request(path: string, init: RequestInit = {}): Promise<unknown> {
+  /**
+   * `expectJson` is false for the one call whose body nobody reads. A service
+   * that answers `204 No Content` to it is answering correctly, and demanding
+   * JSON there would turn a healthy sync into a refusal.
+   */
+  async #request(
+    path: string,
+    init: RequestInit = {},
+    expectJson = true,
+  ): Promise<unknown> {
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${this.#apiToken}`);
     if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -139,13 +161,17 @@ export class SOstoslistaClient {
     }
 
     let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new SOstoslistaError(
-        `S-ostoslista returned invalid JSON (${response.status}).`,
-        response.status,
-      );
+    if (expectJson) {
+      try {
+        payload = await response.json();
+      } catch {
+        throw new SOstoslistaError(
+          `S-ostoslista returned invalid JSON (${response.status}).`,
+          response.status,
+        );
+      }
+    } else {
+      payload = await readOptionalJson(response);
     }
     if (!response.ok) {
       const record = isRecord(payload) ? payload : null;
@@ -167,6 +193,26 @@ export class SOstoslistaClient {
  */
 export function sProductImageUrl(ean: string): string {
   return `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/${encodeURIComponent(ean)}_kuva1.jpg`;
+}
+
+/**
+ * A body that may not be there. It is still read, because a refusal's own
+ * `error` field is the one line that says why the call failed, and losing it
+ * would leave a log entry saying only that something returned 500.
+ */
+async function readOptionalJson(response: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return null;
+  }
+  if (text.trim() === "") return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function cleanKey(key: SOstoslistaKey): Record<string, string> {

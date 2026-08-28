@@ -80,6 +80,8 @@ import {
 import { pantryRemoveForm, pantryScreen } from "./pantry-screens.ts";
 import { Router, type RouteContext } from "./router.ts";
 import {
+  currentListJson,
+  productSearchJson,
   productSearchScreen,
   saveProductForm,
   sendShoppingListForm,
@@ -138,6 +140,8 @@ const router = new Router()
   .post("/ostoslista/laheta", requireMemberScreen(sendShoppingListForm))
   .get("/ostoslista/tuote", requireMemberScreen(productSearchScreen))
   .post("/ostoslista/tuote", requireMemberScreen(saveProductForm))
+  .get("/ostoslista/haku", requireMember(productSearchJson))
+  .get("/ostoslista/s-lista", requireMember(currentListJson))
   .get("/kaappi", requireMemberScreen(pantryScreen))
   .post("/kaappi/:id/poista", requireMemberScreen(pantryRemoveForm))
   .get("/api/menu", requireMember(apiMenu))

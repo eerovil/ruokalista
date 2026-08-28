@@ -69,6 +69,29 @@ test("add supports a concrete EAN and a free-text note", async () => {
   assert.equal(calls[0]?.init?.method, "POST");
 });
 
+test("sync posts once and accepts an answer with no body at all", async () => {
+  const api = client([new Response(null, { status: 204 })]);
+  await api.sync();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, "https://private.example/api/sync");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.equal(
+    new Headers(calls[0]?.init?.headers).get("authorization"),
+    "Bearer secret-token",
+  );
+});
+
+test("a refused sync still says why", async () => {
+  const api = client([json({ error: "no session" }, 503)]);
+  await assert.rejects(
+    () => api.sync(),
+    (error: unknown) =>
+      error instanceof SOstoslistaError &&
+      error.status === 503 &&
+      /no session/.test(error.message),
+  );
+});
+
 test("remove uses the same encoded key", async () => {
   const api = client([json({ deleted: ["one", "two"] })]);
   assert.deepEqual(await api.remove({ note: "suola & pippuri" }), ["one", "two"]);
