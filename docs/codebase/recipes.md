@@ -36,6 +36,34 @@ See `docs/adr/0002-a-part-is-a-recipe.md`, including what it deliberately does
 not decide — scaling parts with the parent is still open (parts are shown
 exactly as written, unscaled, alongside a scaled parent).
 
+### A dish can own nothing but its parts (issue #184)
+
+Proposed here. Once the parts are recipe rows of their own, a dish written
+entirely in named parts keeps no ingredient line at all — only a title, its
+method and its parts. `validateRecipe` (`src/recipe-save.ts`) refuses a recipe
+with no lines, which left that dish openable in the editor and impossible to
+save: *Reseptissä pitää olla ainakin yksi aines.* This change gives the
+function a `hasParts` option and the editor passes `recipe.parts.length > 0`,
+so the rule asks the question it meant to ask — is this recipe empty? — rather
+than counting only one of the two places a recipe's content can be. The
+refusal's wording moves with it: *Reseptissä pitää olla ainakin yksi aines tai
+osa.*
+
+The option is off by default, which is what keeps the import path honest. A
+draft's `lines` carries every part's lines along with the dish's, because the
+parts do not exist yet and a `section` name is all that marks them — so an
+empty array there really is an empty recipe. `saveRecipe` and
+`src/batch-intake.ts` therefore refuse exactly what they refused before, and
+only the editor waives the rule, only for a recipe whose parts it has already
+loaded. Passing the answer in rather than counting the parts inside
+`replaceRecipe` avoids a second query for something the editor knows.
+
+The editor's **Tallenna muutokset** moves into a sticky bar in the same change
+(`.editor-actions` in `src/html.ts`), because the editor is long enough that on
+a phone the button sat several screens below whatever was being changed. It is
+CSS only — `position: sticky` clear of the fixed tab strip — so a browser
+without it gets today's behaviour and nothing on this path needs a script.
+
 ### Cooking order has a phase (issue #58, decision #50, ADR-0003)
 
 Parent-level content on a multipart dish — a line or step that belongs to the
