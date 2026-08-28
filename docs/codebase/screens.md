@@ -250,9 +250,32 @@ viewport. The columns have no fixed height and do not hide overflow. Long steps
 wrap normally and make the page taller when they need to, and the visible
 `Näytä kaikki määrät` control remains after the final preparation block.
 
+## Casting a recipe to a TV
+
+Issue #176 proposes an optional Google Cast action on the cooking view. When a
+`CAST_APP_ID` is configured and Google's sender SDK reports support, its native
+Cast launcher appears under the title. Starting or resuming a session sends a
+versioned, display-only recipe message: title, formatted multiplier, scaled
+ingredient strings and instructions. Navigating to another recipe or multiplier
+while the origin-scoped Cast session remains active sends that newly rendered
+state as soon as the page joins the session.
+
+`GET /cast/receiver` is deliberately public because a Chromecast has none of
+the member's session cookie. It is also deliberately data-free: it reads no D1
+row and accepts no recipe id. `src/cast.ts::castRecipe` removes household,
+source, edit, image and product data before the sender passes the message over
+`CAST_NAMESPACE`; the receiver validates that shape and builds text nodes rather
+than markup from it.
+
+The receiver is a separate 16:9 screen rather than the phone shell stretched
+wide. Ingredients and preparation stay in adjacent columns under the title and
+multiplier. `src/cast.ts::CAST_RECEIVER_ISLAND` reduces a shared type scale
+until an ordinary recipe fits the available height, while the viewport itself
+never becomes a scrolling TV page.
+
 ### Server-rendered inline script islands
 
-Four screens ship a hand-written `<script>` rather than a build step, and all
+Six screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
 
@@ -278,8 +301,12 @@ transpilation:
   already moving. It bails out on an explicit `#` anchor and on a scroll
   position the browser restored, and a browser without `scrollIntoView` simply
   opens at Monday as before.
+- `src/cast.ts::CAST_SENDER_ISLAND` and `CAST_RECEIVER_ISLAND` — proposed for
+  issue #176. The sender feature-detects Google's framework and keeps the action
+  hidden when unavailable; the receiver validates custom messages and writes
+  their strings with `textContent`.
 
-All four islands are written in ES5 (`var`, no arrow functions, no regular
+All six islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.
 
 ## Browser compatibility

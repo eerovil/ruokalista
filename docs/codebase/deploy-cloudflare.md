@@ -48,6 +48,28 @@ actually deploying — it prints the bindings table (e.g.
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.
 
+## Google Cast receiver
+
+Issue #176 proposes hosting a custom Web Receiver at
+`https://ruokalista.eerovil.workers.dev/cast/receiver`. Before that change can
+be used on real devices, register that exact HTTPS URL as a Custom Receiver in
+the Google Cast SDK Developer Console, register a test device while the app is
+unpublished, and store the resulting application id in the Worker:
+
+    ./scripts/node.sh --cloudflare npx wrangler secret put CAST_APP_ID
+
+The application id is an identifier rather than a credential; a Worker secret
+is used here so it can be configured without baking a not-yet-created id into
+`wrangler.jsonc`. Leaving it unset keeps the Cast action absent and avoids
+loading Google's sender SDK. For a local device test, pass the registered id to
+the containerized `wrangler dev` command as `--var CAST_APP_ID:<id>`; the
+harmless `test-cast-app` value used by Playwright is served only to its stubbed
+SDK and cannot launch a device.
+
+Registration and publishing happen in Google's console, outside this repo.
+Publishing makes the receiver available to unregistered Cast devices, so it is
+a release step rather than part of this pull request.
+
 ## The shopping-list service
 
 `SOSTOSLISTA_API_TOKEN` is the bearer secret of **s-ostoslista-worker**

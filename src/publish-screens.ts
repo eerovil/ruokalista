@@ -109,7 +109,14 @@ export async function preferredMultiplierForm(
     }
   } catch (error) {
     if (!(error instanceof PreferenceRefused)) throw error;
-    return renderRecipe(env.DB, member, recipe, DEFAULT_MULTIPLIER, error.message);
+    return renderRecipe(
+      env.DB,
+      member,
+      recipe,
+      DEFAULT_MULTIPLIER,
+      error.message,
+      env.CAST_APP_ID,
+    );
   }
 
   return seeOther(`/recipes/${recipe.id}`);
@@ -174,7 +181,14 @@ async function refuse(
       Number(back.slice("/recipes/".length)),
     );
     if (recipe !== null) {
-      return renderRecipe(env.DB, member, recipe, DEFAULT_MULTIPLIER, message);
+      return renderRecipe(
+        env.DB,
+        member,
+        recipe,
+        DEFAULT_MULTIPLIER,
+        message,
+        env.CAST_APP_ID,
+      );
     }
   }
 

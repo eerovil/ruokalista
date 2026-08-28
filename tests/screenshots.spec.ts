@@ -51,6 +51,50 @@ test("sign-in", async ({ page }) => {
   await capture(page, { path: `${SHOTS}/01-signin.png`, fullPage: true });
 });
 
+test("Cast receiver", async ({ page }) => {
+  await page.route(
+    "https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js",
+    async (route) =>
+      route.fulfill({ contentType: "application/javascript", body: "" }),
+  );
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/cast/receiver");
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __ruokalistaCastReceive(recipe: unknown): void;
+      }
+    ).__ruokalistaCastReceive({
+        version: 1,
+        title: "Kaalilaatikko",
+        multiplier: "1,5×",
+        ingredients: [{
+          title: "",
+          items: [
+            "¾ dl öljy",
+            "1½–2¼ l vesi",
+            "¾ kpl (750 g) valkokaali",
+            "sitruunaruoho",
+          ],
+        }],
+        instructions: [{
+          title: "",
+          items: [
+            "Kuullota kaali öljyssä.",
+            "Lisää vesi ja sitruunaruoho.",
+            "Hauduta kaalilaatikko kypsäksi.",
+          ],
+        }],
+      });
+  });
+  await expect(page.getByRole("heading", { name: "Kaalilaatikko" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ainekset" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Valmistus" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollHeight))
+    .toBeLessThanOrEqual(1080);
+  await capture(page, { path: `${SHOTS}/63-cast-receiver.png` });
+});
+
 test("intake requires JavaScript", async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   await context.addCookies([sessionCookie(1)]);
