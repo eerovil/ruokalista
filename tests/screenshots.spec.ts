@@ -872,6 +872,20 @@ test.describe("signed in", () => {
     );
     await capture(page, { path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
 
+    // An unmapped row's actions. `Lisää toinen pakkauskoko` holds its place
+    // disabled rather than appearing the moment a product is chosen — arriving
+    // mid-row, it used to shove every row below it down the screen (#200).
+    const water = page.locator(".shopping-item", { hasText: "vesi" }).first();
+    await water.locator("summary").click();
+    await expect(
+      water.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
+    ).toBeDisabled();
+    await capture(page, {
+      path: `${SHOTS}/83-shopping-unmapped-row.png`,
+      fullPage: true,
+    });
+    await water.locator("summary").click();
+
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
     await milk.getByRole("button", { name: "Valitse tuote" }).click();

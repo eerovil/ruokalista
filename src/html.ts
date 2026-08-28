@@ -722,6 +722,15 @@ const STYLES = `
     flex: none; object-fit: contain; background: #fff;
     border: 1px solid var(--edge); border-radius: .35rem;
   }
+  /* The sizes have to be said here, not left to the width and height
+     attributes: the shell's own img rule sets height to auto, which outranks the height
+     attribute, so a tall carton photograph was drawing itself several hundred
+     pixels high, and object-fit had no box to fit it inside. That
+     is what made a chosen product tower over the row it replaced (#200), and
+     it is why .shopping-thumb img — the one that always said its size in CSS
+     — was the only picture on this screen behaving. */
+  .s-shopping-product-one img { width: 2.5rem; height: 2.5rem; }
+  .s-product-results img { width: 5rem; height: 5rem; }
   .s-shopping-product-copy, .s-product-result-copy {
     display: flex; flex: 1 1 12rem; flex-direction: column; min-width: 0;
     overflow-wrap: break-word;
@@ -737,6 +746,13 @@ const STYLES = `
      for — "Kotimaista rasvaton ma…" is not a carton you can find (#200). */
   .s-shopping-product-body {
     display: flex; flex: 1 1 100%; min-width: 0; min-height: 2.6rem;
+  }
+  /* Nothing to add a second package size to yet. The button keeps its place
+     rather than appearing the moment a product is chosen, so the rows below it
+     never move (#200) — which only works if it also reads as unavailable. */
+  .s-shopping-product button[disabled] {
+    color: var(--muted); cursor: default;
+    background: transparent; border-style: dashed;
   }
 
   /* The package sizes an ingredient knows beyond the one it is buying. Only
@@ -779,8 +795,12 @@ const STYLES = `
   /* The row's one busy line. The server draws it on every mapped-capable row
      and the island only fills and empties it, so a save starting or finishing
      never changes a row's height (#200) — hence the reserved min-height. */
-  .s-status { flex-basis: 100%; min-height: 1.05rem; margin: 0;
-    color: var(--muted); font-size: .85rem; }
+  /* The reserved height and the filled height have to be the same number, or
+     the slot defeats itself: at the shell's 1.55 line-height a .85rem line is
+     taller than a bare min-height, so starting a save would still grow the
+     row. Both are pinned to the same value instead. */
+  .s-status { flex-basis: 100%; min-height: 1.5rem; line-height: 1.5rem;
+    margin: 0; color: var(--muted); font-size: .85rem; }
 
   /* A refusal is a fixed strip above the tab bar, not a paragraph pushed into
      the list. It is the one place on this screen that says a save failed, and

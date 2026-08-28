@@ -493,12 +493,18 @@ test("a choice returns to the list at once and saves behind it", async ({
  * #200: the whole point of the picker being a fixed sheet rather than a panel
  * grown inside the row.
  *
- * The assertion is deliberately about `window.scrollY` and not about how the
- * screen looks: what made this unusable on a phone was that opening the picker,
- * closing it, choosing a product and having the save land each moved the page
- * under the member's thumb. So the test scrolls to a row well down the list,
- * writes the position down, walks the whole flow, and demands the number be
- * exactly the same at every step.
+ * What made this unusable on a phone was that opening the picker, closing it,
+ * choosing a product and having the save land each moved the page under the
+ * member's thumb. So the test scrolls to a row well down the list, writes the
+ * position down, walks the whole flow, and demands nothing move.
+ *
+ * It watches two different things, because either one alone can pass while the
+ * screen is still misbehaving. `window.scrollY` catches the page being yanked
+ * somewhere else, but it holds perfectly still while a row grows and shoves
+ * every row under it down the screen. So the edited row's own height and the
+ * next row's top are checked too — including at the moment the optimistic draw
+ * is on screen and the save has not answered yet, which is exactly where an
+ * optimistic redraw that does not match the server's shape shows up.
  */
 test("choosing a product never moves the page under the member", async ({
   page,
@@ -509,16 +515,28 @@ test("choosing a product never moves the page under the member", async ({
 
   // Far enough down that a jump to the top would be unmistakable, and on a row
   // that is really being worked on rather than the first one on the screen.
+  // Opened, because the product line is inside the row's own disclosure and a
+  // closed row would hide the growth this is looking for.
+  const names = await buyRowNames(page);
   const milk = row(page, "maito");
+  const following = page.locator(".shopping-list > li").nth(names.indexOf("maito") + 1);
   await milk.locator("summary").click();
   await milk.evaluate((node) => {
     node.scrollIntoView(true);
   });
   const scrolled = await page.evaluate(() => window.scrollY);
   expect(scrolled).toBeGreaterThan(0);
+  const height = (await milk.boundingBox())?.height;
+  const nextTop = (await following.boundingBox())?.y;
+  expect(height).toBeGreaterThan(0);
+  expect(nextTop).toBeGreaterThan(0);
 
   const still = async (what: string) => {
-    expect(await page.evaluate(() => window.scrollY), what).toBe(scrolled);
+    expect(await page.evaluate(() => window.scrollY), `${what}: scroll`).toBe(
+      scrolled,
+    );
+    expect((await milk.boundingBox())?.height, `${what}: row height`).toBe(height);
+    expect((await following.boundingBox())?.y, `${what}: next row`).toBe(nextTop);
   };
 
   await openPanel(page, milk);

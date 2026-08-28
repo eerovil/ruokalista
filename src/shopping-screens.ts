@@ -720,7 +720,7 @@ function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
 
 const rawOpen = raw("open");
 const rawChecked = raw("checked");
-const rawHidden = raw("hidden");
+const rawDisabled = raw("disabled");
 
 /**
  * The list in two parts: what to buy, then what the cupboard already covers.
@@ -993,30 +993,32 @@ function scopeSource(item: ShoppingItem): Raw {
  * second packet. Both end up in the same panel; only what the save does with
  * the answer differs.
  *
- * There is nothing to add a second size *to* until something is chosen, so that
- * button ships hidden on an unmapped row. The island unhides it the moment a
- * choice is drawn, which is what keeps an optimistic row offering the same two
- * things a reloaded one does.
+ * There is nothing to add a second size *to* until something is chosen, so on an
+ * unmapped row that button is **disabled rather than hidden** (#200). Hidden, it
+ * appeared the instant a product was drawn — and a whole tap target arriving
+ * mid-row shoved every row under it down the screen at exactly the moment the
+ * member had just tapped something. Disabled it holds its own space, says
+ * plainly that there is nothing to add a size to yet, and the island only has to
+ * enable it.
  */
 function openForm(
   item: ShoppingItem,
   selectedIds: Set<number>,
   mode: "korvaa" | "lisaa",
   label: string,
-  hidden = false,
+  disabled = false,
 ): Raw {
   return html`<form
     method="get"
     action="/ostoslista/tuote"
     class="inline s-product-open"
     data-tapa="${mode}"
-    ${hidden ? rawHidden : ""}
   >
     <input type="hidden" name="rivi" value="${item.key}" />
     <input type="hidden" name="tapa" value="${mode}" />
     <input type="hidden" name="haku" value="${item.name}" />
     ${selectionFields(selectedIds)}
-    <button type="submit">${label}</button>
+    <button type="submit" ${disabled ? rawDisabled : ""}>${label}</button>
   </form>`;
 }
 
@@ -1820,7 +1822,7 @@ const SHOPPING_ISLAND = `
       thumb: row.thumb ? row.thumb.innerHTML : null,
       blockClass: row.block.className,
       openLabel: openerLabel(row),
-      hiddenOpeners: openerVisibility(row)
+      disabledOpeners: openerAvailability(row)
     };
     showProduct(row, product);
     persist(row, query, product, extra, before);
@@ -1853,12 +1855,17 @@ const SHOPPING_ISLAND = `
     );
   }
 
-  function openerVisibility(row) {
-    var hidden = [];
+  function openerButton(form) {
+    return form.querySelector('button');
+  }
+
+  function openerAvailability(row) {
+    var off = [];
     for (var index = 0; index < row.openers.length; index += 1) {
-      hidden.push(row.openers[index].hidden);
+      var button = openerButton(row.openers[index]);
+      off.push(button ? button.disabled : false);
     }
-    return hidden;
+    return off;
   }
 
   function openerLabel(row) {
@@ -1878,7 +1885,8 @@ const SHOPPING_ISLAND = `
     if (row.thumb && before.thumb !== null) row.thumb.innerHTML = before.thumb;
     row.block.className = before.blockClass;
     for (var index = 0; index < row.openers.length; index += 1) {
-      row.openers[index].hidden = before.hiddenOpeners[index];
+      var opener = openerButton(row.openers[index]);
+      if (opener) opener.disabled = before.disabledOpeners[index];
     }
     var button = row.opener.querySelector('button');
     if (button && before.openLabel !== null) button.innerHTML = before.openLabel;
@@ -1929,16 +1937,34 @@ const SHOPPING_ISLAND = `
     return false;
   }
 
+  /**
+   * Draw a chosen product into the row, in exactly the shape the server draws
+   * in productSummary — same wrapper, same 40 px.
+   *
+   * "Exactly" is load-bearing rather than tidiness. This runs the instant a
+   * member taps Valitse, and a shape of its own is a shape the row's own CSS
+   * was not sized for: the 64 px picture this used to build grew the row back
+   * to the layout #200 exists to get rid of, at the one moment the member's
+   * thumb was on the screen.
+   */
   function showProduct(row, product) {
     row.block.className = 's-shopping-product is-mapped';
 
+    // Which dish this row is pinned to is a fact about the row, not about the
+    // product, so it survives a change of product — and keeping it is also
+    // what keeps a pinned row the height it was.
+    var scope = row.body.querySelector('.s-product-scope');
+
     clear(row.body);
     var summary = el('div', 's-shopping-product-summary');
-    summary.appendChild(productImage(product.imageUrl, 64));
+    if (scope) summary.appendChild(scope);
+    var one = el('span', 's-shopping-product-one');
+    one.appendChild(productImage(product.imageUrl, 40));
     var copy = el('span', 's-shopping-product-copy');
     copy.appendChild(el('strong', '', product.name));
     copy.appendChild(el('span', 'meta', 'EAN ' + product.ean));
-    summary.appendChild(copy);
+    one.appendChild(copy);
+    summary.appendChild(one);
     row.body.appendChild(summary);
 
     if (row.thumb) {
@@ -1947,9 +1973,12 @@ const SHOPPING_ISLAND = `
     }
 
     setOpenerLabel(row, 'Vaihda tuote');
-    // The row has something to add a second size to now.
+    // The row has something to add a second size to now. Enabling rather than
+    // unhiding, so the button was already taking up its own space and the rows
+    // below do not move (#200).
     for (var which = 0; which < row.openers.length; which += 1) {
-      row.openers[which].hidden = false;
+      var opener = openerButton(row.openers[which]);
+      if (opener) opener.disabled = false;
     }
   }
 

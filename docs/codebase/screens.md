@@ -210,7 +210,22 @@ restored.
   rather than 64, the name and EAN held to one line each, and a reserved
   `min-height`, so swapping "Teksti" for a chosen product moves nothing. It
   takes the full width with its buttons underneath, because squeezed beside them
-  the name ellipsised away the very thing somebody is shopping for.
+  the name ellipsised away the very thing somebody is shopping for. The island's
+  `showProduct` builds that shape **exactly** — same `.s-shopping-product-one`
+  wrapper, same 40 px — because it runs the instant a member taps `Valitse`, and
+  a shape of its own is a shape the row's CSS was not sized for.
+- **The product pictures say their size in CSS, not only in attributes.** The
+  shell's own `img` rule sets `height: auto`, which outranks an `img` element's
+  `height` attribute — so a tall carton photograph drew itself several hundred
+  pixels high and `object-fit: contain` never got a box to fit it inside. The
+  `.shopping-thumb` picture always stated its size in CSS, which is why it was
+  the only one on this screen behaving. `.s-shopping-product-one img` and
+  `.s-product-results img` now state theirs too.
+- **`Lisää toinen pakkauskoko` is disabled on an unmapped row, not hidden.**
+  There is still nothing to add a second size to until a product is chosen, but
+  hidden it *appeared* the moment one was — a whole tap target arriving mid-row,
+  shoving every row under it down the screen at the exact moment the member had
+  tapped something. Disabled it holds its own space and says plainly why.
 - **A row's busy line is reserved, not inserted.** The server ships an empty
   `.s-status` on every mapped-capable row and the island only fills and empties
   it.
@@ -233,10 +248,19 @@ restored.
   anchor before reloading rather than drawing a guess.
 
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
-row deep in the list, writes `window.scrollY` down, and demands the same number
-after opening the picker, searching again, closing it, drawing the optimistic
-choice and having the save land — plus two more that assert the reload and the
-cupboard button come back to the row they were pressed on.
+row deep in the list and demands nothing move after opening the picker,
+searching again, closing it, drawing the optimistic choice and having the save
+land — plus two more that assert the reload and the cupboard button come back to
+the row they were pressed on.
+
+It watches two different things on purpose, because either alone passes while
+the screen still misbehaves. `window.scrollY` catches the page being yanked
+somewhere else, but holds perfectly still while a row grows and shoves every row
+under it down; so the edited row's own height and the next row's top are checked
+too, including while the optimistic draw is on screen and the save has not
+answered. That second pair is what a redraw not matching the server's shape
+shows up in, and it is the assertion that catches the 64 px picture, the missing
+wrapper and the tap target appearing mid-row.
 
 ## The cupboard
 
