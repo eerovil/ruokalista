@@ -177,6 +177,9 @@ function fakeDatabase(): {
   const tableRows: Record<string, Record<string, unknown>[]> = {
     household: [{ id: 1, name: "Koti" }, { id: 2, name: "Naapuri" }],
     member: [{ id: 1, household_id: 1, display_name: "Eero" }],
+    member_invitation: [
+      { id: 1, household_id: 1, email: "uusi@example.com", created_by: 1 },
+    ],
     ingredient: [{ id: 1, name: "öljy" }],
     recipe: [
       {

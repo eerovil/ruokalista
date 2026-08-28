@@ -59,8 +59,9 @@ export async function findMemberById(
  * Matched on Google's stable account id, never on email — an email can be
  * reassigned, and the spec is explicit that it is shown but never used to match.
  *
- * No row means no entry. There is no signup path anywhere in the app, so this
- * returning null is the wall a stranger hits, not a reason to create anything.
+ * No row still means no entry by itself. The Google callback may separately
+ * claim an admin-created verified-email invitation (#187), then repeats this
+ * stable-sub lookup; this function never falls back to matching email.
  */
 export async function findMemberByGoogleSub(
   db: D1Database,

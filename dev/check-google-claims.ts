@@ -28,6 +28,8 @@ const valid = {
   sub: "1234567890",
   name: "Eero",
   email: "eero@example.com",
+  email_verified: true,
+  hd: "example.com",
 };
 
 test("accepts a token issued to this application", () => {
@@ -36,6 +38,8 @@ test("accepts a token issued to this application", () => {
     sub: "1234567890",
     name: "Eero",
     email: "eero@example.com",
+    emailVerified: true,
+    emailAuthoritative: true,
   });
 });
 
@@ -79,5 +83,36 @@ test("falls back to a placeholder name, but never invents a subject", () => {
     sub: "1234567890",
     name: "Tuntematon",
     email: null,
+    emailVerified: true,
+    emailAuthoritative: false,
   });
+});
+
+test("carries Google's email verification separately from token validity", () => {
+  assert.equal(
+    readIdentity(idToken({ ...valid, email_verified: false }), CLIENT_ID, NOW)
+      ?.emailVerified,
+    false,
+  );
+  assert.equal(
+    readIdentity(idToken({ ...valid, email_verified: undefined }), CLIENT_ID, NOW)
+      ?.emailVerified,
+    false,
+  );
+});
+
+test("only Gmail and Workspace claims are authoritative for invitation email", () => {
+  assert.equal(
+    readIdentity(idToken({ ...valid, hd: undefined }), CLIENT_ID, NOW)
+      ?.emailAuthoritative,
+    false,
+  );
+  assert.equal(
+    readIdentity(
+      idToken({ ...valid, email: "eero@gmail.com", hd: undefined }),
+      CLIENT_ID,
+      NOW,
+    )?.emailAuthoritative,
+    true,
+  );
 });

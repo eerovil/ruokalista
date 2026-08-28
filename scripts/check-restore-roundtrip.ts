@@ -70,6 +70,14 @@ try {
   if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha") === undefined) {
     throw new Error("round-trip did not preserve household/member/ingredient relationships");
   }
+  const invitation = target.member_invitation[0];
+  if (
+    invitation?.household_id !== 2 ||
+    invitation.email !== "odottaa@example.com" ||
+    invitation.created_by !== 3
+  ) {
+    throw new Error("round-trip did not preserve the pending member invitation");
+  }
   const share = target.recipe_share[0];
   if (share?.recipe_id !== 1 || share.household_id !== 2 || share.shared_by !== 1) {
     throw new Error("round-trip did not preserve the selected recipe recipient");

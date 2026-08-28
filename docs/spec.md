@@ -12,8 +12,9 @@ line, ingredient, unit, yield.
 ## Shape of the thing
 
 A single Cloudflare Worker in TypeScript, serving both the HTML app and its JSON
-API, over one D1 database. Google sign-in is the gate. One household exists;
-its row and its members' rows are inserted by hand.
+API, over one D1 database. Google sign-in is the gate. Household administration
+has since moved from hand-written rows to the admin screens; #187 proposes the
+email-only member enrollment described in `docs/codebase/auth.md`.
 
 Deferred out of v1, on purpose:
 
@@ -175,9 +176,11 @@ Notes on the choices, since a schema is where a decision quietly gets reversed:
 ## Sign-in
 
 Google OAuth, authorization-code flow, handled in the Worker. On callback,
-verify the id token and look up `member` by `google_sub`. **No row means no
-entry** — the screen says the household has to add you, and nothing is created.
-There is no signup path anywhere in the app.
+verify the id token and look up `member` by `google_sub`. Existing members never
+fall back to email matching. #187 proposes one explicit enrollment path: an
+unknown `sub` may consume an admin-created invitation for the same verified
+Google email, creating its permanent member row before the stable-`sub` lookup
+is repeated. Every other unknown account is refused.
 
 The session is a signed cookie (HttpOnly, Secure, SameSite=Lax) holding
 `member_id` and an expiry, HMAC'd with a Worker secret. No session table: with
