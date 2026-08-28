@@ -919,6 +919,7 @@ const SHOPPING_ISLAND = `
 
   var rows = [];
   var sending = false;
+  var sendAfterSaves = null;
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -1244,6 +1245,7 @@ const SHOPPING_ISLAND = `
         // An ingredient that was going as a note is going as a product now, and
         // the line above the send button says how many of each there are.
         if (before.blockClass.indexOf('is-note') !== -1) countProduct();
+        saveSettled(true);
         return;
       }
       restore(row, before);
@@ -1255,7 +1257,25 @@ const SHOPPING_ISLAND = `
           persist(row, query, product, before);
         }
       );
+      saveSettled(false);
     });
+  }
+
+  /* A queued send starts only when every optimistic row agrees with D1. */
+  function saveSettled(ok) {
+    if (!sendAfterSaves) return;
+    if (!ok) sendAfterSaves.failed = true;
+    if (savesPending()) return;
+    var after = sendAfterSaves;
+    sendAfterSaves = null;
+    after.done(!after.failed);
+  }
+
+  function savesPending() {
+    for (var index = 0; index < rows.length; index += 1) {
+      if (rows[index].saving) return true;
+    }
+    return false;
   }
 
   function showProduct(row, product) {
@@ -1344,40 +1364,68 @@ const SHOPPING_ISLAND = `
       sending = true;
       var label = button.innerHTML;
       button.disabled = true;
-      busy(button, 'Lähetetään…');
       note(null, null);
-      request(
-        'POST',
-        '/ostoslista/laheta',
-        fieldsOf(form, { muoto: 'json' }, null),
-        function (ok, payload) {
-          sending = false;
-          button.disabled = false;
-          button.innerHTML = label;
-          if (ok && payload && typeof payload.sent === 'number') {
-            note(
-              'shopping-sent',
-              payload.sent + ' ainesta lähetettiin S-ostoslistaan.'
-            );
-            // The items are on the list either way; this only says whether the
-            // phone was told about them now or will be at the next sweep.
-            if (payload.synced === false) {
+
+      function releaseSend() {
+        sending = false;
+        button.disabled = false;
+        button.innerHTML = label;
+      }
+
+      function sendNow() {
+        busy(button, 'Lähetetään…');
+        request(
+          'POST',
+          '/ostoslista/laheta',
+          fieldsOf(form, { muoto: 'json' }, null),
+          function (ok, payload) {
+            releaseSend();
+            if (ok && payload && typeof payload.sent === 'number') {
               note(
-                'refused',
-                payload.warning ||
-                  'Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä.'
+                'shopping-sent',
+                payload.sent + ' ainesta lähetettiin S-ostoslistaan.'
               );
+              // The items are on the list either way; this only says whether the
+              // phone was told about them now or will be at the next sweep.
+              if (payload.synced === false) {
+                note(
+                  'refused',
+                  payload.warning ||
+                    'Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä.'
+                );
+              }
+              loadCurrent();
+              return;
             }
-            loadCurrent();
-            return;
+            note(
+              'refused',
+              (payload && payload.error) ||
+                'S-ostoslistaan ei saatu lähetettyä kaikkea.'
+            );
           }
-          note(
-            'refused',
-            (payload && payload.error) ||
-              'S-ostoslistaan ei saatu lähetettyä kaikkea.'
-          );
-        }
-      );
+        );
+      }
+
+      if (savesPending()) {
+        busy(button, 'Tallennetaan valintoja…');
+        sendAfterSaves = {
+          failed: false,
+          done: function (ready) {
+            if (ready) {
+              sendNow();
+              return;
+            }
+            releaseSend();
+            note(
+              'refused',
+              'Lähetystä ei aloitettu, koska tuotteen tallennus epäonnistui. Korjaa valinta ja yritä uudelleen.'
+            );
+          }
+        };
+        return;
+      }
+
+      sendNow();
     });
   }
 

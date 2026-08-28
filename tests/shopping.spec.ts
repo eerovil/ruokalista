@@ -468,6 +468,67 @@ test("a choice returns to the list at once and saves behind it", async ({
   );
 });
 
+test("sending waits for an optimistic product save", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/ostoslista/tuote", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await held;
+    await route.continue();
+  });
+
+  let sends = 0;
+  await page.route("**/ostoslista/laheta", async (route) => {
+    sends += 1;
+    await route.continue();
+  });
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanel(milk);
+  await milk
+    .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+    .getByRole("button", { name: "Valitse" })
+    .click();
+  await expect(milk.locator(".s-status .spinner")).toBeVisible();
+
+  const send = page.locator(".s-send-form button");
+  await send.click();
+  await expect(send).toBeDisabled();
+  await expect(send).toContainText("Tallennetaan valintoja");
+  expect(sends).toBe(0);
+
+  const sent = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && request.url().includes("/ostoslista/laheta"),
+  );
+  release();
+  await sent;
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  expect(sends).toBe(1);
+
+  const calls = await externalRequests(page);
+  expect(
+    calls.some(
+      (call) => call.path === "/items" && call.body?.["ean"] === "6415712506032",
+    ),
+  ).toBe(true);
+  expect(
+    calls.some(
+      (call) =>
+        call.path === "/items" &&
+        String(call.body?.["note"] ?? "").startsWith("maito"),
+    ),
+  ).toBe(false);
+});
+
 test("a failed background save is shown, undone, and retryable", async ({
   page,
 }) => {
@@ -475,13 +536,23 @@ test("a failed background save is shown, undone, and retryable", async ({
   await page.goto("/ostoslista");
 
   let failing = true;
+  let releaseFailure: () => void = () => {};
+  const heldFailure = new Promise<void>((resolve) => {
+    releaseFailure = resolve;
+  });
   await page.route("**/ostoslista/tuote", async (route) => {
     if (route.request().method() !== "POST" || !failing) return route.continue();
+    await heldFailure;
     await route.fulfill({
       status: 502,
       contentType: "application/json",
       body: JSON.stringify({ error: "Tuotetta ei voitu varmistaa." }),
     });
+  });
+  let sends = 0;
+  await page.route("**/ostoslista/laheta", async (route) => {
+    sends += 1;
+    await route.continue();
   });
 
   const milk = row(page, "maito");
@@ -492,10 +563,21 @@ test("a failed background save is shown, undone, and retryable", async ({
     .getByRole("button", { name: "Valitse" })
     .click();
 
+  const send = page.locator(".s-send-form button");
+  await send.click();
+  await expect(send).toContainText("Tallennetaan valintoja");
+  expect(sends).toBe(0);
+  releaseFailure();
+
   // The row goes back to what the server actually holds, and says why.
   await expect(milk.locator(".s-shopping-error")).toContainText(
     "Tuotetta ei voitu varmistaa",
   );
+  await expect(send).toBeEnabled();
+  await expect(page.locator(".s-shopping-send .refused")).toContainText(
+    "Lähetystä ei aloitettu",
+  );
+  expect(sends).toBe(0);
   await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
   await expect(milk.locator(".shopping-thumb img")).toHaveCount(0);
 
@@ -513,6 +595,7 @@ test("a failed background save is shown, undone, and retryable", async ({
   );
 
   await page.unroute("**/ostoslista/tuote");
+  await page.unroute("**/ostoslista/laheta");
   await page.reload();
   await expect(row(page, "maito").locator(".s-shopping-product-summary")).toContainText(
     "Kotimaista rasvaton maito 1 l",
