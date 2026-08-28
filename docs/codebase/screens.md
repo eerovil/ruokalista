@@ -282,6 +282,15 @@ multiplier. `src/cast.ts::CAST_RECEIVER_ISLAND` reduces a shared type scale
 until an ordinary recipe fits the available height, while the viewport itself
 never becomes a scrolling TV page.
 
+A long recipe used to reach the floor of that scale and become unreadable from
+across the kitchen — twenty ingredient lines against nine steps, on a Nest Hub
+(#180). This change proposes folding the ingredients into two narrow lists and
+giving that side the wider half of the screen before any shrinking happens, so
+the space the shorter instructions were leaving empty pays for the type size.
+It only applies when the ingredients are the taller column; when the
+instructions are the long side, widening the ingredients would take room from
+the column that did not fit. Shrinking remains the last resort.
+
 ### Server-rendered inline script islands
 
 Six screens ship a hand-written `<script>` rather than a build step, and all

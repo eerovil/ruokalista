@@ -95,6 +95,73 @@ test("Cast receiver", async ({ page }) => {
   await capture(page, { path: `${SHOTS}/63-cast-receiver.png` });
 });
 
+test("Cast receiver, long recipe", async ({ page }) => {
+  await page.route(
+    "https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js",
+    async (route) =>
+      route.fulfill({ contentType: "application/javascript", body: "" }),
+  );
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+  await page.evaluate((recipe) => {
+    (
+      window as typeof window & {
+        __ruokalistaCastReceive(recipe: unknown): void;
+      }
+    ).__ruokalistaCastReceive(recipe);
+  }, longCastRecipe());
+  await expect(page.locator(".columns")).toHaveClass(/split/);
+  await capture(page, { path: `${SHOTS}/64-cast-receiver-long.png` });
+});
+
+/** The stroganoff of #180, on the Nest Hub it was photographed on. */
+function longCastRecipe(): object {
+  return {
+    version: 1,
+    title: "Mausteinen makkarastroganoff, perunoita ja raikasta salaattia",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "1 kg peruna",
+        "½–1 tl suola",
+        "¾ kpl purjo",
+        "2–3 kpl valkosipulinkynsi",
+        "1 pkt makkara",
+        "1 rkl öljy",
+        "1 tl suola",
+        "½ tl mustapippuri",
+        "1 tl kuivattu yrttisekoitus",
+        "½–1 tl chilijauhe",
+        "1 tl paprikajauhe",
+        "3–4 rkl tomaattipyree",
+        "2 rkl vehnäjauho",
+        "5–6 dl vesi",
+        "1 pkt maustekurkku",
+        "1 prk ranskankerma",
+        "1 ruukku salaatti",
+        "1 kpl kurkku",
+        "1 rkl oliiviöljy",
+        "1 tl valkoviinietikka",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Keitä kuoritut perunat suolatussa vedessä kypsiksi ja valuta.",
+        "Suikaloi purjo, hienonna valkosipuli ja kuutioi makkara.",
+        "Ruskista purjo, valkosipuli ja makkara öljyssä.",
+        "Mausta suolalla, mustapippurilla, yrttisekoituksella, chilillä ja paprikajauheella.",
+        "Sekoita joukkoon tomaattipyree ja vehnäjauhot.",
+        "Lisää vesi vähitellen sekoittaen ja hauduta miedolla lämmöllä.",
+        "Kuutioi maustekurkut ja sekoita ne kastikkeeseen.",
+        "Valmista salaatti salaatista ja kurkusta ja mausta oliiviöljyllä sekä valkoviinietikalla.",
+        "Tarjoile stroganoff perunoiden, ranskankerman ja salaatin kanssa.",
+      ],
+    }],
+  };
+}
+
 test("intake requires JavaScript", async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   await context.addCookies([sessionCookie(1)]);

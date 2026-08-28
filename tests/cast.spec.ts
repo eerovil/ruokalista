@@ -165,9 +165,7 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
   await expect(page).toHaveURL(/\/recipes$/);
 });
 
-test("the public receiver renders a normal recipe in one 16:9 screen", async ({
-  page,
-}) => {
+async function stubReceiverSdk(page: Page): Promise<void> {
   await page.route(RECEIVER_SDK, async (route) => {
     await route.fulfill({
       contentType: "application/javascript",
@@ -183,6 +181,12 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
 } } } };`,
     });
   });
+}
+
+test("the public receiver renders a normal recipe in one 16:9 screen", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
   await page.setViewportSize({ width: 1920, height: 1080 });
   const response = await page.goto("/cast/receiver");
   expect(response?.status()).toBe(200);
@@ -215,7 +219,44 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
     recipeClientHeight: 1080,
     recipeScrollHeight: 1080,
   }));
+  await expect(page.locator(".columns")).not.toHaveClass(/split/);
+  expect(await fitScale(page)).toBe(1);
 });
+
+test("a long recipe on a small screen splits the ingredients instead of shrinking", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  // A Nest Hub, which is where the unreadable screen in #180 was photographed.
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await page.evaluate((recipe) => {
+    window.__castReceiverListener({ data: recipe });
+  }, longRecipe());
+
+  await expect(page.locator(".columns")).toHaveClass(/split/);
+  expect(await page.locator(".ingredients li").count()).toBe(20);
+
+  // The whole recipe is on screen, and it did not have to reach the floor of
+  // the type scale to get there.
+  expect(await page.evaluate(() => {
+    const recipe = document.getElementById("recipe")!;
+    return recipe.scrollHeight <= recipe.clientHeight;
+  })).toBe(true);
+  expect(await fitScale(page)).toBeGreaterThan(0.58);
+
+  // Two lists side by side, not one column running off the bottom.
+  const first = await page.locator(".ingredients li").first().boundingBox();
+  const last = await page.locator(".ingredients li").last().boundingBox();
+  expect(last!.x).toBeGreaterThan(first!.x + first!.width);
+});
+
+async function fitScale(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Number(document.getElementById("recipe")!.style.getPropertyValue("--fit"))
+  );
+}
 
 async function sentMessages(page: Page): Promise<Array<Record<string, unknown>>> {
   return page.evaluate(() =>
@@ -243,6 +284,54 @@ function normalRecipe(): object {
         "Kuullota kaali öljyssä.",
         "Lisää vesi ja sitruunaruoho.",
         "Hauduta kaalilaatikko kypsäksi.",
+      ],
+    }],
+  };
+}
+
+/** The stroganoff of #180: twenty ingredient lines against nine steps. */
+function longRecipe(): object {
+  return {
+    version: 1,
+    title: "Mausteinen makkarastroganoff, perunoita ja raikasta salaattia",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "1 kg peruna",
+        "½–1 tl suola",
+        "¾ kpl purjo",
+        "2–3 kpl valkosipulinkynsi",
+        "1 pkt makkara",
+        "1 rkl öljy",
+        "1 tl suola",
+        "½ tl mustapippuri",
+        "1 tl kuivattu yrttisekoitus",
+        "½–1 tl chilijauhe",
+        "1 tl paprikajauhe",
+        "3–4 rkl tomaattipyree",
+        "2 rkl vehnäjauho",
+        "5–6 dl vesi",
+        "1 pkt maustekurkku",
+        "1 prk ranskankerma",
+        "1 ruukku salaatti",
+        "1 kpl kurkku",
+        "1 rkl oliiviöljy",
+        "1 tl valkoviinietikka",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Keitä kuoritut perunat suolatussa vedessä kypsiksi ja valuta.",
+        "Suikaloi purjo, hienonna valkosipuli ja kuutioi makkara.",
+        "Ruskista purjo, valkosipuli ja makkara öljyssä.",
+        "Mausta suolalla, mustapippurilla, yrttisekoituksella, chilillä ja paprikajauheella.",
+        "Sekoita joukkoon tomaattipyree ja vehnäjauhot.",
+        "Lisää vesi vähitellen sekoittaen ja hauduta miedolla lämmöllä.",
+        "Kuutioi maustekurkut ja sekoita ne kastikkeeseen.",
+        "Valmista salaatti salaatista ja kurkusta ja mausta oliiviöljyllä sekä valkoviinietikalla.",
+        "Tarjoile stroganoff perunoiden, ranskankerman ja salaatin kanssa.",
       ],
     }],
   };

@@ -292,6 +292,14 @@ const CAST_RECEIVER_STYLE = `
     display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
     gap: 4vw; min-height: 0;
   }
+  /*
+    A long ingredient list is folded into two narrow lists and given the wider
+    half of the screen, because the space it needs is the space the shorter
+    instructions were leaving empty. Cheaper than shrinking the type.
+  */
+  .columns.split { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .split .ingredients ul { columns: 2; column-gap: 2.5vw; }
+  .split .ingredients li { break-inside: avoid; }
   section { min-width: 0; }
   h2 {
     margin: 0 0 .35em; color: var(--accent);
@@ -317,6 +325,7 @@ const CAST_RECEIVER_ISLAND = `
 (function () {
   var namespace = '${CAST_NAMESPACE}';
   var root = document.getElementById('recipe');
+  var columns = null;
 
   function text(tag, value, className) {
     var element = document.createElement(tag);
@@ -368,10 +377,27 @@ const CAST_RECEIVER_ISLAND = `
     return section;
   }
 
+  function overflows() {
+    return root.scrollHeight > root.clientHeight;
+  }
+
+  // Widen and fold the ingredients before touching the type size, but only
+  // when they are the long side: splitting the short column would take room
+  // away from whichever one actually did not fit.
   function fit() {
     var scale = 1;
     root.style.setProperty('--fit', String(scale));
-    while (root.scrollHeight > root.clientHeight && scale > .58) {
+    if (!columns) return;
+    columns.className = 'columns';
+
+    var ingredients = columns.firstChild;
+    var instructions = columns.lastChild;
+    if (
+      overflows() && ingredients && instructions &&
+      ingredients.scrollHeight >= instructions.scrollHeight
+    ) columns.className = 'columns split';
+
+    while (overflows() && scale > .58) {
       scale = Math.round((scale - .04) * 100) / 100;
       root.style.setProperty('--fit', String(scale));
     }
@@ -386,7 +412,7 @@ const CAST_RECEIVER_ISLAND = `
     header.appendChild(text('p', recipe.multiplier, 'multiplier'));
     root.appendChild(header);
 
-    var columns = document.createElement('div');
+    columns = document.createElement('div');
     columns.className = 'columns';
     columns.appendChild(column('Ainekset', recipe.ingredients, 'ingredients', 'ul'));
     columns.appendChild(column('Valmistus', recipe.instructions, 'instructions', 'ol'));
