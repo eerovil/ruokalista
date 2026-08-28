@@ -68,6 +68,16 @@ How many servings of that one recipe are wanted in that one slot. A bare count,
 never a list of who is eating.
 _Avoid_: Servings, yield, headcount
 
+ADR-0007 proposes replacing this unit with a **multiplier**. Until that
+proposal merges, portions remains the live term above.
+
+**Multiplier**:
+How much of a recipe one cooking makes. The recipe as written is 1×; 1,5× is
+half again of every amount in it. It is a property of the planned batch, and it
+is what every scaled amount on a screen or a shopping list comes from. Any
+positive number, though the screens offer 0,5×, 1×, 1,5× and 2× with one tap.
+_Avoid_: Factor, scale, ratio, portions
+
 ### Getting recipes in
 
 **Intake**:
@@ -107,6 +117,8 @@ recipe stated it; nothing is ever converted between units.
 _Avoid_: Measure, uom
 
 **Yield**:
-How many portions a recipe's own ingredient quantities make. Unknown unless the
-source said so, and a recipe of unknown yield cannot be scaled.
+How many portions the source page claimed a recipe's own ingredient quantities
+make. Unknown unless the source said so. Under ADR-0007 it is source metadata
+and nothing else: it is not what scaling starts from, and a recipe of unknown
+yield scales like any other.
 _Avoid_: Servings, portions (that is the count on a meal entry), makes

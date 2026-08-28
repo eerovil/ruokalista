@@ -18,7 +18,7 @@ Regenerate after a change that alters a screen:
 | `03-picker.png` | The recipe picker, reached from a slot |
 | `04-recipes.png` | The recipe list, newest first |
 | `05-recipe.png` | One recipe: every awkward line shape, source lines underneath |
-| `06-recipe-no-yield.png` | A recipe with no yield, saying it cannot be scaled |
+| `06-recipe-no-yield.png` | Proposed recipe whose source never stated a yield, scaled to 2× anyway (#165) |
 | `07-intake.png` | Intake: paste a recipe, take a photograph of a page, or choose pictures of one |
 | `08-correct.png` | Check and correct, with the new ingredient marked |
 | `09-gate-refused.png` | The approval gate refusing a save |
@@ -26,8 +26,8 @@ Regenerate after a change that alters a screen:
 | `11-editor.png` | The recipe editor: proposed compact ingredient rows and the always-visible `+ Lisää aines` |
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
-| `14-scaled.png` | The same lasagne planned for 8, amounts rounded for a kitchen |
-| `15-meal-actions.png` | Proposed whole-batch recipe, portions, continuation and removal actions |
+| `14-scaled.png` | Proposed same lasagne at 1,5×, amounts rounded for a kitchen |
+| `15-meal-actions.png` | Proposed whole-batch recipe, multiplier chips, continuation and removal actions |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
 | `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
@@ -61,7 +61,7 @@ Regenerate after a change that alters a screen:
 | `49-covered-days.png` | Proposed covered days: two recipes continuing into Tuesday, one covering both of Wednesday's meals, `katettu` in each heading and both add links still there (not full-page, on purpose) |
 | `50-recipes-select-to-publish.png` | Proposed recipe list with two recipes selected for the bulk publish action |
 | `51-recipes-published.png` | Proposed same list afterwards: what was published says so on the row, and the action reports what happened |
-| `52-recipe-owner-sharing.png` | Proposed owner's view of a published recipe: this household's own default portions, and the control to take the publication back |
+| `52-recipe-owner-sharing.png` | Proposed owner's view of a published recipe: this household's own default multiplier, and the control to take the publication back |
 | `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
 | `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
 | `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |

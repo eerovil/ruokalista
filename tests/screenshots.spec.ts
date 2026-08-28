@@ -223,6 +223,9 @@ test.describe("signed in", () => {
   test("the recipe picker", async ({ page }) => {
     await page.goto("/picker?date=2026-10-06&slot=dinner");
     await expect(page.locator(".pick li").first()).toBeVisible();
+    const multipliers = page.locator(".pick-multiplier");
+    await expect(multipliers).toHaveCount(4);
+    await expect(multipliers.first()).toHaveValue("1×");
     await page.screenshot({ path: `${SHOTS}/03-picker.png`, fullPage: true });
   });
 
@@ -250,7 +253,7 @@ test.describe("signed in", () => {
    * this meal's and not the page's.
    */
   test("ingredient amounts revealed in the method", async ({ page }) => {
-    await page.goto("/recipes/1?portions=8");
+    await page.goto("/recipes/1?multiplier=2");
     const kaali = page
       .locator(".steps .mention")
       .filter({ has: page.locator(".mention-word", { hasText: "kaali" }) });
@@ -367,7 +370,7 @@ test.describe("signed in", () => {
     await page.screenshot({ path: `${SHOTS}/25-picker-images.png`, fullPage: true });
 
     await page.request.post("/api/batches", {
-      data: { date: "2026-10-06", slot: "dinner", recipeId: 1, portions: 4 },
+      data: { date: "2026-10-06", slot: "dinner", recipeId: 1, multiplier: 1 },
     });
     await page.goto("/?week=2026-10-05");
     await expect(page.locator(".entry .recipe-image img").first()).toBeVisible();
@@ -451,9 +454,11 @@ test.describe("signed in", () => {
     });
   });
 
-  test("a recipe that cannot be scaled", async ({ page }) => {
-    await page.goto("/recipes/2");
-    await expect(page.locator(".yield")).toBeVisible();
+  test("a recipe whose source never stated a yield, scaled anyway (#165)", async ({
+    page,
+  }) => {
+    await page.goto("/recipes/2?multiplier=2");
+    await expect(page.locator(".yield")).toHaveText("2×");
     await page.screenshot({ path: `${SHOTS}/06-recipe-no-yield.png`, fullPage: true });
   });
 
@@ -593,7 +598,7 @@ test.describe("signed in", () => {
   });
 
   test("a dish scaled to a planned day", async ({ page }) => {
-    await page.goto("/recipes/3?portions=8");
+    await page.goto("/recipes/3?multiplier=1.5");
     await expect(page.locator(".part").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/14-scaled.png`, fullPage: true });
   });
@@ -659,8 +664,8 @@ test.describe("signed in", () => {
     const later = shiftedFromToday(2);
 
     const planned = [
-      await createBatch(page, soon, "dinner", 1, 8),
-      await createBatch(page, later, "dinner", 3, 6),
+      await createBatch(page, soon, "dinner", 1, 2),
+      await createBatch(page, later, "dinner", 3, 1),
     ];
 
     await page.goto("/ostoslista");
@@ -706,8 +711,8 @@ test.describe("signed in", () => {
    */
   test("the cupboard, and the list it splits in two", async ({ page }) => {
     const planned = [
-      await createBatch(page, shiftedFromToday(0), "dinner", 1, 8),
-      await createBatch(page, shiftedFromToday(2), "dinner", 3, 6),
+      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
+      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
     ];
 
     await page.goto("/ostoslista");
@@ -1002,9 +1007,9 @@ test.describe("a long recipe name on a phone", () => {
 
     await page.goto("/?week=2027-03-01");
     // Both pills are on screen and whole before the shot is taken.
-    await expect(page.locator(".batch-start")).toHaveText("Kokataan · 4 annosta");
+    await expect(page.locator(".batch-start")).toHaveText("Kokataan · 1×");
     await expect(page.locator(".batch-carried")).toHaveText(
-      "Kokattu 28.2. · 4 annosta",
+      "Kokattu 28.2. · 1×",
     );
     await page.screenshot({
       path: `${SHOTS}/37-week-long-title.png`,
@@ -1031,10 +1036,10 @@ async function createBatch(
   date: string,
   slot: "lunch" | "dinner",
   recipeId: number,
-  portions = 4,
+  multiplier = 1,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot, recipeId, portions },
+    data: { date, slot, recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;
@@ -1161,11 +1166,15 @@ test.describe("public recipes", () => {
     });
 
     // The owner's own view of a published recipe: the publish control, and the
-    // household's own default portions beside it.
+    // household's own default multiplier beside it.
     await page.goto("/recipes/1");
-    await page.getByLabel("Oletusannokset").fill("9");
-    await page.locator(".portions-preference button").click();
-    await expect(page.getByLabel("Oletusannokset")).toHaveValue("9");
+    await page
+      .locator(".multiplier-choice")
+      .getByRole("button", { name: "1,5×" })
+      .click();
+    await expect(
+      page.locator(".multiplier-choice button.is-current"),
+    ).toHaveText("1,5×");
     await expect(
       page.getByRole("button", { name: "Poista julkaisu" }),
     ).toBeVisible();

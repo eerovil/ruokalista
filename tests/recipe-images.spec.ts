@@ -223,7 +223,7 @@ test.describe("every screen a recipe appears on", () => {
   }) => {
     // Plan recipe 1 for a day, then look at the week and at the meal.
     const planned = await page.request.post("/api/batches", {
-      data: { date: "2026-10-06", slot: "dinner", recipeId: RECIPE, portions: 4 },
+      data: { date: "2026-10-06", slot: "dinner", recipeId: RECIPE, multiplier: 1 },
     });
     expect(planned.ok()).toBe(true);
 
@@ -242,7 +242,7 @@ test.describe("every screen a recipe appears on", () => {
 
     await page.locator(".entry > a").first().click();
     await expect(page.locator(".recipe-image img")).toBeVisible();
-    // Still read-only: the meal screen changes portions, not pictures.
+    // Still read-only: the meal screen changes the multiplier, not pictures.
     await expect(page.locator("input[type=file]")).toHaveCount(0);
   });
 });
