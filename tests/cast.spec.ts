@@ -13,13 +13,19 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
-async function stubSenderSdk(page: Page, available = true): Promise<void> {
+async function stubSenderSdk(
+  page: Page,
+  available = true,
+  castState = "NOT_CONNECTED",
+): Promise<void> {
   await page.route(`${SENDER_SDK}?*`, async (route: Route) => {
     await route.fulfill({
       contentType: "application/javascript",
       body: `
 (function () {
   var listeners = [];
+  var stateListeners = [];
+  var castState = '${castState}';
   var active = sessionStorage.getItem('cast-active') === '1';
   var session = {
     sendMessage: function (namespace, recipe) {
@@ -34,18 +40,33 @@ async function stubSenderSdk(page: Page, available = true): Promise<void> {
       sessionStorage.setItem('cast-options', JSON.stringify(options));
     },
     getCurrentSession: function () { return active ? session : null; },
-    addEventListener: function (type, listener) { listeners.push(listener); }
+    getCastState: function () { return castState; },
+    addEventListener: function (type, listener) {
+      if (type === 'caststate') stateListeners.push(listener);
+      else listeners.push(listener);
+    }
   };
   window.chrome = { cast: { AutoJoinPolicy: { ORIGIN_SCOPED: 'origin' } } };
   window.cast = { framework: {
     CastContext: { getInstance: function () { return context; } },
-    CastContextEventType: { SESSION_STATE_CHANGED: 'session' },
+    CastContextEventType: {
+      SESSION_STATE_CHANGED: 'session',
+      CAST_STATE_CHANGED: 'caststate'
+    },
+    CastState: {
+      NO_DEVICES_AVAILABLE: 'NO_DEVICES_AVAILABLE',
+      NOT_CONNECTED: 'NOT_CONNECTED'
+    },
     SessionState: {
       SESSION_STARTED: 'started',
       SESSION_RESUMED: 'resumed',
       SESSION_ENDED: 'ended'
     }
   } };
+  window.__setCastStateForTest = function (next) {
+    castState = next;
+    stateListeners.forEach(function (listener) { listener({ castState: next }); });
+  };
   window.__endCastForTest = function () {
     active = false;
     sessionStorage.setItem('cast-active', '0');
@@ -53,11 +74,17 @@ async function stubSenderSdk(page: Page, available = true): Promise<void> {
   };
   window.__onGCastApiAvailable(${available ? "true" : "false"});
   var launcher = document.getElementById('cast-launcher');
-  if (launcher) launcher.addEventListener('click', function () {
-    active = true;
-    sessionStorage.setItem('cast-active', '1');
-    listeners.forEach(function (listener) { listener({ sessionState: 'started' }); });
-  });
+  if (launcher) {
+    launcher.addEventListener('click', function () {
+      active = true;
+      sessionStorage.setItem('cast-active', '1');
+      listeners.forEach(function (listener) { listener({ sessionState: 'started' }); });
+    });
+    // Google's launcher hides itself with an inline style and does not
+    // reliably undo that once a device turns up. Reproduced here so the
+    // screen's own rules are what decide whether the button is on screen.
+    launcher.style.display = 'none';
+  }
 }());`,
     });
   });
@@ -77,6 +104,27 @@ test("the Cast action appears only after the sender SDK is available", async ({
   ).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem("cast-options")))
     .toContain("test-cast-app");
+});
+
+test("the Cast action waits for a device rather than offering a dead label", async ({
+  page,
+}) => {
+  await stubSenderSdk(page, true, "NO_DEVICES_AVAILABLE");
+  await page.goto("/recipes/1");
+  await expect(page.locator("#cast-action")).toBeHidden();
+
+  await page.evaluate(() => {
+    window.__setCastStateForTest("NOT_CONNECTED");
+  });
+  await expect(page.locator("#cast-action")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Näytä Cast-laitteet" }),
+  ).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__setCastStateForTest("NO_DEVICES_AVAILABLE");
+  });
+  await expect(page.locator("#cast-action")).toBeHidden();
 });
 
 test("selecting a device sends the scaled recipe and later recipe pages resync", async ({
@@ -202,6 +250,7 @@ function normalRecipe(): object {
 
 declare global {
   interface Window {
+    __setCastStateForTest(state: string): void;
     __castReceiverListener(event: { data: unknown }): void;
     __castReceiverNamespace: string;
     __castReceiverStarted: boolean;
