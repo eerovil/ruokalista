@@ -676,7 +676,7 @@ function externalSendPanel(
       : html`<p class="s-send-counts" data-tuotteet="${mapped}" data-muistutukset="${notes}">
             ${mapped} ${mapped === 1 ? "tuote" : "tuotetta"}${notes === 0
               ? ""
-              : ` · ${notes} ${notes === 1 ? "muistutus" : "muistutusta"}`}
+              : ` · ${notes} ${notes === 1 ? "teksti" : "tekstiä"}`}
           </p>
           <form method="post" action="/ostoslista/laheta" class="s-send-form">
             ${selectionFields(selectedIds)}
@@ -725,7 +725,7 @@ function externalProductBlock(
       ${mapped
         ? productSummary(item)
         : html`<div class="s-shopping-product-copy">
-            <strong>Muistutus</strong>
+            <strong>Teksti</strong>
             <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
           </div>`}
     </div>
@@ -1344,7 +1344,7 @@ const SHOPPING_ISLAND = `
     line.setAttribute('data-muistutukset', String(notes));
     var text = products + (products === 1 ? ' tuote' : ' tuotetta');
     if (notes > 0) {
-      text += ' · ' + notes + (notes === 1 ? ' muistutus' : ' muistutusta');
+      text += ' · ' + notes + (notes === 1 ? ' teksti' : ' tekstiä');
     }
     clear(line);
     line.appendChild(document.createTextNode(text));
@@ -1486,7 +1486,7 @@ const SHOPPING_ISLAND = `
         entry.className = items[index].ean ? 's-current-product' : 's-current-note';
         entry.appendChild(el('span', 's-current-name', items[index].name));
         entry.appendChild(
-          el('span', 'meta', items[index].ean ? 'Tuote' : 'Muistutus')
+          el('span', 'meta', items[index].ean ? 'Tuote' : 'Teksti')
         );
         list.appendChild(entry);
       }

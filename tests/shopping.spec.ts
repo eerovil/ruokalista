@@ -270,14 +270,22 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
 
   const milk = row(page, "maito");
   const water = row(page, "vesi");
+  await expect(milk.locator(".s-shopping-product.is-note strong")).toHaveText(
+    "Teksti",
+  );
+  await expect(page.locator(".s-send-counts")).toContainText(/\d+ teksti(?:ä)?/);
   const before = await milk.locator("summary").boundingBox();
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   // The count above the send button keeps up with a mapping made in place.
-  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
+  await expect(page.locator(".s-send-counts")).toContainText(
+    /1 tuote · \d+ teksti(?:ä)?/,
+  );
 
   await page.reload();
-  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
+  await expect(page.locator(".s-send-counts")).toContainText(
+    /1 tuote · \d+ teksti(?:ä)?/,
+  );
   const thumb = row(page, "maito").locator(".shopping-thumb img");
   await expect(thumb).toBeVisible();
   await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);
@@ -654,7 +662,7 @@ test("the shopping screen shows what the S list already holds, and refreshes it"
     items.filter({ hasText: "Kotimaista rasvaton maito" }),
   ).toContainText("Tuote");
   await expect(items.filter({ hasText: "vesi — 2–3 l" })).toContainText(
-    "Muistutus",
+    "Teksti",
   );
 });
 
