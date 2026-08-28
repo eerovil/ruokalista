@@ -22,6 +22,12 @@ import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
+import {
+  readableRecipeCondition,
+  recipeSharingState,
+  type RecipeSharingState,
+  type SharingDraft,
+} from "./recipe-publish.ts";
 import { preferredMultiplierFor } from "./recipe-preference.ts";
 import {
   DEFAULT_MULTIPLIER,
@@ -69,6 +75,8 @@ export interface RecipeSummary {
   householdName: string;
   /** When it was published, or null while it is the household's own business. */
   publishedAt: string | null;
+  /** Selected households that may read it while it is not public. */
+  shareCount: number;
 }
 
 export interface RecipeLine extends Measurement {
@@ -119,6 +127,7 @@ interface SummaryRow {
   household_id: number;
   household_name: string;
   published_at: string | null;
+  share_count: number;
 }
 
 const SUMMARY_SELECT = `SELECT recipe.id,
@@ -128,6 +137,8 @@ const SUMMARY_SELECT = `SELECT recipe.id,
               recipe.image_key,
               recipe.household_id,
               recipe.published_at,
+              (SELECT count(*) FROM recipe_share
+                WHERE recipe_share.recipe_id = recipe.id) AS share_count,
               household.name AS household_name,
               member.display_name AS created_by
          FROM recipe
@@ -154,7 +165,7 @@ export async function recipeSummaries(
 }
 
 /**
- * Dishes other households have published.
+ * Dishes other households have made readable to this household.
  *
  * Deliberately not "every published dish": this household's own recipes are its
  * own list, and repeating them here would make the public section read as a
@@ -173,11 +184,16 @@ export async function publicRecipeSummaries(
     .prepare(
       `${SUMMARY_SELECT}
         WHERE recipe.household_id <> ?
-          AND recipe.published_at IS NOT NULL
+          AND (recipe.published_at IS NOT NULL
+               OR EXISTS (
+                    SELECT 1 FROM recipe_share
+                     WHERE recipe_share.recipe_id = recipe.id
+                       AND recipe_share.household_id = ?
+                  ))
           AND recipe.parent_id IS NULL
         ORDER BY recipe.published_at DESC, recipe.id DESC`,
     )
-    .bind(householdId)
+    .bind(householdId, householdId)
     .all<SummaryRow>();
 
   return filterByTitle(results.map(toSummary), query);
@@ -211,6 +227,7 @@ function toSummary(row: SummaryRow): RecipeSummary {
     householdId: row.household_id,
     householdName: row.household_name,
     publishedAt: row.published_at,
+    shareCount: row.share_count,
   };
 }
 
@@ -272,7 +289,7 @@ export function findRecipe(
 }
 
 /**
- * One recipe this household may *read*: its own, or anybody's published dish.
+ * One recipe this household may *read*: its own, public, or shared to it.
  *
  * The caller still has to ask whose it is before offering an edit — the recipe
  * carries `householdId` for exactly that.
@@ -294,10 +311,9 @@ async function loadRecipe(
   scope: "own" | "readable",
   productHouseholdId = householdId,
 ): Promise<Recipe | null> {
-  const ownership =
-    scope === "own"
-      ? "recipe.household_id = ?"
-      : "(recipe.household_id = ? OR recipe.published_at IS NOT NULL)";
+  const ownership = scope === "own"
+    ? "recipe.household_id = ?"
+    : readableRecipeCondition();
 
   const row = await db
     .prepare(
@@ -311,6 +327,8 @@ async function loadRecipe(
               recipe.created_at,
               recipe.household_id,
               recipe.published_at,
+              (SELECT count(*) FROM recipe_share
+                WHERE recipe_share.recipe_id = recipe.id) AS share_count,
               recipe.parent_id,
               household.name AS household_name,
               member.display_name AS created_by
@@ -319,7 +337,11 @@ async function loadRecipe(
          JOIN household ON household.id = recipe.household_id
         WHERE recipe.id = ? AND ${ownership}`,
     )
-    .bind(id, householdId)
+    .bind(...(
+      scope === "own"
+        ? [id, householdId]
+        : [id, householdId, householdId]
+    ))
     .first<RecipeRow>();
 
   if (row === null) return null;
@@ -392,6 +414,7 @@ async function loadRecipe(
     householdId: row.household_id,
     householdName: row.household_name,
     publishedAt: row.published_at,
+    shareCount: row.share_count,
     parentId: row.parent_id,
     parts,
     steps: steps.map((step) => ({
@@ -473,6 +496,7 @@ function summaryForApi(summary: RecipeSummary): object {
     householdId: _householdId,
     householdName: _householdName,
     publishedAt: _publishedAt,
+    shareCount: _shareCount,
     ...wire
   } = summary;
   return wire;
@@ -485,7 +509,7 @@ export async function apiShowRecipe(
 ): Promise<Response> {
   const recipe = await loadRequested(env.DB, member, params["id"]);
   if (recipe === null) return problem(404, "No such recipe.");
-  return Response.json({ recipe: recipeForApi(recipe) });
+  return Response.json({ recipe: recipeForApi(recipe, member.householdId) });
 }
 
 /**
@@ -505,17 +529,24 @@ export async function apiShowRecipe(
  * `tests/alternatives.spec.ts` pins the exact key set of both objects against
  * the live route, so nothing joins or leaves this shape by accident again.
  */
-function recipeForApi(recipe: Recipe): object {
+function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
   const {
     householdId: _householdId,
     householdName: _householdName,
     publishedAt: _publishedAt,
+    shareCount: _shareCount,
     parentId: _parentId,
     ...wire
   } = recipe;
 
   return {
     ...wire,
+    // Household names are discoverable for sharing; individual member names
+    // are not. Preserve the string-shaped field for existing API callers while
+    // saying only which household authored a recipe read across the boundary.
+    createdBy: recipe.householdId === viewerHouseholdId
+      ? recipe.createdBy
+      : recipe.householdName,
     steps: recipe.steps.map((step) => step.text),
     lines: recipe.lines.map(
       ({
@@ -525,7 +556,7 @@ function recipeForApi(recipe: Recipe): object {
         ...line
       }) => line,
     ),
-    parts: recipe.parts.map(recipeForApi),
+    parts: recipe.parts.map((part) => recipeForApi(part, viewerHouseholdId)),
   };
 }
 
@@ -558,7 +589,7 @@ export async function ownRecipeList(
   const recipes = await recipeSummaries(db, member.householdId, query);
 
   return html`<h1>Reseptit</h1>
-    <p class="public-link"><a href="/recipes/julkiset">Julkiset reseptit</a></p>
+    <p class="public-link"><a href="/recipes/julkiset">Jaetut reseptit</a></p>
     <form method="get" action="/recipes">
       <input
         type="search"
@@ -609,9 +640,7 @@ export async function ownRecipeList(
                       >${finnishDate(recipe.createdAt)} · ${recipe.createdBy}</span
                     >
                   </span>
-                  ${recipe.publishedAt === null
-                    ? ""
-                    : html`<span class="badge is-published">Julkaistu</span>`}
+                  ${sharingBadge(recipe)}
                 </a>
               </li>`,
             )}
@@ -629,7 +658,7 @@ export async function ownRecipeList(
 }
 
 /**
- * `GET /recipes/julkiset` — what other households are sharing.
+ * `GET /recipes/julkiset` — what other households are sharing with this one.
  *
  * A section of its own rather than a mixed list, because "ours" and "someone
  * else's" are different things to a cook: one can be corrected when it turns
@@ -643,8 +672,8 @@ export async function publicRecipeListScreen(
   const recipes = await publicRecipeSummaries(env.DB, member.householdId, query);
 
   return page(
-    "Julkiset reseptit",
-    html`<h1>Julkiset reseptit</h1>
+    "Jaetut reseptit",
+    html`<h1>Jaetut reseptit</h1>
       <p class="empty">
         Muiden talouksien jakamat reseptit. Voit ottaa ne ruokalistalle, mutta
         muokata voi vain reseptin oma talous.
@@ -664,12 +693,12 @@ export async function publicRecipeListScreen(
         ? html`<div class="nothing">
             <p class="empty">
               ${query.trim() === ""
-                ? "Yksikään talous ei ole vielä julkaissut reseptejä."
-                : `Haku "${query.trim()}" ei löytänyt yhtään julkista reseptiä.`}
+                ? "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille."
+                : `Haku "${query.trim()}" ei löytänyt yhtään jaettua reseptiä.`}
             </p>
             ${query.trim() === ""
               ? ""
-              : html`<p><a href="/recipes/julkiset">Näytä kaikki julkiset</a></p>`}
+              : html`<p><a href="/recipes/julkiset">Näytä kaikki jaetut</a></p>`}
           </div>`
         : html`<ul class="recipes">
             ${recipes.map(
@@ -680,6 +709,9 @@ export async function publicRecipeListScreen(
                     ${recipe.title}
                     <span class="meta">${recipe.householdName}</span>
                   </span>
+                  <span class="badge is-published">
+                    ${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}
+                  </span>
                 </a>
               </li>`,
             )}
@@ -688,6 +720,18 @@ export async function publicRecipeListScreen(
     "recipes",
     member,
   );
+}
+
+function sharingBadge(recipe: RecipeSummary): Raw {
+  if (recipe.publishedAt !== null) {
+    return html`<span class="badge is-published">Julkinen</span>`;
+  }
+  if (recipe.shareCount > 0) {
+    return html`<span class="badge is-published"
+      >Jaettu ${recipe.shareCount === 1 ? "1 taloudelle" : `${recipe.shareCount} taloudelle`}</span
+    >`;
+  }
+  return raw("");
 }
 
 function noticeLine(notice: ListNotice | null): Raw {
@@ -743,15 +787,23 @@ export async function renderRecipe(
   multiplier: number,
   refusal: string | null,
   castApplicationId?: string,
+  sharingDraft?: SharingDraft,
 ): Promise<Response> {
-  const preference = await preferredMultiplierFor(db, member.householdId, recipe.id);
+  const owned = recipe.householdId === member.householdId;
+  const [preference, sharing] = await Promise.all([
+    preferredMultiplierFor(db, member.householdId, recipe.id),
+    owned && recipe.parentId === null
+      ? recipeSharingState(db, member.householdId, recipe.id, sharingDraft)
+      : Promise.resolve(null),
+  ]);
 
   return page(
     recipe.title,
     recipeBody(recipe, multiplier, {
-      owned: recipe.householdId === member.householdId,
+      owned,
       preference,
       refusal,
+      sharing,
     }, castApplicationId),
     "recipes",
     member,
@@ -965,6 +1017,7 @@ interface RecipeView {
   /** This household's saved default multiplier for it, if it has one. */
   preference: number | null;
   refusal: string | null;
+  sharing: RecipeSharingState | null;
 }
 
 function recipeBody(
@@ -989,7 +1042,7 @@ function recipeBody(
             // at the bottom: whose recipe this is changes how it should be read,
             // and the reader deserves that before they start cooking from it.
             html`<p class="meta shared-from">
-              ${recipe.householdName} on julkaissut tämän reseptin. Voit käyttää
+              ${recipe.householdName} on jakanut tämän reseptin. Voit käyttää
               sitä, mutta vain sen oma talous voi muokata sitä.
             </p>`}
         <!-- Whether the amounts below are the page's or this cooking's is the
@@ -1107,26 +1160,77 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
       </p>
     </form>
 
-    ${view.owned
-      ? html`<h2>Julkaisu</h2>
-          <p class="empty">
-            ${recipe.publishedAt === null
-              ? "Tämä resepti näkyy vain omalle taloudelle."
-              : "Tämä resepti näkyy kaikille talouksille, ja ne näkevät myös muutokset heti."}
-          </p>
-          <form method="post" action="/recipes/julkaisu" class="stacked">
+    ${view.owned && view.sharing !== null
+      ? html`<h2>Jakaminen</h2>
+          <p class="empty">${sharingSummary(view.sharing)}</p>
+          <form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
             <input type="hidden" name="recipeId" value="${recipe.id}" />
             <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
-            ${recipe.publishedAt === null
-              ? html`<button type="submit" name="action" value="publish">
-                  Julkaise resepti
-                </button>`
-              : html`<button type="submit" name="action" value="unpublish">
-                  Poista julkaisu
-                </button>`}
-          </form>`
+            <fieldset class="visibility-choices">
+              <legend>Näkyvyys</legend>
+              ${visibilityChoice("private", "Oma", view.sharing.visibility)}
+              ${visibilityChoice("selected", "Valituille", view.sharing.visibility)}
+              ${visibilityChoice("public", "Julkinen", view.sharing.visibility)}
+            </fieldset>
+            <div class="recipient-picker">
+              <label for="recipient-search">Hae vastaanottavaa taloutta</label>
+              <input
+                type="search"
+                id="recipient-search"
+                placeholder="Talouden nimi"
+                autocomplete="off"
+              />
+              <p class="empty">
+                Valitse vähintään yksi talous, kun näkyvyys on Valituille.
+                Jäsenien nimiä tai sähköposteja ei näytetä.
+              </p>
+              <ul class="recipient-list" id="recipient-list">
+                ${view.sharing.recipients.map(
+                  (recipient) => html`<li data-household-name="${recipient.name}">
+                    <label>
+                      <input
+                        type="checkbox"
+                        name="recipientId"
+                        value="${recipient.id}"
+                        ${recipient.selected ? raw("checked") : ""}
+                      />
+                      ${recipient.name}
+                    </label>
+                  </li>`,
+                )}
+              </ul>
+            </div>
+            <button type="submit" name="action" value="save">Tallenna jako</button>
+          </form>
+          <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`
       : ""}
   </section>`;
+}
+
+function sharingSummary(sharing: RecipeSharingState): string {
+  if (sharing.savedVisibility === "public") {
+    return "Tämä resepti näkyy kaikille kirjautuneille talouksille.";
+  }
+  if (sharing.savedVisibility === "selected") {
+    return `Tämä resepti on jaettu: ${sharing.savedRecipientNames.join(", ")}.`;
+  }
+  return "Tämä resepti näkyy vain omalle taloudelle.";
+}
+
+function visibilityChoice(
+  value: "private" | "selected" | "public",
+  label: string,
+  current: "private" | "selected" | "public",
+): Raw {
+  return html`<label>
+    <input
+      type="radio"
+      name="visibility"
+      value="${value}"
+      ${value === current ? raw("checked") : ""}
+    />
+    ${label}
+  </label>`;
 }
 
 /** Whether this dish or any of its parts has an amount the toggle can reveal. */
@@ -1183,9 +1287,40 @@ const PUBLISH_STYLE = html`<style>
   .recipe-sharing h2 { margin: 0 0 .4rem; font-size: 1rem; }
   .recipe-sharing p { margin: 0 0 .6rem; }
   .recipe-sharing form { margin: 0; }
+  .visibility-choices { display: flex; flex-wrap: wrap; gap: .35rem .8rem;
+    padding: 0; margin: .8rem 0; border: 0; }
+  .visibility-choices legend { width: 100%; margin-bottom: .25rem;
+    font-weight: 600; }
+  .visibility-choices label, .recipient-list label {
+    display: flex; align-items: center; gap: .4rem; min-height: var(--tap-compact);
+  }
+  .visibility-choices input, .recipient-list input { width: auto; min-height: 0; }
+  .recipient-picker { margin: .4rem 0 .8rem; }
+  .recipient-picker > label { display: block; margin-bottom: .25rem;
+    font-weight: 600; }
+  .recipient-list { padding: .3rem 0; margin: 0; list-style: none; }
+  .recipient-list li { border-bottom: 1px solid var(--edge); }
+  .recipient-list li:last-child { border-bottom: 0; }
   .preference-label { margin: 0 0 .4rem; font-weight: 600; }
   .source-yield { margin: .1rem 0 0; }
 </style>`;
+
+/* Deliberately ES5: household search is a small enhancement over the full list. */
+const RECIPIENT_SEARCH_ISLAND = `
+(function () {
+  var search = document.getElementById('recipient-search');
+  var list = document.getElementById('recipient-list');
+  if (!search || !list || typeof search.addEventListener !== 'function') return;
+
+  search.addEventListener('input', function () {
+    var needle = search.value.toLowerCase();
+    var rows = list.getElementsByTagName('li');
+    for (var index = 0; index < rows.length; index += 1) {
+      var name = rows[index].getAttribute('data-household-name') || '';
+      rows[index].hidden = name.toLowerCase().indexOf(needle) === -1;
+    }
+  });
+}());`;
 
 /**
  * The cooking view uses the extra width a tablet offers without changing the

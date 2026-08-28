@@ -1,4 +1,5 @@
 import type { Member } from "./members.ts";
+import { readableRecipeCondition } from "./recipe-publish.ts";
 import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
 /**
@@ -81,9 +82,9 @@ export async function setPreferredMultiplier(
       `SELECT id FROM recipe
         WHERE id = ?
           AND parent_id IS NULL
-          AND (household_id = ? OR published_at IS NOT NULL)`,
+          AND ${readableRecipeCondition("recipe")}`,
     )
-    .bind(recipeId, member.householdId)
+    .bind(recipeId, member.householdId, member.householdId)
     .first<{ id: number }>();
   if (visible === null) throw new PreferenceRefused("Tuntematon resepti.");
 

@@ -192,3 +192,14 @@ rewrites what every household's recipes say. Coining a new name while writing a
 recipe is still every member's.
 
 See [ADR-0006](../adr/0006-a-published-recipe-is-shared-not-copied.md).
+
+### Selected recipient households (#185, proposed)
+
+This pull request proposes widening the readable scope once more: an owner may
+share a dish with selected households without making it public. The grant is a
+`recipe_share` row and never changes ownership; every write remains on the
+existing own-only scope, and a household without a grant still receives 404.
+
+Recipient discovery exposes every household's display name to signed-in
+members, but no member name, email, Google subject or admin status. See
+[ADR-0009](../adr/0009-recipe-sharing-targets-households.md).
