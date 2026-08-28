@@ -4,14 +4,11 @@ import { readFileSync } from "node:fs";
 import { AGENTDECK_BATCH } from "./support/batch";
 import {
   DUPLICATE_AMOUNT_DRAFT,
-  streamRecordBody,
-  stubStreamBody,
   stubStructuring,
-  TRUNCATED_ATTEMPT,
 } from "./support/draft";
 import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
 import { flatPng } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -663,32 +660,23 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
   });
 
-  test("a streamed import that failed both attempts", async ({ page }) => {
-    // Both attempts stop mid-JSON (#146). What the member must see is plain
-    // Finnish and their own paste still in the box — not the review screen
-    // reporting "The model returned unparseable JSON."
-    await stubStreamBody(
-      page,
-      streamRecordBody(
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "restart" },
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "failed" },
-      ),
+  test("a background import that failed", async ({ page }) => {
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_text,
+         error_message, created_at, updated_at)
+       VALUES ('screenshot-failed', 1, 1, 'failed', 'pasted',
+         'Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.',
+         'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
-
     await page.goto("/intake");
-    await page
-      .getByLabel("Liitä reseptin teksti")
-      .fill("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
-
-    await expect(page.locator("#status")).toContainText(
-      "malli ei saanut reseptiä valmiiksi",
-    );
-    await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+    await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
+    await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+    await page.getByText("Alkuperäinen teksti").click();
+    await expect(page.getByText("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.")).toBeVisible();
     await capture(page, {
-      path: `${SHOTS}/56-intake-stream-failed.png`,
+      path: `${SHOTS}/78-intake-background-failed.png`,
       fullPage: true,
     });
   });

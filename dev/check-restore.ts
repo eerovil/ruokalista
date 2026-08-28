@@ -17,6 +17,7 @@ import {
 const TABLES: readonly BackupTableName[] = [
   "household",
   "member",
+  "intake_job",
   "member_invitation",
   "ingredient",
   "recipe",
@@ -227,6 +228,22 @@ async function validSnapshot() {
         display_name: "Eero",
         email: "eero@example.com",
         created_at: "2026-08-25 00:00:00",
+      },
+    ],
+    intake_job: [
+      {
+        id: "job-1",
+        household_id: 1,
+        created_by: 1,
+        status: "failed",
+        lease_id: null,
+        source_route: "pasted",
+        source_text: "Uunikaali",
+        image_refs: null,
+        draft_json: null,
+        error_message: "Jäsennys epäonnistui.",
+        created_at: "2026-08-25 00:00:00",
+        updated_at: "2026-08-25 00:01:00",
       },
     ],
     member_invitation: [

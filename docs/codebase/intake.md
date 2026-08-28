@@ -17,25 +17,24 @@ cause. Size and count caps therefore live in the prompt and in
 `assertDraftWire`, never in the schema, and `dev/check-draft-schema.ts` walks
 the schema for the whole unsupported list without spending anything.
 
-**The model call streams and checks `stop_reason`.** `max_tokens` is the
+**The queued model call streams internally and checks `stop_reason`.** `max_tokens` is the
 model's full 128000 — a ceiling rather than a spend, so it costs nothing to
 leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft cut off at
 `max_tokens` is a JSON document that just ends, and a refusal is no text at
 all. Neither condition raises anything in the transport, so before this check
-both reached the browser looking like a finished import and failed one screen
-later at `/intake/correct`'s `JSON.parse`. The streaming path retries once
-while no byte has been sent; this pull request proposes letting it retry after
-bytes are out too, which is what the record framing below is for. Failures
+both looked like a finished import and failed one screen later at
+`/intake/correct`'s `JSON.parse`. The stream retries once and records a ready
+job only after the final draft parses on the server. Failures
 reach a member as Finnish through `importFailureMessage`, which logs the
 English detail; `intake.model_usage` carries `stop_reason` alongside the token
 counts, so a truncated import is visible in `wrangler tail`.
 
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
-`src/sample-draft.ts` to the same `/intake/correct` the streaming island hands
+`src/sample-draft.ts` to the same `/intake/correct` the ready-job route uses,
 over to, so the review, the editor and the save are all the real ones — only
-the model call is skipped. That is the same fixture the browser suite answers
-`/api/intake/structure` from, so there is one draft rather than two that drift.
+the model call is skipped. The browser suite persists the same fixture as a
+ready queued import, so there is one draft rather than two that drift.
 
 The button exists only when `isLocalOrigin` (`src/public-origin.ts`) says the
 browser reached a loopback or private-network address. It is not a flag or an
@@ -92,9 +91,10 @@ them.
 
 For a photographed page, `source_text` in the draft is the model's own
 transcription of the image (`PHOTOGRAPHED_RULES` in `src/intake.ts`) — the
-photo itself is never stored, only held in memory for the one model call. That
-also traces to decision #4: raw text is kept forever, images are discarded, so
-a photo import stays re-runnable but never re-readable.
+photo is retained privately in R2 while its queued import is pending or failed.
+It is deleted as soon as a validated draft is ready; the transcription then
+becomes the durable source text. A failed import keeps the pages so retry means
+retrying the same source rather than asking the member to photograph it again.
 
 ## Photographing a printed recipe (#156)
 
@@ -136,7 +136,7 @@ every change so the numbering always agrees with the list. Pages are downscaled
 one at a time rather than all at once: the order has to survive, and a phone
 decoding eight full-size photographs at the same time is how a tab gets killed.
 
-`readImages` in `src/intake-screens.ts` still accepts the older single-`image`
+`readImages` in `src/intake-jobs.ts` still accepts the older single-`image`
 body. Ruokalista is an installable PWA (#100), so a browser can be running a
 cached copy of yesterday's island, and its one-photo import must not become a
 400 overnight.
@@ -174,20 +174,38 @@ refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trail
 every recipe; `lineRows` decides which rows are spare by reading the values, as
 "everything after the last row anybody put anything in".
 
-Intake requires JavaScript. This pull request proposes removing the plain
-`POST /intake` fallback: the form has no server action and its submit button is
-disabled until the island in `src/intake-screens.ts` finds the browser features
-it needs. The island streams from `/api/intake/structure` so bytes never stop
-flowing, then hands the finished draft to `/intake/correct` — which keeps the
-correction screen server-rendered rather than built in the browser. The camera
-route also needs the island because downscaling a photograph is a canvas job.
+Intake requires JavaScript. The form has no server action and its submit button
+is disabled until the island in `src/intake-screens.ts` finds the browser
+features it needs. The island posts the prepared source to
+`/api/intake/imports`; that route writes an `intake_job`, sends its id to
+`INTAKE_QUEUE`, and returns before the model call begins. The import screen
+lists queued/running, ready and failed jobs for the signed-in household. A
+ready row opens the same server-rendered review used by the development sample,
+and saving removes the job. The camera route still needs the island because
+downscaling a photograph is a canvas job.
 
-Intake's progress is counted, not dumped: the island reads the streaming JSON
-and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
-that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
-before the browser sees it** — no regular expressions in that script.
+## Background lifecycle (issue #186)
 
-## What a streamed body says about its attempts (issue #146)
+`src/intake-jobs.ts` owns the lifecycle. A queue message carries only the job
+id; source data, Finnish failure text and the validated draft are household-
+scoped in D1. The consumer claims a job with a 16-minute lease, so duplicate
+at-least-once deliveries do not call the model twice. Ready and failed writes
+carry the claim's opaque lease id, so an older consumer cannot overwrite a
+newer claim. A five-minute Cron Trigger re-enqueues queued jobs and reclaims a
+running job only after its lease is stale, even if Cloudflare exhausted or lost
+the original Queue message. `waitUntil()` is deliberately not used: Cloudflare
+cancels it 30 seconds after a browser disconnect, which is shorter than the
+long call this feature exists for.
+
+Pasted text stays in `intake_job.source_text`. Downscaled photographed pages
+use private `intake/<job>/<page>` objects in the existing R2 bucket and D1 keeps
+only their ordered keys. Success deletes those objects; failure retains them
+for the explicit retry action. Ready and failed jobs remain until the member
+saves the recipe or retries them. The same maintenance pass removes a temporary
+`intake/` object only when no D1 job references it and it is at least a day old;
+failed source pages have no blanket expiry.
+
+## What the internal stream says about its attempts (issue #146)
 
 This pull request proposes closing an asymmetry between the two paths. The
 plain path has always had `structureDraftWithRetry`, which retries a retryable
@@ -196,35 +214,30 @@ The streaming path had neither: an answer cut off at `max_tokens` was streamed
 through as if it were whole, the island handed it to `/intake/correct`, and the
 member met the parser's own English — "The model returned unparseable JSON."
 
-The awkward part is that by the time an attempt is recognisably bad, its bytes
-are already at the browser. Nothing can be un-sent. This pull request therefore
-proposes an NDJSON body (`application/x-ndjson`): each line is one JSON record.
+Attempts still use NDJSON internally: each line is one JSON record.
 `delta` carries draft text as an escaped string, `restart` says everything
 streamed so far is dead and a second attempt begins, `complete` says the current
 draft already parsed on the server, and `failed` says every attempt failed.
 Because pasted text is data inside a JSON string, it cannot impersonate a record
-boundary or control record. The island resets only for a parsed `restart` record
-and hands over only after a parsed `complete`, so two attempts cannot be joined
-and a half-draft never reaches `/intake/correct` however the chunks fall.
+boundary or control record. The queue consumer resets only for a parsed
+`restart` record and persists only after `complete`, so two attempts cannot be
+joined and a half-draft never becomes a ready job however the chunks fall.
 
 The retry itself stays on the server, in `draftStream`, next to the
 retryability it already knows about. `draftStream` takes the model call as an
 argument purely so `dev/check-intake-stream.ts` can drive the whole loop from
 fake responses — a cut-off first attempt, an unparseable one that stopped
 cleanly, a refusal that must not be retried, and two failures in a row — with
-no model call and nothing spent. `tests/intake.spec.ts` covers the island's
-half from the same fixtures.
+no model call and nothing spent. `dev/check-intake-jobs.ts` covers the queue
+collector's fragmented-record side from the same protocol.
 
-A terminal failure closes the body on a `failed` record rather than tearing the
-stream down. A body that simply stops is indistinguishable from a dropped
-connection, and the browser cannot tell whether what it holds is a whole draft.
+A terminal failure closes the internal body on a `failed` record rather than
+tearing the stream down. A body that simply stops never becomes a ready draft.
 `importFailureMessage` still logs the English detail as `intake.failed`, so
 `wrangler tail` shows one shape for every import failure however it arrived.
 
-The island shows its own Finnish wording for a failure it framed, and the fixed
-`Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.` for anything else. That
-split is deliberate: a 503's body or a transport error is English, or worse
-somebody else's Finnish, and neither belongs on a member's screen.
+The job stores only the Finnish wording from `importFailureMessage`; raw model
+or transport errors stay in logs and never land on a member's screen.
 
 ## Marking the ingredients a step names (issue #120)
 

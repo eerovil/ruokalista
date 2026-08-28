@@ -288,7 +288,8 @@ Six screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
 
-- `src/intake-screens.ts::STREAMING_ISLAND` — see `docs/codebase/intake.md`.
+- `src/intake-screens.ts::STREAMING_ISLAND` — starts a durable background import
+  and prepares camera pages; see `docs/codebase/intake.md`.
 - `src/keep-awake.ts::KEEP_AWAKE_ISLAND`, called from `recipeBody()` in
   `src/recipes.ts` and inserted directly into the recipe detail markup (issue
   #65, PR #75) — not a global slot on `page()`. It tries
@@ -361,8 +362,8 @@ row of controls.
 
 ## Related docs
 
-- `docs/codebase/intake.md` — the correction screen, `lineRow`, and the other
-  streaming island.
+- `docs/codebase/intake.md` — the background import, correction screen and
+  `lineRow`.
 - `docs/codebase/recipe-images.md` — the generator and freshness rules this
   admin screen is built on.
 - `docs/codebase/testing.md` — the browser suite that walks these screens.

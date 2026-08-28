@@ -24,6 +24,7 @@ set -euo pipefail
 
 DATABASE_NAME="${DATABASE_NAME:-ruokalista}"
 BUCKET_NAME="${BUCKET_NAME:-ruokalista-recipe-images}"
+QUEUE_NAME="${QUEUE_NAME:-ruokalista-intake}"
 ROTATE_SESSION_SECRET="${ROTATE_SESSION_SECRET:-0}"
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,7 +43,7 @@ lookup_database_id() {
     | ./scripts/node.sh node scripts/pick-d1-id.mjs "$DATABASE_NAME"
 }
 
-echo "==> 1/6  database"
+echo "==> 1/7  database"
 database_id=$(lookup_database_id | tr -d '\r\n')
 if [ -n "$database_id" ]; then
   echo "    $DATABASE_NAME exists: $database_id"
@@ -54,7 +55,7 @@ else
   echo "    created: $database_id"
 fi
 
-echo "==> 2/6  wrangler.jsonc"
+echo "==> 2/7  wrangler.jsonc"
 sed -i -E \
   "s/(\"database_id\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")/\1${database_id}\2/" \
   wrangler.jsonc
@@ -62,7 +63,7 @@ grep -q "$database_id" wrangler.jsonc \
   || { echo "failed to write database_id into wrangler.jsonc" >&2; exit 1; }
 echo "    database_id written"
 
-echo "==> 3/6  recipe image bucket"
+echo "==> 3/7  recipe image bucket"
 # Before the tolerant section below on purpose: a missing bucket is not a
 # stumble the deploy can survive, so this one is fatal.
 # Create-and-tolerate rather than list-then-create: `r2 bucket list` has changed
@@ -80,6 +81,21 @@ else
   exit 1
 fi
 
+rm -f "$bucket_log"
+
+echo "==> 4/7  intake queue"
+queue_log=$(mktemp)
+if wrangler queues create "$QUEUE_NAME" >"$queue_log" 2>&1; then
+  echo "    created: $QUEUE_NAME"
+elif grep -qi "already exists\|already owned" "$queue_log"; then
+  echo "    $QUEUE_NAME exists"
+else
+  cat "$queue_log" >&2
+  echo "could not create $QUEUE_NAME. Does the token carry Queues permission?" >&2
+  exit 1
+fi
+rm -f "$queue_log"
+
 # From here on a failing step must not abandon the ones after it: the token may
 # be good for a single run, so the script gets as far as it can and reports what
 # did not happen, rather than stopping at the first stumble.
@@ -87,19 +103,19 @@ set +e
 failures=""
 note_failure() { failures="${failures}  - $1"$'\n'; }
 
-echo "==> 4/6  remote migrations"
+echo "==> 5/7  remote migrations"
 wrangler d1 migrations apply "$DATABASE_NAME" --remote \
   || note_failure "remote migrations"
 
 # Deploy comes before the secret because `wrangler secret put` needs the Worker
 # to exist; on a first run it does not until this deploy creates it. The Worker
 # is briefly live without SESSION_SECRET, which is the 503 path, not an open one.
-echo "==> 5/6  deploy"
+echo "==> 6/7  deploy"
 deploy_log=$(mktemp)
 wrangler deploy 2>&1 | tee "$deploy_log"
 [ "${PIPESTATUS[0]}" -eq 0 ] || note_failure "deploy"
 
-echo "==> 6/6  SESSION_SECRET"
+echo "==> 7/7  SESSION_SECRET"
 if [ "$ROTATE_SESSION_SECRET" = "1" ] \
    || ! wrangler secret list 2>/dev/null | grep -q SESSION_SECRET; then
   # Generated here and never printed. Rotating it signs every member out, which
