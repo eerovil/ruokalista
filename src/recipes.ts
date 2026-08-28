@@ -5,6 +5,11 @@ import {
   resolveMentions,
   type StepIngredientRef,
 } from "./ingredient-refs.ts";
+import {
+  overrideKey,
+  overridesForRecipes,
+  productsForIngredients,
+} from "./ingredient-products.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
@@ -235,7 +240,6 @@ interface LineRow {
   alt_quantity: number | null;
   alt_unit: string | null;
   ingredient: string;
-  external_product_image_url: string | null;
   source_line: string;
   phase: RecipePhase;
 }
@@ -274,6 +278,7 @@ async function loadRecipe(
   id: number,
   withParts: boolean,
   scope: "own" | "readable",
+  productHouseholdId = householdId,
 ): Promise<Recipe | null> {
   const ownership =
     scope === "own"
@@ -330,8 +335,7 @@ async function loadRecipe(
                 ingredient_line.alt_unit,
                 ingredient_line.source_line,
                 ingredient_line.phase,
-                ingredient.name AS ingredient,
-                ingredient.external_product_image_url
+                ingredient.name AS ingredient
            FROM ingredient_line
            JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
           WHERE ingredient_line.recipe_id = ?
@@ -342,13 +346,23 @@ async function loadRecipe(
 
   const steps = (batch[0]?.results ?? []) as StepRow[];
   const lines = (batch[1]?.results ?? []) as LineRow[];
+  const ingredientIds = [...new Set(lines.map((line) => line.ingredient_id))];
+  // Product overrides belong to the planned dish. A part is loaded as its own
+  // recipe row, but the shopping list stores its choice against the parent.
+  const productRecipeId = row.parent_id ?? row.id;
+  const [products, overrides] = await Promise.all([
+    productsForIngredients(db, ingredientIds),
+    overridesForRecipes(db, productHouseholdId, [productRecipeId]),
+  ]);
 
   // One level only: a part cannot itself have parts, so this never recurses
   // more than once. See docs/adr/0002-a-part-is-a-recipe.md.
   //
   // Loaded through the *owner's* household: a published dish read by somebody
   // else still has to bring its own parts, and they are the owner's rows.
-  const parts = withParts ? await partsOf(db, row.household_id, id) : [];
+  const parts = withParts
+    ? await partsOf(db, row.household_id, productHouseholdId, id)
+    : [];
 
   return {
     id: row.id,
@@ -379,7 +393,11 @@ async function loadRecipe(
       altQuantity: line.alt_quantity,
       altUnit: line.alt_unit,
       ingredient: line.ingredient,
-      productImageUrl: line.external_product_image_url?.trim() || null,
+      productImageUrl:
+        (
+          overrides.get(overrideKey(productRecipeId, line.ingredient_id)) ??
+          products.get(line.ingredient_id)?.[0]
+        )?.imageUrl?.trim() || null,
       sourceLine: line.source_line,
       phase: line.phase,
     })),
@@ -390,7 +408,8 @@ async function loadRecipe(
 
 async function partsOf(
   db: D1Database,
-  householdId: number,
+  ownerHouseholdId: number,
+  productHouseholdId: number,
   parentId: number,
 ): Promise<Recipe[]> {
   const { results } = await db
@@ -399,12 +418,19 @@ async function partsOf(
         WHERE household_id = ? AND parent_id = ?
         ORDER BY part_position, id`,
     )
-    .bind(householdId, parentId)
+    .bind(ownerHouseholdId, parentId)
     .all<{ id: number }>();
 
   const parts: Recipe[] = [];
   for (const row of results) {
-    const part = await loadRecipe(db, householdId, row.id, false, "own");
+    const part = await loadRecipe(
+      db,
+      ownerHouseholdId,
+      row.id,
+      false,
+      "own",
+      productHouseholdId,
+    );
     if (part !== null) parts.push(part);
   }
 
