@@ -80,6 +80,7 @@ export interface StubbedCall {
     image?: string;
     mediaType?: string;
     images?: Array<{ image?: string; mediaType?: string }>;
+    url?: string;
   };
 }
 
@@ -266,3 +267,40 @@ export const REMOVED_LINE_DRAFT = {
     },
   ],
 };
+
+/** What the fetch endpoint was asked for, once a stub has answered it. */
+export interface StubbedLink {
+  url: string;
+}
+
+/**
+ * Answer `POST /api/intake/fetch` without going near the web (#192).
+ *
+ * The route itself has no network in a browser run, so what these tests cover
+ * is the island's half: that the address is sent, that the text that comes back
+ * lands in the paste box, and that a refusal becomes the island's own Finnish.
+ * The server half — the address guard and the extraction — is
+ * `dev/check-recipe-fetch.ts`, which needs no browser and no network either.
+ */
+export async function stubLinkFetch(
+  page: Page,
+  answer: { url: string; sourceText: string } | { reason: string; status?: number },
+): Promise<StubbedLink[]> {
+  const asked: StubbedLink[] = [];
+
+  await page.route("**/api/intake/fetch", async (route) => {
+    const body = JSON.parse(route.request().postData() ?? "{}") as {
+      url?: string;
+    };
+    asked.push({ url: body.url ?? "" });
+
+    const refused = "reason" in answer;
+    await route.fulfill({
+      status: refused ? answer.status ?? 400 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(answer),
+    });
+  });
+
+  return asked;
+}

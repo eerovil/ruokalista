@@ -95,17 +95,23 @@ export interface IntakeImage {
 export const MAX_IMAGES = 8;
 
 /**
- * The two routes in, and only two. Nothing is ever fetched from a web address.
+ * The three routes in, and only three.
  *
  * A photographed import carries one *or more* pages, in the order the member
  * chose them, and they make one recipe rather than one each — a recipe printed
  * across a spread is read as the dish it is. Every page is held in memory for
  * the length of one model call and then dropped — never written to D1, and
  * there is no bucket.
+ *
+ * A linked import is text too, by the time it reaches here: `recipe-fetch.ts`
+ * has already turned the address into the plainest reading of the page, and the
+ * address rides along only so it can be saved on the recipe (#192). That is
+ * what keeps there being one structuring path rather than a second importer.
  */
 export type IntakeSource =
   | { route: "pasted"; text: string }
-  | { route: "photographed"; images: IntakeImage[] };
+  | { route: "photographed"; images: IntakeImage[] }
+  | { route: "linked"; url: string; text: string };
 
 /** The model asked for. Exposed so a streamed draft can be stamped with it. */
 export const STRUCTURED_BY = MODEL;
@@ -291,6 +297,30 @@ Monisivuisen reseptin lisäsäännöt:
 - Jos jollakin sivulla on jokin muu resepti, ohita se ja pysy pääreseptissä.
 `;
 
+/**
+ * Extra standing rules for text read off a web page (#192).
+ *
+ * The text arrived from a machine rather than from a person, so unlike a paste
+ * it may still carry the page around the recipe — a cookie notice, a comment,
+ * a list of other dishes. `recipe-fetch.ts` removes what it safely can; these
+ * rules say what to do with whatever survived.
+ */
+const LINKED_RULES = `
+Nettisivulta luetun tekstin lisäsäännöt:
+
+- Teksti on poimittu nettisivulta koneellisesti, joten mukana voi olla sivun
+  muuta sisältöä: valikoita, evästeilmoituksia, mainoksia, kommentteja tai
+  linkkejä toisiin resepteihin. Poimi vain sivun pääresepti.
+- Jos sivulla on useampi resepti, valitse se, jonka otsikko ja ainesluettelo
+  ovat tekstin alussa, ja jätä loput huomiotta.
+- source_text on annettu teksti sellaisenaan. Älä siivoa, järjestä uudelleen,
+  käännä tai tiivistä sitä.
+- Älä ota mukaan kommenttien tai arvostelujen ehdottamia muutoksia. Resepti on
+  se, minkä sivu itse kertoo.
+- Jos jokin tieto puuttuu tekstistä, jätä kenttä null. Älä täydennä sitä
+  yleistiedolla ruokalajista.
+`;
+
 /** The standing rules, from docs/spec.md's intake flow. */
 function systemPrompt(
   ingredients: IngredientSummary[],
@@ -303,7 +333,9 @@ function systemPrompt(
   const extra =
     source.route === "photographed"
       ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
-      : "";
+      : source.route === "linked"
+        ? LINKED_RULES
+        : "";
 
   return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
 
@@ -383,7 +415,7 @@ ${list || "(ei vielä yhtään)"}`;
  * one-photo import is not quietly a different prompt.
  */
 function userContent(source: IntakeSource) {
-  if (source.route === "pasted") {
+  if (source.route === "pasted" || source.route === "linked") {
     return source.text;
   }
 
@@ -425,12 +457,12 @@ function userContent(source: IntakeSource) {
 }
 
 /**
- * The text a draft's source_text should hold: for a paste, exactly what
- * arrived; for a photograph, the model's transcription, since nothing else
- * records what was on the page.
+ * The text a draft's source_text should hold: for a paste or a fetched page,
+ * exactly what arrived; for a photograph, the model's transcription, since
+ * nothing else records what was on the page.
  */
 function keptSourceText(source: IntakeSource, transcribed: unknown): string {
-  if (source.route === "pasted") return source.text;
+  if (source.route === "pasted" || source.route === "linked") return source.text;
   return typeof transcribed === "string" ? transcribed : "";
 }
 

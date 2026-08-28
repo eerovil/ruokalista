@@ -5,6 +5,7 @@ import {
   streamRecordBody,
   stubFragmentedStreamBody,
   stubStreamBody,
+  stubLinkFetch,
   stubStructuring,
   TRUNCATED_ATTEMPT,
 } from "./support/draft";
@@ -111,7 +112,115 @@ test("an empty intake is refused without leaving the screen", async ({ page }) =
 
   await expect(page).toHaveURL(/\/intake$/);
   await expect(page.locator("#status")).toHaveText(
-    "Liitä ensin reseptin teksti tai valitse kuva.",
+    "Anna reseptin osoite, liitä sen teksti tai valitse kuva.",
+  );
+});
+
+const LINKED_PAGE = {
+  url: "https://kotikokki.example/reseptit/uunikaali",
+  sourceText: "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä",
+};
+
+test("a web address is fetched, shown, structured and kept on the recipe", async ({
+  page,
+}) => {
+  const asked = await stubLinkFetch(page, LINKED_PAGE);
+  const calls = await stubStructuring(page);
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("kotikokki.example/reseptit/uunikaali");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+
+  // The address really went to the fetch route, and the text that came back
+  // went to the model — not the address, which no model ever sees.
+  expect(asked).toEqual([{ url: "kotikokki.example/reseptit/uunikaali" }]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body.sourceText).toContain("Uunikaali");
+  expect(calls[0]?.body.url).toBe(LINKED_PAGE.url);
+
+  // The review carries the route and the address into the save.
+  await expect(page.locator('input[name="sourceRoute"]')).toHaveValue("linked");
+  await expect(page.locator('input[name="sourceUrl"]')).toHaveValue(
+    LINKED_PAGE.url,
+  );
+
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  await page.getByText("Näytä alkuperäinen").click();
+  const link = page.locator(".source-link a");
+  await expect(link).toHaveText("kotikokki.example");
+  await expect(link).toHaveAttribute("href", LINKED_PAGE.url);
+});
+
+test("the fetched text lands in the paste box, so a partial page is fixable", async ({
+  page,
+}) => {
+  await stubLinkFetch(page, {
+    url: "https://kotikokki.example/vajaa",
+    sourceText: "Uunikaali\n1 valkokaali",
+  });
+  await stubStructuring(page);
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://kotikokki.example/vajaa");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  // An import that got only half the page is still an import: what was found
+  // reached the box a member types in, on the way past.
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(
+    "Uunikaali\n1 valkokaali",
+  );
+});
+
+test("a page with no recipe on it refuses in Finnish and keeps the address", async ({
+  page,
+}) => {
+  await stubLinkFetch(page, { reason: "no_recipe" });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://kotikokki.example/etusivu");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page).toHaveURL(/\/intake$/);
+  await expect(page.locator("#status")).toHaveText(
+    "Linkin luku epäonnistui: sivulta ei löytynyt reseptiä. " +
+      "Voit liittää tekstin itse alla olevaan kenttään.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(
+    page.getByLabel("…tai hae resepti nettiosoitteesta"),
+  ).toHaveValue("https://kotikokki.example/etusivu");
+});
+
+test("a refusal the server did not name still reads as Finnish", async ({
+  page,
+}) => {
+  // A 502 from something in the way, with a body nobody wrote for a member.
+  await stubLinkFetch(page, { reason: "kaboom", status: 502 });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://kotikokki.example/resepti");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.locator("#status")).toHaveText(
+    "Linkin luku epäonnistui: sivua ei saatu auki. " +
+      "Tarkista linkki tai kokeile hetken kuluttua uudelleen.",
   );
 });
 

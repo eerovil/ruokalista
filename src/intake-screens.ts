@@ -34,6 +34,12 @@ import type { Member } from "./members.ts";
 import { formatMeasurement } from "./quantities.ts";
 import { saveRecipe, SaveRefused } from "./recipe-save.ts";
 import { isLocalOrigin } from "./public-origin.ts";
+import {
+  fetchRecipePage,
+  normaliseRecipeUrl,
+  PageRefused,
+  type FetchFailure,
+} from "./recipe-fetch.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
 
@@ -78,6 +84,7 @@ const STREAMING_ISLAND = `
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
+  var linkField = form.sourceUrl;
   button.disabled = false;
   status.textContent = '';
   if (!window.createImageBitmap || !window.URL || !window.URL.createObjectURL || !window.URL.revokeObjectURL) {
@@ -99,6 +106,48 @@ const STREAMING_ISLAND = `
     var error = new Error(FAILED_TEXT);
     error.member = true;
     return error;
+  }
+
+  // Why a web address gave up no recipe (#192). The server names the case in a
+  // closed set of words and this is where each one becomes Finnish, so a page's
+  // own error text — or somebody else's Finnish — never reaches a screen.
+  var LINK_REASONS = {
+    invalid_url: 'osoite ei näytä nettiosoitteelta. Tarkista linkki.',
+    unreachable: 'sivua ei saatu auki. Tarkista linkki tai kokeile hetken kuluttua uudelleen.',
+    not_a_page: 'osoitteesta ei löytynyt nettisivua.',
+    too_large: 'sivu on liian suuri luettavaksi.',
+    no_recipe: 'sivulta ei löytynyt reseptiä. Voit liittää tekstin itse alla olevaan kenttään.'
+  };
+
+  function linkRefusal(reason) {
+    var known = typeof reason === 'string' && LINK_REASONS[reason];
+    var error = new Error(known || LINK_REASONS.unreachable);
+    error.member = true;
+    error.heading = 'Linkin luku epäonnistui';
+    return error;
+  }
+
+  // The page, read on the server and handed back as text. No model runs here —
+  // what comes back goes into the paste box, so the member sees exactly what
+  // the model will be given and can fix it before anything is spent.
+  function readLink(address) {
+    status.textContent = 'Haetaan sivua…';
+    return fetch('/api/intake/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: address })
+    }).then(function (response) {
+      return response.json().then(function (data) {
+        if (!response.ok || !data || typeof data.sourceText !== 'string' || !data.sourceText) {
+          throw linkRefusal(data && data.reason);
+        }
+        return data;
+      }, function () {
+        throw linkRefusal('unreachable');
+      });
+    }, function () {
+      throw linkRefusal('unreachable');
+    });
   }
 
   // What the household is told while the model works. The draft arrives as
@@ -223,11 +272,11 @@ const STREAMING_ISLAND = `
     }
   });
 
-  function handOver(draft, route, sourceText) {
+  function handOver(draft, route, sourceText, sourceUrl) {
     var hidden = document.createElement('form');
     hidden.method = 'post';
     hidden.action = '/intake/correct';
-    [['draft', draft], ['route', route], ['sourceText', sourceText]].forEach(function (pair) {
+    [['draft', draft], ['route', route], ['sourceText', sourceText], ['sourceUrl', sourceUrl]].forEach(function (pair) {
       var field = document.createElement('input');
       field.type = 'hidden';
       field.name = pair[0];
@@ -240,20 +289,40 @@ const STREAMING_ISLAND = `
 
   form.addEventListener('submit', function (event) {
     var text = form.sourceText.value.trim();
+    var link = linkField ? linkField.value.trim() : '';
     var photographed = pages.length > 0;
+    // A photograph wins over a link and a link over an already-pasted box, so
+    // the recipe that gets imported is the newest thing the member reached for.
+    var linked = !photographed && !!link;
+    var address = '';
     event.preventDefault();
-    if (!photographed && !text) {
-      status.textContent = 'Liitä ensin reseptin teksti tai valitse kuva.';
+    if (!photographed && !linked && !text) {
+      status.textContent = 'Anna reseptin osoite, liitä sen teksti tai valitse kuva.';
       return;
     }
     button.disabled = true;
-    status.textContent = photographed ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
+    status.textContent = photographed
+      ? 'Luetaan kuvaa…'
+      : linked ? 'Haetaan sivua…' : 'Luetaan reseptiä…';
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
 
-    var prepared = photographed
-      ? shrinkAll().then(function (images) { return { images: images }; })
-      : Promise.resolve({ sourceText: text });
+    var prepared;
+    if (photographed) {
+      prepared = shrinkAll().then(function (images) { return { images: images }; });
+    } else if (linked) {
+      prepared = readLink(link).then(function (page) {
+        text = page.sourceText;
+        address = typeof page.url === 'string' ? page.url : link;
+        // Put it where the member can see and edit it: an import that got only
+        // half the page is still worth saving, and this is where they fix it.
+        form.sourceText.value = text;
+        status.textContent = 'Sivulta luettiin resepti — malli jäsentää sen.';
+        return { sourceText: text, url: address };
+      });
+    } else {
+      prepared = Promise.resolve({ sourceText: text });
+    }
 
     prepared
       .then(function (body) {
@@ -339,14 +408,15 @@ const STREAMING_ISLAND = `
       })
       .then(function (draft) {
         status.textContent = 'Valmis — avataan tarkistus.';
-        handOver(draft, photographed ? 'photographed' : 'pasted', text);
+        var route = photographed ? 'photographed' : linked ? 'linked' : 'pasted';
+        handOver(draft, route, text, address);
       })
       .catch(function (error) {
         // Only wording this island wrote is shown. Anything else — a transport
         // error, a server body — is generic, so no English or raw response
         // text ever lands on a member's screen.
         status.textContent = error && error.member
-          ? 'Jäsennys epäonnistui: ' + error.message
+          ? (error.heading || 'Jäsennys epäonnistui') + ': ' + error.message
           : 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
         // The counts belonged to an attempt that came to nothing. Leaving them
         // up would read as a half-finished import that is still going.
@@ -358,13 +428,15 @@ const STREAMING_ISLAND = `
 })();
 `;
 
-type SourceRoute = "pasted" | "photographed";
+type SourceRoute = "pasted" | "photographed" | "linked";
 
 interface CorrectionView {
   title: string;
   yieldValue: string;
   sourceText: string;
   sourceRoute: SourceRoute;
+  /** The address a linked import was read from, empty on every other route. */
+  sourceUrl: string;
   structuredBy: string;
   rows: Array<DraftLine | LineFormValues>;
   steps: StepFormValues[];
@@ -393,7 +465,11 @@ function sampleDraftForm(): Raw {
 }
 
 /** The JavaScript-owned intake form, optionally with a paste kept for retry. */
-function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
+function intakeForm(
+  sourceText = "",
+  submitLabel = "Jäsennä",
+  sourceUrl = "",
+): Raw {
   return html`<form class="stacked" id="intake">
       <label for="sourceText">Liitä reseptin teksti</label>
       <textarea
@@ -402,6 +478,26 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
         rows="14"
         placeholder="Liitä tähän resepti sellaisenaan."
       >${sourceText}</textarea>
+
+      <label for="sourceUrl">…tai hae resepti nettiosoitteesta</label>
+      <!-- Deliberately not type="url": that refuses an address with no scheme,
+           and pasting "kotikokki.fi/resepti" is exactly what people do. The
+           browser would then block the submit before the island ever ran.
+           recipe-fetch.ts fills the scheme in and checks the address. -->
+      <input
+        id="sourceUrl"
+        name="sourceUrl"
+        type="text"
+        inputmode="url"
+        autocomplete="off"
+        value="${sourceUrl}"
+        placeholder="https://…"
+      />
+      <p class="empty" id="link-help">
+        Sivu haetaan ja siitä luetaan resepti. Löytynyt teksti tulee yllä
+        olevaan kenttään ennen jäsennystä, joten voit täydentää sitä. Osoite jää
+        talteen reseptin lähteeksi.
+      </p>
 
       <label for="camera">…tai ota kuva painetusta sivusta</label>
       <input
@@ -487,6 +583,63 @@ export function readImages(body: {
 }
 
 /**
+ * `POST /api/intake/fetch` — read a recipe off a web address (#192).
+ *
+ * Deliberately its own route rather than a branch of the streaming one. No
+ * model runs here and nothing is spent, so the island can put the fetched text
+ * in front of the member before anything expensive happens — and a page that
+ * gave up nothing is a plain failure to report rather than a stream that has
+ * to be unwound.
+ *
+ * A refusal answers with a `reason` from a closed set and no prose. The island
+ * owns every Finnish word a member reads; a fetched page's own error text must
+ * never become one.
+ */
+export async function fetchPageForIntake(
+  { request }: RouteContext,
+  _member: Member,
+): Promise<Response> {
+  let body: { url?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return fetchRefusal("invalid_url");
+  }
+
+  if (typeof body.url !== "string" || body.url.trim() === "") {
+    return fetchRefusal("invalid_url");
+  }
+
+  try {
+    const page = await fetchRecipePage(body.url);
+    console.log(JSON.stringify({
+      event: "intake.page_fetched",
+      host: new URL(page.url).hostname,
+      structured: page.structured,
+      characters: page.sourceText.length,
+    }));
+    return Response.json({
+      url: page.url,
+      sourceText: page.sourceText,
+      structured: page.structured,
+    });
+  } catch (error) {
+    if (!(error instanceof PageRefused)) throw error;
+    console.log(JSON.stringify({
+      event: "intake.page_refused",
+      reason: error.reason,
+      detail: error.message,
+    }));
+    return fetchRefusal(error.reason);
+  }
+}
+
+/** A fetch failure on the wire: the case, named, and nothing else. */
+function fetchRefusal(reason: FetchFailure): Response {
+  return Response.json({ reason }, { status: 400 });
+}
+
+/**
  * `POST /api/intake/structure` — run the model and stream the draft straight
  * through. The browser accumulates it and hands it back to /intake/correct,
  * which keeps the correction screen server-rendered.
@@ -503,6 +656,7 @@ export async function structureStream(
     image?: unknown;
     mediaType?: unknown;
     images?: unknown;
+    url?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -515,11 +669,20 @@ export async function structureStream(
     return problem(400, `Yhteen reseptiin voi antaa enintään ${MAX_IMAGES} kuvaa.`);
   }
 
+  const text =
+    typeof body.sourceText === "string" && body.sourceText.trim() !== ""
+      ? body.sourceText
+      : null;
+
   let source: IntakeSource;
   if (images.length > 0) {
     source = { route: "photographed", images };
-  } else if (typeof body.sourceText === "string" && body.sourceText.trim() !== "") {
-    source = { route: "pasted", text: body.sourceText };
+  } else if (text !== null && typeof body.url === "string" && body.url !== "") {
+    // The address is not fetched again here — the island already did that
+    // through /api/intake/fetch, and the text it got back is what arrives.
+    source = { route: "linked", url: body.url, text };
+  } else if (text !== null) {
+    source = { route: "pasted", text };
   } else {
     return problem(400, "Anna joko tekstiä tai kuva.");
   }
@@ -551,14 +714,22 @@ export async function correctScreen(
 ): Promise<Response> {
   const form = await request.formData();
   const json = String(form.get("draft") ?? "");
+  const handedRoute = form.get("route");
   const route: SourceRoute =
-    form.get("route") === "photographed" ? "photographed" : "pasted";
+    handedRoute === "photographed" || handedRoute === "linked"
+      ? handedRoute
+      : "pasted";
   const pasted = String(form.get("sourceText") ?? "");
+  // Re-checked rather than carried through: this came back from the browser,
+  // and it ends up in a href on the recipe screen.
+  const address = readSourceUrl(form.get("sourceUrl"));
 
   const source: IntakeSource =
     route === "photographed"
       ? { route, images: [] }
-      : { route, text: pasted };
+      : route === "linked"
+        ? { route, url: address, text: pasted }
+        : { route, text: pasted };
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
 
@@ -566,12 +737,30 @@ export async function correctScreen(
     const draft = draftFromJson(json, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, route),
+      correctionForm(draft, ingredients, route, address),
       "intake",
       member,
     );
   } catch (error) {
-    return failed(member, importFailureMessage(error), pasted);
+    return failed(member, importFailureMessage(error), pasted, address);
+  }
+}
+
+/**
+ * A web address that survived the round trip through the browser, or nothing.
+ *
+ * `normaliseRecipeUrl` is the same check the fetch went through, so an address
+ * that could not have been fetched cannot be saved as the source of something
+ * that was. A bad one is dropped rather than refused: the recipe is worth more
+ * than the link, and the import is otherwise finished.
+ */
+function readSourceUrl(value: FormDataEntryValue | null): string {
+  const given = String(value ?? "").trim();
+  if (given === "") return "";
+  try {
+    return normaliseRecipeUrl(given).toString();
+  } catch {
+    return "";
   }
 }
 
@@ -586,11 +775,13 @@ export async function saveScreen(
   try {
     const lineCount = readLineCount(form.get("lineCount"));
     const sourceRoute = readSourceRoute(form.get("sourceRoute"));
+    const sourceUrl = readSourceUrl(form.get("sourceUrl"));
     const recipeId = await saveRecipe(env.DB, member, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
       sourceText: String(form.get("sourceText") ?? ""),
       sourceRoute,
+      sourceUrl: sourceUrl === "" ? null : sourceUrl,
       structuredBy: String(form.get("structuredBy") ?? "") || null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
@@ -625,6 +816,7 @@ function correctionForm(
   draft: Draft,
   ingredients: IngredientSummary[],
   sourceRoute: SourceRoute,
+  sourceUrl: string,
 ): Raw {
   const rows = [
     ...draft.lines,
@@ -647,6 +839,7 @@ function correctionForm(
       yieldValue: String(draft.yieldPortions ?? ""),
       sourceText: draft.sourceText,
       sourceRoute,
+      sourceUrl,
       structuredBy: draft.structuredBy,
       rows,
       steps,
@@ -666,6 +859,7 @@ function correctionFormFromSubmission(
       yieldValue: String(form.get("yield") ?? ""),
       sourceText: String(form.get("sourceText") ?? ""),
       sourceRoute: sourceRouteForRendering(form),
+      sourceUrl: readSourceUrl(form.get("sourceUrl")),
       structuredBy: String(form.get("structuredBy") ?? ""),
       rows: Array.from({ length: lineCount }, (_, index) =>
         lineValuesFromForm(form, index),
@@ -877,6 +1071,7 @@ function renderCorrection(
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
+      <input type="hidden" name="sourceUrl" value="${view.sourceUrl}" />
       <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
 
@@ -938,12 +1133,17 @@ function renderCorrection(
     </form>`;
 }
 
-function failed(member: Member, message: string, sourceText: string): Response {
+function failed(
+  member: Member,
+  message: string,
+  sourceText: string,
+  sourceUrl = "",
+): Response {
   return page(
     "Jäsennys epäonnistui",
     html`<h1>Jäsennys epäonnistui</h1>
       <p class="refused">${message}</p>
-      ${intakeForm(sourceText, "Yritä uudelleen")}`,
+      ${intakeForm(sourceText, "Yritä uudelleen", sourceUrl)}`,
     "intake",
     member,
     400,
@@ -951,12 +1151,13 @@ function failed(member: Member, message: string, sourceText: string): Response {
 }
 
 function readSourceRoute(value: FormDataEntryValue | null): SourceRoute {
-  if (value === "pasted" || value === "photographed") return value;
+  if (value === "pasted" || value === "photographed" || value === "linked") {
+    return value;
+  }
   throw new FormRefused("Reseptin lähteen tyyppi on virheellinen.");
 }
 
 function sourceRouteForRendering(form: FormData): SourceRoute {
-  return form.get("sourceRoute") === "photographed"
-    ? "photographed"
-    : "pasted";
+  const given = form.get("sourceRoute");
+  return given === "photographed" || given === "linked" ? given : "pasted";
 }

@@ -6,6 +6,7 @@ import {
   DUPLICATE_AMOUNT_DRAFT,
   streamRecordBody,
   stubStreamBody,
+  stubLinkFetch,
   stubStructuring,
   TRUNCATED_ATTEMPT,
 } from "./support/draft";
@@ -652,6 +653,43 @@ test.describe("signed in", () => {
       path: `${SHOTS}/56-intake-two-pages.png`,
       fullPage: true,
     });
+  });
+
+  test("a recipe brought in from a web address", async ({ page }) => {
+    // The page is stubbed, not fetched: a screenshot must not depend on
+    // somebody else's website being up, and this run has no network anyway.
+    // What it shows is the real screen doing the real thing with the answer.
+    await stubLinkFetch(page, {
+      url: "https://kotikokki.example/reseptit/uunikaali",
+      sourceText:
+        "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä\n\n" +
+        "Kuullota kaali pannulla ja paista uunissa.",
+    });
+    await stubStructuring(page);
+
+    await page.goto("/intake");
+    await page
+      .getByLabel("…tai hae resepti nettiosoitteesta")
+      .fill("https://kotikokki.example/reseptit/uunikaali");
+    await capture(page, {
+      path: `${SHOTS}/73-intake-from-link.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tarkista resepti" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Tallenna resepti" }).click();
+    await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+    await page.getByText("Näytä alkuperäinen").click();
+    await expect(page.locator(".source-link a")).toHaveText("kotikokki.example");
+    // Not full-page: the tab strip is position: fixed and a full-page shot
+    // paints it over whatever the viewport was showing, which here is the one
+    // line worth seeing.
+    await page.locator(".source-original").scrollIntoViewIfNeeded();
+    await capture(page, { path: `${SHOTS}/74-linked-recipe-source.png` });
   });
 
   test("check and correct", async ({ page }) => {

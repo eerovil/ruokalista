@@ -41,7 +41,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Households and their members, admin-side | `src/households.ts`, `src/household-admin.ts` |
 | Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts`, `src/ingredient-refs.ts`, `src/alternatives.ts` |
 | Publishing a recipe, and a household's own default for one | `src/recipe-publish.ts`, `src/recipe-preference.ts`, `src/publish-screens.ts` |
-| Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
+| Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/recipe-fetch.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |

@@ -21,6 +21,7 @@ import {
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
+import { normaliseRecipeUrl } from "./recipe-fetch.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
 import {
   readableRecipeCondition,
@@ -104,7 +105,9 @@ export interface RecipeStep {
 
 export interface Recipe extends RecipeSummary {
   sourceText: string;
-  sourceRoute: "pasted" | "photographed";
+  sourceRoute: "pasted" | "photographed" | "linked";
+  /** The web address this was read from, for a linked import (#192). */
+  sourceUrl: string | null;
   /** Optimistic edit version. Incremented whenever this recipe is changed. */
   revision: number;
   steps: RecipeStep[];
@@ -251,7 +254,8 @@ function filterByTitle(
 interface RecipeRow extends SummaryRow {
   parent_id: number | null;
   source_text: string;
-  source_route: "pasted" | "photographed";
+  source_route: "pasted" | "photographed" | "linked";
+  source_url: string | null;
   revision: number;
 }
 
@@ -322,6 +326,7 @@ async function loadRecipe(
               recipe.yield_portions,
               recipe.source_text,
               recipe.source_route,
+              recipe.source_url,
               recipe.revision,
               recipe.image_key,
               recipe.created_at,
@@ -407,6 +412,7 @@ async function loadRecipe(
     yieldPortions: row.yield_portions,
     sourceText: row.source_text,
     sourceRoute: row.source_route,
+    sourceUrl: row.source_url,
     revision: row.revision,
     imageKey: row.image_key,
     createdAt: row.created_at,
@@ -1102,6 +1108,7 @@ function recipeBody(
     <!-- Still stored, still one tap away, but not competing with the cooking. -->
     <details class="source-original">
       <summary>Näytä alkuperäinen</summary>
+      ${sourceLink(recipe)}
       <p class="source-text">${recipe.sourceText}</p>
     </details>
 
@@ -1327,6 +1334,34 @@ const RECIPIENT_SEARCH_ISLAND = `
  * phone-first shell. Nothing here fixes a height or hides overflow: a long
  * instruction is allowed to wrap and make the page taller.
  */
+/**
+ * Where a linked recipe came from (#192).
+ *
+ * Re-checked rather than trusted: the column is written by intake, but a
+ * restored snapshot is data from outside this code path, and an address that
+ * will not parse as an ordinary web address is shown as text rather than made
+ * clickable. `noreferrer` because leaving for the source page should not tell
+ * it which household is cooking.
+ */
+function sourceLink(recipe: Recipe): Raw {
+  const address = recipe.sourceUrl;
+  if (address === null || address.trim() === "") return html``;
+
+  let url: URL;
+  try {
+    url = normaliseRecipeUrl(address);
+  } catch {
+    return html`<p class="source-link">Lähde: ${address}</p>`;
+  }
+
+  return html`<p class="source-link">
+    Lähde:
+    <a href="${url.toString()}" target="_blank" rel="noopener noreferrer"
+      >${url.hostname}</a
+    >
+  </p>`;
+}
+
 const RECIPE_VIEW_STYLE = html`<style>
   .recipe-method { min-width: 0; }
   .recipe-method li { overflow-wrap: break-word; }

@@ -330,6 +330,34 @@ confirms the submitted EAN, and the image is still the stable public CDN URL
 derived from that EAN. Unlike #147, this **is** a table addition, so it goes
 through the manifest lockstep below.
 
+## Where a recipe was read from
+
+`migrations/0016_recipe_source_url.sql`, proposed by #192, adds
+`recipe.source_url` — the web address a linked import was read from, kept so a
+household can go back to it — and adds `linked` to `source_route`, which was
+`pasted` or `photographed`. A fetched page recording itself as a paste would
+have been the cheaper change and a lie. See
+[ADR-0011](../adr/0011-a-web-address-is-a-third-way-in.md) for why URL import
+exists at all, given that decision #4 ruled it out.
+
+The column is nullable and stays NULL on every other route. `replaceRecipe`
+does not touch the source columns, so editing a recipe never loses its link,
+and `src/recipes.ts::sourceLink` re-checks the stored address before putting it
+in a `href` — a restored snapshot is data from outside the intake path.
+
+`source_route` carries a `CHECK`, so widening it means swapping the column, and
+this is the case the warning below does **not** apply to. `recipe` is the parent
+of several `ON DELETE CASCADE` children and is referenced by four more tables,
+so a rebuild would be exactly the sequence 0011 documents — and none of it is
+needed. A column's own `CHECK` goes away with `DROP COLUMN`, and
+`RENAME COLUMN` rewrites the replacement's `CHECK` to follow the new name, so
+the migration is add, copy, drop, rename. `dev/check-source-url-migration.ts`
+runs the real files against `node:sqlite` and asserts that no existing recipe
+loses its route, that nothing hanging off `recipe` is lost, and that a fourth
+invented route is still refused.
+
+This is a column addition, so the backup lockstep below does not move.
+
 ### Rebuilding a table in a D1 migration
 
 Worth reading before writing another one. The plain SQLite rebuild does not work

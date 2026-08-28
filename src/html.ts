@@ -215,6 +215,7 @@ const STYLES = `
   .source { display: block; margin-top: .1rem; color: var(--muted); font-size: .8rem; }
   .source-text { white-space: pre-wrap; color: var(--muted); font-size: .85rem;
     margin: .5rem 0 0; }
+  .source-link { margin: .5rem 0 0; font-size: .85rem; word-break: break-all; }
   .source-original { margin: 2rem 0 1rem; }
   .source-original > summary {
     display: inline-flex; align-items: center;

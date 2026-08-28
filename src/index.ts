@@ -30,6 +30,7 @@ import {
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
+  fetchPageForIntake,
   intakeScreen,
   saveScreen,
   structureStream,
@@ -183,6 +184,7 @@ const router = new Router()
   .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
+  .post("/api/intake/fetch", requireMember(fetchPageForIntake))
   .post("/api/intake/structure", requireMember(structureStream))
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))

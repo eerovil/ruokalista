@@ -76,7 +76,12 @@ export interface RecipeToSave {
   title: string;
   yieldPortions: number | null;
   sourceText: string;
-  sourceRoute: "pasted" | "photographed";
+  sourceRoute: "pasted" | "photographed" | "linked";
+  /**
+   * The web address this was read from, for a linked import (#192). Absent on
+   * every other route, and on a recipe saved before that route existed.
+   */
+  sourceUrl?: string | null;
   structuredBy: string | null;
   steps: StepToSave[];
   lines: LineToSave[];
@@ -245,9 +250,9 @@ function recipeRow(
     .prepare(
       `INSERT INTO recipe
          (id, household_id, title, yield_portions, source_text, source_route,
-          structured_by, structured_at, created_at, created_by,
+          source_url, structured_by, structured_at, created_at, created_by,
           updated_at, updated_by, parent_id, part_position, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'),
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?,
                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0)`,
     )
@@ -259,6 +264,7 @@ function recipeRow(
       // A part came from the same page, so it keeps the same record of arrival.
       recipe.sourceText,
       recipe.sourceRoute,
+      recipe.sourceUrl ?? null,
       recipe.structuredBy,
       member.id,
       member.id,
