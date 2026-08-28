@@ -117,9 +117,14 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   whatever `legacy_alter_table` says. `migrations/0011_public_recipes.sql` shows
   the sequence that does work. See
   [data-model](docs/codebase/data-model.md).
-- **Touching `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts` or a
-  migration is full-tier.** No focused spec covers them, so run the whole
-  browser suite. See [agent-workflow](docs/codebase/agent-workflow.md).
+- **Verify focused locally, and let CI be complete.** Before a pull request:
+  the typecheck, `npm run check`, and the browser specs that cover what you
+  changed. Touching a file every screen goes through — `src/html.ts`,
+  `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts`, a migration —
+  is not on its own a reason to run the whole suite here; CI runs it on every
+  pull request. This change removes that rule, which was making sessions pay
+  for the same answer twice. See
+  [verification](docs/agents/verification.md).
 
 ## Conventions
 

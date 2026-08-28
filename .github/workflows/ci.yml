@@ -21,6 +21,10 @@ jobs:
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The restore round-trip decides whether it applies by diffing against
+          # this pull request's base, so the base commit has to be here.
+          fetch-depth: 0
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
@@ -37,8 +41,40 @@ jobs:
         run: npx wrangler d1 migrations apply ruokalista --local
       - name: Check backup schema coverage
         run: npm run check:backup-schema
+      # The drill costs minutes where the rest of this tier costs seconds, and it
+      # can only say something when the schema, the backup format, the restore
+      # path or their fixtures moved. On a push to main it always runs: that is
+      # the run that migrates the live database and then deploys.
+      - name: Decide whether the restore round-trip applies
+        id: roundtrip
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "always runs outside a pull request"
+            exit 0
+          fi
+          # If the diff cannot be worked out, run the drill. The expensive
+          # answer is the safe one; skipping on a broken diff is not.
+          if ! changed=$(git diff --name-only '${{ github.event.pull_request.base.sha }}' HEAD); then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "could not diff against the base, so running it"
+            exit 0
+          fi
+          echo "$changed"
+          if printf '%s\n' "$changed" | grep -qE '^(migrations/|src/backup\.ts$|src/restore\.ts$|dev/check-backup\.ts$|dev/check-restore\.ts$|dev/seed\.sql$|scripts/check-restore-roundtrip\.ts$|scripts/check-backup-schema\.ts$|package\.json$|\.github/workflows/ci\.yml$)'; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "no schema, backup or restore path changed"
+          fi
       - name: Restore round-trip
+        if: steps.roundtrip.outputs.needed == 'true'
         run: npm run check:restore-roundtrip
+      # Every behavioural spec, on every pull request — this is the gate.
+      # tests/screenshots.spec.ts still runs its flows and assertions; only its
+      # review-artifact writes are opt-in.
       - name: Browser tests
         run: npx playwright test
       - name: Keep the traces from a failure

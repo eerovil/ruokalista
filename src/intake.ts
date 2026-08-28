@@ -137,6 +137,24 @@ export function importFailureMessage(error: unknown): string {
     : GENERIC_REFUSAL;
 }
 
+/** How many times one import calls the model before it gives up. */
+const ATTEMPTS = 2;
+
+/** One newline-delimited record in the streamed draft protocol (#146, #153). */
+export type DraftStreamRecord =
+  | { type: "delta"; text: string }
+  | { type: "restart" }
+  | { type: "complete" }
+  | { type: "failed" };
+
+/**
+ * Frame one stream event as an NDJSON record. Draft text lives inside a JSON
+ * string, so pasted newlines or protocol-looking words cannot become records.
+ */
+export function encodeDraftStreamRecord(record: DraftStreamRecord): string {
+  return `${JSON.stringify(record)}\n`;
+}
+
 const nullable = (type: string) => ({
   anyOf: [{ type }, { type: "null" }],
 });
@@ -434,68 +452,132 @@ export function streamDraft(
   ingredients: IngredientSummary[],
 ): ReadableStream<Uint8Array> {
   const client = anthropic(env);
+  return draftStream(
+    () => client.messages.stream({ ...requestFor(source, ingredients) }),
+    source,
+  );
+}
+
+/**
+ * As much of a streaming model response as the attempt loop reads. It is
+ * deliberately the smallest shape that both the SDK's stream and a fake in
+ * `dev/check-intake-stream.ts` satisfy, which is why `delta` is left unknown
+ * here and narrowed in `textDelta` — the SDK's own event union is far wider
+ * than anything this loop cares about.
+ */
+export interface DraftAttemptStream
+  extends AsyncIterable<{ type: string; delta?: unknown }> {
+  finalMessage(): Promise<{
+    model?: string;
+    stop_reason?: string | null;
+    content: Array<{ type: string; text?: string }>;
+    usage?: unknown;
+  }>;
+}
+
+/** The text a streamed event carries, or null when it carries none. */
+function textDelta(event: { type: string; delta?: unknown }): string | null {
+  if (event.type !== "content_block_delta") return null;
+  const delta = event.delta as { type?: string; text?: string } | undefined;
+  return delta?.type === "text_delta" ? delta.text ?? "" : null;
+}
+
+/**
+ * The attempt loop behind `streamDraft`, with the model call handed in so it
+ * can be driven without spending anything (`dev/check-intake-stream.ts`).
+ *
+ * It gives the streaming path the error tolerance the plain path has had all
+ * along in `structureDraftWithRetry`: a cut-off or unparseable answer is
+ * retried once, and either way the browser is told which it got. The two
+ * attempts are separated by a `restart` record, so their JSON cannot be read
+ * as one draft however the bytes happen to be chunked.
+ */
+export function draftStream(
+  startAttempt: () => DraftAttemptStream,
+  source: IntakeSource,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
     async start(controller) {
-      // Once a byte is out it cannot be taken back, so a retry is only
-      // possible while the response body is still empty — which is exactly
-      // the case for a request the model refuses before it starts writing.
-      let sent = 0;
+      const emit = (record: DraftStreamRecord) =>
+        controller.enqueue(encoder.encode(encodeDraftStreamRecord(record)));
 
-      for (let attempt = 0; ; attempt++) {
+      for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+        if (attempt > 0) emit({ type: "restart" });
+
         try {
-          const stream = client.messages.stream({
-            ...requestFor(source, ingredients),
-          });
-
-          let text = "";
-
-          for await (const event of stream) {
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              text += event.delta.text;
-              controller.enqueue(encoder.encode(event.delta.text));
-              sent += 1;
-            }
-          }
-
-          const response = await stream.finalMessage();
-          logImportUsage(
-            recipeTitle(response.content, text),
-            response.usage,
-            response.stop_reason,
-          );
-          // The browser is about to hand this straight back to
-          // /intake/correct, so a cut-off or empty draft has to fail here
-          // rather than arrive there looking finished.
-          assertFinished(response.stop_reason);
-          if (text.trim() === "") {
-            throw new RetryableStructuringError("The model returned no draft.");
-          }
-
+          await runAttempt(startAttempt(), source, emit);
+          emit({ type: "complete" });
           controller.close();
           return;
         } catch (cause) {
-          // Only our own retryable failures are worth a second call. A 400
-          // from the API is a request this code got wrong, and repeating it
-          // just spends the key twice.
-          if (
-            attempt === 0 && sent === 0 &&
-            cause instanceof RetryableStructuringError
-          ) continue;
+          const retry =
+            attempt < ATTEMPTS - 1 && cause instanceof RetryableStructuringError;
+          console.log(JSON.stringify({
+            event: "intake.attempt_failed",
+            attempt: attempt + 1,
+            retrying: retry,
+            reason: String((cause as Error).message ?? cause),
+          }));
+          if (retry) continue;
 
-          // A JSON body has no room for an in-band error, so the stream is torn
-          // down instead. The browser still has what the member typed.
+          // The English detail of the last attempt, logged the same way every
+          // other import failure is, so `wrangler tail` shows one shape.
           importFailureMessage(cause);
-          controller.error(cause);
+
+          // The stream is closed rather than torn down: a terminal record the
+          // browser can read stops it handing a half-draft to /intake/correct.
+          emit({ type: "failed" });
+          controller.close();
           return;
         }
       }
     },
   });
+}
+
+/**
+ * Stream one model attempt through to the browser, then check it the way
+ * `structureDraft` checks a non-streamed one. Throwing here means the bytes
+ * already sent are worthless, which is what the caller's records announce.
+ */
+async function runAttempt(
+  stream: DraftAttemptStream,
+  source: IntakeSource,
+  emit: (record: DraftStreamRecord) => void,
+): Promise<void> {
+  let text = "";
+  let response: Awaited<ReturnType<DraftAttemptStream["finalMessage"]>>;
+
+  try {
+    for await (const event of stream) {
+      const delta = textDelta(event);
+      if (delta === null) continue;
+      text += delta;
+      emit({ type: "delta", text: delta });
+    }
+
+    response = await stream.finalMessage();
+  } catch (cause) {
+    throw new RetryableStructuringError(`Model call failed: ${String(cause)}`);
+  }
+
+  logImportUsage(
+    recipeTitle(response.content, text),
+    response.usage,
+    response.stop_reason,
+  );
+
+  // A refusal is not worth calling again and a cut-off answer is; both carry
+  // their own Finnish wording, which is why this is not two inline checks.
+  assertFinished(response.stop_reason ?? null);
+
+  // Parsed here, on the server, and the result thrown away — the browser hands
+  // the same text back to /intake/correct, which parses it for real. What this
+  // buys is that an unparseable attempt is a retry rather than a member staring
+  // at "The model returned unparseable JSON."
+  draftFromJson(text, source, response.model ?? STRUCTURED_BY);
 }
 
 /**

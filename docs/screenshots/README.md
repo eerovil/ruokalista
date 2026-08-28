@@ -7,9 +7,12 @@ request can be looked at without running the app.
 Taken on a Pixel 7 viewport, because a week gets planned at the kitchen table
 and a recipe gets read at the hob.
 
-Regenerate after a change that alters a screen:
+The flows and assertions in `screenshots.spec.ts` run in every ordinary suite.
+Writing these review artifacts is deliberate because nothing compares their PNG
+bytes: set `PLAYWRIGHT_SCREENSHOTS=1` after a change that alters a screen, and
+commit what it wrote:
 
-    ./scripts/playwright.sh npx playwright test screenshots
+    PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
 
 | file | screen |
 | --- | --- |

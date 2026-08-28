@@ -23,8 +23,9 @@ leave high. `streamDraft` checks the stop reason after `finalMessage()`: a draft
 `max_tokens` is a JSON document that just ends, and a refusal is no text at
 all. Neither condition raises anything in the transport, so before this check
 both reached the browser looking like a finished import and failed one screen
-later at `/intake/correct`'s `JSON.parse`. The streaming path retries once, but only
-while no byte has been sent — after that the member sees the failure. Failures
+later at `/intake/correct`'s `JSON.parse`. The streaming path retries once
+while no byte has been sent; this pull request proposes letting it retry after
+bytes are out too, which is what the record framing below is for. Failures
 reach a member as Finnish through `importFailureMessage`, which logs the
 English detail; `intake.model_usage` carries `stop_reason` alongside the token
 counts, so a truncated import is visible in `wrangler tail`.
@@ -185,6 +186,45 @@ Intake's progress is counted, not dumped: the island reads the streaming JSON
 and shows "Uunikaali · 5 ainesta · 2 vaihetta" rather than the raw bytes. Note
 that `STREAMING_ISLAND` is a template literal, so **a backslash in it is eaten
 before the browser sees it** — no regular expressions in that script.
+
+## What a streamed body says about its attempts (issue #146)
+
+This pull request proposes closing an asymmetry between the two paths. The
+plain path has always had `structureDraftWithRetry`, which retries a retryable
+failure once, and `structureDraft`, which checks `stop_reason` before parsing.
+The streaming path had neither: an answer cut off at `max_tokens` was streamed
+through as if it were whole, the island handed it to `/intake/correct`, and the
+member met the parser's own English — "The model returned unparseable JSON."
+
+The awkward part is that by the time an attempt is recognisably bad, its bytes
+are already at the browser. Nothing can be un-sent. This pull request therefore
+proposes an NDJSON body (`application/x-ndjson`): each line is one JSON record.
+`delta` carries draft text as an escaped string, `restart` says everything
+streamed so far is dead and a second attempt begins, `complete` says the current
+draft already parsed on the server, and `failed` says every attempt failed.
+Because pasted text is data inside a JSON string, it cannot impersonate a record
+boundary or control record. The island resets only for a parsed `restart` record
+and hands over only after a parsed `complete`, so two attempts cannot be joined
+and a half-draft never reaches `/intake/correct` however the chunks fall.
+
+The retry itself stays on the server, in `draftStream`, next to the
+retryability it already knows about. `draftStream` takes the model call as an
+argument purely so `dev/check-intake-stream.ts` can drive the whole loop from
+fake responses — a cut-off first attempt, an unparseable one that stopped
+cleanly, a refusal that must not be retried, and two failures in a row — with
+no model call and nothing spent. `tests/intake.spec.ts` covers the island's
+half from the same fixtures.
+
+A terminal failure closes the body on a `failed` record rather than tearing the
+stream down. A body that simply stops is indistinguishable from a dropped
+connection, and the browser cannot tell whether what it holds is a whole draft.
+`importFailureMessage` still logs the English detail as `intake.failed`, so
+`wrangler tail` shows one shape for every import failure however it arrived.
+
+The island shows its own Finnish wording for a failure it framed, and the fixed
+`Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.` for anything else. That
+split is deliberate: a 503's body or a transport error is English, or worse
+somebody else's Finnish, and neither belongs on a member's screen.
 
 ## Marking the ingredients a step names (issue #120)
 

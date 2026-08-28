@@ -63,6 +63,56 @@ test("a recipe renders every awkward line shape", async ({ page }) => {
   );
 });
 
+test("the cooking view uses tablet width without clipping long steps", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  const ingredients = page.locator(".recipe-section").first().locator(".lines");
+  const method = page.locator(".recipe-section").first().locator(".steps");
+  const mobileIngredients = await ingredients.boundingBox();
+  const mobileMethod = await method.boundingBox();
+  expect(mobileIngredients).not.toBeNull();
+  expect(mobileMethod).not.toBeNull();
+  expect(mobileMethod!.y).toBeGreaterThanOrEqual(
+    mobileIngredients!.y + mobileIngredients!.height,
+  );
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const tabletIngredients = await ingredients.boundingBox();
+  const tabletMethod = await method.boundingBox();
+  expect(tabletIngredients).not.toBeNull();
+  expect(tabletMethod).not.toBeNull();
+  expect(tabletMethod!.x).toBeGreaterThanOrEqual(
+    tabletIngredients!.x + tabletIngredients!.width,
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(768);
+
+  const step = method.locator("li").first();
+  const before = await step.boundingBox();
+  await step.evaluate((element) => {
+    element.textContent = `${element.textContent ?? ""} ${"Pitkä valmistusohje rivittyy kokonaan näkyviin. ".repeat(16)}`;
+  });
+  const after = await step.boundingBox();
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect(after!.height).toBeGreaterThan(before!.height);
+  expect(await step.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    overflowY: getComputedStyle(element).overflowY,
+    whiteSpace: getComputedStyle(element).whiteSpace,
+  }))).toEqual(expect.objectContaining({
+    overflowY: "visible",
+    whiteSpace: "normal",
+  }));
+  expect(await step.evaluate((element) => element.scrollWidth))
+    .toBeLessThanOrEqual(await step.evaluate((element) => element.clientWidth));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(768);
+});
+
 test("the original text is one tap away, not in the way", async ({ page }) => {
   await page.goto("/recipes/1");
 

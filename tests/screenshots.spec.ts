@@ -2,7 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { DUPLICATE_AMOUNT_DRAFT, stubStructuring } from "./support/draft";
+import {
+  DUPLICATE_AMOUNT_DRAFT,
+  streamRecordBody,
+  stubStreamBody,
+  stubStructuring,
+  TRUNCATED_ATTEMPT,
+} from "./support/draft";
 import { addIngredientRow, openDraftEditor } from "./support/lines";
 import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
@@ -19,18 +25,30 @@ import { sessionCookie } from "./support/session";
  * a fixed element where the viewport left it — so on a long page the tabs show
  * up partway down the picture. That is the screenshot, not the app.
  *
- * Regenerate with:
+ * The flows and assertions in this spec are behavioural coverage, so they run
+ * in every ordinary suite. Only writing the review artifacts is opt-in.
+ * Regenerate them with:
  *
- *   ./scripts/playwright.sh npx playwright test screenshots
+ *   PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
  */
 
 const SHOTS = "docs/screenshots";
+const writeScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
+
+async function capture(
+  page: Page,
+  options: Parameters<Page["screenshot"]>[0],
+): Promise<void> {
+  if (writeScreenshots) {
+    await page.screenshot(options);
+  }
+}
 
 test.beforeAll(reseed);
 
 test("sign-in", async ({ page }) => {
   await page.goto("/signin");
-  await page.screenshot({ path: `${SHOTS}/01-signin.png`, fullPage: true });
+  await capture(page, { path: `${SHOTS}/01-signin.png`, fullPage: true });
 });
 
 test("intake requires JavaScript", async ({ browser }) => {
@@ -47,7 +65,7 @@ test("intake requires JavaScript", async ({ browser }) => {
     element.scrollIntoView({ block: "center" }),
   );
   await expect(page.locator("#status")).toBeInViewport();
-  await page.screenshot({
+  await capture(page, {
     path: `${SHOTS}/57-intake-requires-javascript.png`,
   });
 
@@ -70,7 +88,7 @@ test.describe("PWA", () => {
     await expect(
       page.getByRole("heading", { name: "Ruokalista odottaa verkkoyhteyttä" }),
     ).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/31-pwa-offline.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/31-pwa-offline.png`, fullPage: true });
     await context.setOffline(false);
   });
 });
@@ -97,7 +115,7 @@ test.describe("signed in", () => {
     await page.locator('input[value="2026-10-06:lunch"]').check();
     await page.locator('input[value="2026-10-07:lunch"]').check();
     await expect(page.locator('input[value="2026-10-07:lunch"]')).toBeChecked();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/19-batch-coverage.png`,
       fullPage: true,
     });
@@ -106,7 +124,7 @@ test.describe("signed in", () => {
     await page.getByRole("link", { name: "Takaisin viikkoon" }).click();
     await expect(page.locator(".batch-start")).toBeVisible();
     await expect(page.locator(".batch-end")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/02-week.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/02-week.png`, fullPage: true });
   });
 
   test("a batch spanning several days is one card", async ({ page }) => {
@@ -147,7 +165,7 @@ test.describe("signed in", () => {
     await expect(wednesday.locator(".continuing-slots")).toHaveText(
       "Lounas · Päivällinen",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/24-multi-day-batch.png`,
       fullPage: true,
     });
@@ -165,7 +183,7 @@ test.describe("signed in", () => {
     await expect(tuesday.locator(".continuing-card")).toBeInViewport();
     await expect(tuesday.locator(".slot-actions")).toBeInViewport();
     await expect(wednesday.locator(".continuing-card")).toBeInViewport();
-    await page.screenshot({ path: `${SHOTS}/49-covered-days.png` });
+    await capture(page, { path: `${SHOTS}/49-covered-days.png` });
   });
 
   /**
@@ -177,7 +195,7 @@ test.describe("signed in", () => {
     const today = page.locator(".day.is-today");
     await expect(page.locator(".batch-card")).toHaveCount(0);
     await expect(today).toBeInViewport();
-    await page.screenshot({ path: `${SHOTS}/36-week-empty-today.png` });
+    await capture(page, { path: `${SHOTS}/36-week-empty-today.png` });
   });
 
   test("today in the current week", async ({ page }) => {
@@ -197,7 +215,7 @@ test.describe("signed in", () => {
     const today = page.locator(".day.is-today");
     await expect(today.locator(".today-badge")).toHaveText("Tänään");
     await expect(today.locator(".batch-card")).toHaveCount(1);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/27-week-today.png`,
       fullPage: true,
     });
@@ -211,25 +229,30 @@ test.describe("signed in", () => {
       .click();
     await page.locator(".day .entry a").first().click();
     await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/15-meal-actions.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/15-meal-actions.png`, fullPage: true });
   });
 
   test("the recipe picker", async ({ page }) => {
     await page.goto("/picker?date=2026-10-06&slot=dinner");
     await expect(page.locator(".pick li").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/03-picker.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/03-picker.png`, fullPage: true });
   });
 
   test("recipe list", async ({ page }) => {
     await page.goto("/recipes");
     await expect(page.locator(".recipes li").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/04-recipes.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/04-recipes.png`, fullPage: true });
   });
 
   test("one recipe", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/recipes/1");
     await expect(page.locator(".lines li").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/05-recipe.png`, fullPage: true });
+    await expect(page.getByRole("heading", { name: "Valmistus" })).toBeVisible();
+    await expect(page.locator(".steps li").last()).toBeInViewport();
+    await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+      .toBeInViewport();
+    await capture(page, { path: `${SHOTS}/05-recipe.png` });
   });
 
   /**
@@ -257,7 +280,7 @@ test.describe("signed in", () => {
     expect(toggleBox!.y).toBeGreaterThanOrEqual(
       methodBox!.y + methodBox!.height,
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/38-step-mentions-closed.png`,
       fullPage: true,
     });
@@ -266,7 +289,7 @@ test.describe("signed in", () => {
     await vesi.locator("label").click();
     await expect(kaali.locator(".mention-amount")).toBeVisible();
     await expect(vesi.locator(".mention-amount")).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/39-step-mentions-open.png`,
       fullPage: true,
     });
@@ -275,7 +298,7 @@ test.describe("signed in", () => {
     await expect(page.locator(".reveal-all")).toBeChecked();
     await expect(page.locator(".mention-amount:visible")).toHaveCount(3);
     await expect(page.getByText("Piilota määrät", { exact: true })).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/48-step-mentions-all-open.png`,
       fullPage: true,
     });
@@ -296,7 +319,7 @@ test.describe("signed in", () => {
     await oil.locator("label").click();
     await expect(oil.locator(".mention-amount")).toBeVisible();
     await expect(oil.locator(".mention-amount")).toHaveText("2 rkl / 1 dl");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/40-step-mention-all-amounts.png`,
       fullPage: true,
     });
@@ -339,28 +362,28 @@ test.describe("signed in", () => {
 
     await page.goto("/recipes/1");
     await expect(page.locator(".recipe-image img")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/22-recipe-image.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/22-recipe-image.png`, fullPage: true });
 
     await page.goto("/recipes/1/edit");
     await expect(page.locator(".recipe-image-editor img")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/23-editor-image.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/23-editor-image.png`, fullPage: true });
 
     // The list, with one recipe pictured and the rest showing the placeholder —
     // which is the point of the placeholder, so the shot has to show both.
     await page.goto("/recipes");
     await expect(page.locator(".recipes .recipe-image img")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/24-recipes-images.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/24-recipes-images.png`, fullPage: true });
 
     await page.goto("/picker?date=2026-10-05&slot=dinner");
     await expect(page.locator(".pick .recipe-image img")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/25-picker-images.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/25-picker-images.png`, fullPage: true });
 
     await page.request.post("/api/batches", {
       data: { date: "2026-10-06", slot: "dinner", recipeId: 1, portions: 4 },
     });
     await page.goto("/?week=2026-10-05");
     await expect(page.locator(".entry .recipe-image img").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/26-week-images.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/26-week-images.png`, fullPage: true });
 
     // Put it back, so the recipe every other shot photographs is unchanged.
     await page.request.delete("/api/recipes/1/image");
@@ -411,7 +434,7 @@ test.describe("signed in", () => {
     // drawn inside the band rather than cropped to fill it.
     await expect(hero).toHaveCSS("object-fit", "contain");
     await expect(hero).toHaveJSProperty("naturalWidth", 512);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/35-recipe-image-square.png`,
       fullPage: true,
     });
@@ -434,7 +457,7 @@ test.describe("signed in", () => {
     await expect(page.locator("#keep-awake-status")).toHaveText(
       "Näyttö pysyy hereillä.",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/18-keep-awake-fallback.png`,
       fullPage: true,
     });
@@ -443,7 +466,7 @@ test.describe("signed in", () => {
   test("a recipe that cannot be scaled", async ({ page }) => {
     await page.goto("/recipes/2");
     await expect(page.locator(".yield")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/06-recipe-no-yield.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/06-recipe-no-yield.png`, fullPage: true });
   });
 
   test("intake", async ({ page }) => {
@@ -454,7 +477,7 @@ test.describe("signed in", () => {
     await expect(
       page.getByLabel("…tai valitse kuvia kuvakirjastosta"),
     ).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/07-intake.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/07-intake.png`, fullPage: true });
   });
 
   test("a recipe photographed across a spread", async ({ page }) => {
@@ -511,7 +534,7 @@ test.describe("signed in", () => {
       "Sivu 1",
       "Sivu 2",
     ]);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/56-intake-two-pages.png`,
       fullPage: true,
     });
@@ -523,7 +546,37 @@ test.describe("signed in", () => {
     await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
     await page.getByRole("button", { name: "Jäsennä" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/08-correct.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
+  });
+
+  test("a streamed import that failed both attempts", async ({ page }) => {
+    // Both attempts stop mid-JSON (#146). What the member must see is plain
+    // Finnish and their own paste still in the box — not the review screen
+    // reporting "The model returned unparseable JSON."
+    await stubStreamBody(
+      page,
+      streamRecordBody(
+        { type: "delta", text: TRUNCATED_ATTEMPT },
+        { type: "restart" },
+        { type: "delta", text: TRUNCATED_ATTEMPT },
+        { type: "failed" },
+      ),
+    );
+
+    await page.goto("/intake");
+    await page
+      .getByLabel("Liitä reseptin teksti")
+      .fill("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.");
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+
+    await expect(page.locator("#status")).toContainText(
+      "malli ei saanut reseptiä valmiiksi",
+    );
+    await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+    await capture(page, {
+      path: `${SHOTS}/56-intake-stream-failed.png`,
+      fullPage: true,
+    });
   });
 
   test("the approval gate refusing", async ({ page }) => {
@@ -535,7 +588,7 @@ test.describe("signed in", () => {
     await page.locator(".line.is-new select").selectOption("");
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page.locator(".refused")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/09-gate-refused.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/09-gate-refused.png`, fullPage: true });
   });
 
   test("a dish written in parts", async ({ page }) => {
@@ -548,19 +601,19 @@ test.describe("signed in", () => {
     expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
       cookingText.indexOf("Kokoa vuokaan"),
     );
-    await page.screenshot({ path: `${SHOTS}/13-dish-in-parts.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/13-dish-in-parts.png`, fullPage: true });
   });
 
   test("a dish scaled to a planned day", async ({ page }) => {
     await page.goto("/recipes/3?portions=8");
     await expect(page.locator(".part").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/14-scaled.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/14-scaled.png`, fullPage: true });
   });
 
   test("the recipe editor", async ({ page }) => {
     await page.goto("/recipes/1/edit");
     await expect(page.locator(".line").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/11-editor.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/11-editor.png`, fullPage: true });
   });
 
   test("a removal the steps still argue with", async ({ page }) => {
@@ -585,7 +638,7 @@ test.describe("signed in", () => {
     await expect(page.locator(".refused")).toContainText("sitruunaruoho");
     await expect(linked.locator("select")).toHaveValue("3");
     await expect(page.getByRole("button", { name: "Poista silti" })).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/47-editor-remove-mentioned.png`,
       fullPage: true,
     });
@@ -596,13 +649,13 @@ test.describe("signed in", () => {
     await expect(
       page.getByRole("button", { name: "Poista lopullisesti" }),
     ).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/16-confirm-delete.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/16-confirm-delete.png`, fullPage: true });
   });
 
   test("a search that finds nothing", async ({ page }) => {
     await page.goto("/recipes?q=pizza");
     await expect(page.locator(".nothing")).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
   });
 
   /**
@@ -627,7 +680,7 @@ test.describe("signed in", () => {
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
       "Kaalilaatikko + Lasagne",
     );
-    await page.screenshot({ path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
 
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await milk.locator("summary").click();
@@ -636,7 +689,7 @@ test.describe("signed in", () => {
       hasText: "Kotimaista rasvaton maito",
     });
     await expect(product).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/57-s-ostoslista-product-search.png`,
       fullPage: true,
     });
@@ -660,7 +713,7 @@ test.describe("signed in", () => {
     await send.click();
     await expect(send).toContainText("Tallennetaan valintoja");
     await expect(send.locator(".spinner")).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/59-s-ostoslista-waits-for-product.png`,
       fullPage: true,
     });
@@ -685,7 +738,7 @@ test.describe("signed in", () => {
     await milk.evaluate((details: HTMLDetailsElement) => {
       details.open = false;
     });
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/58-s-ostoslista-current.png`,
       fullPage: true,
     });
@@ -695,7 +748,7 @@ test.describe("signed in", () => {
     });
     await page.locator(".shopping-picker > summary").click();
     await expect(milk.locator(".shopping-from li").first()).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/39-shopping-breakdown.png`,
       fullPage: true,
     });
@@ -733,14 +786,14 @@ test.describe("signed in", () => {
     await expect(
       page.locator(".shopping-list").last().locator("> li"),
     ).toHaveCount(2);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/40-shopping-pantry.png`,
       fullPage: true,
     });
 
     await page.goto("/kaappi");
     await expect(page.locator(".pantry li")).toHaveCount(2);
-    await page.screenshot({ path: `${SHOTS}/41-pantry.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/41-pantry.png`, fullPage: true });
 
     // Leave the cupboard and the week as they were found: the shots above and
     // below share this database.
@@ -755,13 +808,13 @@ test.describe("signed in", () => {
   test("the ingredient list", async ({ page }) => {
     await page.goto("/ingredients");
     await expect(page.locator(".ingredients li").first()).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/12-ingredients.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/12-ingredients.png`, fullPage: true });
   });
 
   test("search results", async ({ page }) => {
     await page.goto("/recipes?q=kaali");
     await expect(page.locator(".recipes li")).toHaveCount(1);
-    await page.screenshot({ path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
   });
 
   test("the account menu as an ordinary member sees it", async ({ page }) => {
@@ -769,7 +822,7 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("button", { name: "Kirjaudu ulos" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/28-week-not-admin.png`,
       fullPage: true,
     });
@@ -787,7 +840,7 @@ test.describe("signed in as an admin", () => {
     await page.goto("/?week=2026-10-05");
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/29-week-admin.png`,
       fullPage: true,
     });
@@ -803,7 +856,7 @@ test.describe("signed in as an admin", () => {
       (details as HTMLDetailsElement).open = true;
     });
     await expect(page.locator(".batch-previews details").first()).toHaveAttribute("open", "");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/20-agentdeck-batch-review.png`,
       fullPage: true,
     });
@@ -828,7 +881,7 @@ test.describe("signed in as an admin", () => {
     await expect(page.locator(".refused")).toContainText(
       "Talouden ainekset muuttuivat tarkistamisen jälkeen",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/21-agentdeck-stale-review.png`,
       fullPage: true,
     });
@@ -839,7 +892,7 @@ test.describe("signed in as an admin", () => {
   test("the admin screen", async ({ page }) => {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: "Ylläpito" })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/30-admin.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/30-admin.png`, fullPage: true });
   });
 
   test("every household, and one of them open", async ({ page }) => {
@@ -848,7 +901,7 @@ test.describe("signed in as an admin", () => {
     // Both seeded households, including the one this admin is not in — that
     // crossing is the whole point of the screen.
     await expect(page.getByRole("link", { name: /Naapuri/ })).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/42-admin-households.png`,
       fullPage: true,
     });
@@ -858,7 +911,7 @@ test.describe("signed in as an admin", () => {
     // what the screen is for.
     await page.locator("details.rename").first().locator("summary").click();
     await expect(page.locator("#member-1-sub")).toHaveValue("dev-seed-koti");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/43-admin-household.png`,
       fullPage: true,
     });
@@ -876,7 +929,7 @@ test.describe("signed in as an admin", () => {
     await expect(page.locator(".refused")).toContainText(
       "Google-tunnistettaan ei voi vaihtaa",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/44-admin-member-refused.png`,
       fullPage: true,
     });
@@ -895,7 +948,7 @@ test.describe("signed in as an admin", () => {
     await expect(page.locator(".refused")).toContainText(
       "ei ole kelvollinen Google-tunniste",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/47-admin-member-sub-refused.png`,
       fullPage: true,
     });
@@ -924,7 +977,7 @@ test.describe("signed in as an admin", () => {
     await page.goto("/admin/recipe-images");
     await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
     await page.locator("details.image-current > summary").click();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/32-admin-recipe-images.png`,
       fullPage: true,
     });
@@ -934,7 +987,7 @@ test.describe("signed in as an admin", () => {
     await page.goto("/admin/recipe-images/confirm?id=1&id=3");
     await expect(page.locator("#split-manifest li")).toHaveCount(2);
     await expect(page.locator("#sheet-prompt")).toContainText("4-column by 4-row grid");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/33-admin-recipe-images-confirm.png`,
       fullPage: true,
     });
@@ -947,7 +1000,7 @@ test.describe("signed in as an admin", () => {
     });
     const pictured = page.locator("#split-manifest .recipe-image img");
     await expect(pictured).toHaveCount(2);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/34-admin-recipe-images-done.png`,
       fullPage: true,
     });
@@ -967,14 +1020,14 @@ test.describe("signed in as an admin", () => {
       await expect(page.locator(".recipes .recipe-image img").nth(at))
         .not.toHaveJSProperty("naturalWidth", 0);
     }
-    await page.screenshot({ path: `${SHOTS}/32-generated-images.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/32-generated-images.png`, fullPage: true });
 
     await page.goto("/recipes/1");
     await expect(page.locator(".recipe-image img").first()).toHaveJSProperty(
       "naturalWidth",
       512,
     );
-    await page.screenshot({ path: `${SHOTS}/33-generated-recipe.png`, fullPage: true });
+    await capture(page, { path: `${SHOTS}/33-generated-recipe.png`, fullPage: true });
   });
 });
 
@@ -1013,7 +1066,7 @@ test.describe("a long recipe name on a phone", () => {
     await expect(page.locator(".batch-carried")).toHaveText(
       "Kokattu 28.2. · 4 annosta",
     );
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/37-week-long-title.png`,
       fullPage: true,
     });
@@ -1110,7 +1163,7 @@ test.describe("removing an established member", () => {
     await expect(
       page.locator("details.rename").filter({ hasText: "Eero" }),
     ).toHaveCount(0);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/45-admin-household-after-removal.png`,
       fullPage: true,
     });
@@ -1118,7 +1171,7 @@ test.describe("removing an established member", () => {
     // And the recipes they wrote are still on the list, still theirs.
     await page.goto("/recipes");
     await expect(page.locator(".recipes").first()).toContainText("Eero");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/46-recipes-after-removal.png`,
       fullPage: true,
     });
@@ -1155,14 +1208,14 @@ test.describe("public recipes", () => {
     await page.getByLabel("Valitse Kaalilaatikko").check();
     await page.getByLabel("Valitse Lasagne").check();
     await expect(page.getByLabel("Valitse Lasagne")).toBeChecked();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/50-recipes-select-to-publish.png`,
       fullPage: true,
     });
 
     await page.getByRole("button", { name: "Julkaise valitut" }).click();
     await expect(page.locator(".badge.is-published")).toHaveCount(2);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/51-recipes-published.png`,
       fullPage: true,
     });
@@ -1176,7 +1229,7 @@ test.describe("public recipes", () => {
     await expect(
       page.getByRole("button", { name: "Poista julkaisu" }),
     ).toBeVisible();
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/52-recipe-owner-sharing.png`,
       fullPage: true,
     });
@@ -1191,7 +1244,7 @@ test.describe("public recipes", () => {
     const thumb = page.locator(".recipes .recipe-image img").first();
     await expect(thumb).toHaveJSProperty("complete", true);
     await expect(thumb).not.toHaveJSProperty("naturalWidth", 0);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/53-public-recipes.png`,
       fullPage: true,
     });
@@ -1202,7 +1255,7 @@ test.describe("public recipes", () => {
     const hero = page.locator(".recipe-image.is-hero img");
     await expect(hero).toHaveJSProperty("complete", true);
     await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/54-public-recipe-read-only.png`,
       fullPage: true,
     });
@@ -1220,7 +1273,7 @@ test.describe("public recipes", () => {
     await page.goto("/recipes/1");
     await page.getByRole("button", { name: "Poista julkaisu" }).click();
     await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
-    await page.screenshot({
+    await capture(page, {
       path: `${SHOTS}/55-unpublish-refused.png`,
       fullPage: true,
     });
