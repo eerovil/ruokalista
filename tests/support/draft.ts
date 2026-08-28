@@ -78,6 +78,7 @@ export interface StubbedCall {
     image?: string;
     mediaType?: string;
     images?: Array<{ image?: string; mediaType?: string }>;
+    url?: string;
   };
 }
 
@@ -89,6 +90,7 @@ export interface StubbedCall {
 export async function stubStructuring(
   page: Page,
   draft: unknown = DRAFT_FIXTURE,
+  options: StubOptions = {},
 ): Promise<StubbedCall[]> {
   const calls: StubbedCall[] = [];
 
@@ -98,22 +100,45 @@ export async function stubStructuring(
 
     const id = `test-${randomUUID()}`;
     const photographed = Array.isArray(body.images) && body.images.length > 0;
-    const sourceText = typeof body.sourceText === "string" ? body.sourceText : "";
+    const linked = !photographed && typeof body.url === "string" && body.url !== "";
+    // A linked job's text is what the consumer read off the page, so the
+    // fixture stands in for the page rather than for anything the browser sent.
+    const sourceText = linked
+      ? options.linkedText ?? ""
+      : typeof body.sourceText === "string"
+        ? body.sourceText
+        : "";
     const imageRefs = photographed
       ? body.images!.map((image, index) => ({
           key: `test/${id}/${index + 1}`,
           mediaType: image.mediaType ?? "image/jpeg",
         }))
       : null;
-    executeLocalSql(
-      `INSERT INTO intake_job
-        (id, household_id, created_by, status, source_route, source_text,
-         image_refs, draft_json, created_at, updated_at)
-       VALUES (${sql(id)}, 1, 1, 'ready', ${sql(photographed ? "photographed" : "pasted")},
-         ${photographed ? "NULL" : sql(sourceText)},
-         ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
-         ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    );
+    const route_ = photographed ? "photographed" : linked ? "linked" : "pasted";
+
+    if (options.failWith !== undefined) {
+      executeLocalSql(
+        `INSERT INTO intake_job
+          (id, household_id, created_by, status, source_route, source_text,
+           source_url, image_refs, error_message, created_at, updated_at)
+         VALUES (${sql(id)}, 1, 1, 'failed', ${sql(route_)},
+           ${linked ? "NULL" : sql(sourceText)},
+           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${sql(options.failWith)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      );
+    } else {
+      executeLocalSql(
+        `INSERT INTO intake_job
+          (id, household_id, created_by, status, source_route, source_text,
+           source_url, image_refs, draft_json, created_at, updated_at)
+         VALUES (${sql(id)}, 1, 1, 'ready', ${sql(route_)},
+           ${photographed ? "NULL" : sql(sourceText)},
+           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      );
+    }
 
     await route.fulfill({
       status: 202,
@@ -123,6 +148,24 @@ export async function stubStructuring(
   });
 
   return calls;
+}
+
+/**
+ * How the stubbed queue consumer should have finished (#192).
+ *
+ * A browser run has no network and no queue, so these stand in for what the
+ * consumer would have written: the text it read off a linked page, the address
+ * it finally read, or the Finnish it failed with. The fetch itself is covered
+ * without a browser by `dev/check-recipe-fetch.ts`, and the job half by
+ * `dev/check-intake-jobs.ts`.
+ */
+export interface StubOptions {
+  /** The text the consumer read off the page, for a linked import. */
+  linkedText?: string;
+  /** The address it finally read, after any redirect. */
+  linkedUrl?: string;
+  /** Finnish failure wording, when the job should land as failed instead. */
+  failWith?: string;
 }
 
 function sql(value: string): string {
@@ -216,3 +259,4 @@ export const REMOVED_LINE_DRAFT = {
     },
   ],
 };
+

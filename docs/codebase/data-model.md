@@ -164,6 +164,21 @@ ordered key list. `lease_id` makes completion conditional on the consumer that
 claimed the running job. The queue message carries the job id rather than
 source data.
 
+`migrations/0018_linked_intake_jobs.sql`, proposed by #192, adds a third route.
+`intake_job.source_route` gains `linked` and the table gains `source_url`,
+because a linked import persists the *address* rather than the text: the page
+is read by the consumer, not by the request. `source_text` is therefore
+nullable for a linked job until the consumer has read the page, and filled in
+once it has — which is what lets a retry after a model failure reuse the text
+instead of fetching the site again.
+
+That one is a table rebuild rather than a column swap, and it is the case the
+warning below does not catch either way: two of `intake_job`'s CHECKs are
+table-level and name `source_route`, so no `DROP COLUMN` can carry them away,
+but nothing references `intake_job`, so the plain create-copy-drop-rename works
+with no cascade to worry about and no child's `REFERENCES` clause to follow the
+rename.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
@@ -363,6 +378,34 @@ Both product values are still written only after a fresh S-ostoslista search
 confirms the submitted EAN, and the image is still the stable public CDN URL
 derived from that EAN. Unlike #147, this **is** a table addition, so it goes
 through the manifest lockstep below.
+
+## Where a recipe was read from
+
+`migrations/0016_recipe_source_url.sql`, proposed by #192, adds
+`recipe.source_url` — the web address a linked import was read from, kept so a
+household can go back to it — and adds `linked` to `source_route`, which was
+`pasted` or `photographed`. A fetched page recording itself as a paste would
+have been the cheaper change and a lie. See
+[ADR-0011](../adr/0011-a-web-address-is-a-third-way-in.md) for why URL import
+exists at all, given that decision #4 ruled it out.
+
+The column is nullable and stays NULL on every other route. `replaceRecipe`
+does not touch the source columns, so editing a recipe never loses its link,
+and `src/recipes.ts::sourceLink` re-checks the stored address before putting it
+in a `href` — a restored snapshot is data from outside the intake path.
+
+`source_route` carries a `CHECK`, so widening it means swapping the column, and
+this is the case the warning below does **not** apply to. `recipe` is the parent
+of several `ON DELETE CASCADE` children and is referenced by four more tables,
+so a rebuild would be exactly the sequence 0011 documents — and none of it is
+needed. A column's own `CHECK` goes away with `DROP COLUMN`, and
+`RENAME COLUMN` rewrites the replacement's `CHECK` to follow the new name, so
+the migration is add, copy, drop, rename. `dev/check-source-url-migration.ts`
+runs the real files against `node:sqlite` and asserts that no existing recipe
+loses its route, that nothing hanging off `recipe` is lost, and that a fourth
+invented route is still refused.
+
+This is a column addition, so the backup lockstep below does not move.
 
 ### Rebuilding a table in a D1 migration
 

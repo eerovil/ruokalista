@@ -11,8 +11,18 @@ import {
   type IntakeSource,
 } from "./intake.ts";
 import type { Member } from "./members.ts";
+import {
+  fetchRecipePage,
+  normaliseRecipeUrl,
+  PageRefused,
+  type FetchFailure,
+  type PageFetcher,
+} from "./recipe-fetch.ts";
 
 export type IntakeJobStatus = "queued" | "running" | "ready" | "failed";
+
+/** The three ways a recipe arrives (#192 added the third). */
+export type IntakeJobRoute = "pasted" | "photographed" | "linked";
 
 interface StoredImageRef {
   key: string;
@@ -25,8 +35,9 @@ interface IntakeJobRow {
   created_by: number;
   status: IntakeJobStatus;
   lease_id: string | null;
-  source_route: "pasted" | "photographed";
+  source_route: IntakeJobRoute;
   source_text: string | null;
+  source_url: string | null;
   image_refs: string | null;
   draft_json: string | null;
   error_message: string | null;
@@ -39,8 +50,10 @@ export interface IntakeJob {
   householdId: number;
   createdBy: number;
   status: IntakeJobStatus;
-  sourceRoute: "pasted" | "photographed";
+  sourceRoute: IntakeJobRoute;
   sourceText: string | null;
+  /** The address a linked import reads, and null on every other route. */
+  sourceUrl: string | null;
   imageRefs: StoredImageRef[];
   draftJson: string | null;
   draftTitle: string | null;
@@ -54,6 +67,7 @@ interface IntakeBody {
   image?: unknown;
   mediaType?: unknown;
   images?: unknown;
+  url?: unknown;
 }
 
 const GENERIC_FAILURE = "Reseptin jäsennys ei onnistunut. Yritä uudelleen.";
@@ -73,6 +87,11 @@ interface QueueDependencies {
 
 interface IntakeProcessDependencies {
   structure?: (env: Env, job: IntakeJob) => Promise<string>;
+  /**
+   * Stands in for `fetch` when a linked job reads its page, so
+   * `dev/check-intake-jobs.ts` can drive the whole lifecycle with no network.
+   */
+  fetchPage?: PageFetcher;
 }
 
 /** Parse both today's multi-page body and the older one-photo PWA body. */
@@ -111,9 +130,20 @@ export async function createIntakeJob(
     typeof body.sourceText === "string" && body.sourceText.trim() !== ""
       ? body.sourceText
       : null;
-  if (images.length === 0 && sourceText === null) {
-    throw new IntakeRefused("Anna joko tekstiä tai kuva.");
+
+  // A photograph wins over an address and an address over an already-pasted
+  // box, so the recipe that gets imported is the newest thing the member
+  // reached for. The address is checked here rather than in the consumer: an
+  // address that could never be fetched should be refused while the member is
+  // still looking at the field they typed it into.
+  const sourceUrl = images.length === 0 ? readIntakeUrl(body.url) : null;
+
+  if (images.length === 0 && sourceUrl === null && sourceText === null) {
+    throw new IntakeRefused("Anna reseptin osoite, tekstiä tai kuva.");
   }
+
+  const route: IntakeJobRoute =
+    images.length > 0 ? "photographed" : sourceUrl !== null ? "linked" : "pasted";
 
   const id = crypto.randomUUID();
   const imageRefs: StoredImageRef[] = [];
@@ -130,16 +160,20 @@ export async function createIntakeJob(
 
     await env.DB.prepare(
       `INSERT INTO intake_job
-         (id, household_id, created_by, status, source_route, source_text, image_refs)
-       VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
+         (id, household_id, created_by, status, source_route, source_text,
+          source_url, image_refs)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
     )
       .bind(
         id,
         member.householdId,
         member.id,
-        images.length > 0 ? "photographed" : "pasted",
-        images.length > 0 ? null : sourceText,
-        images.length > 0 ? JSON.stringify(imageRefs) : null,
+        route,
+        // A linked job starts with no text at all: the page has not been read
+        // yet, and it is the consumer that reads it.
+        route === "pasted" ? sourceText : null,
+        sourceUrl,
+        route === "photographed" ? JSON.stringify(imageRefs) : null,
       )
       .run();
   } catch (error) {
@@ -159,6 +193,40 @@ export async function createIntakeJob(
 }
 
 export class IntakeRefused extends Error {}
+
+/**
+ * The address a linked import will read, or null when none was given.
+ *
+ * `normaliseRecipeUrl` is the same check the fetch itself goes through, so an
+ * address that could not be fetched is refused here rather than becoming a job
+ * that is certain to fail. It also fills in a missing scheme, which is what
+ * lets a member paste `kotikokki.fi/resepti` the way people actually do.
+ */
+function readIntakeUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    return normaliseRecipeUrl(value).toString();
+  } catch {
+    throw new IntakeRefused(LINK_REFUSALS.invalid_url);
+  }
+}
+
+/**
+ * Why a web address gave up no recipe, in Finnish (#192).
+ *
+ * The fetch names its refusals in a closed set of English words; this is the
+ * one place each becomes something a household reads. A page's own error text
+ * never becomes a Finnish message, and never reaches a screen.
+ */
+const LINK_REFUSALS: Record<FetchFailure, string> = {
+  invalid_url: "Osoite ei näytä nettiosoitteelta. Tarkista linkki.",
+  unreachable:
+    "Sivua ei saatu auki. Tarkista linkki tai kokeile hetken kuluttua uudelleen.",
+  not_a_page: "Osoitteesta ei löytynyt nettisivua.",
+  too_large: "Sivu on liian suuri luettavaksi.",
+  no_recipe:
+    "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
+};
 
 export async function listIntakeJobs(
   db: D1Database,
@@ -304,7 +372,7 @@ export async function processIntakeJob(
   const job = toJob(row);
 
   try {
-    const source = await sourceForJob(env.RECIPE_IMAGES, job);
+    const source = await sourceForJob(env, job, dependencies.fetchPage);
     const draftJson = dependencies.structure
       ? await dependencies.structure(env, job)
       : await collectValidatedDraft(
@@ -330,25 +398,62 @@ export async function processIntakeJob(
     if (completed.meta.changes !== 1) return "done";
     await deleteImages(env.RECIPE_IMAGES, job.imageRefs);
   } catch (error) {
-    await markOwnedFailed(
-      env.DB,
-      id,
-      leaseId,
-      importFailureMessage(error),
-    );
+    await markOwnedFailed(env.DB, id, leaseId, jobFailureMessage(error));
   }
 
   return "done";
 }
 
-async function sourceForJob(bucket: R2Bucket, job: IntakeJob): Promise<IntakeSource> {
+/**
+ * What the model will be given, assembled at the moment the job runs.
+ *
+ * A linked job is read here rather than when it was created, which is the
+ * whole reason it is a job: fetching in the request would hold that request
+ * open for a slow site, and #186 moved imports off the request precisely so a
+ * member could navigate away. The text it reads is written back onto the job,
+ * so a retry after a *model* failure reuses it instead of asking the site
+ * again, and so a failed import can still show what it did manage to read.
+ */
+async function sourceForJob(
+  env: Env,
+  job: IntakeJob,
+  fetchPage?: PageFetcher,
+): Promise<IntakeSource> {
   if (job.sourceRoute === "pasted") {
     return { route: "pasted", text: job.sourceText ?? "" };
   }
 
+  if (job.sourceRoute === "linked") {
+    const address = job.sourceUrl ?? "";
+    if (job.sourceText !== null && job.sourceText.trim() !== "") {
+      return { route: "linked", url: address, text: job.sourceText };
+    }
+
+    const page = fetchPage
+      ? await fetchRecipePage(address, fetchPage)
+      : await fetchRecipePage(address);
+    console.log(JSON.stringify({
+      event: "intake.page_fetched",
+      job_id: job.id,
+      host: new URL(page.url).hostname,
+      structured: page.structured,
+      characters: page.sourceText.length,
+    }));
+
+    // Written before the model runs, so the text survives a model failure and
+    // the retry is of the structuring rather than of the whole read.
+    await env.DB.prepare(
+      `UPDATE intake_job SET source_text = ?, source_url = ? WHERE id = ?`,
+    )
+      .bind(page.sourceText, page.url, job.id)
+      .run();
+
+    return { route: "linked", url: page.url, text: page.sourceText };
+  }
+
   const images: IntakeImage[] = [];
   for (const ref of job.imageRefs) {
-    const object = await bucket.get(ref.key);
+    const object = await env.RECIPE_IMAGES.get(ref.key);
     if (object === null) throw new Error("A retained intake image is missing.");
     images.push({
       base64: encodeBase64(new Uint8Array(await object.arrayBuffer())),
@@ -393,6 +498,25 @@ export async function collectValidatedDraft(
   const complete = record(pending);
   if (complete !== null) return complete;
   throw new Error("The model stream ended without a completed draft.");
+}
+
+/**
+ * The Finnish a failed job carries, whichever half of the import failed.
+ *
+ * A page that would not be read is a different thing to explain than a model
+ * that would not answer, and the member can usually act on the first — so the
+ * fetch's named reason is kept rather than flattened into the generic wording.
+ * The English detail still only goes to the log.
+ */
+function jobFailureMessage(error: unknown): string {
+  if (error instanceof PageRefused) {
+    console.log(JSON.stringify({
+      event: "intake.page_refused",
+      reason: error.reason,
+    }));
+    return LINK_REFUSALS[error.reason];
+  }
+  return importFailureMessage(error);
 }
 
 async function markQueuedFailed(
@@ -523,6 +647,7 @@ function toJob(row: IntakeJobRow): IntakeJob {
     status: row.status,
     sourceRoute: row.source_route,
     sourceText: row.source_text,
+    sourceUrl: row.source_url,
     imageRefs: parseImageRefs(row.image_refs),
     draftJson: row.draft_json,
     draftTitle: draftTitle(row.draft_json),

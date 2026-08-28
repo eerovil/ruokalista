@@ -70,7 +70,7 @@ cookbook in one sitting would cost close to a year's budget.
 `src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
 AgentDeck and paste the result in, rather than looping real imports.
 
-## Why pasted text, not a URL importer
+## A web address, and the decision it reverses (#192)
 
 Wayfinder decision #4 ("Where recipes come from", closed) ruled out fetching
 recipes from a URL even though it was shown to work: `recipe-scrapers`
@@ -78,10 +78,78 @@ extracted clean `schema.org/Recipe` JSON-LD from most Finnish recipe sites
 tested, with no Finnish-specific code needed. It was rejected anyway because
 pasting text already covers those sites *and* the ones a scraper can't reach —
 one route instead of two, no importer to maintain, no robots.txt question.
-There is no URL-fetch or scraper code anywhere in `src/`; if that is proposed
-again, this is the recorded reasoning to weigh against.
 
-The same decision is why the model does the structuring rather than a
+**Issue #192 reverses that half of #4, and this pull request proposes the
+change.** The capability argument held; the effort one did not. Pasting a
+recipe on a phone means selecting text interleaved with adverts and a life
+story, and that is the step where an import gets abandoned. See
+[ADR-0011](../adr/0011-a-web-address-is-a-third-way-in.md) for the full
+reasoning, including why the robots question is answered narrowly rather than
+dismissed. Both #4 and #192 come from the same person, so this is a change of
+mind rather than a contested reversal.
+
+`src/recipe-fetch.ts` is the reading half of it, and it never calls a model. It
+turns an address into the plainest text the page reduces to, and everything
+after that is the ordinary path — `IntakeSource` gains a `linked` arm carrying
+text and the address, and nothing downstream of the model knows the difference.
+That is what keeps there being one importer rather than two.
+
+Four things about it are load-bearing:
+
+- **A linked import is a background job, and the page is read by the queue
+  consumer.** The address goes to the same `POST /api/intake/imports` the other
+  two routes use, and `intake_job` gains a `linked` route and a `source_url`
+  column. `sourceForJob` in `src/intake-jobs.ts` is what fetches the site,
+  which is the only place it can go now that #186 has moved imports off the
+  request: a slow site would otherwise hold a request open, and a member who
+  navigated away would lose the import. The text it reads is written back onto
+  the job before the model runs, so a retry after a *model* failure structures
+  the text again rather than asking the site again, and a failed import can
+  still show what it did manage to read. A retry after a *fetch* failure has no
+  text to reuse and does go back to the site, which is what a retry means
+  there.
+- **A refusal is one of five words, never prose.** `FetchFailure` is
+  `invalid_url`, `unreachable`, `not_a_page`, `too_large` or `no_recipe`, and
+  `LINK_REFUSALS` in `src/intake-jobs.ts` is the one place each becomes
+  Finnish. A fetched page's own error text — or worse, somebody else's Finnish
+  — must never land on a member's screen, which is the same rule the streamed
+  failures follow. The wording lands on the job, so a failed linked import
+  reads on the import list next to every other background failure rather than
+  as a message that disappears with the page. An address that is not an address
+  is refused by `createIntakeJob` before a job exists at all, while the member
+  is still looking at the field they typed it into.
+- **Only a public web address, at every hop.** `normaliseRecipeUrl` takes an
+  HTTP address by hostname and nothing else: no bare IP, no loopback or private
+  name, no credentials, no other scheme. Redirects are followed by hand rather
+  than by the platform precisely so a public address that bounces to a private
+  one is refused at the bounce. The body is capped as it arrives, because a
+  `Content-Length` is a claim.
+- **Structured data first, page text second.** A `schema.org/Recipe` node is
+  rendered as the plain Finnish a person would have pasted — name, yield,
+  ingredient lines, numbered steps, with a `HowToSection`'s name kept as a
+  heading because that is exactly the wording the model reads as a named part
+  of the dish. A page with no such node gives up its visible text with the
+  scripts, styles and navigation stripped out. Neither path parses ingredient
+  lines; that is still the model's job, for the reason below.
+
+The address is saved on the recipe as `recipe.source_url`, and `source_route`
+gains `linked`, so how a recipe arrived stays recorded truthfully. The recipe
+screen shows the link inside **Näytä alkuperäinen**, next to the text.
+
+Three checks cover it, none of them spending anything or touching the network.
+`dev/check-recipe-fetch.ts` covers the address guard and the extraction against
+fixtures. `dev/check-intake-jobs.ts` drives the job half through
+`processIntakeJob` with a stand-in for `fetch`: that the page is read in the
+consumer, that a job which already has text does not read it again, and that a
+fetch refusal lands on the job as Finnish. `tests/intake.spec.ts` covers the
+screens, with the stub standing in for what the consumer would have written.
+
+The picture on the page is **not** imported, which is the one thing in #192's
+list this leaves out. #4 already settled that this app keeps text and discards
+images, and a recipe photograph is somebody else's work; a household still
+uploads or generates one as before.
+
+Decision #4 is also why the model does the structuring rather than a
 Finnish-language ingredient-line parser: no such parser exists. The
 English-only options (an NYT-trained CRF, a popular ingredient-parser package)
 don't cover Finnish, and the few Finnish-aware hobby parsers found rely on

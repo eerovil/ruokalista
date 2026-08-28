@@ -160,6 +160,101 @@ test("only the lease that claimed a job can make it ready or failed", async () =
   assert.equal(failed.readyLease(), null);
 });
 
+const RECIPE_PAGE = `<!doctype html><html><head><title>Uunikaali</title>
+  <script type="application/ld+json">${JSON.stringify({
+    "@type": "Recipe",
+    name: "Uunikaali",
+    recipeYield: "4 annosta",
+    recipeIngredient: ["500 g valkokaalia", "1 l vettä", "\u00bd dl \u00f6ljy\u00e4"],
+    recipeInstructions: "Kuullota kaali pannulla ja paista uunissa tunnin ajan.",
+  })}</script></head>
+  <body><main><h1>Uunikaali</h1></main></body></html>`;
+
+test("a linked job reads its page in the consumer, not in the request", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+  const server = pageServer(RECIPE_PAGE);
+
+  let given: unknown = null;
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: server.fetchPage,
+    structure: async (_env, job) => {
+      given = job;
+      return JSON.stringify(SAMPLE_DRAFT);
+    },
+  });
+
+  // The site was read once, by the queue consumer.
+  assert.deepEqual(server.requests(), ["https://kotikokki.example/uunikaali"]);
+  assert.notEqual(given, null);
+  // And what it read was written back onto the job before the model ran, so a
+  // model failure does not throw the page away.
+  assert.match(db.storedText() ?? "", /valkokaalia/);
+  assert.equal(db.claimLease(), db.readyLease());
+});
+
+test("a linked job that already read its page does not read it again", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: "Uunikaali\n500 g valkokaalia",
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+  const server = pageServer(RECIPE_PAGE);
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: server.fetchPage,
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  // Retrying a model failure must not go back to somebody else's website.
+  assert.deepEqual(server.requests(), []);
+  assert.equal(db.storedText(), null);
+});
+
+test("a page that gives up no recipe fails the job in Finnish", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/etusivu",
+  });
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async () =>
+      new Response("<html><body><p>Ei mitään.</p></body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  assert.equal(db.claimLease(), db.failedLease());
+  assert.equal(
+    db.failureMessage(),
+    "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
+  );
+});
+
+test("a site that will not answer fails the job in Finnish too", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/poissa",
+  });
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async () => new Response("", { status: 503 }),
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  assert.equal(
+    db.failureMessage(),
+    "Sivua ei saatu auki. Tarkista linkki tai kokeile hetken kuluttua uudelleen.",
+  );
+});
+
 function streamOf(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -192,15 +287,19 @@ function batch(messages: FakeMessage[]): MessageBatch<{ jobId: string }> {
   return { messages } as unknown as MessageBatch<{ jobId: string }>;
 }
 
-function intakeDatabase(): {
+function intakeDatabase(overrides: Record<string, unknown> = {}): {
   env: import("../src/env.ts").Env;
   claimLease(): string | null;
   readyLease(): string | null;
   failedLease(): string | null;
+  failureMessage(): string | null;
+  storedText(): string | null;
 } {
   let claimLease: string | null = null;
   let readyLease: string | null = null;
   let failedLease: string | null = null;
+  let failureMessage: string | null = null;
+  let storedText: string | null = null;
   const row = {
     id: "owned",
     household_id: 1,
@@ -209,11 +308,13 @@ function intakeDatabase(): {
     lease_id: "filled-by-claim",
     source_route: "pasted",
     source_text: SAMPLE_DRAFT.source_text,
+    source_url: null,
     image_refs: null,
     draft_json: null,
     error_message: null,
     created_at: "2026-08-28 00:00:00",
     updated_at: "2026-08-28 00:00:00",
+    ...overrides,
   };
   const db = {
     prepare(sql: string) {
@@ -231,6 +332,9 @@ function intakeDatabase(): {
             readyLease = String(values[2]);
           } else if (sql.includes("SET status = 'failed'")) {
             failedLease = String(values[2]);
+            failureMessage = String(values[0]);
+          } else if (sql.includes("SET source_text = ?, source_url = ?")) {
+            storedText = String(values[0]);
           }
           return { meta: { changes: 1 } };
         },
@@ -248,5 +352,25 @@ function intakeDatabase(): {
     claimLease: () => claimLease,
     readyLease: () => readyLease,
     failedLease: () => failedLease,
+    failureMessage: () => failureMessage,
+    storedText: () => storedText,
+  };
+}
+
+/** A stand-in web server: one page of markup, and a count of what was asked. */
+function pageServer(markup: string): {
+  fetchPage: import("../src/recipe-fetch.ts").PageFetcher;
+  requests(): string[];
+} {
+  const requests: string[] = [];
+  return {
+    fetchPage: async (url) => {
+      requests.push(url);
+      return new Response(markup, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    },
+    requests: () => requests,
   };
 }

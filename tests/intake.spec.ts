@@ -101,8 +101,126 @@ test("an empty intake is refused without leaving the screen", async ({ page }) =
 
   await expect(page).toHaveURL(/\/intake$/);
   await expect(page.locator("#status")).toHaveText(
-    "Liitä ensin reseptin teksti tai valitse kuva.",
+    "Anna reseptin osoite, liitä sen teksti tai valitse kuva.",
   );
+});
+
+const LINKED_URL = "https://kotikokki.example/reseptit/uunikaali";
+const LINKED_TEXT = "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä";
+
+test("a web address becomes a background import and is kept on the recipe", async ({
+  page,
+}) => {
+  const calls = await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedText: LINKED_TEXT,
+    linkedUrl: LINKED_URL,
+  });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("kotikokki.example/reseptit/uunikaali");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  // The address is what was submitted — not page text. Nothing was fetched in
+  // this request; the queue consumer is what reads the site.
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body.url).toBe("kotikokki.example/reseptit/uunikaali");
+  expect(calls[0]?.body.sourceText).toBeUndefined();
+
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+
+  // The review carries the route and the address into the save.
+  await expect(page.locator('input[name="sourceRoute"]')).toHaveValue("linked");
+  await expect(page.locator('input[name="sourceUrl"]')).toHaveValue(LINKED_URL);
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(LINKED_TEXT);
+
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  await page.getByText("Näytä alkuperäinen").click();
+  const link = page.locator(".source-link a");
+  await expect(link).toHaveText("kotikokki.example");
+  await expect(link).toHaveAttribute("href", LINKED_URL);
+});
+
+test("a partial fetched page is preserved through the review", async ({
+  page,
+}) => {
+  await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedText: "Uunikaali\n1 valkokaali",
+    linkedUrl: "https://kotikokki.example/vajaa",
+  });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://kotikokki.example/vajaa");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  // An import that got only half the page is still an import: what was found
+  // remains the source text carried into review and save.
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(
+    "Uunikaali\n1 valkokaali",
+  );
+});
+
+test("a page with no recipe on it fails the import in Finnish, with a retry", async ({
+  page,
+}) => {
+  await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedUrl: "https://kotikokki.example/etusivu",
+    failWith:
+      "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
+  });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://kotikokki.example/etusivu");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  // The failure lives on the import list, like every other background failure,
+  // rather than as a message that disappears with the page.
+  await expect(page).toHaveURL(/\/intake/);
+  const job = page.locator("[data-intake-job]").first();
+  await expect(job.locator(".refused")).toHaveText(
+    "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
+  );
+  // Named by its site, because a linked job that never read the page has no
+  // text to be named by.
+  await expect(job.getByText("kotikokki.example")).toBeVisible();
+  await expect(job.locator(".meta")).toHaveText("Nettiosoite");
+  await expect(job.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+
+  // This file reseeds once, so a failed job left here would show up on every
+  // later test's import list.
+  executeLocalSql("DELETE FROM intake_job WHERE source_route = 'linked'");
+});
+
+test("an address that is not one is refused before a job exists", async ({
+  page,
+}) => {
+  await page.goto("/intake");
+  const before = await page.locator("[data-intake-job]").count();
+
+  await page.getByLabel("…tai hae resepti nettiosoitteesta").fill("ei mikään osoite");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  // Refused by the server while the member is still looking at the field, in
+  // the server's own Finnish rather than the island's fallback wording.
+  await expect(page.locator("#status")).toHaveText(
+    "Osoite ei näytä nettiosoitteelta. Tarkista linkki.",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  // Nothing was queued: an address that could never be fetched does not become
+  // a job that is certain to fail.
+  await expect(page.locator("[data-intake-job]")).toHaveCount(before);
 });
 
 test("pasting text queues a draft and opens the completed review", async ({

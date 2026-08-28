@@ -46,6 +46,7 @@ import {
   readCategories,
 } from "./categories.ts";
 import { isLocalOrigin } from "./public-origin.ts";
+import { normaliseRecipeUrl } from "./recipe-fetch.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
 
@@ -82,6 +83,7 @@ const STREAMING_ISLAND = `
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
+  var linkField = form.sourceUrl;
   button.disabled = false;
   status.textContent = '';
   if (!window.createImageBitmap || !window.URL || !window.URL.createObjectURL || !window.URL.revokeObjectURL) {
@@ -187,20 +189,35 @@ const STREAMING_ISLAND = `
 
   form.addEventListener('submit', function (event) {
     var text = form.sourceText.value.trim();
+    var link = linkField ? linkField.value.trim() : '';
     var photographed = pages.length > 0;
+    // A photograph wins over an address and an address over an already-pasted
+    // box, so the import is the newest thing the member reached for. The
+    // server applies the same order; this only keeps the wording honest.
+    var linked = !photographed && !!link;
     event.preventDefault();
-    if (!photographed && !text) {
-      status.textContent = 'Liitä ensin reseptin teksti tai valitse kuva.';
+    if (!photographed && !linked && !text) {
+      status.textContent = 'Anna reseptin osoite, liitä sen teksti tai valitse kuva.';
       return;
     }
     button.disabled = true;
-    status.textContent = photographed ? 'Luetaan kuvaa…' : 'Luetaan reseptiä…';
+    status.textContent = photographed
+      ? 'Luetaan kuvaa…'
+      : linked ? 'Haetaan sivua…' : 'Luetaan reseptiä…';
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
 
-    var prepared = photographed
-      ? shrinkAll().then(function (images) { return { images: images }; })
-      : Promise.resolve({ sourceText: text });
+    // The page is not fetched here. The address goes into the job and the
+    // queue consumer reads the site, so a slow page cannot hold this request
+    // open and navigating away does not lose the import.
+    var prepared;
+    if (photographed) {
+      prepared = shrinkAll().then(function (images) { return { images: images }; });
+    } else if (linked) {
+      prepared = Promise.resolve({ url: link });
+    } else {
+      prepared = Promise.resolve({ sourceText: text });
+    }
 
     prepared
       .then(function (body) {
@@ -210,7 +227,16 @@ const STREAMING_ISLAND = `
           body: JSON.stringify(body),
         }).then(function (response) {
           if (!response.ok) {
-            return response.text().then(function (t) { throw new Error(t || response.status); });
+            // A 400 is this app refusing in Finnish it wrote itself — an
+            // address that is not one, or too many pages. That wording is
+            // worth showing; anything else stays generic.
+            return response.json().then(function (body) {
+              var refusal = new Error((body && body.error) || '');
+              refusal.member = response.status === 400 && !!(body && body.error);
+              throw refusal;
+            }, function () {
+              throw new Error(String(response.status));
+            });
           }
           return response.json();
         });
@@ -229,7 +255,7 @@ const STREAMING_ISLAND = `
         // error, a server body — is generic, so no English or raw response
         // text ever lands on a member's screen.
         status.textContent = error && error.member
-          ? 'Jäsennys epäonnistui: ' + error.message
+          ? error.message
           : 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
         // The counts belonged to an attempt that came to nothing. Leaving them
         // up would read as a half-finished import that is still going.
@@ -241,13 +267,15 @@ const STREAMING_ISLAND = `
 })();
 `;
 
-type SourceRoute = "pasted" | "photographed";
+type SourceRoute = "pasted" | "photographed" | "linked";
 
 interface CorrectionView {
   title: string;
   yieldValue: string;
   sourceText: string;
   sourceRoute: SourceRoute;
+  /** The address a linked import was read from, empty on every other route. */
+  sourceUrl: string;
   structuredBy: string;
   intakeJobId: string;
   rows: Array<DraftLine | LineFormValues>;
@@ -279,7 +307,11 @@ function sampleDraftForm(): Raw {
 }
 
 /** The JavaScript-owned intake form, optionally with a paste kept for retry. */
-function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
+function intakeForm(
+  sourceText = "",
+  submitLabel = "Jäsennä",
+  sourceUrl = "",
+): Raw {
   return html`<form class="stacked" id="intake">
       <label for="sourceText">Liitä reseptin teksti</label>
       <textarea
@@ -288,6 +320,25 @@ function intakeForm(sourceText = "", submitLabel = "Jäsennä"): Raw {
         rows="14"
         placeholder="Liitä tähän resepti sellaisenaan."
       >${sourceText}</textarea>
+
+      <label for="sourceUrl">…tai hae resepti nettiosoitteesta</label>
+      <!-- Deliberately not type="url": that refuses an address with no scheme,
+           and pasting "kotikokki.fi/resepti" is exactly what people do. The
+           browser would then block the submit before the island ever ran.
+           recipe-fetch.ts fills the scheme in and checks the address. -->
+      <input
+        id="sourceUrl"
+        name="sourceUrl"
+        type="text"
+        inputmode="url"
+        autocomplete="off"
+        value="${sourceUrl}"
+        placeholder="https://…"
+      />
+      <p class="empty" id="link-help">
+        Sivu haetaan taustalla ja siitä luetaan resepti. Osoite jää talteen
+        reseptin lähteeksi.
+      </p>
 
       <label for="camera">…tai ota kuva painetusta sivusta</label>
       <input
@@ -351,7 +402,7 @@ function intakeJobs(jobs: IntakeJob[]): Raw {
       >
         <div class="recipes-text">
           <strong>${job.draftTitle ?? intakeSourceLabel(job)}</strong>
-          <span class="meta">${job.sourceRoute === "photographed" ? "Kuvattu" : "Liitetty teksti"}</span>
+          <span class="meta">${sourceRouteLabel(job.sourceRoute)}</span>
           ${state(job)}
           ${job.status === "failed" && job.sourceText
             ? html`<details><summary>Alkuperäinen teksti</summary><pre>${job.sourceText}</pre></details>`
@@ -384,14 +435,35 @@ function intakeJobs(jobs: IntakeJob[]): Raw {
   </section>`;
 }
 
+function sourceRouteLabel(route: SourceRoute): string {
+  if (route === "photographed") return "Kuvattu";
+  if (route === "linked") return "Nettiosoite";
+  return "Liitetty teksti";
+}
+
 function intakeSourceLabel(job: IntakeJob): string {
   if (job.sourceRoute === "photographed") {
     return job.imageRefs.length === 1
       ? "Kuvattu resepti"
       : `Kuvattu resepti (${job.imageRefs.length} sivua)`;
   }
+  // A linked job has no text at all until the consumer has read the page, so
+  // until then the address is the only thing there is to name it by.
+  if (job.sourceRoute === "linked" && (job.sourceText ?? "").trim() === "") {
+    return hostOf(job.sourceUrl) ?? "Linkitetty resepti";
+  }
   const firstLine = (job.sourceText ?? "").split("\n")[0]?.trim();
   return firstLine || "Liitetty resepti";
+}
+
+/** The site an address names, or null if it will not parse as one. */
+function hostOf(address: string | null): string | null {
+  if (address === null || address.trim() === "") return null;
+  try {
+    return normaliseRecipeUrl(address).hostname;
+  } catch {
+    return null;
+  }
 }
 
 /** `GET /intake` */
@@ -490,16 +562,21 @@ export async function intakeJobReviewScreen(
     return intakeNotFound(member);
   }
 
+  // The address the consumer finally read, after any redirect — that is what
+  // was structured, and what the recipe should point back at.
+  const address = job.sourceRoute === "linked" ? job.sourceUrl ?? "" : "";
   const source: IntakeSource = job.sourceRoute === "photographed"
     ? { route: "photographed", images: [] }
-    : { route: "pasted", text: job.sourceText ?? "" };
+    : job.sourceRoute === "linked"
+      ? { route: "linked", url: address, text: job.sourceText ?? "" }
+      : { route: "pasted", text: job.sourceText ?? "" };
   const ingredients = await ingredientsFor(env.DB, member.householdId);
 
   try {
     const draft = draftFromJson(job.draftJson, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, job.sourceRoute, job.id),
+      correctionForm(draft, ingredients, job.sourceRoute, address, job.id),
       "intake",
       member,
     );
@@ -520,14 +597,22 @@ export async function correctScreen(
 ): Promise<Response> {
   const form = await request.formData();
   const json = String(form.get("draft") ?? "");
+  const handedRoute = form.get("route");
   const route: SourceRoute =
-    form.get("route") === "photographed" ? "photographed" : "pasted";
+    handedRoute === "photographed" || handedRoute === "linked"
+      ? handedRoute
+      : "pasted";
   const pasted = String(form.get("sourceText") ?? "");
+  // Re-checked rather than trusted: this came back through the browser, and it
+  // ends up in an href on the recipe screen.
+  const address = readSourceUrl(form.get("sourceUrl"));
 
   const source: IntakeSource =
     route === "photographed"
       ? { route, images: [] }
-      : { route, text: pasted };
+      : route === "linked"
+        ? { route, url: address, text: pasted }
+        : { route, text: pasted };
 
   const ingredients = await ingredientsFor(env.DB, member.householdId);
 
@@ -535,12 +620,12 @@ export async function correctScreen(
     const draft = draftFromJson(json, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, route),
+      correctionForm(draft, ingredients, route, address),
       "intake",
       member,
     );
   } catch (error) {
-    return failed(member, importFailureMessage(error), pasted);
+    return failed(member, importFailureMessage(error), pasted, address);
   }
 }
 
@@ -555,11 +640,13 @@ export async function saveScreen(
   try {
     const lineCount = readLineCount(form.get("lineCount"));
     const sourceRoute = readSourceRoute(form.get("sourceRoute"));
+    const sourceUrl = readSourceUrl(form.get("sourceUrl"));
     const recipeId = await saveRecipe(env.DB, member, {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
       sourceText: String(form.get("sourceText") ?? ""),
       sourceRoute,
+      sourceUrl: sourceUrl === "" ? null : sourceUrl,
       structuredBy: String(form.get("structuredBy") ?? "") || null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
@@ -608,6 +695,7 @@ function correctionForm(
   draft: Draft,
   ingredients: IngredientSummary[],
   sourceRoute: SourceRoute,
+  sourceUrl = "",
   intakeJobId = "",
 ): Raw {
   const rows = [
@@ -631,6 +719,7 @@ function correctionForm(
       yieldValue: String(draft.yieldPortions ?? ""),
       sourceText: draft.sourceText,
       sourceRoute,
+      sourceUrl,
       structuredBy: draft.structuredBy,
       intakeJobId,
       rows,
@@ -654,6 +743,7 @@ function correctionFormFromSubmission(
       yieldValue: String(form.get("yield") ?? ""),
       sourceText: String(form.get("sourceText") ?? ""),
       sourceRoute: sourceRouteForRendering(form),
+      sourceUrl: readSourceUrl(form.get("sourceUrl")),
       structuredBy: String(form.get("structuredBy") ?? ""),
       intakeJobId: String(form.get("intakeJobId") ?? ""),
       rows: Array.from({ length: lineCount }, (_, index) =>
@@ -867,6 +957,7 @@ function renderCorrection(
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
+      <input type="hidden" name="sourceUrl" value="${view.sourceUrl}" />
       <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
       <input type="hidden" name="intakeJobId" value="${view.intakeJobId}" />
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
@@ -936,12 +1027,17 @@ function renderCorrection(
     ${CATEGORY_STYLE}`;
 }
 
-function failed(member: Member, message: string, sourceText: string): Response {
+function failed(
+  member: Member,
+  message: string,
+  sourceText: string,
+  sourceUrl = "",
+): Response {
   return page(
     "Jäsennys epäonnistui",
     html`<h1>Jäsennys epäonnistui</h1>
       <p class="refused">${message}</p>
-      ${intakeForm(sourceText, "Yritä uudelleen")}`,
+      ${intakeForm(sourceText, "Yritä uudelleen", sourceUrl)}`,
     "intake",
     member,
     400,
@@ -961,12 +1057,31 @@ function intakeNotFound(member: Member): Response {
 }
 
 function readSourceRoute(value: FormDataEntryValue | null): SourceRoute {
-  if (value === "pasted" || value === "photographed") return value;
+  if (value === "pasted" || value === "photographed" || value === "linked") {
+    return value;
+  }
   throw new FormRefused("Reseptin lähteen tyyppi on virheellinen.");
 }
 
 function sourceRouteForRendering(form: FormData): SourceRoute {
-  return form.get("sourceRoute") === "photographed"
-    ? "photographed"
-    : "pasted";
+  const given = form.get("sourceRoute");
+  return given === "photographed" || given === "linked" ? given : "pasted";
+}
+
+/**
+ * A web address that survived the round trip through the browser, or nothing.
+ *
+ * `normaliseRecipeUrl` is the same check the fetch went through, so an address
+ * that could not have been fetched cannot be saved as the source of something
+ * that was. A bad one is dropped rather than refused: the recipe is worth more
+ * than the link, and the import is otherwise finished.
+ */
+function readSourceUrl(value: FormDataEntryValue | null): string {
+  const given = String(value ?? "").trim();
+  if (given === "") return "";
+  try {
+    return normaliseRecipeUrl(given).toString();
+  } catch {
+    return "";
+  }
 }

@@ -88,3 +88,5 @@ commit what it wrote:
 | `76-recipe-categories.png` | Proposed recipe screen carrying its categories under the title, beside the rest of the dish's own facts |
 | `77-recipes-category-filter.png` | Proposed recipe list standing in **Uuniruoka**: the scrolling chip row above, only the recipes in that category below |
 | `78-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |
+| `79-intake-from-link.png` | Proposed intake with a recipe's web address filled in: the third way in, alongside pasting and photographing (#192) |
+| `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
