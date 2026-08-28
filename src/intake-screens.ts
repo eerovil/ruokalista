@@ -40,6 +40,11 @@ import {
 import type { Member } from "./members.ts";
 import { formatMeasurement } from "./quantities.ts";
 import { saveRecipe, SaveRefused } from "./recipe-save.ts";
+import {
+  CATEGORY_STYLE,
+  categoryChoices,
+  readCategories,
+} from "./categories.ts";
 import { isLocalOrigin } from "./public-origin.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
@@ -247,6 +252,8 @@ interface CorrectionView {
   intakeJobId: string;
   rows: Array<DraftLine | LineFormValues>;
   steps: StepFormValues[];
+  /** The categories ticked on this screen (#196). Never guessed by the model. */
+  categories: string[];
 }
 
 /**
@@ -556,6 +563,7 @@ export async function saveScreen(
       structuredBy: String(form.get("structuredBy") ?? "") || null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
+      categories: readCategories(form),
     });
 
     const intakeJobId = String(form.get("intakeJobId") ?? "");
@@ -627,6 +635,9 @@ function correctionForm(
       intakeJobId,
       rows,
       steps,
+      // Nothing proposes these. The model is not asked to guess what kind of
+      // food a page describes, so the one moment somebody knows is this one.
+      categories: [],
     },
     ingredients,
   );
@@ -649,6 +660,7 @@ function correctionFormFromSubmission(
         lineValuesFromForm(form, index),
       ),
       steps: stepValuesForRendering(form),
+      categories: readCategories(form),
     },
     ingredients,
   );
@@ -861,6 +873,12 @@ function renderCorrection(
 
       ${draftReview(view, ingredients)}
 
+      <!-- Outside the "Muokkaa ennen tallennusta" disclosure, unlike every
+           other field on this screen: 99% of imports need no correction and
+           would save with no category at all if this were one tap further in,
+           and this is the one moment somebody knows what kind of dish it is. -->
+      ${categoryChoices(view.categories)}
+
       <button type="submit" class="button save-draft">Tallenna resepti</button>
 
       <!-- The same form, one tap down. A closed details still submits, so the
@@ -914,7 +932,8 @@ function renderCorrection(
         )}
       </ol>
       </details>
-    </form>`;
+    </form>
+    ${CATEGORY_STYLE}`;
 }
 
 function failed(member: Member, message: string, sourceText: string): Response {

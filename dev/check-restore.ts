@@ -22,6 +22,7 @@ const TABLES: readonly BackupTableName[] = [
   "ingredient",
   "recipe",
   "recipe_share",
+  "recipe_category",
   "recipe_step",
   "ingredient_line",
   "planned_batch",
@@ -314,6 +315,10 @@ async function validSnapshot() {
         shared_at: "2026-08-25 00:00:00",
         shared_by: 1,
       },
+    ],
+    recipe_category: [
+      { recipe_id: 1, category: "uuniruoka" },
+      { recipe_id: 1, category: "pasta" },
     ],
     recipe_step: [
       { recipe_id: 2, position: 1, text: "Ruskista." },
