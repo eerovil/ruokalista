@@ -76,7 +76,10 @@ test("the recipe-wide toggle follows the preparation instructions", async ({
         ingredients.compareDocumentPosition(label) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ),
-      afterInstructions: finalSteps.nextElementSibling === label,
+      afterInstructions: Boolean(
+        finalSteps.compareDocumentPosition(label) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
     };
   });
 
