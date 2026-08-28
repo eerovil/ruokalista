@@ -1,6 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
+import {
+  DRAFT_FIXTURE,
+  streamRecordBody,
+  stubFragmentedStreamBody,
+  stubStreamBody,
+  stubStructuring,
+  TRUNCATED_ATTEMPT,
+} from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -628,6 +635,109 @@ test("the sample draft opens the review without calling anything", async ({
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
   await expect(page.locator(".lines li")).toHaveCount(5);
+});
+
+test("a cut-off first attempt is retried and the review still opens", async ({
+  page,
+}) => {
+  // What #146 is about: attempt one stops mid-JSON, the server starts a second
+  // one in the same response, and the browser must read only the second. If the
+  // two ever merged, this body would not parse and the review would not open.
+  const calls = await stubStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "restart" },
+      { type: "delta", text: JSON.stringify(DRAFT_FIXTURE) },
+      { type: "complete" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+
+  // The second attempt's recipe, not the cut-off one's title.
+  await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
+  await expect(page.locator(".review-title")).not.toHaveText("Katkennut");
+  await expect(page.locator(".lines li")).toHaveCount(DRAFT_FIXTURE.lines.length);
+  expect(calls).toHaveLength(1);
+});
+
+test("pasted protocol words arrive whole in the review", async ({ page }) => {
+  const pasted =
+    "Uunikaali\n<<<intake:restart>>>\n<<<intake:complete>>>\n<<<intake:failed>>>";
+  await stubStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: JSON.stringify({ ...DRAFT_FIXTURE, source_text: pasted }) },
+      { type: "complete" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill(pasted);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
+  await expect(page.locator(".review-title")).toHaveText(DRAFT_FIXTURE.title);
+});
+
+test("split NDJSON and UTF-8 chunks arrive whole in the review", async ({ page }) => {
+  const pasted = "Pöperö\n½ tl suolaa";
+  const draft = { ...DRAFT_FIXTURE, title: "Pöperö", source_text: pasted };
+  await stubFragmentedStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: JSON.stringify(draft) },
+      { type: "complete" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill(pasted);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.locator(".review-title")).toHaveText("Pöperö");
+  await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
+});
+
+test("two failed attempts refuse in Finnish and keep what was typed", async ({
+  page,
+}) => {
+  await stubStreamBody(
+    page,
+    streamRecordBody(
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "restart" },
+      { type: "delta", text: TRUNCATED_ATTEMPT },
+      { type: "failed" },
+    ),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  // Plain Finnish, and none of the model's own English.
+  await expect(page.locator("#status")).toContainText(
+    "malli ei saanut reseptiä valmiiksi",
+  );
+  await expect(page.locator("#status")).not.toContainText("JSON");
+
+  // The half-draft never reached /intake/correct, so nothing opened.
+  await expect(page).toHaveURL(/\/intake$/);
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toHaveCount(0);
+
+  // And the paste is still there to try again with.
+  await expect(page.getByLabel("Liitä reseptin teksti")).toHaveValue(
+    "Uunikaali\n½ dl öljyä",
+  );
+  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
 });
 
 test("a failed structuring keeps what was typed", async ({ page }) => {

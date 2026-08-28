@@ -92,6 +92,15 @@ const STREAMING_ISLAND = `
   // library picks land in the same list; nothing distinguishes them after this.
   var pages = [];
 
+  var FAILED_TEXT = 'malli ei saanut reseptiä valmiiksi. Liittämäsi teksti on tallessa — kokeile uudelleen.';
+
+  // Marked so the catch below knows this wording is ours and is safe to show.
+  function refusal() {
+    var error = new Error(FAILED_TEXT);
+    error.member = true;
+    return error;
+  }
+
   // What the household is told while the model works. The draft arrives as
   // JSON, and showing raw JSON to somebody importing a recipe is showing them
   // the plumbing — so it is counted instead. The counts only ever rise, which
@@ -262,12 +271,67 @@ const STREAMING_ISLAND = `
           status.textContent = 'Malli lukee reseptiä…';
           var reader = response.body.getReader();
           var decoder = new TextDecoder();
+          var LF = String.fromCharCode(10);
+          var pending = '';
           var draft = '';
+          var completed = null;
+          var retried = false;
+
+          // Each line is one JSON record. Draft bytes live in an escaped string,
+          // so pasted text cannot impersonate restart or completion framing.
+          function accept(line) {
+            var record;
+            try {
+              record = JSON.parse(line);
+            } catch (_error) {
+              throw refusal();
+            }
+
+            if (completed !== null || !record || typeof record.type !== 'string') {
+              throw refusal();
+            }
+            if (record.type === 'delta' && typeof record.text === 'string') {
+              draft += record.text;
+              progress.textContent = summarise(draft);
+              return;
+            }
+            if (record.type === 'restart') {
+              draft = '';
+              if (!retried) {
+                retried = true;
+                status.textContent = 'Ensimmäinen yritys katkesi — yritetään uudelleen…';
+              }
+              return;
+            }
+            if (record.type === 'complete') {
+              completed = draft;
+              return;
+            }
+            throw refusal();
+          }
+
+          function acceptCompleteLines() {
+            var end = pending.indexOf(LF);
+            while (end >= 0) {
+              var line = pending.slice(0, end);
+              pending = pending.slice(end + 1);
+              if (line) accept(line);
+              end = pending.indexOf(LF);
+            }
+          }
+
           return (function pump() {
             return reader.read().then(function (chunk) {
-              if (chunk.done) return draft;
-              draft += decoder.decode(chunk.value, { stream: true });
-              progress.textContent = summarise(draft);
+              if (chunk.done) {
+                pending += decoder.decode();
+                acceptCompleteLines();
+                // Every record ends in a newline. Leftovers mean the transport
+                // ended mid-record, so no draft is safe to hand over.
+                if (pending || completed === null) throw refusal();
+                return completed;
+              }
+              pending += decoder.decode(chunk.value, { stream: true });
+              acceptCompleteLines();
               return pump();
             });
           })();
@@ -277,8 +341,17 @@ const STREAMING_ISLAND = `
         status.textContent = 'Valmis — avataan tarkistus.';
         handOver(draft, photographed ? 'photographed' : 'pasted', text);
       })
-      .catch(function () {
-        status.textContent = 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
+      .catch(function (error) {
+        // Only wording this island wrote is shown. Anything else — a transport
+        // error, a server body — is generic, so no English or raw response
+        // text ever lands on a member's screen.
+        status.textContent = error && error.member
+          ? 'Jäsennys epäonnistui: ' + error.message
+          : 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
+        // The counts belonged to an attempt that came to nothing. Leaving them
+        // up would read as a half-finished import that is still going.
+        progress.hidden = true;
+        progress.textContent = '';
         button.disabled = false;
       });
   });
@@ -417,6 +490,9 @@ export function readImages(body: {
  * `POST /api/intake/structure` — run the model and stream the draft straight
  * through. The browser accumulates it and hands it back to /intake/correct,
  * which keeps the correction screen server-rendered.
+ *
+ * The body is newline-delimited JSON: text deltas plus restart, complete or
+ * failed records. Only the island reads it.
  */
 export async function structureStream(
   { env, request }: RouteContext,
@@ -460,7 +536,7 @@ export async function structureStream(
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
       // Nothing between here and the browser should hold bytes back.
       "Cache-Control": "no-store",
       "X-Accel-Buffering": "no",

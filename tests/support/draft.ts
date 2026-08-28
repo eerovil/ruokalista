@@ -6,6 +6,10 @@ import type { Page } from "@playwright/test";
  * by CI cannot drift apart.
  */
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
+import {
+  encodeDraftStreamRecord,
+  type DraftStreamRecord,
+} from "../../src/intake.ts";
 
 export { SAMPLE_DRAFT as DRAFT_FIXTURE };
 const DRAFT_FIXTURE = SAMPLE_DRAFT;
@@ -88,6 +92,29 @@ export async function stubStructuring(
   page: Page,
   draft: unknown = DRAFT_FIXTURE,
 ): Promise<StubbedCall[]> {
+  return stubStreamBody(page, streamRecordBody(
+    { type: "delta", text: JSON.stringify(draft) },
+    { type: "complete" },
+  ));
+}
+
+/**
+ * Encode complete NDJSON records exactly as the Worker does.
+ */
+export function streamRecordBody(...records: DraftStreamRecord[]): string {
+  return records.map(encodeDraftStreamRecord).join("");
+}
+
+/**
+ * Answer the same route with a record stream, which is how a cut-off attempt
+ * and a retry are tested without the model (#146). Everything
+ * the island rejects is expressed here rather than in an assertion, so a test
+ * can hand it exactly what a truncated stream looks like on the wire.
+ */
+export async function stubStreamBody(
+  page: Page,
+  body: string,
+): Promise<StubbedCall[]> {
   const calls: StubbedCall[] = [];
 
   await page.route("**/api/intake/structure", async (route) => {
@@ -95,13 +122,62 @@ export async function stubStructuring(
 
     await route.fulfill({
       status: 200,
-      contentType: "application/json; charset=utf-8",
-      body: JSON.stringify(draft),
+      contentType: "application/x-ndjson; charset=utf-8",
+      body,
     });
   });
 
   return calls;
 }
+
+/**
+ * Replace the streaming fetch with deliberately fragmented UTF-8 bytes. This
+ * exercises the island's decoder and record buffer rather than Playwright's
+ * normal one-shot route fulfilment.
+ */
+export async function stubFragmentedStreamBody(page: Page, body: string): Promise<void> {
+  await page.addInitScript((streamBody) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (!url.endsWith("/api/intake/structure")) return originalFetch(input, init);
+
+      const bytes = new TextEncoder().encode(streamBody);
+      const newline = bytes.indexOf(10);
+      let multibyte = -1;
+      for (let at = 0; at < bytes.length; at += 1) {
+        if (bytes[at]! >= 0xc0) {
+          multibyte = at + 1;
+          break;
+        }
+      }
+      const cuts = [0, 1, multibyte, newline, newline + 1, bytes.length]
+        .filter((at, index, all) => at >= 0 && at <= bytes.length && all.indexOf(at) === index)
+        .sort((left, right) => left - right);
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let at = 1; at < cuts.length; at += 1) {
+            controller.enqueue(bytes.slice(cuts[at - 1], cuts[at]));
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+      });
+    }) as typeof window.fetch;
+  }, body);
+}
+
+/** The bytes a stream carries when an attempt was cut off part-way. */
+export const TRUNCATED_ATTEMPT =
+  '{"title":"Katkennut","yield_portions":4,"source_text":"Uunikaali","lines":[{"quantity":1,"unit":"dl"';
 
 /**
  * Öljy on two lines with distinguishable amounts, and a step mentioning it.

@@ -33,7 +33,7 @@ test("import usage log keeps the recipe title and complete provider usage", () =
   });
 });
 
-test("a terminal stream failure is logged before the browser stream fails", async () => {
+test("a terminal stream failure is logged, and the body ends in a failed record", async () => {
   const logs: string[] = [];
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
@@ -53,7 +53,18 @@ test("a terminal stream failure is logged before the browser stream fails", asyn
       [],
     ).getReader();
 
-    await assert.rejects(reader.read(), /test refusal/);
+    // The stream is not torn down (#146): a body that just stops is
+    // indistinguishable from a dropped connection, so the browser is told in
+    // band instead. The last record must be `failed` and never `complete`.
+    const decoder = new TextDecoder();
+    let body = "";
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    assert.equal(body.endsWith('{"type":"failed"}\n'), true);
+    assert.equal(body.includes('{"type":"complete"}'), false);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
