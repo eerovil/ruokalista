@@ -63,6 +63,8 @@ export interface RecipeLine extends Measurement {
   /** The `ingredient` row, so a step's mention of it can find its amount. */
   ingredientId: number;
   ingredient: string;
+  /** The linked shop product's picture, when this ingredient has one. */
+  productImageUrl: string | null;
   sourceLine: string;
   phase: RecipePhase;
 }
@@ -233,6 +235,7 @@ interface LineRow {
   alt_quantity: number | null;
   alt_unit: string | null;
   ingredient: string;
+  external_product_image_url: string | null;
   source_line: string;
   phase: RecipePhase;
 }
@@ -327,7 +330,8 @@ async function loadRecipe(
                 ingredient_line.alt_unit,
                 ingredient_line.source_line,
                 ingredient_line.phase,
-                ingredient.name AS ingredient
+                ingredient.name AS ingredient,
+                ingredient.external_product_image_url
            FROM ingredient_line
            JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
           WHERE ingredient_line.recipe_id = ?
@@ -375,6 +379,7 @@ async function loadRecipe(
       altQuantity: line.alt_quantity,
       altUnit: line.alt_unit,
       ingredient: line.ingredient,
+      productImageUrl: line.external_product_image_url?.trim() || null,
       sourceLine: line.source_line,
       phase: line.phase,
     })),
@@ -444,8 +449,8 @@ export async function apiShowRecipe(
 /**
  * Keep the existing JSON shape; phases and ingredient mentions are both
  * internal cooking-view concerns, and neither has ever been on the wire.
- * Ownership and publication are new for the same reason: the screens need them,
- * the API's callers did not ask for them.
+ * Ownership, publication and linked product pictures are new for the same
+ * reason: the screens need them, the API's callers did not ask for them.
  */
 function recipeForApi(recipe: Recipe): object {
   const {
@@ -460,7 +465,12 @@ function recipeForApi(recipe: Recipe): object {
     ...wire,
     steps: recipe.steps.map((step) => step.text),
     lines: recipe.lines.map(
-      ({ phase: _phase, ingredientId: _ingredientId, ...line }) => line,
+      ({
+        phase: _phase,
+        ingredientId: _ingredientId,
+        productImageUrl: _productImageUrl,
+        ...line
+      }) => line,
     ),
     parts: recipe.parts.map(recipeForApi),
   };
@@ -784,14 +794,27 @@ function body(
           <ul class="lines recipe-ingredients">
             ${lines.map((line) => {
               const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-              return html`<li>
-                ${amount === ""
+              return html`<li class="recipe-ingredient">
+                ${line.productImageUrl === null
                   ? ""
-                  : html`<span class="amount">${amount}</span> `}
-                ${line.ingredient}
-                ${sourceWorthShowing(line, multiplier)
-                  ? html`<span class="source">${line.sourceLine}</span>`
-                  : ""}
+                  : html`<img
+                      class="recipe-product-thumb"
+                      src="${line.productImageUrl}"
+                      alt=""
+                      width="26"
+                      height="26"
+                      loading="lazy"
+                      onerror="this.hidden=true"
+                    />`}
+                <span class="recipe-ingredient-copy">
+                  ${amount === ""
+                    ? ""
+                    : html`<span class="amount">${amount}</span> `}
+                  ${line.ingredient}
+                  ${sourceWorthShowing(line, multiplier)
+                    ? html`<span class="source">${line.sourceLine}</span>`
+                    : ""}
+                </span>
               </li>`;
             })}
           </ul>`}
@@ -1082,6 +1105,16 @@ const PUBLISH_STYLE = html`<style>
 const RECIPE_VIEW_STYLE = html`<style>
   .recipe-method { min-width: 0; }
   .recipe-method li { overflow-wrap: break-word; }
+  .recipe-ingredient {
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .recipe-product-thumb {
+    flex: 0 0 1.6rem; width: 1.6rem; height: 1.6rem;
+    object-fit: contain; background: #fff;
+    border: 1px solid var(--edge); border-radius: .25rem;
+  }
+  .recipe-ingredient-copy { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  .recipe-ingredient-copy .amount { white-space: nowrap; }
 
   @media (min-width: 48rem) {
     .recipe-view {

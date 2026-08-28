@@ -1,7 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
+
+const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
+const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${browserPort + 1}`;
 
 /** Reading the store, and the household wall around it. */
 
@@ -61,6 +64,91 @@ test("a recipe renders every awkward line shape", async ({ page }) => {
   await expect(lines.nth(3).locator(".source")).toContainText(
     "hieman sitruunaruohoa",
   );
+});
+
+test.describe("linked product pictures", () => {
+  test.beforeEach(async ({ request }) => {
+    reseed();
+    expect((await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok()).toBe(true);
+  });
+
+  test.afterEach(reseed);
+
+  async function linkMilkProduct(page: Page): Promise<void> {
+    const date = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Helsinki",
+    }).format(new Date());
+    const cooking = await page.request.post("/api/batches", {
+      data: { date, slot: "dinner", recipeId: 3, multiplier: 1 },
+    });
+    expect(cooking.status()).toBe(201);
+    const cookingId = ((await cooking.json()) as { id: number }).id;
+
+    const form = new URLSearchParams({
+      aines: "9",
+      haku: "maito",
+      ean: "6415712506032",
+      valittu: "1",
+      ateria: String(cookingId),
+      muoto: "json",
+    });
+    const linked = await page.request.post("/ostoslista/tuote", {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      data: form.toString(),
+    });
+    expect(linked.ok()).toBe(true);
+  }
+
+  test("a product picture stays compact at phone, tablet, and desktop widths", async ({
+    page,
+  }) => {
+    await linkMilkProduct(page);
+    await page.goto("/recipes/3");
+
+    const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+    const cheese = page.locator(".recipe-ingredient", { hasText: "juusto" });
+    const thumb = milk.locator(".recipe-product-thumb");
+    await expect(thumb).toBeVisible();
+    await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);
+    await expect(cheese.locator("img")).toHaveCount(0);
+
+    for (const width of [375, 768, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      const [rowBox, copyBox, imageBox, amountBox, plainBox] = await Promise.all([
+        milk.boundingBox(),
+        milk.locator(".recipe-ingredient-copy").boundingBox(),
+        thumb.boundingBox(),
+        milk.locator(".amount").boundingBox(),
+        cheese.boundingBox(),
+      ]);
+      expect(rowBox).not.toBeNull();
+      expect(copyBox).not.toBeNull();
+      expect(imageBox).not.toBeNull();
+      expect(amountBox).not.toBeNull();
+      expect(plainBox).not.toBeNull();
+      expect(imageBox!.width).toBeLessThanOrEqual(26);
+      expect(imageBox!.height).toBeLessThanOrEqual(26);
+      expect(copyBox!.x).toBeGreaterThanOrEqual(imageBox!.x + imageBox!.width);
+      expect(amountBox!.x + amountBox!.width).toBeLessThanOrEqual(
+        rowBox!.x + rowBox!.width,
+      );
+      expect(rowBox!.height).toBeLessThanOrEqual(plainBox!.height + 2);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(width);
+    }
+  });
+
+  test("a product whose picture cannot load leaves no placeholder", async ({ page }) => {
+    await page.route("**/6415712506032_kuva1.jpg", (route) =>
+      route.fulfill({ status: 404, contentType: "image/jpeg", body: "" }),
+    );
+    await linkMilkProduct(page);
+    await page.goto("/recipes/3");
+
+    const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+    await expect(milk.locator(".recipe-product-thumb")).toBeHidden();
+    await expect(milk).toContainText("5 dl maito");
+  });
 });
 
 test("the cooking view uses tablet width without clipping long steps", async ({
@@ -156,6 +244,7 @@ test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
 
   expect(body.recipe.steps[0]).toBe("Kuullota kaali öljyssä.");
   expect(body.recipe.lines[0]).not.toHaveProperty("phase");
+  expect(body.recipe.lines[0]).not.toHaveProperty("productImageUrl");
 });
 
 test("a recipe with no stated yield says nothing about one (#165)", async ({
