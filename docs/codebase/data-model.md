@@ -249,6 +249,37 @@ recipe_id)` row holding the default portions the picker starts from.
 recipe; "we always make this for nine" is a fact about a kitchen, and putting it
 on the shared row would push the publisher's habit onto everyone who plans it.
 
+## Scaling by a multiplier
+
+`migrations/0013_recipe_multiplier.sql`, proposed by #165, replaces
+`planned_batch.portions` with `multiplier REAL` and
+`recipe_preference.default_portions` with `default_multiplier REAL`. A recipe's
+stored amounts are 1× the recipe; `recipe.yield_portions` stays untouched and
+becomes source metadata that nothing computes with. See
+[ADR-0007](../adr/0007-a-batch-is-scaled-by-a-multiplier.md) for the reasoning
+and [recipes](recipes.md) for what the screens do with it.
+
+No table is rebuilt. `planned_batch` is the parent of `batch_occurrence`'s
+`ON DELETE CASCADE`, so a drop-and-recreate would take the occurrences with it —
+`ALTER TABLE ADD COLUMN` and `DROP COLUMN` need none of that, and SQLite carries
+a column's own `CHECK` away with the column. Worth knowing before reaching for
+the rebuild sequence 0011 documents: it is not always needed.
+
+The migration converts `portions / yield_portions` where the dish stores a
+usable positive integer yield, preserving the ratio rather than rounding it.
+Where it cannot, it invents nothing: the batch goes to 1× and its old number is
+kept in `planned_batch.legacy_portions`, which
+`week-screens.ts::batchCard` prints on the card so a cook corrects it rather
+than finding out at the hob. `menu.ts::changeMultiplier` clears the column,
+because once somebody has chosen there is nothing left to warn about. An
+unconvertible `recipe_preference` row is deleted instead — under the old rules
+it produced no factor at all, so it was already inert.
+
+`dev/check-multiplier-migration.ts` runs the real migration files against
+`node:sqlite` and asserts all of that. It is the only check in `dev/` that tests
+a migration rather than a function, and it is there because the "never invent a
+multiplier" rule exists only in the SQL.
+
 Issue #147 proposes three nullable columns on that global `ingredient` row:
 `ean`, `external_product_name`, and `external_product_image_url`. Together they
 cache the one S-group product selected for an ingredient. This deliberately

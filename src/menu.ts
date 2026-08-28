@@ -2,6 +2,7 @@ import { problem } from "./auth.ts";
 import { addDays, isDate } from "./dates.ts";
 import type { Member } from "./members.ts";
 import type { RouteContext } from "./router.ts";
+import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
 /**
  * A menu is a date-range projection of cooked batches. A batch has stable
@@ -11,8 +12,6 @@ import type { RouteContext } from "./router.ts";
 
 export const SLOTS = ["lunch", "dinner"] as const;
 export type Slot = (typeof SLOTS)[number];
-
-export const DEFAULT_PORTIONS = 4;
 
 export interface BatchOccurrence {
   date: string;
@@ -25,7 +24,13 @@ export interface PlannedBatch {
   title: string;
   /** The recipe's picture, so a planned meal can show what it will be. */
   imageKey: string | null;
-  portions: number;
+  /** How much of the recipe this one cooking makes. 1 is the recipe as written. */
+  multiplier: number;
+  /**
+   * The portion count this batch carried before #165, kept only where it could
+   * not be turned into a multiplier. NULL on everything planned since.
+   */
+  legacyPortions: number | null;
   occurrences: BatchOccurrence[];
   startDate: string;
   endDate: string;
@@ -36,7 +41,8 @@ interface BatchRow {
   recipe_id: number;
   title: string;
   image_key: string | null;
-  portions: number;
+  multiplier: number;
+  legacy_portions: number | null;
   date: string;
   slot: Slot;
   start_date: string;
@@ -55,7 +61,8 @@ const BATCH_SELECT = `WITH spans AS (
                       )
                       SELECT planned_batch.id,
                              planned_batch.recipe_id,
-                             planned_batch.portions,
+                             planned_batch.multiplier,
+                             planned_batch.legacy_portions,
                              recipe.title,
                              recipe.image_key,
                              batch_occurrence.date,
@@ -124,7 +131,8 @@ function groupBatches(rows: BatchRow[]): PlannedBatch[] {
         recipeId: row.recipe_id,
         title: row.title,
         imageKey: row.image_key,
-        portions: row.portions,
+        multiplier: row.multiplier,
+        legacyPortions: row.legacy_portions,
         occurrences: [],
         startDate: row.start_date,
         endDate: row.end_date,
@@ -142,19 +150,19 @@ export class MenuRefused extends Error {}
 export async function addPlannedBatch(
   db: D1Database,
   member: Member,
-  entry: { date: string; slot: string; recipeId: number; portions: number },
+  entry: { date: string; slot: string; recipeId: number; multiplier: number },
 ): Promise<number> {
   const occurrence = validateOccurrence(entry.date, entry.slot);
-  validatePortions(entry.portions);
+  const multiplier = validateMultiplier(entry.multiplier);
   await requireDish(db, member.householdId, entry.recipeId);
 
   const [inserted] = await db.batch([
     db.prepare(
       `INSERT INTO planned_batch
-         (household_id, recipe_id, portions, created_by)
+         (household_id, recipe_id, multiplier, created_by)
        VALUES (?, ?, ?, ?)`,
     )
-      .bind(member.householdId, entry.recipeId, entry.portions, member.id),
+      .bind(member.householdId, entry.recipeId, multiplier, member.id),
     db.prepare(
       `INSERT INTO batch_occurrence (batch_id, date, slot)
        VALUES (last_insert_rowid(), ?, ?)`,
@@ -192,18 +200,27 @@ export async function replaceOccurrences(
   return true;
 }
 
-export async function changePortions(
+/**
+ * How much of the recipe this batch makes.
+ *
+ * Saving one also clears `legacy_portions`: the row's old portion count was
+ * only ever there because #165 could not convert it, and once somebody has
+ * chosen a multiplier there is nothing left to warn them about.
+ */
+export async function changeMultiplier(
   db: D1Database,
   member: Member,
   id: number,
-  portions: number,
+  multiplier: number,
 ): Promise<boolean> {
-  validatePortions(portions);
+  const value = validateMultiplier(multiplier);
   const result = await db
     .prepare(
-      "UPDATE planned_batch SET portions = ? WHERE id = ? AND household_id = ?",
+      `UPDATE planned_batch
+          SET multiplier = ?, legacy_portions = NULL
+        WHERE id = ? AND household_id = ?`,
     )
-    .bind(portions, id, member.householdId)
+    .bind(value, id, member.householdId)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -270,10 +287,26 @@ function validateOccurrence(date: string, slot: string): BatchOccurrence {
   return { date, slot };
 }
 
-function validatePortions(portions: number): void {
-  if (!Number.isSafeInteger(portions) || portions <= 0) {
-    throw new MenuRefused("Annosmäärän pitää olla vähintään yksi.");
+/**
+ * The multiplier as it will be stored, or a refusal.
+ *
+ * Goes through the same parser a typed field does, so `1,5` off a form and
+ * `1.5` off the JSON API mean the same cooking and land on the same stored
+ * number.
+ */
+export function validateMultiplier(multiplier: number): number {
+  if (!isMultiplier(multiplier)) {
+    throw new MenuRefused(
+      "Kertoimen pitää olla positiivinen luku, esimerkiksi 0,5 tai 1,5.",
+    );
   }
+  const parsed = parseMultiplier(String(multiplier));
+  if (parsed === null) {
+    throw new MenuRefused(
+      "Kertoimen pitää olla positiivinen luku, esimerkiksi 0,5 tai 1,5.",
+    );
+  }
+  return parsed;
 }
 
 async function requireDish(
@@ -338,7 +371,7 @@ export async function apiAddPlannedBatch(
       date: String(body["date"] ?? ""),
       slot: String(body["slot"] ?? ""),
       recipeId: Number(body["recipeId"]),
-      portions: Number(body["portions"]),
+      multiplier: Number(body["multiplier"]),
     });
     return Response.json({ id }, { status: 201 });
   } catch (error) {
@@ -359,19 +392,19 @@ export async function apiUpdatePlannedBatch(
   }
 
   try {
-    const supplied = ["portions", "recipeId", "occurrences"].filter(
+    const supplied = ["multiplier", "recipeId", "occurrences"].filter(
       (field) => body[field] !== undefined,
     );
     if (supplied.length !== 1) {
       return problem(400, "Change exactly one batch field at a time.");
     }
     let changed = false;
-    if (body["portions"] !== undefined) {
-      changed = await changePortions(
+    if (body["multiplier"] !== undefined) {
+      changed = await changeMultiplier(
         env.DB,
         member,
         Number(params["id"]),
-        Number(body["portions"]),
+        Number(body["multiplier"]),
       );
     }
     if (body["recipeId"] !== undefined) {

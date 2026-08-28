@@ -27,7 +27,7 @@ function today(): string {
 
 async function planKaalilaatikko(page: Page): Promise<void> {
   const response = await page.request.post("/api/batches", {
-    data: { date: today(), slot: "dinner", recipeId: KAALILAATIKKO, portions: 4 },
+    data: { date: today(), slot: "dinner", recipeId: KAALILAATIKKO, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
 }
@@ -97,7 +97,7 @@ test("the selected cookings survive a trip through the cupboard", async ({
   // A second cooking, unticked, so the selection is something other than the
   // default and a lost one would show.
   await page.request.post("/api/batches", {
-    data: { date: today(), slot: "lunch", recipeId: 3, portions: 6 },
+    data: { date: today(), slot: "lunch", recipeId: 3, multiplier: 1 },
   });
 
   await page.goto("/ostoslista");

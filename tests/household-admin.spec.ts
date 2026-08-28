@@ -583,7 +583,7 @@ test("an established member is removed, keeps their history, and moves house", a
   // record who made a row.
   const planned = await request.post("/api/batches", {
     headers: { Cookie: cookieHeader(1) },
-    data: { recipeId: 1, date: "2026-11-02", slot: "lunch", portions: 4 },
+    data: { recipeId: 1, date: "2026-11-02", slot: "lunch", multiplier: 1 },
   });
   expect(planned.status()).toBe(201);
 

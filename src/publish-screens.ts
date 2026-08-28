@@ -2,7 +2,7 @@ import { html, page } from "./html.ts";
 import type { Member } from "./members.ts";
 import {
   PreferenceRefused,
-  setPreferredPortions,
+  setPreferredMultiplier,
 } from "./recipe-preference.ts";
 import {
   blockedMessage,
@@ -18,9 +18,10 @@ import {
   type ListNotice,
 } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
+import { DEFAULT_MULTIPLIER, parseMultiplier } from "./scaling.ts";
 
 /**
- * The forms behind publishing and behind a household's own default portions.
+ * The forms behind publishing and behind a household's own default multiplier.
  *
  * Both are posted from two places — the recipe list's bulk controls and one
  * recipe's own screen — and both answer the way every other form in this app
@@ -72,10 +73,15 @@ export async function publishForm(
 }
 
 /**
- * `POST /recipes/:id/annokset` — this household's default portions for a
+ * `POST /recipes/:id/kerroin` — this household's default multiplier for a
  * recipe, its own or a public one.
+ *
+ * A tapped chip arrives as `preset` and a typed value as `multiplier`, so the
+ * chip wins where both are present: pressing 1,5× means 1,5×, whatever is left
+ * sitting in the box beside it. A blank box with nothing tapped clears the
+ * default, which is the one way to say "no habit here".
  */
-export async function preferredPortionsForm(
+export async function preferredMultiplierForm(
   { env, request, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
@@ -87,18 +93,23 @@ export async function preferredPortionsForm(
   if (recipe === null) return notFound(member);
 
   const form = await request.formData();
-  const typed = String(form.get("portions") ?? "").trim();
+  const preset = String(form.get("preset") ?? "").trim();
+  const typed = String(form.get("multiplier") ?? "").trim();
+  const chosen = preset === "" ? typed : preset;
 
   try {
-    await setPreferredPortions(
-      env.DB,
-      member,
-      recipe.id,
-      typed === "" ? null : Number(typed),
-    );
+    if (chosen === "") {
+      await setPreferredMultiplier(env.DB, member, recipe.id, null);
+    } else {
+      const parsed = parseMultiplier(chosen);
+      if (parsed === null) throw new PreferenceRefused(
+        "Kertoimen pitää olla positiivinen luku, esimerkiksi 0,5 tai 1,5.",
+      );
+      await setPreferredMultiplier(env.DB, member, recipe.id, parsed);
+    }
   } catch (error) {
     if (!(error instanceof PreferenceRefused)) throw error;
-    return renderRecipe(env.DB, member, recipe, null, error.message);
+    return renderRecipe(env.DB, member, recipe, DEFAULT_MULTIPLIER, error.message);
   }
 
   return seeOther(`/recipes/${recipe.id}`);
@@ -163,7 +174,7 @@ async function refuse(
       Number(back.slice("/recipes/".length)),
     );
     if (recipe !== null) {
-      return renderRecipe(env.DB, member, recipe, null, message);
+      return renderRecipe(env.DB, member, recipe, DEFAULT_MULTIPLIER, message);
     }
   }
 
