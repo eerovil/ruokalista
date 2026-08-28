@@ -1,4 +1,9 @@
 import { problem } from "./auth.ts";
+import {
+  CATEGORY_STYLE,
+  categoryChoices,
+  readCategories,
+} from "./categories.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
@@ -196,6 +201,9 @@ export async function saveEditForm(
       structuredBy: null,
       steps: readSteps(form),
       lines: readLines(form, lineCount),
+      // A part shows no category picker, so it submits none and keeps none —
+      // the dish is what gets browsed for (#196).
+      categories: readCategories(form),
     },
     // A dish written entirely in named parts has no ingredient lines of its
     // own, and it is still a whole recipe (issue #184).
@@ -523,6 +531,11 @@ function editorForm(
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
   const hasPicture = recipe.imageKey !== null;
+  // A refused save re-renders what was ticked, not what is stored: the point of
+  // the refusal is that the member's own edit is still in front of them.
+  const categories = attempted
+    ? readCategories(attempted.form)
+    : recipe.categories;
 
   return html`<h1>Muokkaa reseptiä</h1>
     <section class="recipe-image-editor">
@@ -589,6 +602,10 @@ function editorForm(
         placeholder="Tyhjä, jos teksti ei kerro"
       />
 
+      <!-- Only a dish carries categories. A part is a recipe row (ADR-0002),
+           but nobody browses the store for a juustokastike. -->
+      ${recipe.parentId === null ? categoryChoices(categories) : ""}
+
       <h2>Ainekset</h2>
       ${lineRows(rows, ingredients, {
         compact: true,
@@ -639,7 +656,8 @@ function editorForm(
          should finish. The confirmation screen is where the button lives. -->
     <p class="recipe-delete">
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
-    </p>`;
+    </p>
+    ${CATEGORY_STYLE}`;
 }
 
 /**

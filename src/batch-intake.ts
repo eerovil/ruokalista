@@ -292,6 +292,9 @@ function recipeToSave(
     structuredBy,
     lines,
     steps: draft.steps,
+    // A bundle says nothing about categories (#196) and nothing guesses one for
+    // it. They are picked afterwards, in the editor, by somebody who knows.
+    categories: [],
   };
   validateRecipe(recipe);
   return recipe;

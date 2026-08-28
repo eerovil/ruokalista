@@ -194,6 +194,10 @@ function fakeDatabase(): {
         shared_by: 1,
       },
     ],
+    recipe_category: [
+      { recipe_id: 1, category: "lisuke" },
+      { recipe_id: 1, category: "uuniruoka" },
+    ],
     recipe_step: [{ recipe_id: 1, position: 1, text: "Paista." }],
     ingredient_line: [
       {

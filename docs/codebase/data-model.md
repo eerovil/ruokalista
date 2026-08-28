@@ -385,14 +385,39 @@ regression.
 A column addition, so the manifest lockstep below does not move: backup captures
 `SELECT *` and restore builds its INSERT from the row's own keys.
 
+## What kind of food a recipe is
+
+`migrations/0018_recipe_categories.sql`, proposed by #196, adds
+`recipe_category` — one row per `(recipe_id, category)`, holding a slug from the
+closed vocabulary in `src/categories.ts`. No row is the ordinary state and is
+what every recipe stored before it carries.
+
+The table carries **no `household_id`**, which is the decision worth knowing
+before touching it. Since #143 a recipe is read and planned by households that
+do not own it, so a category is either a fact about the dish or a fact about the
+kitchen — `recipe.yield_portions` is the first kind and
+`recipe_preference.default_multiplier` is the second. A category is the first:
+the same lasagne is a *Uuniruoka* to everybody who can read it. That only works
+because the vocabulary is closed, so the two decisions were taken together in
+[ADR-0012](../adr/0012-a-category-belongs-to-the-recipe-not-the-household.md).
+
+Storing the slug rather than the label means renaming *Jälkiruoka* is a code
+change and never a data migration. Only a dish is categorised: a part is a
+recipe row (ADR-0002) but nobody browses for a *juustokastike*, so `saveRecipe`
+writes these on the parent only and `loadRecipe` does not ask for a part's.
+`ON DELETE CASCADE` matches `recipe_step` and `ingredient_line`, so deleting a
+recipe takes its categories with it and `deleteRecipeTree` needs no change.
+
+This **is** a table addition, so it goes through the manifest lockstep below.
+
 ## Backup and restore: the manifest lockstep rule
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
 `ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
-`recipe_preference`, and — proposed by #161 — `ingredient_product` and
-`recipe_ingredient_product`.
+`recipe_preference`, — proposed by #161 — `ingredient_product` and
+`recipe_ingredient_product`, and — proposed by #196 — `recipe_category`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.
