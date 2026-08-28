@@ -17,7 +17,7 @@ import {
   recipeFingerprint,
   type FingerprintLine,
 } from "./recipe-fingerprint.ts";
-import { findRecipe, recipeImage } from "./recipes.ts";
+import { findRecipe } from "./recipes.ts";
 import type { Handler, RouteContext } from "./router.ts";
 
 /**
@@ -69,6 +69,8 @@ const FLOW_NOTE =
 /** One dish, and what its picture is. */
 export interface ImageCandidate {
   id: number;
+  /** The owner scope used for admin-only reads; never supplied by the browser. */
+  householdId: number;
   title: string;
   imageKey: string | null;
   status: ImageStatus;
@@ -91,7 +93,7 @@ export async function recipeImageAdminScreen(
   { env }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const candidates = await imageCandidates(env.DB, member.householdId);
+  const candidates = await imageCandidates(env.DB);
   return page("Reseptikuvat", listBody(candidates, null), "week", member);
 }
 
@@ -107,14 +109,14 @@ export async function recipeImageConfirmScreen(
   { env, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const candidates = await imageCandidates(env.DB, member.householdId);
+  const candidates = await imageCandidates(env.DB);
   const chosen = chooseFrom(candidates, url.searchParams.getAll("id"));
 
   if (typeof chosen === "string") {
     return page("Reseptikuvat", listBody(candidates, chosen), "week", member, 400);
   }
 
-  const dishes = await briefsFor(env.DB, member.householdId, chosen);
+  const dishes = await briefsFor(env.DB, chosen);
   if (dishes === null) {
     return page(
       "Reseptikuvat",
@@ -261,7 +263,7 @@ function currentSection(current: readonly ImageCandidate[]): Raw {
           <ul class="image-list">
             ${manual.map(
               (candidate) => html`<li>
-                ${recipeImage(candidate, "thumb")}
+                ${adminRecipeImage(candidate)}
                 <span class="recipes-text">
                   ${candidate.title}
                   <span class="meta">${statusLabel(candidate)}</span>
@@ -284,7 +286,7 @@ function pickList(candidates: readonly ImageCandidate[], preselect: number): Raw
             value="${candidate.id}"
             ${at < preselect ? "checked" : ""}
           />
-          ${recipeImage(candidate, "thumb")}
+          ${adminRecipeImage(candidate)}
           <span class="recipes-text">
             ${candidate.title}
             <span class="meta">${statusLabel(candidate)}</span>
@@ -355,7 +357,7 @@ function confirmBody(chosen: readonly ImageCandidate[], prompt: string): Raw {
           data-title="${candidate.title}"
         >
           <span class="image-row">
-            ${recipeImage(candidate, "thumb")}
+            ${adminRecipeImage(candidate)}
             <span class="recipes-text">
               ${candidate.title}
               <span class="meta" data-cell-status>${statusLabel(candidate)}</span>
@@ -394,6 +396,20 @@ function statusLabel(candidate: ImageCandidate): string {
   if (candidate.status === "missing") return "Ei kuvaa";
   if (candidate.status === "stale") return "Vanhentunut — resepti on muuttunut";
   return candidate.origin === "generated" ? "Ajan tasalla" : "Itse lisätty kuva";
+}
+
+/** A thumbnail readable only through this admin tool's server-side gate. */
+function adminRecipeImage(candidate: ImageCandidate): Raw {
+  const shape = "recipe-image is-thumb";
+  return candidate.imageKey === null
+    ? html`<div class="${shape} is-empty" aria-hidden="true"></div>`
+    : html`<div class="${shape}">
+        <img
+          src="/api/admin/recipe-images/${candidate.id}"
+          alt=""
+          loading="lazy"
+        />
+      </div>`;
 }
 
 /**
@@ -493,6 +509,7 @@ const LIST_STYLE = html`<style>
 
 interface CandidateRow {
   id: number;
+  household_id: number;
   parent_id: number | null;
   title: string;
   image_key: string | null;
@@ -512,13 +529,13 @@ interface CandidateLineRow {
 }
 
 /**
- * Every dish in the household with the freshness of its picture.
+ * Every dish in every household with the freshness of its picture.
  *
  * Two queries for the whole list, not two per recipe. The fingerprint needs a
  * dish's lines *and* its parts' lines, which `findRecipe` would fetch one
- * recipe at a time; a household of a hundred recipes would be several hundred
- * round trips to render one screen. So the rows come back in bulk and the
- * dishes are assembled here.
+ * recipe at a time; a store of a hundred recipes would be several hundred round
+ * trips to render one screen. So the rows come back in bulk and the dishes are
+ * assembled here.
  *
  * Only dishes are listed. A part is not something anybody plans or picks, and
  * a picture of a cheese sauce on its own is not what this screen is for — the
@@ -529,18 +546,15 @@ interface CandidateLineRow {
  */
 export async function imageCandidates(
   db: D1Database,
-  householdId: number,
 ): Promise<ImageCandidate[]> {
   const batch = await db.batch<never>([
     db
       .prepare(
-        `SELECT id, parent_id, title, image_key, image_origin,
+        `SELECT id, household_id, parent_id, title, image_key, image_origin,
                 image_fingerprint, image_generated_at
            FROM recipe
-          WHERE household_id = ?
           ORDER BY created_at DESC, id DESC`,
-      )
-      .bind(householdId),
+      ),
     db
       .prepare(
         `SELECT ingredient_line.recipe_id,
@@ -552,10 +566,8 @@ export async function imageCandidates(
                 ingredient.name AS ingredient
            FROM ingredient_line
            JOIN recipe ON recipe.id = ingredient_line.recipe_id
-           JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id
-          WHERE recipe.household_id = ?`,
-      )
-      .bind(householdId),
+           JOIN ingredient ON ingredient.id = ingredient_line.ingredient_id`,
+      ),
   ]);
 
   const rows = (batch[0]?.results ?? []) as unknown as CandidateRow[];
@@ -598,6 +610,7 @@ export async function imageCandidates(
 
     candidates.push({
       id: row.id,
+      householdId: row.household_id,
       title: row.title,
       imageKey: row.image_key,
       status: imageStatus(
@@ -632,13 +645,12 @@ export async function imageCandidates(
  */
 async function briefsFor(
   db: D1Database,
-  householdId: number,
   chosen: readonly ImageCandidate[],
 ): Promise<DishBrief[] | null> {
   const dishes: DishBrief[] = [];
 
   for (const candidate of chosen) {
-    const recipe = await findRecipe(db, householdId, candidate.id);
+    const recipe = await findRecipe(db, candidate.householdId, candidate.id);
     if (recipe === null) return null;
     dishes.push(dishBrief(candidate.id, recipe));
   }

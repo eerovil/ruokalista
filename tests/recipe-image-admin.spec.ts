@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 import { emptySheet, onePixelPng, opaqueSheet } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -16,7 +16,7 @@ import { sessionCookie } from "./support/session";
  * sheet here fails the run if any request reaches `api.openai.com`, and the
  * flow they drive is the real one: the committed fixture sheet goes onto the
  * file input, the admin's browser cuts it with the bundled splitter, and each
- * crop is stored through `PUT /api/recipes/:id/image`.
+ * crop is stored through the admin-only `PUT /api/admin/recipe-images/:id`.
  *
  * The screen's own promise is that nothing before pressing that button changes
  * anything, and the tests that matter most are the ones holding it: opening the
@@ -37,11 +37,12 @@ function cookie(memberId: number): string {
 
 /** One recipe's picture state, as #95's API reports it. */
 async function status(
-  page: Page,
+  page: Pick<Page, "request">,
   recipeId: number,
+  memberId = 3,
 ): Promise<Record<string, unknown>> {
   const response = await page.request.get(`/api/recipes/${recipeId}/image/status`, {
-    headers: { Cookie: cookie(3) },
+    headers: { Cookie: cookie(memberId) },
   });
   expect(response.status()).toBe(200);
   return response.json();
@@ -93,7 +94,11 @@ test.describe("the gate", () => {
   test("an ordinary member gets neither the prompt nor the splitter", async ({
     request,
   }) => {
-    for (const path of [`${LIST}/confirm?id=1`, `${LIST}/split.js`]) {
+    for (const path of [
+      `${LIST}/confirm?id=1`,
+      `${LIST}/split.js`,
+      "/api/admin/recipe-images/6",
+    ]) {
       const response = await request.get(path, {
         headers: { Cookie: cookie(1) },
         maxRedirects: 0,
@@ -106,6 +111,26 @@ test.describe("the gate", () => {
       headers: { Cookie: cookie(3) },
     });
     expect((await state.json()).status).toBe("missing");
+  });
+
+  test("an ordinary member cannot use either cross-household image write", async ({
+    request,
+  }) => {
+    const options = {
+      headers: { Cookie: cookie(1), "content-type": "image/png" },
+      data: onePixelPng(),
+    };
+
+    const ordinary = await request.put("/api/recipes/6/image", options);
+    expect(ordinary.status()).toBe(404);
+
+    const admin = await request.put(
+      "/api/admin/recipe-images/6?origin=generated&fingerprint=untrusted",
+      options,
+    );
+    expect(admin.status()).toBe(404);
+
+    expect((await status({ request }, 6, 2)).status).toBe("missing");
   });
 
   test("a signed-out browser is sent to sign in", async ({ request }) => {
@@ -124,16 +149,17 @@ test.describe("the list", () => {
     await page.goto(LIST);
 
     await expect(page.getByRole("heading", { name: "Reseptikuvat" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(4\)/ })).toBeVisible();
 
-    // The three seeded dishes. The lasagne's two parts are not listed: a part
-    // is not something anybody plans, and its ingredients are already in the
-    // dish's fingerprint.
+    // All four seeded dishes, including household 2's fish. The lasagne's two
+    // parts are not listed: a part is not something anybody plans, and its
+    // ingredients are already in the dish's fingerprint.
     const boxes = page.locator("form[action$='/confirm'] input[name='id']");
-    await expect(boxes).toHaveCount(3);
-    for (let at = 0; at < 3; at += 1) {
+    await expect(boxes).toHaveCount(4);
+    for (let at = 0; at < 4; at += 1) {
       await expect(boxes.nth(at)).toBeChecked();
     }
+    await expect(page.getByText("Naapurin uunikala")).toBeVisible();
     await expect(page.getByText("Ei kuvaa").first()).toBeVisible();
 
     // The batch size is stated on the screen, not only in the validation.
@@ -154,6 +180,7 @@ test.describe("the list", () => {
     for (const id of [1, 2, 3]) {
       expect((await status(page, id)).status).toBe("missing");
     }
+    expect((await status(page, 6, 2)).status).toBe("missing");
   });
 
   test("a picture somebody uploaded is listed but never offered", async ({
@@ -171,7 +198,7 @@ test.describe("the list", () => {
     await context.addCookies([sessionCookie(3)]);
     await page.goto(LIST);
 
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
 
     const current = page.locator("details.image-current");
     await current.getByText(/Ajan tasalla olevat/).click();
@@ -285,10 +312,16 @@ test.describe("the prompt", () => {
 });
 
 test.describe("cutting a sheet", () => {
-  test("three recipes get their pictures, and read as fresh", async ({
+  test("every household's recipes get pictures in their owning context", async ({
     context,
     page,
   }) => {
+    // The seed's neighbour recipe is public for the sharing specs. Make it
+    // private here so neither its write nor its post-upload preview can pass by
+    // borrowing the published-recipe read exception.
+    executeLocalSql(
+      "UPDATE recipe SET published_at = NULL, published_by = NULL WHERE id = 6",
+    );
     await context.addCookies([sessionCookie(3)]);
     const reached = await refuseOpenAI(page);
 
@@ -297,7 +330,7 @@ test.describe("cutting a sheet", () => {
     await splitFixtureSheet(page);
 
     await expect(page.locator("#split-note")).toContainText(
-      "3 / 3 reseptiä sai kuvan.",
+      "4 / 4 reseptiä sai kuvan.",
       { timeout: 30_000 },
     );
 
@@ -309,6 +342,33 @@ test.describe("cutting a sheet", () => {
       expect(state.generatedBy).toBe("supplied:manual/s1");
       expect(state.generatedBy).not.toContain("openai");
     }
+
+    // Recipe 6 belongs to household 2. Reading its state as member 2 proves
+    // that the admin write landed on the selected recipe's owner context, not
+    // the admin's household.
+    const neighbour = await status(page, 6, 2);
+    expect(neighbour.status).toBe("fresh");
+    expect(neighbour.origin).toBe("generated");
+    expect(neighbour.generatedBy).toBe("supplied:manual/s1");
+    const preview = page.locator('[data-recipe-id="6"] .recipe-image img');
+    await expect(preview).toHaveAttribute(
+      "src",
+      /\/api\/admin\/recipe-images\/6\?stored=/,
+    );
+    await expect(preview).toHaveJSProperty("naturalWidth", 512);
+
+    const adminImage = await page.request.get("/api/admin/recipe-images/6", {
+      headers: { Cookie: cookie(3) },
+    });
+    expect(adminImage.status()).toBe(200);
+    const ownerImage = await page.request.get("/api/recipes/6/image", {
+      headers: { Cookie: cookie(2) },
+    });
+    expect(ownerImage.status()).toBe(200);
+    const otherHousehold = await page.request.get("/api/recipes/6/image", {
+      headers: { Cookie: cookie(1) },
+    });
+    expect(otherHousehold.status()).toBe(404);
 
     // The whole point of #111: not one paid request was made.
     expect(reached).toEqual([]);
@@ -384,7 +444,7 @@ test.describe("cutting a sheet", () => {
     });
 
     await page.goto(LIST);
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(2\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
 
     // It is not gone, it is behind its own disclosure with its own button, and
     // nothing in there is preselected.
@@ -416,7 +476,7 @@ test.describe("cutting a sheet", () => {
     await expect(page).toHaveURL(/\/recipes\/1(\?|$)/);
 
     await page.goto(LIST);
-    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(3\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Kuvaa vailla \(4\)/ })).toBeVisible();
     await expect(
       page.getByText("Vanhentunut — resepti on muuttunut"),
     ).toBeVisible();
