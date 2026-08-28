@@ -165,9 +165,7 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
   await expect(page).toHaveURL(/\/recipes$/);
 });
 
-test("the public receiver renders a normal recipe in one 16:9 screen", async ({
-  page,
-}) => {
+async function stubReceiverSdk(page: Page): Promise<void> {
   await page.route(RECEIVER_SDK, async (route) => {
     await route.fulfill({
       contentType: "application/javascript",
@@ -183,16 +181,23 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
 } } } };`,
     });
   });
+}
+
+async function receive(page: Page, recipe: object): Promise<void> {
+  await page.evaluate((sent) => {
+    window.__castReceiverListener({ data: sent });
+  }, recipe);
+}
+
+test("the public receiver renders a normal recipe in one 16:9 screen", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
   await page.setViewportSize({ width: 1920, height: 1080 });
   const response = await page.goto("/cast/receiver");
   expect(response?.status()).toBe(200);
 
-  await page.evaluate((recipe) => {
-    const receiver = window as typeof window & {
-      __castReceiverListener(event: { data: unknown }): void;
-    };
-    receiver.__castReceiverListener({ data: recipe });
-  }, normalRecipe());
+  await receive(page, normalRecipe());
 
   await expect(page.getByRole("heading", { name: "Kaalilaatikko" })).toBeVisible();
   await expect(page.getByText("1,5×")).toBeVisible();
@@ -216,6 +221,121 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
     recipeScrollHeight: 1080,
   }));
 });
+
+test("a long recipe splits the ingredients in two rather than shrinking to the floor", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, longRecipe());
+  await expect(page.getByRole("heading", { name: "Makkarastroganoff" }))
+    .toBeVisible();
+
+  await expect(page.locator(".columns")).toHaveClass("columns split");
+
+  // Two sub-columns means the second half of the list sits beside the first,
+  // not under it.
+  const items = page.locator(".ingredients li");
+  await expect(items).toHaveCount(20);
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBeGreaterThan(first!.x + first!.width);
+
+  // Nowhere near the .58 floor: with the width spent, it does not shrink at
+  // all.
+  const kept = await scale(page);
+  expect(kept).toBe(1);
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+
+  // The layout it turned down: one ingredient column needs .76 for the same
+  // recipe, which is what this change buys.
+  expect(kept).toBeGreaterThan(await scaleForLayout(page, "columns"));
+});
+
+test("an instructions-heavy recipe is not split, because widening the ingredients would cost the long side", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, wordyRecipe());
+  await expect(page.getByRole("heading", { name: "Karjalanpaisti" }))
+    .toBeVisible();
+
+  // Splitting here would take width from the column that did not fit. The
+  // receiver takes both layouts all the way to the scale each needs, finds the
+  // split ends smaller, and keeps the single column.
+  await expect(page.locator(".columns")).toHaveClass("columns");
+  const items = page.locator(".ingredients li");
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBe(first!.x);
+
+  const kept = await scale(page);
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+
+  // What the receiver avoided: forcing the split on this recipe and shrinking
+  // from there ends up smaller than what it kept (.76 against .84 as this is
+  // written). The property, not a fixed number — the layout that ships is
+  // never smaller than the one the receiver turned down.
+  expect(kept).toBeGreaterThan(await scaleForLayout(page, "columns split"));
+});
+
+test("a short recipe keeps one ingredient column at full size on a small receiver", async ({
+  page,
+}) => {
+  await stubReceiverSdk(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto("/cast/receiver");
+
+  await receive(page, normalRecipe());
+  await expect(page.getByRole("heading", { name: "Kaalilaatikko" })).toBeVisible();
+
+  await expect(page.locator(".columns")).toHaveClass("columns");
+  const items = page.locator(".ingredients li");
+  const first = await items.first().boundingBox();
+  const last = await items.last().boundingBox();
+  expect(last!.x).toBe(first!.x);
+  expect(await scale(page)).toBe(1);
+});
+
+/**
+ * The scale the other layout would have needed. Runs the receiver's own shrink
+ * loop against a forced layout, so a test can say "what shipped is no smaller
+ * than what was turned down" without hard-coding either number. Destructive:
+ * call it after the assertions about what the receiver actually chose.
+ */
+async function scaleForLayout(page: Page, className: string): Promise<number> {
+  return page.evaluate((layout) => {
+    const root = document.getElementById("recipe")!;
+    root.querySelector(".columns")!.className = layout;
+    let scale = 1;
+    root.style.setProperty("--fit", String(scale));
+    while (root.scrollHeight > root.clientHeight && scale > 0.58) {
+      scale = Math.round((scale - 0.04) * 100) / 100;
+      root.style.setProperty("--fit", String(scale));
+    }
+    return scale;
+  }, className);
+}
+
+async function scale(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Number(
+      getComputedStyle(document.getElementById("recipe")!)
+        .getPropertyValue("--fit"),
+    )
+  );
+}
 
 async function sentMessages(page: Page): Promise<Array<Record<string, unknown>>> {
   return page.evaluate(() =>
@@ -243,6 +363,91 @@ function normalRecipe(): object {
         "Kuullota kaali öljyssä.",
         "Lisää vesi ja sitruunaruoho.",
         "Hauduta kaalilaatikko kypsäksi.",
+      ],
+    }],
+  };
+}
+
+/** The kitchen's worst case: 20 ingredient lines and 9 steps (#180). */
+function longRecipe(): object {
+  return {
+    version: 1,
+    title: "Mausteinen makkarastroganoff, perunoita ja raikasta salaattia",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "400 g nautamakkaraa",
+        "2 kpl sipulia",
+        "3 kynttä valkosipulia",
+        "2 rkl tomaattipyreetä",
+        "2 dl kermaa",
+        "2 dl lihalientä",
+        "1 rkl sinappia",
+        "1 tl paprikajauhetta",
+        "1 tl savupaprikaa",
+        "½ tl chilirouhetta",
+        "1 tl kuivattua timjamia",
+        "2 laakerinlehteä",
+        "1 rkl voita",
+        "1 rkl öljyä",
+        "800 g perunoita",
+        "1 nippu tilliä",
+        "1 kpl jäävuorisalaattia",
+        "2 kpl tomaattia",
+        "1 kpl kurkkua",
+        "hieman suolaa ja mustapippuria",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Kuori perunat ja keitä ne kypsiksi suolatussa vedessä.",
+        "Kuutioi makkara ja ruskista se voi-öljyseoksessa.",
+        "Lisää sipuli ja valkosipuli, kuullota pehmeiksi.",
+        "Lisää tomaattipyree ja kypsennä hetki.",
+        "Kaada joukkoon lihaliemi ja mausteet.",
+        "Hauduta kastiketta noin 20 minuuttia.",
+        "Lisää kerma ja sinappi, tarkista maku.",
+        "Pilko salaatti, tomaatti ja kurkku kulhoon.",
+        "Tarjoa stroganoff perunoiden, tillin ja salaatin kanssa.",
+      ],
+    }],
+  };
+}
+
+/** The other way round: four ingredients and a page of method (#180). */
+function wordyRecipe(): object {
+  return {
+    version: 1,
+    title: "Karjalanpaisti",
+    multiplier: "1×",
+    ingredients: [{
+      title: "",
+      items: [
+        "1 kg naudan lapaa",
+        "2 kpl sipulia",
+        "2 kpl porkkanaa",
+        "1 rkl kokonaisia maustepippureita",
+      ],
+    }],
+    instructions: [{
+      title: "",
+      items: [
+        "Ota liha huoneenlämpöön hyvissä ajoin ennen kuin alat valmistaa paistia, jotta se kypsyy tasaisesti.",
+        "Leikkaa liha reiluiksi paloiksi ja poista suurimmat kalvot, mutta jätä rasva paikoilleen makua antamaan.",
+        "Kuori sipulit ja lohko ne neljään osaan, kuori porkkanat ja paloittele ne paksuiksi kiekoiksi.",
+        "Ripottele padan pohjalle osa mausteista, lado sitten liha ja kasvikset kerroksittain padan täyteen.",
+        "Ripottele loput maustepippurit ja suola päällimmäisen kerroksen päälle.",
+        "Kaada pataan kylmää vettä sen verran, että se juuri peittää lihat, äläkä sekoita sen jälkeen.",
+        "Kuumenna uuni 150 asteeseen ja nosta pata kannen kanssa uunin alatasolle.",
+        "Anna paistin hautua rauhassa vähintään kolme tuntia, mieluummin neljä, kunnes liha hajoaa haarukalla.",
+        "Tarkista puolivälissä, että nestettä on yhä riittävästi, ja lisää tarvittaessa kuumaa vettä.",
+        "Ota kansi pois viimeisen puolen tunnin ajaksi, jos haluat pinnalle hieman väriä.",
+        "Nosta pata uunista ja anna sen tasaantua liedellä kymmenen minuuttia ennen tarjoilua.",
+        "Maista ja lisää suolaa vasta nyt, sillä liemi väkevöityy pitkän haudutuksen aikana.",
+        "Tarjoa paisti perunamuusin tai keitettyjen perunoiden ja puolukkasurvoksen kanssa.",
+        "Säilytä tähteet liemessään jääkaapissa, sillä paisti maistuu seuraavana päivänä vielä paremmalta.",
       ],
     }],
   };
