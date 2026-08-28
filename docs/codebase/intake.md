@@ -249,6 +249,26 @@ Nothing here was proved with a paid call. The sample draft
 (`src/sample-draft.ts`) carries references, so the review screen, the save and
 the recipe screen are all walked with the real code and no model.
 
+## Proposing a `tai` line (issue #183)
+
+An ingredient line may offer a choice, and the model is asked to spot one:
+`DRAFT_SCHEMA` gains a nullable `alternative_group`, and the standing rules tell
+it to write **one line per option**, give them the same number, and give each
+its own quantity, unit and `ingredient_name` — never `hunaja tai sokeri` as a
+single ingredient, which is exactly what it has been producing.
+
+`alternative_group` is **optional on the wire**, the same way `ingredient_refs`
+is: a bundle AgentDeck wrote before #183 carries none, and refusing it would
+break every draft already generated. `dev/check-draft-schema.ts` covers the
+schema-keyword risk for free, as it does for every other field.
+
+The parsing side is deliberately forgiving. `alternatives.ts::alternativeGroup`
+degrades anything that is not a positive whole number to "no group" rather than
+refusing the import — a draft is reviewed by a person before it is saved, and a
+refusal three hops from the cause is worse than a line that offers no
+alternative. `saveRecipe` then dissolves any group the review left with one
+member. See [recipes](recipes.md).
+
 ## Batch intake from AgentDeck (#87)
 
 Issue #82 added a second, model-free intake path: a bundle of recipes generated

@@ -105,6 +105,16 @@ in different units ("½ (500 g) valkokaali"); neither of the two is the primary
 one, and nothing is ever converted between them.
 _Avoid_: Ingredient (that is the shared record), row, item
 
+**Alternative group** (*vaihtoehtoryhmä*):
+Two or more ingredient lines of one recipe that are a choice rather than a
+list — lihaliemikuutio **tai** fondiannos. Each option is a whole line with its
+own amount, its own unit and its own ingredient, and the group belongs to that
+recipe alone: it never says that the two foodstuffs are interchangeable
+anywhere else. The first option is the default, and it is the only one the
+shopping list buys. Proposed by #183; see
+[ADR-0009](docs/adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md).
+_Avoid_: Substitution, substitute, equivalence, swap, variant
+
 **Ingredient**:
 A shared record for one foodstuff, referred to by every line that uses it. No
 new one exists until a human has approved it, which is what keeps "purjo" and

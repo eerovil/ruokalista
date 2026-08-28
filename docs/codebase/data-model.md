@@ -342,6 +342,36 @@ and only then is the old table dropped and the new one renamed into place —
 which is what points the children back at `ingredient`. No statement in the
 sequence ever leaves a constraint violated, so none of it depends on a pragma.
 
+## A line that offers a choice
+
+`migrations/0014_ingredient_alternatives.sql`, proposed by #183, adds one
+nullable `ingredient_line.alternative_group`. Lines of **one recipe row**
+sharing a positive number are options for each other — lihaliemikuutio *tai*
+fondiannos — and NULL, which is what every existing row is, means an ordinary
+line standing alone rather than "unclassified".
+
+Each option is a whole `ingredient_line`, which is the reason this is a column
+rather than a phrase or a substitution table: an option keeps its own quantity,
+unit, range, second measurement, source wording and phase, and it points at a
+real `ingredient`. The workaround it replaces named the whole phrase as an
+ingredient, and since #143 made that dictionary global, `hunaja tai sokeri` was
+a row every household saw and nothing could ever buy. See
+[ADR-0009](../adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md) for
+the survey behind that and the two shapes it rejected.
+
+Group numbers are scoped to the recipe row, so a dish and one of its parts may
+both be using group 1 and mean different things — `shopping.ts` keys on the
+source recipe row for exactly that reason, not on the dish. Nothing joins on
+this column and no other table references it.
+
+Two rules a `CHECK` cannot hold, because a `CHECK` sees one row at a time, live
+in `src/alternatives.ts::normalizeGroups` and run on every save: a group of one
+is dissolved back to NULL, and what is left is renumbered 1, 2, 3 in order of
+first appearance. `dev/check-alternatives.ts` is the regression.
+
+A column addition, so the manifest lockstep below does not move: backup captures
+`SELECT *` and restore builds its INSERT from the row's own keys.
+
 ## Backup and restore: the manifest lockstep rule
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot

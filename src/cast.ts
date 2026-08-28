@@ -1,3 +1,4 @@
+import { ALTERNATIVE_WORD, alternativeSets } from "./alternatives.ts";
 import { html, raw, type Raw } from "./html.ts";
 import { formatMeasurement } from "./quantities.ts";
 import type { Recipe, RecipeLine, RecipeStep } from "./recipes.ts";
@@ -79,20 +80,30 @@ function ingredientGroup(
   if (lines.length === 0) return [];
   return [{
     title,
-    items: lines.map((line) => {
-      const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-      const display = amount === ""
-        ? line.ingredient
-        : `${amount} ${line.ingredient}`;
-      if (!sourceWorthShowing(line, multiplier)) return display;
-
-      // An unstated amount often carries its cooking instruction only in the
-      // source wording: "hieman", "maun mukaan", "tarvittaessa". On the TV
-      // that wording replaces the bare ingredient rather than becoming a
-      // detached evidence line underneath it.
-      return amount === "" ? line.sourceLine : `${display} · ${line.sourceLine}`;
-    }),
+    // The receiver draws plain strings, so a group of alternatives is one item
+    // joined by the word itself: "1 lihaliemikuutio tai 1 annos fondia". A cook
+    // reading a TV across the kitchen needs the choice on one line, not two
+    // items that look like two things to fetch.
+    items: alternativeSets(lines).map((set) =>
+      set.options
+        .map((line) => castLine(line, multiplier))
+        .join(` ${ALTERNATIVE_WORD} `)
+    ),
   }];
+}
+
+function castLine(line: RecipeLine, multiplier: number): string {
+  const amount = formatMeasurement(scaleMeasurement(line, multiplier));
+  const display = amount === ""
+    ? line.ingredient
+    : `${amount} ${line.ingredient}`;
+  if (!sourceWorthShowing(line, multiplier)) return display;
+
+  // An unstated amount often carries its cooking instruction only in the
+  // source wording: "hieman", "maun mukaan", "tarvittaessa". On the TV
+  // that wording replaces the bare ingredient rather than becoming a
+  // detached evidence line underneath it.
+  return amount === "" ? line.sourceLine : `${display} · ${line.sourceLine}`;
 }
 
 function instructionGroup(

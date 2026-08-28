@@ -2,6 +2,7 @@ import type { DraftIngredientRef, StepIngredientRef } from "./ingredient-refs.ts
 import { serializeStepRefs } from "./ingredient-refs.ts";
 import { ingredientsFor } from "./ingredients.ts";
 import type { Member } from "./members.ts";
+import { normalizeGroups, type AlternativeGroup } from "./alternatives.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
 
 /**
@@ -34,6 +35,14 @@ export interface LineToSave {
   /** The named part this belongs to, or null for the dish itself. */
   section: string | null;
   phase: RecipePhase;
+  /**
+   * The alternative group this line is an option in, or null (#183).
+   *
+   * Submitted as written and renumbered on the way in — `childrenOf` runs the
+   * group numbers through `normalizeGroups` per recipe row, so a group of one
+   * dissolves and the rest come out 1, 2, 3 whatever a member typed.
+   */
+  alternativeGroup: AlternativeGroup;
   /**
    * Which row of the draft or form this line came from.
    *
@@ -264,7 +273,15 @@ function childrenOf(
 
   // Keep references inside this recipe row. A step names an ingredient, so
   // duplicate lines for that ingredient deliberately share the same reference.
-  const ownLines = lines.filter((entry) => belongs(entry.line.section));
+  // Group numbers mean something only inside one recipe row: a part is a
+  // recipe of its own (ADR-0002), so its options are renumbered from 1 here
+  // rather than inheriting the dish's numbering.
+  const ownLines = normalizeGroups(
+    lines.filter((entry) => belongs(entry.line.section)).map((entry) => ({
+      ...entry,
+      alternativeGroup: entry.line.alternativeGroup,
+    })),
+  );
 
   steps
     .filter((step) => belongs(step.section) && step.text.trim() !== "")
@@ -320,8 +337,9 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase,
+                  alternative_group)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .bind(
               recipeId,
@@ -334,6 +352,7 @@ function childrenOf(
               entry.ingredientId,
               line.sourceLine,
               phaseFor(line.phase),
+              entry.alternativeGroup,
             ),
         );
       } else {
@@ -342,8 +361,9 @@ function childrenOf(
             .prepare(
               `INSERT INTO ingredient_line
                  (recipe_id, position, quantity, quantity_max, unit,
-                  alt_quantity, alt_unit, ingredient_id, source_line, phase)
-               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  alt_quantity, alt_unit, ingredient_id, source_line, phase,
+                  alternative_group)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 WHERE EXISTS (
                   SELECT 1 FROM recipe
                    WHERE id = ? AND household_id = ? AND edit_token = ?
@@ -360,6 +380,7 @@ function childrenOf(
               entry.ingredientId,
               line.sourceLine,
               phaseFor(line.phase),
+              entry.alternativeGroup,
               guard.recipeId,
               guard.householdId,
               guard.writeToken,

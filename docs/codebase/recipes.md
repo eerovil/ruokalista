@@ -148,6 +148,56 @@ with `display: none` on it until it is tapped. Nobody reads it, nothing copies
 it and no screen reader announces it, but it *is* in `textContent`. See
 [testing](docs/codebase/testing.md).
 
+## A line that offers a choice (issue #183)
+
+Proposed here: an ingredient line may be one of several options — *1
+lihaliemikuutio **tai** 1 annos fondia*, voita tai margariinia. `src/alternatives.ts`
+owns the whole idea and is the file to read first;
+[ADR-0009](../adr/0009-an-alternative-is-a-line-not-a-substitution-rule.md) has
+the survey of real recipes that decided its shape and the two alternatives it
+rejected.
+
+**Every option is an ordinary line.** Nothing about it is special, and that is
+the design: it keeps its own quantity and unit — which is what #183 asks for —
+plus its own range, second measurement, source wording and phase, and it names a
+real `ingredient` rather than a phrase. What joins two lines is one nullable
+number they share, scoped to their own recipe row.
+
+- **A group renders where its first option sits.** The number is a member's own
+  text box, so nothing stops it appearing on rows 1 and 5 with unrelated lines
+  between; `alternativeSets` gathers them at the first rather than refusing
+  input that says something perfectly clear. The recipe screen prints them
+  joined by `tai`, and the Cast receiver joins them into one string for the same
+  reason — two items on a TV list read as two things to fetch.
+- **The thumbnail follows the default option.** A row showing two products would
+  say "buy both", which is what a `tai` line does not mean.
+- **The shopping list buys the first option and no other**, per cooking and per
+  recipe row. The same dish planned twice needs its choice bought twice, and a
+  dish's group 1 has nothing to do with its part's — which is why
+  `ShoppingLine` carries `sourceRecipeId` beside `recipeId`. `recipeId` is the
+  dish, because a product override is set per dish (#161); the group is stored
+  on the row.
+- **The editor's control is a number box** in the row's disclosure, beside the
+  part and phase fields. No script, the standing rule on the editing path. It
+  costs one number typed twice, and a grouping gesture is worth revisiting once
+  somebody has used it.
+- **A save dissolves a group of one and renumbers the rest from 1.** Neither
+  rule can be a database `CHECK`, which sees one row at a time. A group number
+  that is not a positive whole number is *refused* on the form rather than
+  quietly dropped, even though the same value read off a column or off the
+  model's JSON degrades to "no group" — a form is the one edge where somebody
+  typed it on purpose.
+
+Which option a household buys is **not** a member's choice yet. #183 hedges its
+default with "ellei käyttäjä valitse muuta"; this change ships the default only,
+and an override table is a slice of its own.
+
+Intake can propose a group: `DRAFT_SCHEMA` carries an optional
+`alternative_group` and the prompt asks for one line per option with the same
+number and each option's own ingredient. It is optional on the wire so an
+AgentDeck bundle written before this still imports. See
+[intake](intake.md).
+
 ## Publishing a recipe (issue #143)
 
 Proposed here: a household may publish a dish, and a published dish is readable
