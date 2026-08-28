@@ -3,16 +3,13 @@ import { readFileSync } from "node:fs";
 
 import { AGENTDECK_BATCH } from "./support/batch";
 import {
+  DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
-  streamRecordBody,
-  stubStreamBody,
-  stubLinkFetch,
   stubStructuring,
-  TRUNCATED_ATTEMPT,
 } from "./support/draft";
 import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
 import { flatPng } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -658,21 +655,21 @@ test.describe("signed in", () => {
   test("a recipe brought in from a web address", async ({ page }) => {
     // The page is stubbed, not fetched: a screenshot must not depend on
     // somebody else's website being up, and this run has no network anyway.
-    // What it shows is the real screen doing the real thing with the answer.
-    await stubLinkFetch(page, {
-      url: "https://kotikokki.example/reseptit/uunikaali",
-      sourceText:
+    // The stub stands in for the queue consumer having read the page; the
+    // screens either side of it are the real ones.
+    await stubStructuring(page, DRAFT_FIXTURE, {
+      linkedUrl: "https://kotikokki.example/reseptit/uunikaali",
+      linkedText:
         "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä\n\n" +
         "Kuullota kaali pannulla ja paista uunissa.",
     });
-    await stubStructuring(page);
 
     await page.goto("/intake");
     await page
       .getByLabel("…tai hae resepti nettiosoitteesta")
       .fill("https://kotikokki.example/reseptit/uunikaali");
     await capture(page, {
-      path: `${SHOTS}/73-intake-from-link.png`,
+      path: `${SHOTS}/79-intake-from-link.png`,
       fullPage: true,
     });
 
@@ -689,7 +686,7 @@ test.describe("signed in", () => {
     // paints it over whatever the viewport was showing, which here is the one
     // line worth seeing.
     await page.locator(".source-original").scrollIntoViewIfNeeded();
-    await capture(page, { path: `${SHOTS}/74-linked-recipe-source.png` });
+    await capture(page, { path: `${SHOTS}/80-linked-recipe-source.png` });
   });
 
   test("check and correct", async ({ page }) => {
@@ -701,32 +698,23 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
   });
 
-  test("a streamed import that failed both attempts", async ({ page }) => {
-    // Both attempts stop mid-JSON (#146). What the member must see is plain
-    // Finnish and their own paste still in the box — not the review screen
-    // reporting "The model returned unparseable JSON."
-    await stubStreamBody(
-      page,
-      streamRecordBody(
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "restart" },
-        { type: "delta", text: TRUNCATED_ATTEMPT },
-        { type: "failed" },
-      ),
+  test("a background import that failed", async ({ page }) => {
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_text,
+         error_message, created_at, updated_at)
+       VALUES ('screenshot-failed', 1, 1, 'failed', 'pasted',
+         'Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.',
+         'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
-
     await page.goto("/intake");
-    await page
-      .getByLabel("Liitä reseptin teksti")
-      .fill("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
-
-    await expect(page.locator("#status")).toContainText(
-      "malli ei saanut reseptiä valmiiksi",
-    );
-    await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+    await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
+    await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+    await page.getByText("Alkuperäinen teksti").click();
+    await expect(page.getByText("Uunikaali\n1 kaali\n½ dl öljyä\nPaista uunissa 200 asteessa.")).toBeVisible();
     await capture(page, {
-      path: `${SHOTS}/56-intake-stream-failed.png`,
+      path: `${SHOTS}/78-intake-background-failed.png`,
       fullPage: true,
     });
   });

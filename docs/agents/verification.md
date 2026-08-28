@@ -50,7 +50,7 @@ Which spec covers what, roughly:
 | ingredient mentions in a step, tap to reveal an amount | `ingredient-mentions.spec.ts`, `dev/check-ingredient-refs.ts` |
 | portions, factors, rounding | `scaling.spec.ts` |
 | parts of a dish | `parts.spec.ts` |
-| import, the review screen, the streaming island | `intake.spec.ts`, `batch-intake.spec.ts` |
+| import, background jobs, the review screen | `intake.spec.ts`, `batch-intake.spec.ts` |
 | pictures, upload, the bulk API | `recipe-images.spec.ts` |
 | the contact-sheet splitter, the crop rules | `dev/check-contact-sheet.ts` |
 | choosing recipes, the copied prompt, cutting a sheet in the browser | `recipe-image-admin.spec.ts` |

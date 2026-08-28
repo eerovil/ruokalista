@@ -154,6 +154,31 @@ accidentally depend on the unused columns.
 Matching is by `ingredient_id` — the household's canonical identity for a
 foodstuff — and never by name.
 
+## Background recipe imports
+
+Issue #186 proposes `intake_job`, a household-scoped record for a model call
+that continues after its browser leaves. It retains the source, queued/running/
+ready/failed state, safe failure text and validated draft until the recipe is
+saved. Photographed bytes stay temporarily in R2; `image_refs` is only their
+ordered key list. `lease_id` makes completion conditional on the consumer that
+claimed the running job. The queue message carries the job id rather than
+source data.
+
+`migrations/0018_linked_intake_jobs.sql`, proposed by #192, adds a third route.
+`intake_job.source_route` gains `linked` and the table gains `source_url`,
+because a linked import persists the *address* rather than the text: the page
+is read by the consumer, not by the request. `source_text` is therefore
+nullable for a linked job until the consumer has read the page, and filled in
+once it has — which is what lets a retry after a model failure reuse the text
+instead of fetching the site again.
+
+That one is a table rebuild rather than a column swap, and it is the case the
+warning below does not catch either way: two of `intake_job`'s CHECKs are
+table-level and name `source_route`, so no `DROP COLUMN` can carry them away,
+but nothing references `intake_job`, so the plain create-copy-drop-rename works
+with no cascade to worry about and no child's `REFERENCES` clause to follow the
+rename.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
@@ -441,8 +466,8 @@ A column addition, so the manifest lockstep below does not move: backup captures
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
-currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
-`ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
+currently `household`, `member`, `intake_job`, `ingredient`, `recipe`, `recipe_share`,
+`recipe_step`, `ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
 `recipe_preference`, and — proposed by #161 — `ingredient_product` and
 `recipe_ingredient_product`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables

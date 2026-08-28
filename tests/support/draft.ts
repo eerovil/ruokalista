@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 
 /**
  * The fixture lives in `src/sample-draft.ts` because the development server
@@ -6,10 +7,7 @@ import type { Page } from "@playwright/test";
  * by CI cannot drift apart.
  */
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
-import {
-  encodeDraftStreamRecord,
-  type DraftStreamRecord,
-} from "../../src/intake.ts";
+import { executeLocalSql } from "./seed";
 
 export { SAMPLE_DRAFT as DRAFT_FIXTURE };
 const DRAFT_FIXTURE = SAMPLE_DRAFT;
@@ -73,7 +71,7 @@ export const DUPLICATE_AMOUNT_DRAFT = {
   ],
 };
 
-/** What the streaming endpoint was asked for, once a stub has answered it. */
+/** What the queued intake endpoint was asked for, once a stub has answered it. */
 export interface StubbedCall {
   body: {
     sourceText?: string;
@@ -85,46 +83,67 @@ export interface StubbedCall {
 }
 
 /**
- * Answer POST /api/intake/structure from the fixture instead of the model.
- * Returns a record of what the browser actually sent, which is how the camera
- * downscale gets checked without a real photograph reaching anything.
+ * Persist a ready fixture when the browser starts an import. The request never
+ * reaches the Queue or Anthropic, but the return-to-review route reads the same
+ * D1 row production does.
  */
 export async function stubStructuring(
   page: Page,
   draft: unknown = DRAFT_FIXTURE,
-): Promise<StubbedCall[]> {
-  return stubStreamBody(page, streamRecordBody(
-    { type: "delta", text: JSON.stringify(draft) },
-    { type: "complete" },
-  ));
-}
-
-/**
- * Encode complete NDJSON records exactly as the Worker does.
- */
-export function streamRecordBody(...records: DraftStreamRecord[]): string {
-  return records.map(encodeDraftStreamRecord).join("");
-}
-
-/**
- * Answer the same route with a record stream, which is how a cut-off attempt
- * and a retry are tested without the model (#146). Everything
- * the island rejects is expressed here rather than in an assertion, so a test
- * can hand it exactly what a truncated stream looks like on the wire.
- */
-export async function stubStreamBody(
-  page: Page,
-  body: string,
+  options: StubOptions = {},
 ): Promise<StubbedCall[]> {
   const calls: StubbedCall[] = [];
 
-  await page.route("**/api/intake/structure", async (route) => {
-    calls.push({ body: JSON.parse(route.request().postData() ?? "{}") });
+  await page.route("**/api/intake/imports", async (route) => {
+    const body = JSON.parse(route.request().postData() ?? "{}") as StubbedCall["body"];
+    calls.push({ body });
+
+    const id = `test-${randomUUID()}`;
+    const photographed = Array.isArray(body.images) && body.images.length > 0;
+    const linked = !photographed && typeof body.url === "string" && body.url !== "";
+    // A linked job's text is what the consumer read off the page, so the
+    // fixture stands in for the page rather than for anything the browser sent.
+    const sourceText = linked
+      ? options.linkedText ?? ""
+      : typeof body.sourceText === "string"
+        ? body.sourceText
+        : "";
+    const imageRefs = photographed
+      ? body.images!.map((image, index) => ({
+          key: `test/${id}/${index + 1}`,
+          mediaType: image.mediaType ?? "image/jpeg",
+        }))
+      : null;
+    const route_ = photographed ? "photographed" : linked ? "linked" : "pasted";
+
+    if (options.failWith !== undefined) {
+      executeLocalSql(
+        `INSERT INTO intake_job
+          (id, household_id, created_by, status, source_route, source_text,
+           source_url, image_refs, error_message, created_at, updated_at)
+         VALUES (${sql(id)}, 1, 1, 'failed', ${sql(route_)},
+           ${linked ? "NULL" : sql(sourceText)},
+           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${sql(options.failWith)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      );
+    } else {
+      executeLocalSql(
+        `INSERT INTO intake_job
+          (id, household_id, created_by, status, source_route, source_text,
+           source_url, image_refs, draft_json, created_at, updated_at)
+         VALUES (${sql(id)}, 1, 1, 'ready', ${sql(route_)},
+           ${photographed ? "NULL" : sql(sourceText)},
+           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      );
+    }
 
     await route.fulfill({
-      status: 200,
-      contentType: "application/x-ndjson; charset=utf-8",
-      body,
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ id, status: "queued" }),
     });
   });
 
@@ -132,53 +151,26 @@ export async function stubStreamBody(
 }
 
 /**
- * Replace the streaming fetch with deliberately fragmented UTF-8 bytes. This
- * exercises the island's decoder and record buffer rather than Playwright's
- * normal one-shot route fulfilment.
+ * How the stubbed queue consumer should have finished (#192).
+ *
+ * A browser run has no network and no queue, so these stand in for what the
+ * consumer would have written: the text it read off a linked page, the address
+ * it finally read, or the Finnish it failed with. The fetch itself is covered
+ * without a browser by `dev/check-recipe-fetch.ts`, and the job half by
+ * `dev/check-intake-jobs.ts`.
  */
-export async function stubFragmentedStreamBody(page: Page, body: string): Promise<void> {
-  await page.addInitScript((streamBody) => {
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof Request
-          ? input.url
-          : String(input);
-      if (!url.endsWith("/api/intake/structure")) return originalFetch(input, init);
-
-      const bytes = new TextEncoder().encode(streamBody);
-      const newline = bytes.indexOf(10);
-      let multibyte = -1;
-      for (let at = 0; at < bytes.length; at += 1) {
-        if (bytes[at]! >= 0xc0) {
-          multibyte = at + 1;
-          break;
-        }
-      }
-      const cuts = [0, 1, multibyte, newline, newline + 1, bytes.length]
-        .filter((at, index, all) => at >= 0 && at <= bytes.length && all.indexOf(at) === index)
-        .sort((left, right) => left - right);
-
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          for (let at = 1; at < cuts.length; at += 1) {
-            controller.enqueue(bytes.slice(cuts[at - 1], cuts[at]));
-          }
-          controller.close();
-        },
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
-      });
-    }) as typeof window.fetch;
-  }, body);
+export interface StubOptions {
+  /** The text the consumer read off the page, for a linked import. */
+  linkedText?: string;
+  /** The address it finally read, after any redirect. */
+  linkedUrl?: string;
+  /** Finnish failure wording, when the job should land as failed instead. */
+  failWith?: string;
 }
 
-/** The bytes a stream carries when an attempt was cut off part-way. */
-export const TRUNCATED_ATTEMPT =
-  '{"title":"Katkennut","yield_portions":4,"source_text":"Uunikaali","lines":[{"quantity":1,"unit":"dl"';
+function sql(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
 
 /**
  * Öljy on two lines with distinguishable amounts, and a step mentioning it.
@@ -268,39 +260,3 @@ export const REMOVED_LINE_DRAFT = {
   ],
 };
 
-/** What the fetch endpoint was asked for, once a stub has answered it. */
-export interface StubbedLink {
-  url: string;
-}
-
-/**
- * Answer `POST /api/intake/fetch` without going near the web (#192).
- *
- * The route itself has no network in a browser run, so what these tests cover
- * is the island's half: that the address is sent, that the text that comes back
- * lands in the paste box, and that a refusal becomes the island's own Finnish.
- * The server half — the address guard and the extraction — is
- * `dev/check-recipe-fetch.ts`, which needs no browser and no network either.
- */
-export async function stubLinkFetch(
-  page: Page,
-  answer: { url: string; sourceText: string } | { reason: string; status?: number },
-): Promise<StubbedLink[]> {
-  const asked: StubbedLink[] = [];
-
-  await page.route("**/api/intake/fetch", async (route) => {
-    const body = JSON.parse(route.request().postData() ?? "{}") as {
-      url?: string;
-    };
-    asked.push({ url: body.url ?? "" });
-
-    const refused = "reason" in answer;
-    await route.fulfill({
-      status: refused ? answer.status ?? 400 : 200,
-      contentType: "application/json",
-      body: JSON.stringify(answer),
-    });
-  });
-
-  return asked;
-}

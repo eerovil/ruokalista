@@ -26,10 +26,16 @@ stripped out and used instead. Neither path is parsed into a recipe here — tha
 is still the model's job, for the reason #4 gave: there is no parser for Finnish
 ingredient lines.
 
-**The fetch is its own route and spends nothing.** `POST /api/intake/fetch`
-returns text; the ordinary streaming route then structures it. A fetch refusal
-therefore happens before a paid call begins, and the fetched text enters the
-same source-text, review and save path as an ordinary paste.
+**A linked import is a background job like the other two.** The address goes to
+`POST /api/intake/imports`, and the page is read by the queue consumer rather
+than by the request that started it. That follows #186 rather than working
+around it: fetching in the request would hold that request open for as long as
+somebody else's site takes to answer, and a member who navigated away would
+lose the import — the two things #186 moved imports off the request to prevent.
+The text the consumer reads is written back onto the job before the model runs,
+so a model failure retries the structuring rather than the whole read, and a
+fetch refusal is a failed job on the import list with Finnish wording, next to
+every other background failure.
 
 **The address is kept on the recipe.** `recipe.source_url`, and
 `recipe.source_route` gains `linked` so how a recipe arrived is still recorded
@@ -37,8 +43,8 @@ truthfully.
 
 **The page is never trusted.** Only a public HTTP address by hostname is
 fetched; every redirect hop is re-checked the same way; the body is capped as it
-arrives; and a failure is reported to the browser as one of five words, never as
-the page's own prose.
+arrives; and a failure is named internally as one of five words, turned into
+Finnish in one place, and never reported as the page's own prose.
 
 ## Why now, when #4 said no
 

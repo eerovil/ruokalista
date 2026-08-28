@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readImages } from "../src/intake-screens.ts";
+import { readImages } from "../src/intake-jobs.ts";
 import { MAX_IMAGES, requestFor, type IntakeSource } from "../src/intake.ts";
 
 /**

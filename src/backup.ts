@@ -7,6 +7,7 @@ const TRANSIENT_ATTEMPTS = 3;
 export const BACKUP_TABLES = [
   { name: "household", orderBy: "id" },
   { name: "member", orderBy: "id" },
+  { name: "intake_job", orderBy: "created_at, id" },
   { name: "member_invitation", orderBy: "id" },
   { name: "ingredient", orderBy: "id" },
   { name: "recipe", orderBy: "id" },

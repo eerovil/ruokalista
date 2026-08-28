@@ -31,11 +31,14 @@ import {
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
-  fetchPageForIntake,
+  intakeJobReviewScreen,
+  intakeJobStatus,
   intakeScreen,
+  retryIntakeJobForm,
   saveScreen,
-  structureStream,
+  startIntakeJob,
 } from "./intake-screens.ts";
+import { maintainIntakeJobs, processIntakeQueue } from "./intake-jobs.ts";
 import {
   apiListRecipes,
   apiShowRecipe,
@@ -185,8 +188,10 @@ const router = new Router()
   .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
-  .post("/api/intake/fetch", requireMember(fetchPageForIntake))
-  .post("/api/intake/structure", requireMember(structureStream))
+  .get("/intake/imports/:id/review", requireMemberScreen(intakeJobReviewScreen))
+  .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
+  .post("/api/intake/imports", requireMember(startIntakeJob))
+  .get("/api/intake/imports/:id", requireMember(intakeJobStatus))
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))
@@ -224,9 +229,24 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    await scheduledBackup(controller, env);
+    try {
+      await maintainIntakeJobs(env);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "intake.maintenance_failed",
+        detail: String((error as Error)?.message ?? error),
+      }));
+    }
+    if (controller.cron === "17 2 * * *") await scheduledBackup(controller, env);
   },
-} satisfies ExportedHandler<Env>;
+
+  async queue(
+    batch: MessageBatch<{ jobId: string }>,
+    env: Env,
+  ): Promise<void> {
+    await processIntakeQueue(batch, env);
+  },
+} satisfies ExportedHandler<Env, { jobId: string }>;
 
 /**
  * Public, and the only permanent public route. Answers whether the Worker is up
