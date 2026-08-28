@@ -273,7 +273,11 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
   const before = await milk.locator("summary").boundingBox();
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
+  // The count above the send button keeps up with a mapping made in place.
+  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
+
   await page.reload();
+  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
   const thumb = row(page, "maito").locator(".shopping-thumb img");
   await expect(thumb).toBeVisible();
   await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);

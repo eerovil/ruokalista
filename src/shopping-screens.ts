@@ -649,7 +649,7 @@ function externalSendPanel(
     <h2 id="s-shopping-title">S-ostoslista</h2>
     ${buy.length === 0
       ? ""
-      : html`<p>
+      : html`<p class="s-send-counts" data-tuotteet="${mapped}" data-muistutukset="${notes}">
             ${mapped} ${mapped === 1 ? "tuote" : "tuotetta"}${notes === 0
               ? ""
               : ` · ${notes} ${notes === 1 ? "muistutus" : "muistutusta"}`}
@@ -1217,6 +1217,9 @@ const SHOPPING_ISLAND = `
       status(row, null);
       if (ok && payload && payload.product) {
         showProduct(row, payload.product);
+        // An ingredient that was going as a note is going as a product now, and
+        // the line above the send button says how many of each there are.
+        if (before.blockClass.indexOf('is-note') !== -1) countProduct();
         return;
       }
       restore(row, before);
@@ -1285,6 +1288,22 @@ const SHOPPING_ISLAND = `
     });
     row.error.appendChild(again);
     row.block.parentNode.insertBefore(row.error, row.block.nextSibling);
+  }
+
+  function countProduct() {
+    var line = document.querySelector('.s-send-counts');
+    if (!line) return;
+    var products = Number(line.getAttribute('data-tuotteet')) + 1;
+    var notes = Number(line.getAttribute('data-muistutukset')) - 1;
+    if (notes < 0) return;
+    line.setAttribute('data-tuotteet', String(products));
+    line.setAttribute('data-muistutukset', String(notes));
+    var text = products + (products === 1 ? ' tuote' : ' tuotetta');
+    if (notes > 0) {
+      text += ' · ' + notes + (notes === 1 ? ' muistutus' : ' muistutusta');
+    }
+    clear(line);
+    line.appendChild(document.createTextNode(text));
   }
 
   // ------------------------------------------------------------- the sending
