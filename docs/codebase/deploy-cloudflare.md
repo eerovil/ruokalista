@@ -44,6 +44,18 @@ briefly live without `SESSION_SECRET`, which is the 503 path, not an open one.
 actually deploying — it prints the bindings table (e.g.
 `env.RECIPE_IMAGES (ruokalista-recipe-images) R2 Bucket`) and exits.
 
+Issue #186 proposes a `ruokalista-intake` Queue, bound as `INTAKE_QUEUE` for
+both production and consumption by this Worker. The queue must exist before a
+deploy can attach its consumer. `scripts/cloudflare-setup.sh` creates it before
+migrations and deploy, tolerates an already-existing queue, and needs the
+account token to carry Queues permission. Queue consumers have a separate
+15-minute wall-clock limit, so an import continues after its browser request
+has ended; `waitUntil()` would provide only 30 seconds after a disconnect.
+The proposed five-minute Cron Trigger recreates a lost queue message from D1
+after a 16-minute worker lease expires. It also removes `intake/` R2 objects
+that have had no D1 reference for a day, while leaving the source of a real
+failed import available for its explicit retry.
+
 `SESSION_SECRET` is generated during setup and never stored anywhere, so a
 signed-in session on the live Worker cannot be forged from this host — the live
 signed-in path can only be exercised through a real browser sign-in.

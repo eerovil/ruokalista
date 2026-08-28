@@ -79,3 +79,4 @@ commit what it wrote:
 | `65-editor-save-bar.png` | Proposed editor on a phone, scrolled to the ingredient rows: **Tallenna muutokset** rides the scroll just above the tab strip instead of waiting at the end of the form (#184) |
 | `66-parts-only-editor.png` | Proposed editor of a dish written entirely in named parts — no ingredient rows of its own, and no refusal (#184) |
 | `67-parts-only-dish.png` | The same dish after saving: both parts and their ingredients intact, the dish itself carrying only its method |
+| `68-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |

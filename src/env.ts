@@ -5,6 +5,7 @@
 export interface Env {
   DB: D1Database;
   RECIPE_IMAGES: R2Bucket;
+  INTAKE_QUEUE: Queue<{ jobId: string }>;
 
   /**
    * Signs the session cookie. Set as a Worker secret in production and in

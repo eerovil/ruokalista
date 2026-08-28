@@ -19,6 +19,8 @@ const EXPECTED_TABLES = BACKUP_TABLES.map(({ name }) => name);
 const RESTORE_ORDER: readonly BackupTableName[] = [
   "household",
   "member",
+  // After household and member: each retained import belongs to both.
+  "intake_job",
   "ingredient",
   "recipe",
   "recipe_step",
@@ -240,6 +242,7 @@ function validateRowCounts(
 function validateRelationships(snapshot: BackupSnapshot): void {
   const householdIds = uniqueIntegerKey(snapshot.tables.household, "id", "household");
   const memberIds = uniqueIntegerKey(snapshot.tables.member, "id", "member");
+  uniqueComposite(snapshot.tables.intake_job, ["id"], "intake job");
   const ingredientIds = uniqueIntegerKey(snapshot.tables.ingredient, "id", "ingredient");
   const recipeIds = uniqueIntegerKey(snapshot.tables.recipe, "id", "recipe");
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
@@ -287,6 +290,10 @@ function validateRelationships(snapshot: BackupSnapshot): void {
 
   for (const row of snapshot.tables.member) {
     requireReference(row, "household_id", householdIds, "member.household_id");
+  }
+  for (const row of snapshot.tables.intake_job) {
+    requireReference(row, "household_id", householdIds, "intake_job.household_id");
+    requireReference(row, "created_by", memberIds, "intake_job.created_by");
   }
   for (const row of snapshot.tables.ingredient) {
     requireReference(row, "created_by", memberIds, "ingredient.created_by");

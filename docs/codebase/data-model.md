@@ -154,6 +154,16 @@ accidentally depend on the unused columns.
 Matching is by `ingredient_id` — the household's canonical identity for a
 foodstuff — and never by name.
 
+## Background recipe imports
+
+Issue #186 proposes `intake_job`, a household-scoped record for a model call
+that continues after its browser leaves. It retains the source, queued/running/
+ready/failed state, safe failure text and validated draft until the recipe is
+saved. Photographed bytes stay temporarily in R2; `image_refs` is only their
+ordered key list. `lease_id` makes completion conditional on the consumer that
+claimed the running job. The queue message carries the job id rather than
+source data.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
@@ -346,7 +356,7 @@ sequence ever leaves a constraint violated, so none of it depends on a pragma.
 
 `BACKUP_TABLES` in `src/backup.ts` is the single list that drives snapshot
 capture, row ordering, schema comparison, and post-restore comparison — it is
-currently `household`, `member`, `ingredient`, `recipe`, `recipe_step`,
+currently `household`, `member`, `intake_job`, `ingredient`, `recipe`, `recipe_step`,
 `ingredient_line`, `planned_batch`, `batch_occurrence`, `pantry_entry`,
 `recipe_preference`, and — proposed by #161 — `ingredient_product` and
 `recipe_ingredient_product`.
