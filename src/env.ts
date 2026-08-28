@@ -21,6 +21,12 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
 
+  /**
+   * Google Cast custom receiver application id. Until the receiver is
+   * registered, recipe screens stay exactly as they are and load no Cast SDK.
+   */
+  CAST_APP_ID?: string;
+
   /** Structures pasted recipe text. Without it, intake says so and refuses. */
   ANTHROPIC_API_KEY?: string;
 

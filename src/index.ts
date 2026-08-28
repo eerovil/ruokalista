@@ -6,6 +6,7 @@ import {
   requireMemberScreen,
 } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
+import { castReceiver } from "./cast.ts";
 import {
   batchIntakeScreen,
   importBatchScreen,
@@ -127,6 +128,7 @@ const router = new Router()
   .get("/icon-512.png", regularIcon512)
   .get("/icon-maskable-512.png", maskableIcon)
   .get("/apple-touch-icon.png", appleIcon)
+  .get("/cast/receiver", castReceiver)
   .get("/", requireMemberScreen(weekScreen))
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/batches", requireMemberScreen(addBatchForm))

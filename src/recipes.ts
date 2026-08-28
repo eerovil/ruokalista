@@ -1,4 +1,5 @@
 import { problem } from "./auth.ts";
+import { castSender } from "./cast.ts";
 import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import {
   parseStepRefs,
@@ -692,7 +693,14 @@ export async function recipeScreen(
   // else — a bookmark, a typo, nothing at all — is the recipe as written.
   const asked = parseMultiplier(url.searchParams.get("multiplier") ?? "");
 
-  return renderRecipe(env.DB, member, recipe, asked ?? DEFAULT_MULTIPLIER, null);
+  return renderRecipe(
+    env.DB,
+    member,
+    recipe,
+    asked ?? DEFAULT_MULTIPLIER,
+    null,
+    env.CAST_APP_ID,
+  );
 }
 
 /**
@@ -708,6 +716,7 @@ export async function renderRecipe(
   recipe: Recipe,
   multiplier: number,
   refusal: string | null,
+  castApplicationId?: string,
 ): Promise<Response> {
   const preference = await preferredMultiplierFor(db, member.householdId, recipe.id);
 
@@ -717,7 +726,7 @@ export async function renderRecipe(
       owned: recipe.householdId === member.householdId,
       preference,
       refusal,
-    }),
+    }, castApplicationId),
     "recipes",
     member,
     refusal === null ? 200 : 400,
@@ -911,6 +920,7 @@ function recipeBody(
   recipe: Recipe,
   multiplier: number,
   view: RecipeView,
+  castApplicationId?: string,
 ): Raw {
   const canRevealAmounts = hasRevealableMention(recipe, multiplier);
 
@@ -948,6 +958,7 @@ function recipeBody(
           : html`<p class="meta source-yield">
               Lähteessä ${recipe.yieldPortions} annosta
             </p>`}
+        ${castSender(recipe, multiplier, castApplicationId)}
       </div>
     </div>
 

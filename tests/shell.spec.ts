@@ -70,7 +70,11 @@ test.describe("signed in", () => {
     await page.goto("/recipes/1");
     await page.keyboard.press("End");
 
-    const last = page.locator("main :last-child").last();
+    // `css:light=` keeps the match in the page's own markup. A plain CSS
+    // selector pierces open shadow roots, and the Cast launcher has one — the
+    // deepest last child then becomes a hidden icon path inside it rather than
+    // the last thing the page actually shows.
+    const last = page.locator("css:light=main :last-child").last();
     await expect(last).toBeInViewport();
   });
 
