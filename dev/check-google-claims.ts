@@ -28,6 +28,7 @@ const valid = {
   sub: "1234567890",
   name: "Eero",
   email: "eero@example.com",
+  email_verified: true,
 };
 
 test("accepts a token issued to this application", () => {
@@ -36,6 +37,7 @@ test("accepts a token issued to this application", () => {
     sub: "1234567890",
     name: "Eero",
     email: "eero@example.com",
+    emailVerified: true,
   });
 });
 
@@ -79,5 +81,19 @@ test("falls back to a placeholder name, but never invents a subject", () => {
     sub: "1234567890",
     name: "Tuntematon",
     email: null,
+    emailVerified: true,
   });
+});
+
+test("carries Google's email verification separately from token validity", () => {
+  assert.equal(
+    readIdentity(idToken({ ...valid, email_verified: false }), CLIENT_ID, NOW)
+      ?.emailVerified,
+    false,
+  );
+  assert.equal(
+    readIdentity(idToken({ ...valid, email_verified: undefined }), CLIENT_ID, NOW)
+      ?.emailVerified,
+    false,
+  );
 });

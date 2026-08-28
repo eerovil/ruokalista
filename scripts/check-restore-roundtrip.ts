@@ -70,6 +70,14 @@ try {
   if (target.member[0]?.household_id !== 1 || target.ingredient.find((row) => row.name === "jauheliha") === undefined) {
     throw new Error("round-trip did not preserve household/member/ingredient relationships");
   }
+  const invitation = target.member_invitation[0];
+  if (
+    invitation?.household_id !== 2 ||
+    invitation.email !== "odottaa@example.com" ||
+    invitation.created_by !== 3
+  ) {
+    throw new Error("round-trip did not preserve the pending member invitation");
+  }
   // Two package sizes for one ingredient plus one recipe's own choice: the
   // rows #161 added, and the ones a restore would quietly flatten if either
   // table were left out of the manifest.

@@ -14,21 +14,34 @@ parameter. There is no other way in. Another household's record is a 404, not a
 
 ## Sign-in
 
-Google is the gate and there is no signup path. A Google account with no `member`
-row is shown the wall and nothing is created.
-
-Which means member rows are a bootstrap problem: a member is matched on Google's
-`sub`, and the only way to learn somebody's `sub` is for them to try to sign in.
-So the wall shows the person their own `sub`, for the household to insert by
-hand:
-
-    INSERT INTO member (household_id, google_sub, display_name, email)
-    VALUES (1, '<sub from the wall>', 'Nimi', 'nimi@example.com');
+Google is the identity gate. Existing members are matched only on Google's
+stable `sub`; the email-only invitation proposed below is the one enrollment
+path this pull request adds.
 
 The Google client id and secret are Worker secrets. Without them the app says
 sign-in is not configured and lets nobody in. The redirect URI is derived from
 the request's origin, so every origin used has to be registered in Google Cloud
 Console — the live one and `http://127.0.0.1:8787` for local work.
+
+### Email-only membership (#187, proposed)
+
+This pull request proposes replacing the manual three-field member bootstrap on
+the admin household screen with one email field. Submitting it creates a
+`member_invitation`, not a synthetic `member`: the permanent row still requires
+Google's real stable `sub`.
+
+On first sign-in, an unknown Google `sub` may claim exactly one invitation when
+Google also supplies the same **verified** email. The D1 batch inserts the real
+member with Google's `sub` and display name and consumes the invitation in one
+transaction. An unverified address, a different address or an invitation that
+another sign-in already consumed still reaches the existing wall. Existing
+members continue to match only on `sub`; email is never a replacement login key.
+
+Invitation addresses are trimmed, lower-cased and unique case-insensitively
+across active members and pending invitations. A duplicate refusal names the
+household that already has it. Removed members do not reserve their former
+email, so the existing remove-then-add move remains possible through a new
+invitation.
 
 A development server also offers **Kehityskirjautuminen** on `/signin`: a button
 per existing member that issues a session directly. `POST /auth/dev-signin`

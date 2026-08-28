@@ -6,6 +6,7 @@ import {
   type GoogleCredentials,
 } from "./google.ts";
 import { html, page, type Raw } from "./html.ts";
+import { claimMemberInvitation } from "./households.ts";
 import {
   allMembers,
   findMemberById,
@@ -17,9 +18,9 @@ import { clearSessionCookie, issueSessionCookie } from "./session.ts";
 import { base64UrlEncode, cookieValue, sign, verify } from "./signing.ts";
 
 /**
- * Sign-in, end to end. Google is the gate and there is no signup path anywhere:
- * a Google account with no member row is told the household has to add them,
- * and nothing is created.
+ * Sign-in, end to end. Google is the identity gate. An existing member always
+ * matches on its stable `sub`; the one enrollment path is an admin-created
+ * email invitation claimed by the matching verified Google account (#187).
  */
 
 const STATE_COOKIE = "ruokalista_oauth_state";
@@ -136,12 +137,11 @@ export async function devSignIn({
 /**
  * The wall. Signed in with Google, but nobody in the household has added them.
  *
- * It shows the Google account id, because without it the household has no way to
- * add the person: the id is only knowable from a sign-in attempt, and v1 inserts
- * member rows by hand. It is an identifier, not a credential, and it is only
- * ever shown to the person it belongs to.
+ * The admin needs the verified Google email, not the account's internal `sub`.
+ * An unverified or mismatched address cannot claim an invitation and reaches
+ * this same wall without exposing an obsolete enrollment instruction.
  */
-function notAMemberScreen(sub: string, email: string | null): Response {
+function notAMemberScreen(email: string | null): Response {
   return page(
     "Ei käyttöoikeutta",
     html`<h1>Talous ei tunne sinua</h1>
@@ -149,9 +149,10 @@ function notAMemberScreen(sub: string, email: string | null): Response {
         Kirjautuminen Google-tilillä onnistui${email === null
           ? ""
           : ` (${email})`}, mutta tälle tilille ei ole
-        käyttöoikeutta. Talouden jäsen lisää sinut käsin.
+        käyttöoikeutta. Pyydä ylläpitäjää lisäämään Google-tilisi vahvistettu
+        sähköpostiosoite talouteen.
       </p>
-      <p class="empty">Anna hänelle tämä tunniste: <code>${sub}</code></p>`,
+      <p class="empty">Kirjaudu sen jälkeen uudelleen samalla Google-tilillä.</p>`,
     "signed-out",
     null,
     403,
@@ -255,8 +256,12 @@ export async function completeSignIn({
   );
   if (identity === null) return failedScreen("Tunniste ei kelvannut.");
 
-  const member = await findMemberByGoogleSub(env.DB, identity.sub);
-  if (member === null) return notAMemberScreen(identity.sub, identity.email);
+  let member = await findMemberByGoogleSub(env.DB, identity.sub);
+  if (member === null) {
+    await claimMemberInvitation(env.DB, identity);
+    member = await findMemberByGoogleSub(env.DB, identity.sub);
+  }
+  if (member === null) return notAMemberScreen(identity.email);
 
   // Two Set-Cookie headers, appended rather than joined: comma-joining them is
   // not something a browser is obliged to unpick.

@@ -21,6 +21,8 @@ export interface GoogleIdentity {
   sub: string;
   name: string;
   email: string | null;
+  /** Only a verified address may claim an email-only membership invitation. */
+  emailVerified: boolean;
 }
 
 export interface GoogleCredentials {
@@ -119,7 +121,7 @@ export function readIdentity(
     return null;
   }
 
-  const { iss, aud, exp, sub, name, email } = claims;
+  const { iss, aud, exp, sub, name, email, email_verified: emailVerified } = claims;
 
   if (typeof iss !== "string" || !ISSUERS.includes(iss)) return null;
   if (aud !== clientId) return null;
@@ -130,5 +132,6 @@ export function readIdentity(
     sub,
     name: typeof name === "string" && name !== "" ? name : "Tuntematon",
     email: typeof email === "string" ? email : null,
+    emailVerified: emailVerified === true,
   };
 }

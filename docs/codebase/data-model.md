@@ -215,6 +215,28 @@ This is a column addition, so the backup lockstep below does not move: backup
 captures `SELECT *` and restore builds its INSERT from the row's own keys, so
 both carry the new columns without a change.
 
+## Pending membership by email (#187, proposed)
+
+This pull request proposes `migrations/0014_member_invitations.sql` and its
+`member_invitation` table. One row reserves one normalized email for one
+household until the matching verified Google account first signs in:
+
+```sql
+CREATE TABLE member_invitation (
+  id, household_id, email UNIQUE COLLATE NOCASE, created_at, created_by
+);
+```
+
+It is deliberately separate from `member`. A pending person has no Google
+`sub` yet, while `member.google_sub` is the permanent identity and stays
+`NOT NULL UNIQUE`. Claiming runs as one D1 batch: insert the permanent member
+from the invitation, then delete the invitation only when that exact `sub` and
+email now exist. The batch transaction prevents two callbacks from consuming
+one invitation into two members.
+
+The new table joins the backup/restore manifest after `member`; restore checks
+both its household and creator references and its unique email.
+
 ## Public recipes, and a global ingredient dictionary
 
 Issue #143, proposed here, adds `recipe.published_at` and `recipe.published_by`

@@ -107,41 +107,44 @@ test("an admin renames another household", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Naapuri" })).toBeVisible();
 });
 
-test("an admin adds, edits and removes a member of another household", async ({
+test("an admin adds a member with only one normalized email", async ({
   page,
 }) => {
   await signIn(page, 3);
   await page.goto("/admin/households/2");
 
-  await page.locator("#add-name").fill("Vieras");
-  await page.locator("#add-email").fill("vieras@example.com");
-  await page.locator("#add-sub").fill("sub-vieras");
+  await page.locator("#add-email").fill("Vieras@Example.COM");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
 
-  const row = page.locator("details.rename").filter({ hasText: "Vieras" });
-  await expect(row).toHaveCount(1);
-  await expect(row).toContainText("vieras@example.com");
-
-  const memberId = await memberIdOf(page, "Vieras");
-
-  await row.locator("summary").click();
-  await page.locator(`#member-${memberId}-name`).fill("Vieras Vieraskoski");
-  await page.locator(`#member-${memberId}-email`).fill("uusi@example.com");
-  await page.locator(`#member-${memberId}-sub`).fill("sub-vieras-uusi");
-  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
-
-  const edited = page.locator("details.rename").filter({ hasText: "Vieraskoski" });
-  await expect(edited).toContainText("uusi@example.com");
-  await edited.locator("summary").click();
-  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue(
-    "sub-vieras-uusi",
-  );
-
-  await edited.getByRole("button", { name: "Poista taloudesta" }).click();
-  await expect(
-    page.locator("details.rename").filter({ hasText: "Vieraskoski" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Odottaa kirjautumista" }))
+    .toBeVisible();
+  await expect(page.getByText("vieras@example.com", { exact: true })).toBeVisible();
+  // It is an invitation, not a synthetic permanent member row.
   await expect(page.locator("details.rename")).toHaveCount(1);
+
+  await page.locator("#add-email").fill("VIERAS@example.com");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  await expect(page.locator(".refused")).toContainText("jo lisätty talouteen Naapuri");
+  await expect(page.locator("#add-email")).toHaveValue("VIERAS@example.com");
+
+  await page.locator("#add-email").fill("eero@example.com");
+  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  await expect(page.locator(".refused")).toContainText("jo lisätty talouteen Koti");
+});
+
+test("an invalid email is refused by the server with the input intact", async ({
+  page,
+  request,
+}) => {
+  await signIn(page, 3);
+  const response = await request.post("/admin/households/2/members", {
+    headers: { Cookie: cookieHeader(3) },
+    form: { email: "ei-sähköposti" },
+  });
+  expect(response.status()).toBe(400);
+  const body = await response.text();
+  expect(body).toContain("Anna kelvollinen sähköpostiosoite");
+  expect(body).toContain('value="ei-sähköposti"');
 });
 
 test("a member who has made things is removed, and what they made stays", async ({
@@ -184,41 +187,30 @@ test("a removed member's own session no longer opens the household", async ({
   expect(api.status()).toBe(401);
 });
 
-test("the removed member's Google sub is free for another household", async ({
+test("a removed member's email is free for another household invitation", async ({
   page,
 }) => {
-  // The second half of a move. Their old sub was UNIQUE across the table, so
-  // this is the check that removal really handed it back.
+  // The second half of a move now starts with an email-only invitation. The
+  // real Google sub is filled by that person's next verified sign-in.
   await signIn(page, 3);
   await page.goto("/admin/households/1");
-  await page.locator("#add-name").fill("Naapuri");
-  await page.locator("#add-sub").fill("dev-seed-naapuri");
+  await page.locator("#add-email").fill("naapuri@example.com");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
 
   await expect(page.locator(".refused")).toHaveCount(0);
-  const moved = page.locator("details.rename").filter({ hasText: "Naapuri" });
-  await expect(moved).toHaveCount(1);
-
-  // A new row in the new household, not the old one reparented.
-  const memberId = await memberIdOf(page, "Naapuri");
-  expect(memberId).toBeGreaterThan(3);
-
-  // And they can sign in, into household 1 now.
-  await moved.locator("summary").click();
-  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue(
-    "dev-seed-naapuri",
-  );
+  await expect(page.getByText("naapuri@example.com", { exact: true })).toBeVisible();
 });
 
-test("the sub a removed row parks on cannot be typed in", async ({ page }) => {
+test("the sub a removed row parks on cannot be put on an active member", async ({ page }) => {
   // The parked value is not ASCII, so it is not a Google sub, so the form will
   // not take it — which is the only way a live member could land on top of a
   // removed one. See `src/google.ts::isGoogleSub`.
   await signIn(page, 3);
   await page.goto("/admin/households/1");
-  await page.locator("#add-name").fill("Väärennös");
-  await page.locator("#add-sub").fill("—removed:2");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  const row = page.locator("details.rename").filter({ hasText: "Eero" });
+  await row.locator("summary").click();
+  await page.locator("#member-1-sub").fill("—removed:2");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText(
     "ei ole kelvollinen Google-tunniste",
@@ -235,25 +227,16 @@ test("a Google sub that merely looks like a tombstone is an ordinary sub", async
   // a naming convention. They are an ordinary member now.
   await signIn(page, 3);
   await page.goto("/admin/households/1");
-  await page.locator("#add-name").fill("Tuomas");
-  await page.locator("#add-sub").fill("removed:2");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
-
-  await expect(page.locator(".refused")).toHaveCount(0);
-  const row = page.locator("details.rename").filter({ hasText: "Tuomas" });
-  await expect(row).toHaveCount(1);
-
-  const memberId = await memberIdOf(page, "Tuomas");
+  const row = page.locator("details.rename").filter({ hasText: "Eero" });
   await row.locator("summary").click();
-  await expect(page.locator(`#member-${memberId}-sub`)).toHaveValue("removed:2");
-
-  // And they are not mistaken for a parked row: they can be removed, which
-  // parks them somewhere else again, and household 1 is as it was.
-  await row.getByRole("button", { name: "Poista taloudesta" }).click();
+  await page.locator("#member-1-sub").fill("removed:2");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".refused")).toHaveCount(0);
-  await expect(
-    page.locator("details.rename").filter({ hasText: "Tuomas" }),
-  ).toHaveCount(0);
+
+  // Put the seed identity back for later sign-in and removal checks.
+  await page.locator("details.rename").filter({ hasText: "Eero" }).locator("summary").click();
+  await page.locator("#member-1-sub").fill("dev-seed-koti");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 });
 
 test("an admin's own row cannot be removed here", async ({ page }) => {
@@ -335,11 +318,9 @@ test("another admin's row is refused too, through the routes themselves", async 
   // needs a second admin, and this screen deliberately cannot make one — so the
   // test promotes a member the way an operator would, straight in the database,
   // and then tries both writes against somebody who is not the caller.
+  insertTestMember(2, "sub-toinen-yllapitaja", "Toinen ylläpitäjä", null);
   await signIn(page, 3);
   await page.goto("/admin/households/2");
-  await page.locator("#add-name").fill("Toinen ylläpitäjä");
-  await page.locator("#add-sub").fill("sub-toinen-yllapitaja");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
 
   const memberId = await memberIdOf(page, "Toinen ylläpitäjä");
   promoteToAdmin("sub-toinen-yllapitaja");
@@ -386,39 +367,37 @@ test("another admin's row is refused too, through the routes themselves", async 
   expect(gone.status()).toBe(303);
 });
 
-test("a Google sub already in use is refused, and says where it is", async ({
+test("a Google sub already in use is refused when editing, and says where it is", async ({
   page,
 }) => {
   await signIn(page, 3);
-  await page.goto("/admin/households/2");
+  await page.goto("/admin/households/1");
 
-  await page.locator("#add-name").fill("Kaksoisolento");
-  await page.locator("#add-sub").fill("dev-seed-koti");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  const row = page.locator("details.rename").filter({ hasText: "Eero" });
+  await row.locator("summary").click();
+  await page.locator("#member-1-sub").fill("dev-seed-admin");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText("jo taloudessa Koti");
-  await expect(page.locator("#add-name")).toHaveValue("Kaksoisolento");
-  await expect(page.locator("#add-sub")).toHaveValue("dev-seed-koti");
+  await expect(page.locator("#member-1-sub")).toHaveValue("dev-seed-admin");
 });
 
-test("a member with no name and a member with no sub are both refused", async ({
+test("an edited member with no name or sub is refused", async ({
   page,
 }) => {
   await signIn(page, 3);
-  await page.goto("/admin/households/2");
+  await page.goto("/admin/households/1");
 
-  await page.locator("#add-sub").fill("sub-nimeton");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  const row = page.locator("details.rename").filter({ hasText: "Eero" });
+  await row.locator("summary").click();
+  await page.locator("#member-1-name").fill("");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".refused")).toContainText("pitää olla nimi");
 
-  await page.goto("/admin/households/2");
-  await page.locator("#add-name").fill("Tunnisteeton");
-  await page.getByRole("button", { name: "Lisää jäsen" }).click();
+  await page.locator("#member-1-name").fill("Eero");
+  await page.locator("#member-1-sub").fill("");
+  await row.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".refused")).toContainText("Google-tunniste");
-
-  // Neither refusal let a half-filled member through. Household 2 is empty by
-  // this point in the file — its one seeded member was removed above.
-  await expect(page.locator("details.rename")).toHaveCount(0);
 });
 
 test("the screen offers no transfer, no household delete and no admin control", async ({
@@ -436,10 +415,10 @@ test("the screen offers no transfer, no household delete and no admin control", 
   await expect(page.getByRole("button", { name: /Siirrä/ })).toHaveCount(0);
 });
 
-test("nothing the form says can create an admin", async ({ page, request }) => {
-  // The three editable fields are named one by one in the UPDATE, so an extra
-  // form field is just more of the request. Proved end to end: the member this
-  // creates is asked for the admin panel and told it is not there.
+test("nothing the email-only form says can create an active admin", async ({
+  page,
+  request,
+}) => {
   await signIn(page, 3);
 
   const created = await request.post("/admin/households/2/members", {
@@ -447,7 +426,7 @@ test("nothing the form says can create an admin", async ({ page, request }) => {
     maxRedirects: 0,
     form: {
       display_name: "Salakavala",
-      email: "",
+      email: "salakavala@example.com",
       google_sub: "sub-salakavala",
       is_admin: "1",
       isAdmin: "true",
@@ -457,39 +436,10 @@ test("nothing the form says can create an admin", async ({ page, request }) => {
   expect(created.status()).toBe(303);
 
   await page.goto("/admin/households/2");
-  const memberId = await memberIdOf(page, "Salakavala");
-
-  // Still in household 2, whatever the form claimed.
-  await expect(
-    page.locator("details.rename").filter({ hasText: "Salakavala" }),
-  ).toHaveCount(1);
-
-  const asThem = await request.get("/admin", {
-    headers: { Cookie: cookieHeader(memberId) },
-    maxRedirects: 0,
-  });
-  expect(asThem.status()).toBe(404);
-
-  const edited = await request.post(
-    `/admin/households/2/members/${memberId}`,
-    {
-      headers: { Cookie: cookieHeader(3) },
-      maxRedirects: 0,
-      form: {
-        display_name: "Salakavala",
-        email: "",
-        google_sub: "sub-salakavala",
-        is_admin: "1",
-      },
-    },
-  );
-  expect(edited.status()).toBe(303);
-
-  const stillNot = await request.get("/admin", {
-    headers: { Cookie: cookieHeader(memberId) },
-    maxRedirects: 0,
-  });
-  expect(stillNot.status()).toBe(404);
+  await expect(page.getByText("salakavala@example.com", { exact: true }))
+    .toBeVisible();
+  await expect(page.locator("details.rename").filter({ hasText: "Salakavala" }))
+    .toHaveCount(0);
 });
 
 test("a household that is not there is a 404, not a blank screen", async ({
@@ -575,7 +525,7 @@ test("the ordinary product still shows nobody another household", async ({
  * one of those where it is — the recipe list even prints their name, because it
  * joins `member` on `recipe.created_by` — while taking away the household.
  */
-test("an established member is removed, keeps their history, and moves house", async ({
+test("an established member is removed, keeps their history, and can be invited elsewhere", async ({
   page,
   request,
 }) => {
@@ -647,27 +597,13 @@ test("an established member is removed, keeps their history, and moves house", a
   expect(backIn.status()).toBe(400);
   expect(backIn.headers()["set-cookie"]).toBeUndefined();
 
-  // And the other half of the move: the same Google account, in the other
-  // household, as a new row.
+  // And the other half of the move begins with only their email. The D1 domain
+  // check covers the verified first sign-in turning this into a new real row.
   await page.goto("/admin/households/2");
-  await page.locator("#add-name").fill("Eero");
-  await page.locator("#add-sub").fill("dev-seed-koti");
+  await page.locator("#add-email").fill("eero@example.com");
   await page.getByRole("button", { name: "Lisää jäsen" }).click();
   await expect(page.locator(".refused")).toHaveCount(0);
-
-  const movedId = await memberIdOf(page, "Eero");
-  expect(movedId).not.toBe(1);
-
-  // Signed in there, they see household 2's recipes and none of household 1's.
-  // The ingredient dictionary is global since #143, so the recipe list is what
-  // still answers "which household am I in".
-  const nowNeighbour = await request.get("/api/recipes", {
-    headers: { Cookie: cookieHeader(movedId) },
-  });
-  expect(nowNeighbour.status()).toBe(200);
-  const titles = JSON.stringify(await nowNeighbour.json());
-  expect(titles).toContain("Naapurin uunikala");
-  expect(titles).not.toContain("Kaalilaatikko");
+  await expect(page.getByText("eero@example.com", { exact: true })).toBeVisible();
 });
 
 /**
@@ -697,6 +633,28 @@ function promoteToAdmin(googleSub: string): void {
 
 function demoteFromAdmin(googleSub: string): void {
   setAdmin(googleSub, false);
+}
+
+function insertTestMember(
+  householdId: number,
+  googleSub: string,
+  displayName: string,
+  email: string | null,
+): void {
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  execFileSync(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      "ruokalista",
+      "--local",
+      "--command",
+      `INSERT INTO member (household_id, google_sub, display_name, email) VALUES (${householdId}, ${quote(googleSub)}, ${quote(displayName)}, ${email === null ? "NULL" : quote(email)})`,
+    ],
+    { cwd: process.cwd(), stdio: "ignore" },
+  );
 }
 
 async function memberIdOf(page: Page, name: string): Promise<number> {
