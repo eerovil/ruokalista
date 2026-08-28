@@ -758,6 +758,24 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
+    // The product chosen above is the same linked product the recipe now shows.
+    // Photograph that real path rather than seeding a display-only shortcut.
+    // The extra height keeps the fixed bottom navigation off the changed row
+    // in Playwright's full-page rendering.
+    await page.setViewportSize({ width: 1024, height: 1200 });
+    await page.goto("/recipes/3");
+    const recipeThumb = page
+      .locator(".recipe-ingredient", { hasText: "maito" })
+      .locator(".recipe-product-thumb");
+    await expect(recipeThumb).toBeVisible();
+    await expect(
+      page.locator(".recipe-ingredient", { hasText: "juusto" }).locator("img"),
+    ).toHaveCount(0);
+    await capture(page, {
+      path: `${SHOTS}/60-recipe-product-thumbnail.png`,
+      fullPage: true,
+    });
+
     // Only what this shot planned goes away again; the week screenshot above
     // has a cooking on today too, and it is not this test's to delete.
     for (const id of planned) {
