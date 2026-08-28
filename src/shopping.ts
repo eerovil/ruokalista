@@ -13,11 +13,7 @@ import {
   type BaseAmount,
 } from "./packaging.ts";
 import { formatMeasurement, type Measurement } from "./quantities.ts";
-import {
-  scaleFactor,
-  scaleMeasurement,
-  sourceWorthShowing,
-} from "./scaling.ts";
+import { scaleMeasurement, sourceWorthShowing } from "./scaling.ts";
 
 /**
  * The shopping list: what a set of planned cookings needs bought.
@@ -48,9 +44,8 @@ export interface ShoppingLine extends Measurement {
   batchId: number;
   /** The dish that gets cooked — the part's title never replaces it. */
   batchTitle: string;
-  /** The batch's planned portions, and the dish's own yield to scale from. */
-  portions: number;
-  yieldPortions: number | null;
+  /** How much of the dish this cooking makes; 1 is the recipe as written. */
+  multiplier: number;
   /** The named part this line sits in, or null when it is the dish's own. */
   partTitle: string | null;
   /** The dish, even for a part's line: an override is set per dish (#161). */
@@ -164,11 +159,10 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
       item.recipes.push({ id: line.recipeId, title: line.batchTitle });
     }
 
-    const factor = scaleFactor(line.yieldPortions, line.portions);
-    const scaled = scaleMeasurement(line, factor);
+    const scaled = scaleMeasurement(line, line.multiplier);
     const worthShowing = sourceWorthShowing(
       { ...line, ingredient: line.ingredientName },
-      factor,
+      line.multiplier,
     );
 
     item.contributions.push({
@@ -351,8 +345,7 @@ function unitKey(unit: string | null): string {
 interface LineRow {
   batch_id: number;
   batch_title: string;
-  portions: number;
-  yield_portions: number | null;
+  multiplier: number;
   part_title: string | null;
   quantity: number | null;
   quantity_max: number | null;
@@ -369,9 +362,9 @@ interface LineRow {
  * Every ingredient line the given batches call for, dish and named parts alike.
  *
  * The join reaches a part through `parent_id`, so a lasagne brings its
- * jauhelihakastike and its juustokastike with it. A part has no yield of its
- * own — it is a piece of the dish (ADR-0002) — so every row carries the
- * *dish's* yield and the batch's portions, and scales by the one factor.
+ * jauhelihakastike and its juustokastike with it. A part is a piece of the dish
+ * (ADR-0002), so every row carries the batch's multiplier and every one of them
+ * scales by it.
  *
  * Scoped by the *batch's* household, and only there. That is the one hop that
  * matters, and since #143 it is the only one that can be asked: a batch may
@@ -394,8 +387,7 @@ export async function shoppingLinesFor(
     .prepare(
       `SELECT planned_batch.id AS batch_id,
               dish.title AS batch_title,
-              planned_batch.portions,
-              dish.yield_portions,
+              planned_batch.multiplier,
               CASE WHEN source.id = dish.id THEN NULL ELSE source.title END
                 AS part_title,
               ingredient_line.quantity,
@@ -446,8 +438,7 @@ export async function shoppingLinesFor(
   return results.map((row) => ({
     batchId: row.batch_id,
     batchTitle: row.batch_title,
-    portions: row.portions,
-    yieldPortions: row.yield_portions,
+    multiplier: row.multiplier,
     partTitle: row.part_title,
     quantity: row.quantity,
     quantityMax: row.quantity_max,

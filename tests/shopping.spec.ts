@@ -47,10 +47,10 @@ async function createBatch(
   page: Page,
   date: string,
   recipeId: number,
-  portions: number,
+  multiplier: number,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, portions },
+    data: { date, slot: "dinner", recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;
@@ -95,13 +95,13 @@ async function createSpoonedSauce(page: Page): Promise<number> {
  * default and one beyond it but still inside the fortnight.
  */
 async function planTheFortnight(page: Page): Promise<{ lasagne: number }> {
-  // Twice its own yield, so every amount on it is scaled.
-  await createBatch(page, today(), KAALILAATIKKO, 8);
-  const lasagne = await createBatch(page, inDays(2), LASAGNE, 6);
+  // Twice the recipe, so every amount on it is scaled.
+  await createBatch(page, today(), KAALILAATIKKO, 2);
+  const lasagne = await createBatch(page, inDays(2), LASAGNE, 1);
   const sauce = await createSpoonedSauce(page);
-  await createBatch(page, inDays(3), sauce, 2);
+  await createBatch(page, inDays(3), sauce, 1);
   // Beyond the five days, inside the fortnight.
-  await createBatch(page, inDays(10), KAALILAATIKKO, 4);
+  await createBatch(page, inDays(10), KAALILAATIKKO, 1);
   return { lasagne };
 }
 
@@ -192,7 +192,7 @@ test("what the selected cookings add up to", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
 
-  // Kaalilaatikko at twice its yield: ½ dl of oil becomes 1 dl.
+  // Kaalilaatikko at 2×: ½ dl of oil becomes 1 dl.
   await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1 dl");
   // A range scales at both ends and stays a range.
   await expect(row(page, "vesi").locator(".shopping-total")).toHaveText("2–3 l");
@@ -270,14 +270,22 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
 
   const milk = row(page, "maito");
   const water = row(page, "vesi");
+  await expect(milk.locator(".s-shopping-product.is-note strong")).toHaveText(
+    "Teksti",
+  );
+  await expect(page.locator(".s-send-counts")).toContainText(/\d+ teksti(?:ä)?/);
   const before = await milk.locator("summary").boundingBox();
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   // The count above the send button keeps up with a mapping made in place.
-  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
+  await expect(page.locator(".s-send-counts")).toContainText(
+    /1 tuote · \d+ teksti(?:ä)?/,
+  );
 
   await page.reload();
-  await expect(page.locator(".s-send-counts")).toContainText("1 tuote ·");
+  await expect(page.locator(".s-send-counts")).toContainText(
+    /1 tuote · \d+ teksti(?:ä)?/,
+  );
   const thumb = row(page, "maito").locator(".shopping-thumb img");
   await expect(thumb).toBeVisible();
   await expect(thumb).toHaveAttribute("src", /cdn\.s-cloud\.fi.*6415712506032/);
@@ -296,7 +304,7 @@ test("product selection preserves an explicit non-default meal selection", async
   page,
 }) => {
   await planTheFortnight(page);
-  const futureLasagne = await createBatch(page, inDays(11), LASAGNE, 6);
+  const futureLasagne = await createBatch(page, inDays(11), LASAGNE, 1);
   await page.goto("/ostoslista");
   await page.locator(".shopping-picker > summary").click();
   const checked = page.locator(".shopping-meals input:checked");
@@ -654,7 +662,7 @@ test("the shopping screen shows what the S list already holds, and refreshes it"
     items.filter({ hasText: "Kotimaista rasvaton maito" }),
   ).toContainText("Tuote");
   await expect(items.filter({ hasText: "vesi — 2–3 l" })).toContainText(
-    "Muistutus",
+    "Teksti",
   );
 });
 
@@ -895,7 +903,7 @@ test("ticking one further out adds it", async ({ page }) => {
   await expect(page.locator(".shopping-picker > summary")).toContainText(
     "4/4 valittu",
   );
-  // A second Kaalilaatikko at its own yield adds another ½ dl of oil.
+  // A second Kaalilaatikko at 1× adds another ½ dl of oil.
   await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1½ dl");
 });
 
@@ -914,7 +922,7 @@ test("unticking everything is a thing a member is allowed to mean", async ({
 });
 
 test("a cooking that feeds several days is bought for once", async ({ page }) => {
-  const id = await createBatch(page, today(), KAALILAATIKKO, 8);
+  const id = await createBatch(page, today(), KAALILAATIKKO, 2);
 
   await page.goto("/ostoslista");
   await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1 dl");
@@ -939,7 +947,7 @@ test("a cooking that feeds several days is bought for once", async ({ page }) =>
 });
 
 test("a cooking already behind us is not shopped for", async ({ page }) => {
-  await createBatch(page, inDays(-1), KAALILAATIKKO, 8);
+  await createBatch(page, inDays(-1), KAALILAATIKKO, 2);
 
   await page.goto("/ostoslista");
   await expect(page.locator(".shopping-meals li")).toHaveCount(0);
@@ -1116,8 +1124,8 @@ test("a recipe's own product is not merged into the generic pile", async ({
 test("the packet count follows what the week actually needs", async ({ page }) => {
   // 5 dl from one lasagne and 10 dl from a double batch: 1,5 l of milk, which
   // one litre does not cover and two do.
-  await createBatch(page, today(), LASAGNE, 6);
-  await createBatch(page, inDays(1), LASAGNE, 12);
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), LASAGNE, 2);
   await page.goto("/ostoslista");
 
   await expect(row(page, "maito").locator(".shopping-total")).toHaveText("15 dl");
@@ -1135,8 +1143,8 @@ test("a second packet is said to the S list in the one way its API carries", asy
   page,
   request,
 }) => {
-  await createBatch(page, today(), LASAGNE, 6);
-  await createBatch(page, inDays(1), LASAGNE, 12);
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), LASAGNE, 2);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 

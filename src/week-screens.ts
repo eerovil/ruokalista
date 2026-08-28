@@ -8,13 +8,12 @@ import {
   today,
   weekFrom,
 } from "./dates.ts";
-import { html, page, raw, type Raw } from "./html.ts";
+import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
 import {
   addPlannedBatch,
-  changePortions,
+  changeMultiplier,
   changeRecipe,
-  DEFAULT_PORTIONS,
   findPlannedBatch,
   isSlot,
   menuBetween,
@@ -31,8 +30,14 @@ import {
   recipeImage,
   type RecipeSummary,
 } from "./recipes.ts";
-import { preferredPortions } from "./recipe-preference.ts";
+import { preferredMultipliers } from "./recipe-preference.ts";
 import type { RouteContext } from "./router.ts";
+import {
+  DEFAULT_MULTIPLIER,
+  formatMultiplier,
+  MULTIPLIER_CHOICES,
+  parseMultiplier,
+} from "./scaling.ts";
 
 const SLOT_NAMES: Record<Slot, string> = {
   lunch: "Lounas",
@@ -230,7 +235,7 @@ function slotOrder(occurrence: BatchOccurrence | null): number {
 }
 
 /**
- * One cooking, as one card. The head is the recipe, the portions pill and the
+ * One cooking, as one card. The head is the recipe, the multiplier pill and the
  * way into every batch action; the rows below it are the meals this same pot
  * covers, in order, across days.
  */
@@ -246,9 +251,18 @@ function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
         <span class="entry-title">${batch.title}</span>
       </span>
       ${cookedInView
-        ? html`<span class="batch-start">Kokataan · ${batch.portions} annosta</span>`
-        : html`<span class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${batch.portions} annosta</span>`}
+        ? html`<span class="batch-start">Kokataan · ${formatMultiplier(batch.multiplier)}</span>`
+        : html`<span class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${formatMultiplier(batch.multiplier)}</span>`}
     </a></div>
+    ${batch.legacyPortions === null
+      ? ""
+      : // #165 could not turn this batch's old portion count into a multiplier,
+        // because its recipe never said what it makes. Rather than invent one it
+        // sits at 1x and says so, with the number the household actually typed.
+        html`<p class="batch-unconverted">
+          Vanha annosmäärä ${batch.legacyPortions} — kerroin on nyt
+          ${formatMultiplier(DEFAULT_MULTIPLIER)}, tarkista se.
+        </p>`}
     <ul class="batch-when">
       ${days.map(
         (day, index) => html`<li class="batch-when-day">
@@ -321,11 +335,14 @@ export async function plannedBatchScreen(
 
 function batchActions(
   batch: PlannedBatch,
-  refusal: { message: string; portions: string } | null,
+  refusal: { message: string; multiplier: string } | null,
   recipes: RecipeSummary[],
   householdId: number,
 ): Raw {
-  const portions = refusal?.portions ?? String(batch.portions);
+  // On a refusal the box holds what was typed, not what is stored; otherwise it
+  // holds the batch's own multiplier so the number on screen is the truth.
+  const typed = refusal?.multiplier ??
+    formatMultiplier(batch.multiplier).slice(0, -1);
   return html`<p class="meta entry-when">
       ${batch.occurrences.length === 1 ? "1 ateria" : `${batch.occurrences.length} ateriaa`} ·
       ${batch.startDate === batch.endDate
@@ -337,7 +354,7 @@ function batchActions(
     ${refusal === null ? "" : html`<p class="refused">${refusal.message}</p>`}
 
     <p class="batch-actions">
-      <a class="button" href="/recipes/${batch.recipeId}?portions=${batch.portions}"
+      <a class="button" href="/recipes/${batch.recipeId}?multiplier=${String(batch.multiplier)}"
         >Avaa resepti</a
       >
       <a class="button" href="/batches/${batch.id}/coverage?week=${mondayOf(batch.startDate)}"
@@ -347,7 +364,7 @@ function batchActions(
 
     <form method="post" action="/batches/${batch.id}/recipe" class="stacked">
       <label for="recipeId">Resepti koko erälle</label>
-      <div class="portions-row">
+      <div class="control-row">
         <select id="recipeId" name="recipeId">
           ${recipes.map(
             (recipe) => html`<option value="${recipe.id}" ${recipe.id === batch.recipeId ? rawSelected : ""}>${recipe.householdId === householdId ? recipe.title : `${recipe.title} (${recipe.householdName})`}</option>`,
@@ -357,12 +374,14 @@ function batchActions(
       </div>
     </form>
 
-    <form method="post" action="/batches/${batch.id}/portions" class="stacked">
-      <label for="portions">Koko erän annoksia</label>
-      <div class="portions-row">
-        <input id="portions" name="portions" inputmode="numeric" value="${portions}" />
-        <button type="submit">Tallenna</button>
-      </div>
+    <form method="post" action="/batches/${batch.id}/multiplier" class="stacked">
+      <p class="preference-label" id="batchMultiplierLabel">Koko erän kerroin</p>
+      ${multiplierField({
+        current: refusal === null ? batch.multiplier : null,
+        typed,
+        label: "Koko erän kerroin",
+        submit: "Tallenna",
+      })}
     </form>
 
     <form method="post" action="/batches/${batch.id}/delete" class="stacked">
@@ -463,9 +482,9 @@ export async function pickerScreen(
     );
   }
   const recipes = await plannableRecipeSummaries(env.DB, member.householdId, query);
-  // What this household cooks a recipe in, which is not what the recipe says
-  // and is not what its publisher cooks it in either (#143).
-  const preferred = await preferredPortions(
+  // How much of a recipe this household cooks, which is not what the recipe says
+  // and is not what its publisher cooks it at either (#143).
+  const preferred = await preferredMultipliers(
     env.DB,
     member.householdId,
     recipes.map((recipe) => recipe.id),
@@ -488,14 +507,40 @@ export async function pickerScreen(
               <input type="hidden" name="recipeId" value="${recipe.id}" />
               ${recipeImage(recipe, "thumb")}
               <span class="pick-title">${recipe.title}${recipe.householdId === member.householdId ? "" : html` <span class="meta">${recipe.householdName}</span>`}</span>
-              <input name="portions" inputmode="numeric" value="${preferred.get(recipe.id) ?? recipe.yieldPortions ?? DEFAULT_PORTIONS}" aria-label="Annoksia" size="2" />
+              ${multiplierPicker(preferred.get(recipe.id) ?? DEFAULT_MULTIPLIER)}
               <button type="submit">Lisää</button>
             </form></li>`,
-          )}</ul>`}
+          )}</ul>
+          <datalist id="multiplierChoices">
+            ${MULTIPLIER_CHOICES.map(
+              (choice) => html`<option value="${formatMultiplier(choice)}"></option>`,
+            )}
+          </datalist>`}
       <p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
     "week",
     member,
   );
+}
+
+/**
+ * The multiplier a recipe gets added to the week at.
+ *
+ * One compact field rather than the chip row the batch screen offers: the
+ * picker is a list of every plannable recipe, and four buttons on each row
+ * would bury the one thing that list is for. A datalist still offers the four
+ * common values while leaving any other positive multiplier typeable.
+ */
+function multiplierPicker(current: number): Raw {
+  return html`<input
+    name="multiplier"
+    class="pick-multiplier"
+    inputmode="decimal"
+    list="multiplierChoices"
+    value="${formatMultiplier(current)}"
+    aria-label="Kerroin"
+    size="4"
+    required
+  />`;
 }
 
 export async function addBatchForm(
@@ -509,7 +554,7 @@ export async function addBatchForm(
       date,
       slot: String(form.get("slot") ?? ""),
       recipeId: Number(form.get("recipeId")),
-      portions: Number(form.get("portions")),
+      multiplier: parseMultiplier(String(form.get("multiplier") ?? "")) ?? Number.NaN,
     });
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
@@ -518,15 +563,29 @@ export async function addBatchForm(
   return backToWeek(date);
 }
 
-export async function changeBatchPortionsForm(
+/**
+ * `POST /batches/:id/multiplier` — how much of the recipe this cooking makes.
+ *
+ * A tapped chip arrives as `preset`, a typed value as `multiplier`, and the
+ * chip wins where both are present: pressing 2× means 2×, whatever is left in
+ * the box beside it.
+ */
+export async function changeBatchMultiplierForm(
   { env, request, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
   if (batch === null) return batchNotFound(member);
+  const preset = String(form.get("preset") ?? "").trim();
+  const chosen = preset === "" ? String(form.get("multiplier") ?? "").trim() : preset;
   try {
-    await changePortions(env.DB, member, batch.id, Number(form.get("portions")));
+    await changeMultiplier(
+      env.DB,
+      member,
+      batch.id,
+      parseMultiplier(chosen) ?? Number.NaN,
+    );
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
     const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
@@ -534,7 +593,7 @@ export async function changeBatchPortionsForm(
       batch.title,
       batchActions(batch, {
         message: error.message,
-        portions: String(form.get("portions") ?? ""),
+        multiplier: chosen,
       }, recipes, member.householdId),
       "week",
       member,

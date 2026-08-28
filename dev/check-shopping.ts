@@ -14,8 +14,7 @@ function line(overrides: Partial<ShoppingLine>): ShoppingLine {
   return {
     batchId: 1,
     batchTitle: "Kaalilaatikko",
-    portions: 4,
-    yieldPortions: 4,
+    multiplier: 1,
     partTitle: null,
     recipeId: 1,
     ingredientId: 1,
@@ -113,12 +112,11 @@ test("two lines of one ingredient inside one recipe join the same total", () => 
   assert.equal(items[0]!.contributions.length, 2);
 });
 
-test("a part's line is scaled by the dish's factor and named by its part", () => {
+test("a part's line takes the dish's multiplier and is named by its part", () => {
   const items = shoppingList([
     line({
       batchTitle: "Lasagne",
-      yieldPortions: 6,
-      portions: 12,
+      multiplier: 2,
       partTitle: "Juustokastike",
       ingredientName: "maito",
       quantity: 5,
@@ -131,20 +129,28 @@ test("a part's line is scaled by the dish's factor and named by its part", () =>
   assert.equal(items[0]!.contributions[0]!.batchTitle, "Lasagne");
 });
 
-test("a dish with no stated yield is never scaled", () => {
+test("a dish that never stated a yield scales like any other (#165)", () => {
   const items = shoppingList([
-    line({ yieldPortions: null, portions: 12, quantity: 2, unit: "dl" }),
+    line({ multiplier: 2, quantity: 2, unit: "dl" }),
   ]);
 
-  assert.equal(items[0]!.total, "2 dl");
+  assert.equal(items[0]!.total, "4 dl");
+});
+
+test("half a batch buys half the ingredients", () => {
+  const items = shoppingList([
+    line({ multiplier: 0.5, quantity: 5, unit: "dl" }),
+  ]);
+
+  assert.equal(items[0]!.total, "2½ dl");
 });
 
 test("the total is the sum of the rounded contributions, so it adds up", () => {
   // 5 dl at 4/3 rounds to 6½ dl on the recipe screen; two of them read 13 dl,
   // not the 13½ an exact sum would round to.
   const items = shoppingList([
-    line({ yieldPortions: 3, portions: 4, quantity: 5, unit: "dl" }),
-    line({ batchId: 2, yieldPortions: 3, portions: 4, quantity: 5, unit: "dl" }),
+    line({ multiplier: 4 / 3, quantity: 5, unit: "dl" }),
+    line({ batchId: 2, multiplier: 4 / 3, quantity: 5, unit: "dl" }),
   ]);
 
   assert.equal(items[0]!.contributions[0]!.amount, "6½ dl");
@@ -198,8 +204,7 @@ test("a source line the scaling contradicted is kept", () => {
   const items = shoppingList([
     line({
       ingredientName: "maito",
-      yieldPortions: 2,
-      portions: 4,
+      multiplier: 2,
       quantity: 5,
       unit: "dl",
       sourceLine: "5 dl maitoa",

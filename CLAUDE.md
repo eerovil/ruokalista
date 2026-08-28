@@ -107,8 +107,16 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   about intake is testable without spending anything; only call the model when
   the model call itself changed. See [intake](docs/codebase/intake.md).
 - **`docs/spec.md` has drifted.** It still describes `meal_entry` as current and
-  the planned-batch model as a proposal; the swap merged in #57/#86. Trust the
+  the planned-batch model as a proposal; the swap merged in #57/#86. It also
+  still describes scaling as a portion count divided by a recipe's yield, which
+  #165 proposes replacing with a multiplier on the batch
+  ([ADR-0007](docs/adr/0007-a-batch-is-scaled-by-a-multiplier.md)). Trust the
   code and [data-model](docs/codebase/data-model.md) over the spec on schema.
+- **Not every schema change needs a table rebuild.** `ALTER TABLE ADD COLUMN`
+  takes a `CHECK` constraint, and `DROP COLUMN` carries a column's own `CHECK`
+  away with it — so a column swap on a table other rows cascade from needs none
+  of the sequence below. `migrations/0013_recipe_multiplier.sql` is the worked
+  example. Reach for the rebuild only when the shape genuinely changes.
 - **Rebuilding a table in a D1 migration is not the SQLite recipe.** D1 enforces
   foreign keys and a migration's statements are not in a transaction you
   control, so `PRAGMA defer_foreign_keys` does nothing and dropping a referenced

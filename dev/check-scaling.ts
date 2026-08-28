@@ -10,8 +10,10 @@ import test from "node:test";
 
 import { formatMeasurement } from "../src/quantities.ts";
 import {
+  formatMultiplier,
+  isMultiplier,
+  parseMultiplier,
   roundForKitchen,
-  scaleFactor,
   scaleMeasurement,
 } from "../src/scaling.ts";
 
@@ -24,24 +26,47 @@ const line = (over: Partial<Parameters<typeof scaleMeasurement>[0]> = {}) => ({
   ...over,
 });
 
-test("a recipe with no yield cannot be scaled", () => {
-  assert.equal(scaleFactor(null, 6), null);
-  assert.equal(scaleFactor(0, 6), null);
+test("a typed multiplier takes the Finnish comma, and the x with it", () => {
+  assert.equal(parseMultiplier("1,5"), 1.5);
+  assert.equal(parseMultiplier("1.5"), 1.5);
+  assert.equal(parseMultiplier(" 2× "), 2);
+  assert.equal(parseMultiplier("0,5x"), 0.5);
 });
 
-test("a nonsense portion count scales nothing", () => {
-  assert.equal(scaleFactor(4, 0), null);
-  assert.equal(scaleFactor(4, -2), null);
-  assert.equal(scaleFactor(4, null), null);
+test("a multiplier that is not one is refused rather than repaired", () => {
+  assert.equal(parseMultiplier(""), null);
+  assert.equal(parseMultiplier("0"), null);
+  assert.equal(parseMultiplier("-2"), null);
+  assert.equal(parseMultiplier("puolikas"), null);
 });
 
-test("cooking the number it already makes changes nothing", () => {
-  assert.equal(scaleFactor(4, 4), null);
+test("the domain accepts every finite positive multiplier without rounding it", () => {
+  assert.equal(parseMultiplier("1,333"), 1.333);
+  assert.equal(parseMultiplier("200"), 200);
+  assert.equal(parseMultiplier("0,004"), 0.004);
+  assert.equal(isMultiplier(200), true);
+  assert.equal(isMultiplier(0), false);
+  assert.equal(isMultiplier(Number.NaN), false);
 });
 
-test("the factor is portions over yield", () => {
-  assert.equal(scaleFactor(4, 6), 1.5);
-  assert.equal(scaleFactor(6, 3), 0.5);
+test("a multiplier reads with a Finnish comma and no trailing zeros", () => {
+  assert.equal(formatMultiplier(1), "1×");
+  assert.equal(formatMultiplier(0.5), "0,5×");
+  assert.equal(formatMultiplier(1.5), "1,5×");
+  assert.equal(formatMultiplier(2), "2×");
+  assert.equal(formatMultiplier(1.333), "1,333×");
+});
+
+test("the recipe as written comes back untouched at 1x", () => {
+  const written = line({ quantity: 6.666, unit: "dl" });
+  assert.deepEqual(scaleMeasurement(written, 1), written);
+});
+
+test("a stored multiplier that is not one scales nothing", () => {
+  // Belt and braces against a row no migration should ever leave behind.
+  const written = line({ quantity: 5, unit: "dl" });
+  assert.deepEqual(scaleMeasurement(written, 0), written);
+  assert.deepEqual(scaleMeasurement(written, Number.NaN), written);
 });
 
 test("small amounts keep their quarters", () => {
@@ -74,8 +99,8 @@ test("a line with no stated amount is left alone", () => {
   assert.equal(formatMeasurement(scaleMeasurement(hint, 1.5)), "");
 });
 
-test("Kaalilaatikko for six, from a yield of four", () => {
-  const factor = scaleFactor(4, 6)!;
+test("Kaalilaatikko at 1,5×", () => {
+  const factor = 1.5;
 
   // ½ dl öljyä
   assert.equal(
@@ -106,8 +131,8 @@ test("Kaalilaatikko for six, from a yield of four", () => {
   );
 });
 
-test("Lasagne for eight, from a yield of six", () => {
-  const factor = scaleFactor(6, 8)!;
+test("Lasagne at 4/3×, where the rounding does the work", () => {
+  const factor = 8 / 6;
 
   // 400 g jauhelihaa -> 533.3, which a scale would show as 530.
   assert.equal(
@@ -129,7 +154,7 @@ test("Lasagne for eight, from a yield of six", () => {
 });
 
 test("halving works as well as doubling", () => {
-  const factor = scaleFactor(6, 3)!;
+  const factor = 0.5;
   assert.equal(
     formatMeasurement(scaleMeasurement(line({ quantity: 5, unit: "dl" }), factor)),
     "2½ dl",

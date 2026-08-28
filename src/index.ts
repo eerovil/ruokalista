@@ -40,7 +40,7 @@ import {
   recipeListScreen,
   recipeScreen,
 } from "./recipes.ts";
-import { preferredPortionsForm, publishForm } from "./publish-screens.ts";
+import { preferredMultiplierForm, publishForm } from "./publish-screens.ts";
 import {
   apiAddPlannedBatch,
   apiMenu,
@@ -98,7 +98,7 @@ import {
 } from "./signin.ts";
 import {
   addBatchForm,
-  changeBatchPortionsForm,
+  changeBatchMultiplierForm,
   changeBatchRecipeForm,
   coverageForm,
   coverageScreen,
@@ -133,7 +133,7 @@ const router = new Router()
   .get("/batches/:id", requireMemberScreen(plannedBatchScreen))
   .get("/batches/:id/coverage", requireMemberScreen(coverageScreen))
   .post("/batches/:id/coverage", requireMemberScreen(coverageForm))
-  .post("/batches/:id/portions", requireMemberScreen(changeBatchPortionsForm))
+  .post("/batches/:id/multiplier", requireMemberScreen(changeBatchMultiplierForm))
   .post("/batches/:id/recipe", requireMemberScreen(changeBatchRecipeForm))
   .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))
   .get("/ostoslista", requireMemberScreen(shoppingScreen))
@@ -164,7 +164,7 @@ const router = new Router()
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
-  .post("/recipes/:id/annokset", requireMemberScreen(preferredPortionsForm))
+  .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
   .post("/recipes/:id/image/delete", requireMemberScreen(deleteRecipeImageForm))
   .get("/recipes/:id/delete", requireMemberScreen(confirmDeleteScreen))

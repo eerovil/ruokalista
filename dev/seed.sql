@@ -54,13 +54,14 @@ VALUES
      || char(10) || '½ (500 g) valkokaali' || char(10) || 'hieman sitruunaruohoa',
    'pasted', 1, 1);
 
--- No yield_portions: the source never said, so the screen has to admit the
--- recipe cannot be scaled rather than hide it.
+-- No yield_portions: the source never said what this makes. Since #165 that no
+-- longer stops it being scaled — the recipe as written is 1x — so it is here to
+-- prove exactly that, with one line that states an amount and one that does not.
 INSERT INTO recipe
   (id, household_id, title, yield_portions, source_text, source_route, created_by, updated_by)
 VALUES
   (2, 1, 'Öljykastike', NULL,
-   'Öljykastike' || char(10) || 'öljyä' || char(10) || 'vettä',
+   'Öljykastike' || char(10) || 'öljyä' || char(10) || '2 dl vettä',
    'photographed', 1, 1);
 
 -- A dish written in named parts: the lasagne itself, plus one recipe per part.
@@ -119,7 +120,7 @@ VALUES
   (1, 3, 0.5, NULL, 'kpl', 500,  'g',  3, '½ (500 g) valkokaali', NULL),
   (1, 4, NULL, NULL, NULL, NULL, NULL, 4, 'hieman sitruunaruohoa', NULL),
   (2, 1, NULL, NULL, NULL, NULL, NULL, 1, 'öljyä', NULL),
-  (2, 2, NULL, NULL, NULL, NULL, NULL, 2, 'vettä', NULL),
+  (2, 2, 2,    NULL, 'dl', NULL, NULL, 2, '2 dl vettä', NULL),
   (3, 1, 12,  NULL, 'kpl', NULL, NULL, 10, '12 lasagnelevyä', 'after_parts'),
   (4, 1, 400, NULL, 'g',  NULL, NULL, 7, '400 g jauhelihaa', NULL),
   (5, 1, 5,   NULL, 'dl', NULL, NULL, 9, '5 dl maitoa', NULL),
