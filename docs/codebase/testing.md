@@ -150,7 +150,8 @@ nothing compares their PNG bytes, so rendering differences do not fail a build.
 The flows and assertions in `screenshots.spec.ts` are still behavioural coverage
 and run in every ordinary suite. Only its calls that write review artifacts are
 conditional on `PLAYWRIGHT_SCREENSHOTS=1`, which `scripts/playwright.sh`
-forwards into the container. Regenerate with
+forwards into the container. `dev/check-screenshot-capture.ts` rejects direct
+calls that would bypass that helper. Regenerate with
 `PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`
 and commit what it wrote. They have caught
 real layout bugs the assertions missed (a shared flex rule misplacing a save
