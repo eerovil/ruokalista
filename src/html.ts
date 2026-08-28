@@ -549,6 +549,20 @@ const STYLES = `
     padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0);
   }
 
+  /* The editor's save bar (issue #184). It sticks to the bottom of the screen,
+     clear of the fixed tab strip, so Tallenna is one tap away wherever you are
+     in a long form; once the end of the form scrolls into view the bar simply
+     sits there. A browser without position:sticky gets exactly the old
+     behaviour, which is why this needs no script. */
+  .editor-actions {
+    position: sticky; z-index: 1;
+    bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom));
+    display: flex; gap: .5rem;
+    padding: .6rem 0; margin-top: 1rem;
+    background: var(--bg); border-top: 1px solid var(--edge);
+  }
+  .editor-actions button { flex: 1; }
+
   .line-conflicts {
     padding: .7rem .8rem; margin: 0 0 1rem;
     background: var(--surface); border: 1px solid var(--accent);
