@@ -450,3 +450,33 @@ fourth.
 `PUBLISH_STYLE` in `src/recipes.ts` holds the rules, beside the screens that use
 them rather than in the shell — the same arrangement as `MENTION_STYLE`. None of
 it needs a script.
+
+## Changing a category on several recipes at once (issue #199)
+
+This pull request proposes a second thing the list's existing selection can do:
+`categories.ts::categoryBulkControls` renders a `<select>` of the seven
+categories and two buttons whose `formaction` sends the same form to
+`POST /recipes/kategoriat` (`src/category-bulk.ts::categoryBulkForm`). One form,
+one set of checkboxes; a row ticked for publishing is the same row ticked for a
+category, which is why this is not a second selection UI.
+
+Three rules the proposal treats as fixed:
+
+- **One category per press, added or removed.** The bulk edit never replaces a
+  recipe's whole set, so a category the member cannot see on this screen cannot
+  be lost to a button on it. The editor's checkbox picker is still the only
+  place a recipe's categories are set wholesale.
+- **Ownership is `recipe-publish.ts::ownedDishes`**, now exported and shared
+  with publishing rather than restated. Another household's recipe, a part of a
+  dish and an id that never existed are all absent from the result, so the empty
+  selection refusal is the answer to all three.
+- **The count is said twice.** Before the press,
+  `categories.ts::SELECTION_COUNT_ISLAND` keeps `.selection-count` reading
+  `3 reseptiä valittuna`; without JavaScript that line is the plain sentence the
+  server rendered and every button still works. After it, the notice counts what
+  actually moved and says separately how many were already in that state.
+
+The list comes back in the same search and category filter it was posted from,
+and a refusal keeps the chosen category in the box — `ownRecipeList` takes the
+bulk control's state as its own parameter, deliberately separate from the
+category the list is filtered to.

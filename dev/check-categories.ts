@@ -3,12 +3,14 @@ import test from "node:test";
 
 import {
   CATEGORIES,
+  categoryBulkControls,
   categoryFilter,
   categoryLabel,
   isCategorySlug,
   readCategories,
   sortCategories,
 } from "../src/categories.ts";
+import { doneNotice } from "../src/category-bulk.ts";
 
 /**
  * The category vocabulary and the list filter's links (#196).
@@ -93,4 +95,65 @@ test("the chip being stood on stays even once it matches nothing", () => {
 
 test("a list with nothing categorised offers no filter at all", () => {
   assert.equal(categoryFilter("/recipes", "", null, []).value, "");
+});
+
+/**
+ * What a bulk category edit says it did (#199).
+ *
+ * The sentence is the whole feedback a member gets, so it is checked here
+ * rather than only through the two browser cases that happen to render one.
+ */
+
+test("a bulk add counts what moved, not what was ticked", () => {
+  assert.equal(
+    doneNotice("add", "keitto", { changed: ["A", "B"], unchanged: [] }).message,
+    "Kategoria Keitto lisättiin 2 reseptille.",
+  );
+  assert.equal(
+    doneNotice("add", "keitto", { changed: ["A"], unchanged: ["B", "C"] })
+      .message,
+    "Kategoria Keitto lisättiin yhdelle reseptille. 2 reseptillä se oli jo.",
+  );
+});
+
+test("a bulk removal says so in its own words", () => {
+  assert.equal(
+    doneNotice("remove", "lisuke", { changed: ["A"], unchanged: [] }).message,
+    "Kategoria Lisuke poistettiin yhdeltä reseptiltä.",
+  );
+  assert.equal(
+    doneNotice("remove", "lisuke", { changed: ["A", "B"], unchanged: ["C"] })
+      .message,
+    "Kategoria Lisuke poistettiin 2 reseptiltä. 1 reseptillä sitä ei ollut.",
+  );
+});
+
+test("nothing moved is said plainly, and is not a refusal", () => {
+  const added = doneNotice("add", "pasta", { changed: [], unchanged: ["A"] });
+  assert.equal(added.message, "Valituilla resepteillä oli jo kategoria Pasta.");
+  assert.equal(added.refused, false);
+
+  assert.equal(
+    doneNotice("remove", "pasta", { changed: [], unchanged: ["A"] }).message,
+    "Valituilla resepteillä ei ollut kategoriaa Pasta.",
+  );
+});
+
+test("the bulk control keeps the category that was chosen", () => {
+  const markup = categoryBulkControls("keitto").value;
+  // `selected` sits inside the Keitto option and no other: after that option
+  // opens and before the next one does.
+  assert.ok(
+    markup.indexOf('value="keitto"') <
+      markup.indexOf("selected") &&
+      markup.indexOf("selected") < markup.indexOf('value="salaatti"'),
+  );
+  // And offers every category, whichever one is standing selected.
+  for (const category of CATEGORIES) {
+    assert.ok(markup.includes(`value="${category.slug}"`));
+  }
+});
+
+test("with nothing chosen the control selects nothing", () => {
+  assert.ok(!categoryBulkControls(null).value.includes("selected"));
 });

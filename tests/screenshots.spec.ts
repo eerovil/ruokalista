@@ -1784,3 +1784,35 @@ test.describe("categories (#196)", () => {
     });
   });
 });
+
+test.describe("bulk category editing (#199)", () => {
+  test("giving several recipes a category in one press", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // Two recipes ticked, the count saying so, and the control that is about
+    // to move both.
+    await page.goto("/recipes");
+    await page.getByLabel("Valitse Kaalilaatikko").check();
+    await page.getByLabel("Valitse Öljykastike").check();
+    await expect(page.locator(".selection-count")).toHaveText(
+      "2 reseptiä valittuna.",
+    );
+    await page.locator(".bulk-categories select").selectOption({ label: "Keitto" });
+    await capture(page, {
+      path: `${SHOTS}/81-recipes-bulk-category.png`,
+      fullPage: true,
+    });
+
+    // And what the list says once it has happened.
+    await page.getByRole("button", { name: "Lisää valituille" }).click();
+    await expect(page.locator(".done")).toContainText("2 reseptille");
+    await expect(page.locator(".category-filter")).toContainText("Keitto");
+    await capture(page, {
+      path: `${SHOTS}/82-recipes-bulk-category-done.png`,
+      fullPage: true,
+    });
+  });
+});

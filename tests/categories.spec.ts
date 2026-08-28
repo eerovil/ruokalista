@@ -158,6 +158,148 @@ test("a shared recipe carries its owner's categories into the other household", 
   await expect(page.locator("h1")).toHaveText("Ei löytynyt");
 });
 
+/**
+ * Changing a category on several recipes at once (#199).
+ *
+ * The selection is the one the list already had for publishing, so these tests
+ * tick rows exactly as a person does rather than posting the form directly.
+ */
+
+/** Tick the rows of the named recipes on `/recipes`. */
+async function pick(page: Page, titles: string[]): Promise<void> {
+  for (const title of titles) {
+    await page.getByLabel(`Valitse ${title}`).check();
+  }
+}
+
+test("a category is added to several recipes in one press", async ({ page }) => {
+  await signIn(page, 1);
+  await page.goto("/recipes");
+
+  await pick(page, ["Kaalilaatikko", "Öljykastike"]);
+  await expect(page.locator(".selection-count")).toHaveText("2 reseptiä valittuna.");
+
+  await page.locator(".bulk-categories select").selectOption({ label: "Keitto" });
+  await page.getByRole("button", { name: "Lisää valituille" }).click();
+
+  await expect(page.locator(".done")).toContainText("Keitto");
+  await expect(page.locator(".done")).toContainText("2 reseptille");
+
+  // Stored on both, and on nothing else.
+  await page.goto("/recipes?kategoria=keitto");
+  await expect(page.locator(".recipes li")).toHaveCount(2);
+
+  await page.goto("/recipes/1/edit");
+  await expect(page.locator(".category-choices").getByLabel("Keitto")).toBeChecked();
+});
+
+test("a bulk add leaves the categories a recipe already had alone", async ({
+  page,
+}) => {
+  await signIn(page, 1);
+  await categorise(page, 1, ["Uuniruoka"]);
+
+  await page.goto("/recipes");
+  await pick(page, ["Kaalilaatikko"]);
+  await page.locator(".bulk-categories select").selectOption({ label: "Lisuke" });
+  await page.getByRole("button", { name: "Lisää valituille" }).click();
+
+  await page.goto("/recipes/1/edit");
+  const picker = page.locator(".category-choices");
+  await expect(picker.getByLabel("Uuniruoka")).toBeChecked();
+  await expect(picker.getByLabel("Lisuke")).toBeChecked();
+});
+
+test("a category is taken off several recipes in one press", async ({ page }) => {
+  await signIn(page, 1);
+  await categorise(page, 1, ["Uuniruoka"]);
+  await categorise(page, 3, ["Uuniruoka"]);
+
+  await page.goto("/recipes");
+  await pick(page, ["Kaalilaatikko", "Lasagne"]);
+  await page.locator(".bulk-categories select").selectOption({ label: "Uuniruoka" });
+  await page.getByRole("button", { name: "Poista valituilta" }).click();
+
+  await expect(page.locator(".done")).toContainText("2 reseptiltä");
+  await expect(page.locator(".category-filter")).toHaveCount(0);
+});
+
+test("the notice separates what moved from what was already there", async ({
+  page,
+}) => {
+  await signIn(page, 1);
+  await categorise(page, 1, ["Keitto"]);
+
+  await page.goto("/recipes");
+  await pick(page, ["Kaalilaatikko", "Öljykastike"]);
+  await page.locator(".bulk-categories select").selectOption({ label: "Keitto" });
+  await page.getByRole("button", { name: "Lisää valituille" }).click();
+
+  await expect(page.locator(".done")).toContainText("yhdelle reseptille");
+  await expect(page.locator(".done")).toContainText("1 reseptillä se oli jo.");
+});
+
+test("pressing with nothing ticked refuses and changes nothing", async ({
+  page,
+}) => {
+  await signIn(page, 1);
+  await page.goto("/recipes");
+
+  await expect(page.locator(".selection-count")).toHaveText(
+    "Ei yhtään reseptiä valittuna.",
+  );
+  await page.locator(".bulk-categories select").selectOption({ label: "Keitto" });
+  await page.getByRole("button", { name: "Lisää valituille" }).click();
+
+  await expect(page.locator(".refused")).toContainText("Valitse ainakin yksi");
+  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".category-filter")).toHaveCount(0);
+  // The refusal keeps what the member chose, so only the ticking is redone.
+  await expect(page.locator(".bulk-categories select")).toHaveValue("keitto");
+});
+
+test("a bulk edit comes back to the same search and category", async ({ page }) => {
+  await signIn(page, 1);
+  await categorise(page, 1, ["Uuniruoka"]);
+  await categorise(page, 3, ["Uuniruoka"]);
+
+  await page.goto("/recipes?q=lasagne&kategoria=uuniruoka");
+  await pick(page, ["Lasagne"]);
+  await page.locator(".bulk-categories select").selectOption({ label: "Lisuke" });
+  await page.getByRole("button", { name: "Lisää valituille" }).click();
+
+  await expect(page.locator(".done")).toContainText("Lisuke");
+  await expect(page.locator(".recipes li")).toHaveCount(1);
+  await expect(page.locator(".recipes li")).toContainText("Lasagne");
+  await expect(page.getByLabel("Hae nimellä")).toHaveValue("lasagne");
+});
+
+test("another household's recipe cannot be bulk categorised", async ({ page }) => {
+  await signIn(page, 1);
+  // Recipe 6 is household 2's published dish: readable here, never writable.
+  // It has no row on this list, so the id has to be posted by hand — which is
+  // the case worth testing.
+  const response = await page.request.post("/recipes/kategoriat", {
+    form: { action: "add", bulkCategory: "keitto", recipeId: "6" },
+  });
+  expect(response.status()).toBe(400);
+  expect(await response.text()).toContain("Valitse ainakin yksi resepti");
+
+  await signIn(page, 2);
+  await page.goto("/recipes/6");
+  await expect(page.locator(".category-tags")).toHaveCount(0);
+});
+
+test("a part of a dish cannot be bulk categorised either", async ({ page }) => {
+  await signIn(page, 1);
+  // Recipe 5 is the lasagne's Juustokastike — owned, but a part (ADR-0002).
+  const response = await page.request.post("/recipes/kategoriat", {
+    form: { action: "add", bulkCategory: "keitto", recipeId: "5" },
+  });
+  expect(response.status()).toBe(400);
+  expect(await response.text()).toContain("Valitse ainakin yksi resepti");
+});
+
 test("a part of a dish is not categorised", async ({ page }) => {
   await signIn(page, 1);
   // Recipe 5 is the lasagne's Juustokastike — a recipe row, but not a dish.
