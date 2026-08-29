@@ -17,6 +17,8 @@ import {
   draftFromJson,
   importFailureMessage,
   MAX_IMAGES,
+  MAX_PAGE_BASE64_BYTES,
+  MAX_PAGES_BASE64_BYTES,
   STRUCTURED_BY,
   type Draft,
   type DraftLine,
@@ -90,46 +92,78 @@ const STREAMING_ISLAND = `
   var linkField = form.sourceUrl;
   button.disabled = false;
   status.textContent = '';
-  if (!window.createImageBitmap || !window.URL || !window.URL.createObjectURL || !window.URL.revokeObjectURL) {
+  var photosWork = !!(window.createImageBitmap && window.URL && window.URL.createObjectURL);
+  if (!photosWork) {
     form.camera.disabled = true;
     form.photo.disabled = true;
     photoHelp.textContent = 'Kuvan tuonti ei ole käytettävissä tässä selaimessa.';
   }
   var LONG_EDGE = 1500;
+  var THUMB_EDGE = 192;
   var MAX_PAGES = ${MAX_IMAGES};
+  var MAX_PAGE_BYTES = ${MAX_PAGE_BASE64_BYTES};
+  var MAX_PAGES_BYTES = ${MAX_PAGES_BASE64_BYTES};
 
-  // The pages to import, in the order they were added. Camera shots and
-  // library picks land in the same list; nothing distinguishes them after this.
+  // The pages to import, in the order they were added, already reduced to what
+  // will be sent: a ~1500 px JPEG and a thumbnail-sized one, both as base64.
+  // Camera shots and library picks land in the same list; nothing
+  // distinguishes them after this.
+  //
+  // A page is shrunk the moment it is chosen and the original photograph is
+  // let go there and then. That is the fix for #218. Keeping the File and
+  // pointing the thumbnail at it looked free — the thumbnail is 3 rem — but a
+  // browser decodes a picture at its own size before it scales it down, so a
+  // 12-megapixel photograph cost about 50 MB of live memory per page however
+  // small it was drawn. Four of those, plus a fifth full-size decode when the
+  // button was finally pressed, is more than a phone will lend a tab, and the
+  // tab was killed on the page the member had just finished choosing.
   var pages = [];
+
+  // How many pages are being read right now. Reading is one serial chain, for
+  // the reason it always was — the order has to survive, and two photographs
+  // decoding at once is the thing being avoided.
+  var reading = 0;
+  var chain = window.Promise.resolve();
+  var notice = '';
+
+  // A canvas of this picture, no larger than the given long edge.
+  function scaled(bitmap, edge) {
+    var scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  // The canvas as base64 JPEG, and then emptied: a canvas holds its pixels
+  // until something says otherwise, and this one has served its purpose.
+  function spend(canvas, quality) {
+    var url = canvas.toDataURL('image/jpeg', quality);
+    canvas.width = 1;
+    canvas.height = 1;
+    return url.slice(url.indexOf(',') + 1);
+  }
 
   function shrink(file) {
     return window.createImageBitmap(file).then(function (bitmap) {
-      var scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      var url = canvas.toDataURL('image/jpeg', 0.85);
-      return url.slice(url.indexOf(',') + 1);
+      var full = scaled(bitmap, LONG_EDGE);
+      var small = scaled(bitmap, THUMB_EDGE);
+      // The decoded photograph goes now, not at the next collection.
+      if (bitmap.close) bitmap.close();
+      var image = spend(full, 0.85);
+      return {
+        image: image,
+        thumb: 'data:image/jpeg;base64,' + spend(small, 0.6),
+        bytes: image.length
+      };
     });
   }
 
-  // One page at a time, on purpose: the order has to survive, and a phone
-  // decoding eight full-size photographs at once is how a tab gets killed.
-  function shrinkAll() {
-    var images = [];
-    return pages
-      .reduce(function (chain, page, index) {
-        return chain.then(function () {
-          status.textContent = pages.length > 1
-            ? 'Luetaan kuvaa ' + (index + 1) + '/' + pages.length + '…'
-            : 'Luetaan kuvaa…';
-          return shrink(page.file).then(function (b64) {
-            images.push({ image: b64, mediaType: 'image/jpeg' });
-          });
-        });
-      }, Promise.resolve())
-      .then(function () { return images; });
+  function totalBytes() {
+    var total = 0;
+    for (var i = 0; i < pages.length; i++) total += pages[i].bytes;
+    return total;
   }
 
   // Rebuilt whole every time, so the numbering and the remove buttons always
@@ -142,7 +176,7 @@ const STREAMING_ISLAND = `
       var item = document.createElement('li');
 
       var thumb = document.createElement('img');
-      thumb.src = page.url;
+      thumb.src = page.thumb;
       thumb.alt = '';
       item.appendChild(thumb);
 
@@ -156,9 +190,9 @@ const STREAMING_ISLAND = `
       remove.className = 'quiet';
       remove.textContent = 'Poista';
       remove.addEventListener('click', function () {
-        URL.revokeObjectURL(page.url);
         pages.splice(index, 1);
-        renderPages();
+        notice = '';
+        refresh();
       });
       item.appendChild(remove);
 
@@ -166,22 +200,58 @@ const STREAMING_ISLAND = `
     });
   }
 
+  // Nothing may be sent while a page is still being read, or half a recipe
+  // would go. The wording says which page is being read, because on a phone
+  // this is the part that takes a moment.
+  function refresh() {
+    renderPages();
+    button.disabled = reading > 0;
+    if (photosWork) {
+      form.camera.disabled = reading > 0;
+      form.photo.disabled = reading > 0;
+    }
+    if (reading > 0) {
+      status.textContent =
+        'Luetaan kuvaa ' + (pages.length + 1) + '/' + (pages.length + reading) + '…';
+    } else {
+      status.textContent = notice;
+    }
+  }
+
+  function prepare(file) {
+    return function () {
+      return shrink(file).then(function (page) {
+        if (page.bytes > MAX_PAGE_BYTES) {
+          notice = 'Yksi kuvista on liian suuri lähetettäväksi. Ota se uudelleen.';
+        } else if (totalBytes() + page.bytes > MAX_PAGES_BYTES) {
+          notice = 'Kuvat ovat yhteensä liian suuria. Poista jokin sivu ja yritä uudelleen.';
+        } else {
+          pages.push(page);
+        }
+      }, function () {
+        notice = 'Yhtä kuvista ei voitu lukea. Kokeile ottaa se uudelleen.';
+      }).then(function () {
+        reading--;
+        refresh();
+      });
+    };
+  }
+
   function addFrom(input) {
+    var files = input.files;
     var dropped = 0;
-    for (var i = 0; i < input.files.length; i++) {
-      if (pages.length >= MAX_PAGES) { dropped++; continue; }
-      var file = input.files[i];
-      pages.push({ file: file, url: URL.createObjectURL(file) });
+    notice = '';
+    for (var i = 0; i < files.length; i++) {
+      if (pages.length + reading >= MAX_PAGES) { dropped++; continue; }
+      reading++;
+      chain = chain.then(prepare(files[i]));
     }
 
     // Clearing the input is what lets the same camera button be pressed again
     // for the next page: without it a second identical capture fires no change.
     input.value = '';
-    renderPages();
-
-    status.textContent = dropped
-      ? 'Enintään ' + MAX_PAGES + ' sivua yhdessä reseptissä.'
-      : '';
+    if (dropped) notice = 'Enintään ' + MAX_PAGES + ' sivua yhdessä reseptissä.';
+    refresh();
   }
 
   ['camera', 'photo'].forEach(function (id) {
@@ -206,7 +276,7 @@ const STREAMING_ISLAND = `
     }
     button.disabled = true;
     status.textContent = photographed
-      ? 'Luetaan kuvaa…'
+      ? 'Lähetetään sivuja…'
       : linked ? 'Haetaan sivua…' : 'Luetaan reseptiä…';
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
@@ -214,16 +284,20 @@ const STREAMING_ISLAND = `
     // The page is not fetched here. The address goes into the job and the
     // queue consumer reads the site, so a slow page cannot hold this request
     // open and navigating away does not lose the import.
-    var prepared;
+    // The pages are already shrunk — that happened as each one was chosen —
+    // so pressing the button decodes nothing and costs no memory.
+    var body;
     if (photographed) {
-      prepared = shrinkAll().then(function (images) { return { images: images }; });
+      body = { images: pages.map(function (page) {
+        return { image: page.image, mediaType: 'image/jpeg' };
+      }) };
     } else if (linked) {
-      prepared = Promise.resolve({ url: link });
+      body = { url: link };
     } else {
-      prepared = Promise.resolve({ sourceText: text });
+      body = { sourceText: text };
     }
 
-    prepared
+    Promise.resolve(body)
       .then(function (body) {
         return fetch('/api/intake/imports', {
           method: 'POST',

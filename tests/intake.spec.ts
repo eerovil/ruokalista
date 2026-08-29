@@ -775,6 +775,62 @@ test("camera shots and library pictures collect into the same recipe", async ({
   expect(calls[0]!.body.images).toHaveLength(3);
 });
 
+/**
+ * Issue #218: four pages killed the tab, and the thumbnails were most of why.
+ * A picture is decoded at its own size before it is drawn at 3 rem, so a list
+ * of originals held tens of megabytes a page. Each page is now shrunk as it is
+ * chosen and the original is let go, which is what this checks — the row shows
+ * a small copy, not the photograph.
+ */
+test("a chosen page is shrunk as it is added, and shown as the small copy", async ({
+  page,
+}) => {
+  await page.goto("/intake");
+
+  await choosePages(page, "photo", [
+    { text: "Iso sivu", width: 3000, height: 2250 },
+  ]);
+  await expect(page.locator("#chosen li")).toHaveCount(1);
+
+  const thumb = page.locator("#chosen li img");
+  // A blob: URL here would mean the original file is still being held.
+  expect(await thumb.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+
+  const drawn = await thumb.evaluate(
+    (image) => (image as HTMLImageElement).naturalWidth,
+  );
+  expect(drawn).toBeLessThanOrEqual(192);
+});
+
+test("nothing can be sent while a page is still being read", async ({ page }) => {
+  await page.goto("/intake");
+
+  // Held open until this test lets go, so the in-between state is observable
+  // rather than something that flickers past on a fast machine.
+  await page.evaluate(() => {
+    const real = window.createImageBitmap;
+    (window as unknown as { release: () => void }).release = () => {};
+    window.createImageBitmap = ((...args: unknown[]) =>
+      new Promise((resolve) => {
+        (window as unknown as { release: () => void }).release = () => {
+          resolve(
+            (real as unknown as (...a: unknown[]) => Promise<ImageBitmap>)(...args),
+          );
+        };
+      })) as typeof window.createImageBitmap;
+  });
+
+  await choosePages(page, "photo", [{ text: "Sivu A" }]);
+
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeDisabled();
+  await expect(page.locator("#status")).toHaveText("Luetaan kuvaa 1/1…");
+
+  await page.evaluate(() => (window as unknown as { release: () => void }).release());
+
+  await expect(page.locator("#chosen li")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
+});
+
 test("a page can be dropped before the recipe is parsed", async ({ page }) => {
   const calls = await stubStructuring(page);
   await page.goto("/intake");

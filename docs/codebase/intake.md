@@ -265,6 +265,53 @@ body. Ruokalista is an installable PWA (#100), so a browser can be running a
 cached copy of yesterday's island, and its one-photo import must not become a
 400 overnight.
 
+### A page is shrunk when it is chosen, not when it is sent (#218)
+
+Four photographed pages did not fail an import — they killed the tab, and this
+pull request proposes the change that stops it. Nothing about the model or the
+context window was involved: measured on the local dev server with four
+12-megapixel photographs, the request weighs 2.6 MB of base64 and the model
+call reads 13,249 input tokens, which is under 7% of Sonnet's window. What ran
+out was the browser's memory.
+
+Two things spent it, and both are the same mistake. The page list held the
+original `File` and pointed each 3 rem thumbnail straight at it, and **a
+browser decodes a picture at its own size before it draws it small** — about
+50 MB a page, four times over. Then pressing the button decoded every page
+again, at full size, to downscale it. Peak renderer memory across the four-page
+import measured 596 MB, nearly 480 MB of it arriving in the second between the
+button being pressed and the request being built. A phone does not lend a tab
+that, so the tab died on the button — which is why it reads as "creating the
+recipe crashes" rather than as an import that failed.
+
+So `shrink` now runs as each page is chosen, one at a time as it always did,
+and what the list keeps is what will be sent: a ~1500 px JPEG plus a
+thumbnail-sized one, both base64. The original is let go there and then —
+`bitmap.close()`, and no object URL to hold it. Pressing the button decodes
+nothing. The same measurement afterwards is 188 MB peak, and all of the rise is
+while choosing rather than at the press.
+
+While a page is being read the submit button and both file inputs are disabled
+and the status says which page it is on, because half a spread must not be
+importable and on a phone this is the part that takes a moment.
+
+`MAX_PAGE_BASE64_BYTES` and `MAX_PAGES_BASE64_BYTES` in `src/intake.ts` are the
+UX half of the issue: an import too large to carry is refused in Finnish rather
+than failing with nothing a household can read. A shrunk page weighs about
+400 kB, so neither fires on an ordinary import — they are the floor under the
+screen, not a working limit. The browser applies them as each page is chosen
+and `createIntakeJob` applies them again, before anything is written to R2.
+
+`intake.pages_received` logs the page count, the total base64 and the largest
+page at job creation, so a photographed import that goes wrong is a number in
+`wrangler tail` rather than a job id and a guess.
+
+`tests/intake.spec.ts` covers the two things a reader would otherwise have to
+take on trust: that a row shows a small `data:` copy rather than a `blob:` URL
+of the photograph, and that nothing can be submitted while a page is still
+being read. `dev/check-intake-jobs.ts` covers both refusals and that four
+ordinary pages clear them.
+
 ## Review, not correction
 
 Testing the deployed v1 found that 99% of imports need no change and 99% of
