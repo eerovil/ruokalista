@@ -49,7 +49,7 @@ import type { RouteContext } from "./router.ts";
  * needs exactly that text.
  */
 
-interface EditorAttempt {
+export interface EditorAttempt {
   form: FormData;
   lineCount: number;
   revision: number;
@@ -57,6 +57,13 @@ interface EditorAttempt {
   autofocusRow?: number;
   /** Removals the steps still argue with (issue #128). */
   conflicts?: RemovalConflict[];
+  /**
+   * Leave the picture block off. A prompt edit's review (#208) is about the
+   * words: the picture is not part of the proposal, and its upload form posts
+   * somewhere else entirely, so a whole file input between the proposal and
+   * the ingredients is only in the way.
+   */
+  withoutPicture?: boolean;
 }
 
 /**
@@ -442,7 +449,16 @@ function seeEditor(recipeId: number): Response {
 
 // ---------------------------------------------------------------- rendering
 
-function editorForm(
+/**
+ * The editor, optionally rendered from a submitted form rather than from the
+ * stored recipe.
+ *
+ * Exported because a prompt edit (#208) reviews its proposal *in this form*.
+ * That is the whole trick: the member corrects the proposal with the controls
+ * they already know, and the save is this screen's own `POST /recipes/:id`, so
+ * a proposed recipe and a hand-typed one reach the database the same way.
+ */
+export function editorForm(
   recipe: Recipe,
   ingredients: IngredientSummary[],
   attempted?: EditorAttempt,
@@ -538,37 +554,7 @@ function editorForm(
     : recipe.categories;
 
   return html`<h1>Muokkaa reseptiä</h1>
-    <section class="recipe-image-editor">
-      <h2>Kuva</h2>
-      ${recipeImage(recipe)}
-      <form
-        method="post"
-        action="/recipes/${recipe.id}/image"
-        enctype="multipart/form-data"
-        class="stacked"
-        id="recipe-image-form"
-        data-editor="/recipes/${recipe.id}/edit"
-      >
-        <label for="recipe-image">
-          ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
-        </label>
-        <input
-          id="recipe-image"
-          name="image"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          required
-        />
-        <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
-        <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
-      </form>
-      ${hasPicture
-        ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
-            <button type="submit" class="danger">Poista kuva</button>
-          </form>`
-        : ""}
-    </section>
-    ${raw(`<script>${SHRINK_ISLAND}</script>`)}
+    ${attempted?.withoutPicture === true ? "" : pictureBlock(recipe, hasPicture)}
 
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <!-- The browser submits a form through its *first* submit button when
@@ -648,6 +634,12 @@ function editorForm(
       </div>
     </form>
 
+    <!-- Outside the form above on purpose: a link, so nothing typed into the
+         editor is carried into a prompt edit and quietly proposed away (#208). -->
+    <p class="recipe-prompt-edit">
+      <a href="/recipes/${recipe.id}/prompt">Muokkaa promptilla</a>
+    </p>
+
     <h2>Alkuperäinen teksti</h2>
     <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
     <p class="source-text">${recipe.sourceText}</p>
@@ -658,6 +650,41 @@ function editorForm(
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
     </p>
     ${CATEGORY_STYLE}`;
+}
+
+/** The picture and its upload, which is the only upload control anywhere. */
+function pictureBlock(recipe: Recipe, hasPicture: boolean): Raw {
+  return html`<section class="recipe-image-editor">
+      <h2>Kuva</h2>
+      ${recipeImage(recipe)}
+      <form
+        method="post"
+        action="/recipes/${recipe.id}/image"
+        enctype="multipart/form-data"
+        class="stacked"
+        id="recipe-image-form"
+        data-editor="/recipes/${recipe.id}/edit"
+      >
+        <label for="recipe-image">
+          ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
+        </label>
+        <input
+          id="recipe-image"
+          name="image"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          required
+        />
+        <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
+        <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
+      </form>
+      ${hasPicture
+        ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
+            <button type="submit" class="danger">Poista kuva</button>
+          </form>`
+        : ""}
+    </section>
+    ${raw(`<script>${SHRINK_ISLAND}</script>`)}`;
 }
 
 /**

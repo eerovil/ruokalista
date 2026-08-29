@@ -1280,6 +1280,10 @@ function recipeBody(
     ${view.owned
       ? html`<p class="recipe-edit">
           <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
+          <!-- The same edit, asked for in a sentence (#208). It sits beside the
+               editor rather than instead of it: it proposes a change and the
+               editor is where the proposal is checked and saved. -->
+          <a href="/recipes/${recipe.id}/prompt">Muokkaa promptilla</a>
         </p>`
       : ""}
   </div>`;

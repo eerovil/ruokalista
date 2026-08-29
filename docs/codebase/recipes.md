@@ -309,6 +309,73 @@ how somebody finds it, so a caller reads the same dish with or without it — an
 the vocabulary and the filter's links; `tests/categories.spec.ts` covers the
 screens.
 
+## Changing a recipe with a sentence (issue #208)
+
+Proposed here: *Muokkaa promptilla* — the member writes a short Finnish change
+request against a recipe they already have, and gets a proposed version to check
+before anything is written. `src/recipe-prompt-edit.ts` owns what the model is
+asked and what is done with its answer; `src/recipe-prompt-screens.ts` owns the
+two screens.
+
+**The proposal is reviewed in the recipe editor, not in a screen of its own.**
+That is the load-bearing decision here, and it collapses three of the issue's
+requirements into one fact: the member can correct the proposal by hand because
+it is a form they already know, and the save is that form's own `POST
+/recipes/:id` through `validateRecipe` and `replaceRecipe`, so a proposed recipe
+and a hand-typed one reach the database by exactly the same path. Nothing in
+either screen writes. `editorForm` is exported for this, and a proposal reaches
+it as `FormData` — the same re-render-from-what-was-submitted path a refused save
+uses, so there is one rendering of the editor rather than two that drift.
+
+- **The model is handed the recipe, in the shape it must answer in.**
+  `recipeWire` writes the stored recipe out as a `DRAFT_SCHEMA` object, so "here
+  is what you are changing" and "answer like this" are one document. The source
+  text rides along as background — *täydennä ohje niin että kaikki ainekset
+  tulevat käytetyiksi* cannot be answered without it — but is asked back as an
+  empty string, because `keptSourceText` discards whatever the model writes
+  there and paying output tokens for a copy of it would be waste.
+- **It is an intake draft, not a second recipe format.** `DRAFT_SCHEMA`,
+  `draftStream`'s retry loop and `assertDraftWire` are the intake ones. The
+  standing rules about quantities, units, alternative groups and a step's
+  mentions are literally the same string: `DRAFT_RULES` in `src/intake.ts` was
+  split out of `systemPrompt` so both prompts read from one copy.
+- **The edit rules exist to forbid the failure that makes this worthless.** A
+  model asked to add a missing side dish will happily rename the dish, restate
+  every amount in round numbers and rewrite the method in its own voice. So:
+  change only what was asked, keep everything else verbatim, never rename or
+  re-yield unasked, never rewrite the method, never remove anything, keep an
+  existing line's `ingredient_id`, and put a `note` only on lines that moved.
+- **What changed is worked out here, not asked of the model.** `proposalChanges`
+  compares the proposal against the stored recipe and lists the ingredients,
+  steps and title that moved. The question it answers — did something I did not
+  ask about move? — is the one a model's own summary is worst at.
+- **A section or a phase the model invented is dropped before the review.** The
+  editor shows no part field (a saved part is a recipe of its own, ADR-0002) and
+  no phase select on a dish with no parts, so a field neither box would render
+  would be discarded on save without ever having been on screen.
+  `proposalForRecipe` drops them first, so the review shows exactly what the
+  save will write. The rules ask for the same thing, and a model that follows
+  them changes nothing.
+- **Nothing widens who may write.** Both routes load through `findRecipe`, which
+  is own-household only. Somebody else's published dish is a 404 here for the
+  same reason it is a 404 in the editor, and the recipe screen offers the link
+  only to the household that owns it.
+- **The screen is streamed, and it is not a background job.** A model call with
+  thinking on outlasts Cloudflare's ~125 s silence limit, which is why intake
+  streams at all — `html.ts::streamingPage` sends the shell first and the
+  proposal when it arrives, keeping a byte flowing per delta, with no script.
+  Unlike an import (#186) it does *not* need to survive the member navigating
+  away, because nothing has been written to survive. The cost is that the status
+  is always 200 and a refusal is written into the body; a later `<style>` hides
+  the "working on it" block once the answer is under it.
+
+`POST /recipes/:id/prompt/review` is the seam `/intake/correct` already is: the
+model call on one side, the review and the save on the other. It is what lets
+`tests/prompt-edit.spec.ts` drive adding an ingredient, adding a step, adding a
+side dish, correcting the proposal by hand and the whole ownership boundary
+without spending anything. `dev/check-recipe-prompt-edit.ts` covers the request
+and the draft-to-form conversion for free.
+
 ## Publishing a recipe (issue #143)
 
 Proposed here: a household may publish a dish, and a published dish is readable

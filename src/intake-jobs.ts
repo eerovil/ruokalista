@@ -568,9 +568,16 @@ export function intakeJobImageRef(job: IntakeJob | null): StoredImageRef | null 
   return job.pageImage;
 }
 
-/** Read the existing NDJSON retry protocol without involving a browser. */
+/**
+ * Read the existing NDJSON retry protocol without involving a browser.
+ *
+ * `onDelta` is told how much draft has arrived so far. The queue consumer has
+ * nobody to tell, but a prompt edit (#208) is read by somebody waiting, and
+ * that is what keeps its connection open while the model thinks.
+ */
 export async function collectValidatedDraft(
   stream: ReadableStream<Uint8Array>,
+  onDelta?: (soFar: string) => void,
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -580,8 +587,10 @@ export async function collectValidatedDraft(
   const record = (line: string): string | null => {
     if (line === "") return null;
     const parsed = JSON.parse(line) as DraftStreamRecord;
-    if (parsed.type === "delta") draft += parsed.text;
-    else if (parsed.type === "restart") draft = "";
+    if (parsed.type === "delta") {
+      draft += parsed.text;
+      onDelta?.(draft);
+    } else if (parsed.type === "restart") draft = "";
     else if (parsed.type === "complete") return draft;
     else if (parsed.type === "failed") throw new Error("The model did not produce a draft.");
     return null;

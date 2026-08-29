@@ -1867,3 +1867,141 @@ test.describe("bulk category editing (#199)", () => {
     });
   });
 });
+
+test.describe("editing a recipe with a prompt (#208)", () => {
+  // The proposal below is a snapshot of the *seeded* Kaalilaatikko, so this
+  // block starts from the seed rather than from whatever the cases above left
+  // on recipe 1 — otherwise the change list truthfully reports removing an
+  // ingredient an earlier screenshot had added. It is the last block in the
+  // file, so nothing downstream depends on what it leaves behind.
+  test.beforeAll(reseed);
+
+  /**
+   * The proposal is handed in rather than generated, exactly as
+   * `tests/prompt-edit.spec.ts` does it: no browser test calls Anthropic, and
+   * what these pictures are of is the review and the save, not the model.
+   */
+  const PROPOSAL = {
+    title: "Kaalilaatikko",
+    yield_portions: 4,
+    source_text: "",
+    steps: [
+      { text: "Kuullota kaali öljyssä.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Lisää vesi ja hauduta.", section: null, phase: null, ingredient_refs: [] },
+      {
+        text: "Mausta sitruunaruoholla ja tarjoa.",
+        section: null,
+        phase: null,
+        ingredient_refs: [],
+      },
+      {
+        text: "Revi jäävuorisalaatti kulhoon ja pirskota päälle öljyä. Tarjoa laatikon kanssa.",
+        section: null,
+        phase: null,
+        ingredient_refs: [],
+      },
+    ],
+    lines: [
+      line(1, "öljy", 0.5, "dl", "½ dl öljyä"),
+      { ...line(2, "vesi", 1, "l", "1–1 ja ½ l vettä"), quantity_max: 1.5 },
+      {
+        ...line(3, "valkokaali", 0.5, "kpl", "½ (500 g) valkokaali"),
+        alt_quantity: 500,
+        alt_unit: "g",
+      },
+      line(4, "sitruunaruoho", null, null, "hieman sitruunaruohoa"),
+      {
+        ...line(null, "jäävuorisalaatti", 1, "kpl", "1 kpl jäävuorisalaattia"),
+        note: "Lisätty lisukkeeksi pyynnön mukaan.",
+      },
+    ],
+  };
+
+  function line(
+    ingredientId: number | null,
+    name: string,
+    quantity: number | null,
+    unit: string | null,
+    sourceLine: string,
+  ) {
+    return {
+      quantity,
+      quantity_max: null,
+      unit,
+      alt_quantity: null,
+      alt_unit: null,
+      ingredient_id: ingredientId,
+      ingredient_name: name,
+      source_line: sourceLine,
+      section: null,
+      phase: null,
+      alternative_group: null,
+      note: null,
+    };
+  }
+
+  test("asking for a side dish, and checking what came back", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    // The box, on a recipe that already exists.
+    await page.goto("/recipes/1");
+    await page.getByRole("link", { name: "Muokkaa promptilla" }).click();
+    await page.locator("#instruction").fill("Lisää salaatti tämän ruoan lisukkeeksi.");
+    await capture(page, { path: `${SHOTS}/86-prompt-edit-form.png`, fullPage: true });
+
+    // The proposal, in the recipe editor, with what moved named above it.
+    await page.evaluate(
+      ({ draft, instruction }) => {
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = "/recipes/1/prompt/review";
+        for (const [name, value] of [
+          ["draft", draft],
+          ["instruction", instruction],
+        ]) {
+          const field = document.createElement("input");
+          field.type = "hidden";
+          field.name = name!;
+          field.value = value!;
+          form.appendChild(field);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      },
+      {
+        draft: JSON.stringify(PROPOSAL),
+        instruction: "Lisää salaatti tämän ruoan lisukkeeksi.",
+      },
+    );
+    await page.waitForURL(/\/prompt\/review$/);
+    await expect(page.locator(".prompt-changes")).toContainText(
+      "Lisätty — Aines: jäävuorisalaatti",
+    );
+    await expect(page.locator(".line")).toHaveCount(5);
+    // The new part of the screen on its own, then the whole thing: the
+    // proposal is a long editor, and what this change added is the head of it.
+    await capture(page, { path: `${SHOTS}/87-prompt-edit-proposal.png` });
+    await capture(page, {
+      path: `${SHOTS}/88-prompt-edit-review.png`,
+      fullPage: true,
+    });
+
+    // And the recipe once the ordinary save has written it.
+    await page.locator(".editor-actions button").click();
+    await expect(page).toHaveURL(/\/recipes\/1$/);
+    await expect(page.locator(".lines li")).toContainText([
+      "öljy",
+      "vesi",
+      "valkokaali",
+      "sitruunaruoho",
+      "jäävuorisalaatti",
+    ]);
+    await capture(page, {
+      path: `${SHOTS}/89-prompt-edit-saved.png`,
+      fullPage: true,
+    });
+  });
+});
