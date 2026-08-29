@@ -20,7 +20,11 @@ import { baseAmount, packageSizeFromName } from "./packaging.ts";
 import { formatDecimal } from "./quantities.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
-import { SOstoslistaClient, type SOstoslistaProduct } from "./s-ostoslista.ts";
+import {
+  SOstoslistaClient,
+  sProductImageAtWidth,
+  type SOstoslistaProduct,
+} from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
   shoppingLinesFor,
@@ -866,6 +870,41 @@ function listLocation(
 }
 
 /**
+ * Every slot a product picture is drawn in, with the width the CDN should
+ * render it at. Three of them, and the widths are roughly three times the slot
+ * — enough for a phone's own pixel density and no more (#204). Left to itself
+ * the CDN sends one 256 px picture for all three, which on a portrait carton is
+ * 44 kB apiece: nearly a megabyte to fill twenty 26 px squares.
+ *
+ * The CSS crops each of these to its box rather than fitting the whole picture
+ * inside it, which is the other half of the same complaint. A product photo is
+ * shot however the package stands, so a milk carton arrives at 256 × 705; fitted
+ * into a square it drew as a 9 px sliver of white, and the picture that was
+ * supposed to say which product this row is said nothing.
+ *
+ * These numbers pair with the sizes in `html.ts` and are handed to the island
+ * below, so a slot's size lives in one place.
+ */
+const PRODUCT_PICTURE = {
+  row: { size: 26, width: 96 },
+  summary: { size: 40, width: 128 },
+  result: { size: 80, width: 192 },
+} as const;
+
+type PictureSlot = (typeof PRODUCT_PICTURE)[keyof typeof PRODUCT_PICTURE];
+
+function productPicture(url: string, slot: PictureSlot): Raw {
+  return html`<img
+    src="${sProductImageAtWidth(url, slot.width)}"
+    alt=""
+    width="${String(slot.size)}"
+    height="${String(slot.size)}"
+    loading="lazy"
+    onerror="this.hidden=true"
+  />`;
+}
+
+/**
  * The chosen product's picture on the row itself (#159), small enough that the
  * row it sits in is the height it always was. Without a picture the slot stays
  * empty and collapses, so an unmapped ingredient — or one whose CDN image is
@@ -874,14 +913,7 @@ function listLocation(
 function thumbnail(item: ShoppingItem): Raw {
   const image = item.chosen[0]?.product.imageUrl ?? null;
   if (image === null) return html``;
-  return html`<img
-    src="${image}"
-    alt=""
-    width="26"
-    height="26"
-    loading="lazy"
-    onerror="this.hidden=true"
-  />`;
+  return productPicture(image, PRODUCT_PICTURE.row);
 }
 
 function externalSendPanel(
@@ -1077,14 +1109,7 @@ function productSummary(item: ShoppingItem): Raw {
       ({ product, count }) => html`<span class="s-shopping-product-one">
         ${product.imageUrl === null
           ? ""
-          : html`<img
-              src="${product.imageUrl}"
-              alt=""
-              width="40"
-              height="40"
-              loading="lazy"
-              onerror="this.hidden=true"
-            />`}
+          : productPicture(product.imageUrl, PRODUCT_PICTURE.summary)}
         <span class="s-shopping-product-copy">
           <strong
             >${count > 1 ? `${count} × ` : ""}${product.name}</strong
@@ -1189,14 +1214,7 @@ function productResults(
 function productResult(product: SOstoslistaProduct): Raw {
   const size = packageSizeFromName(product.name);
   return html`<li>
-    <img
-      src="${product.imageUrl}"
-      alt=""
-      width="80"
-      height="80"
-      loading="lazy"
-      onerror="this.hidden=true"
-    />
+    ${productPicture(product.imageUrl, PRODUCT_PICTURE.result)}
     <div class="s-product-result-copy">
       <strong>${product.name}</strong>
       <span class="meta">EAN ${product.ean}</span>
@@ -1492,13 +1510,27 @@ const SHOPPING_ISLAND = `
     }
   }
 
-  function productImage(url, size) {
+  // The same three slots the server draws, handed over rather than written
+  // twice, and the same width swap on the CDN's path — done here with indexOf
+  // and slice because a regular expression cannot survive this file (#204).
+  var PICTURE = ${JSON.stringify(PRODUCT_PICTURE)};
+
+  function pictureAtWidth(url, width) {
+    var base = 'https://cdn.s-cloud.fi/v1/';
+    if (url.indexOf(base) !== 0) return url;
+    var path = url.slice(base.length);
+    var slash = path.indexOf('/');
+    if (slash <= 0) return url;
+    return base + 'w' + width + '_q75/' + path.slice(slash + 1);
+  }
+
+  function productImage(url, slot) {
     var image = document.createElement('img');
     image.setAttribute('alt', '');
-    image.setAttribute('width', String(size));
-    image.setAttribute('height', String(size));
+    image.setAttribute('width', String(slot.size));
+    image.setAttribute('height', String(slot.size));
     image.onerror = function () { this.hidden = true; };
-    image.src = url;
+    image.src = pictureAtWidth(url, slot.width);
     return image;
   }
 
@@ -1731,7 +1763,7 @@ const SHOPPING_ISLAND = `
 
   function resultRow(row, query, product) {
     var item = document.createElement('li');
-    item.appendChild(productImage(product.imageUrl, 80));
+    item.appendChild(productImage(product.imageUrl, PICTURE.result));
     var copy = el('div', 's-product-result-copy');
     copy.appendChild(el('strong', '', product.name));
     copy.appendChild(el('span', 'meta', 'EAN ' + product.ean));
@@ -1959,7 +1991,7 @@ const SHOPPING_ISLAND = `
     var summary = el('div', 's-shopping-product-summary');
     if (scope) summary.appendChild(scope);
     var one = el('span', 's-shopping-product-one');
-    one.appendChild(productImage(product.imageUrl, 40));
+    one.appendChild(productImage(product.imageUrl, PICTURE.summary));
     var copy = el('span', 's-shopping-product-copy');
     copy.appendChild(el('strong', '', product.name));
     copy.appendChild(el('span', 'meta', 'EAN ' + product.ean));
@@ -1969,7 +2001,7 @@ const SHOPPING_ISLAND = `
 
     if (row.thumb) {
       clear(row.thumb);
-      row.thumb.appendChild(productImage(product.imageUrl, 26));
+      row.thumb.appendChild(productImage(product.imageUrl, PICTURE.row));
     }
 
     setOpenerLabel(row, 'Vaihda tuote');
