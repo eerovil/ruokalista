@@ -26,7 +26,14 @@ const MODEL = "claude-sonnet-5";
  * this sits in the middle rather than at either end. It is the one dial worth
  * turning if imports feel dear or drafts feel sloppy.
  */
-const EFFORT = "medium" as const;
+export const EFFORT = "medium" as const;
+
+/**
+ * The model's own ceiling, counted across thinking *and* the answer. It is a
+ * limit rather than a spend, so nothing costs more for it being high — but a
+ * budget this large is why every call streams.
+ */
+export const MAX_TOKENS = 128000;
 
 export interface DraftLine {
   quantity: number | null;
@@ -321,25 +328,28 @@ Nettisivulta luetun tekstin lisäsäännöt:
   yleistiedolla ruokalajista.
 `;
 
-/** The standing rules, from docs/spec.md's intake flow. */
-function systemPrompt(
-  ingredients: IngredientSummary[],
-  source: IntakeSource,
-): string {
+/**
+ * The household's ingredient dictionary, as the model is shown it. Exported
+ * because a prompt edit (#208) has to hand the model the same list under the
+ * same heading — a second wording for the same fact is a second thing to drift.
+ */
+export function ingredientDictionary(ingredients: IngredientSummary[]): string {
   const list = ingredients
     .map((ingredient) => `${ingredient.id}\t${ingredient.name}`)
     .join("\n");
 
-  const extra =
-    source.route === "photographed"
-      ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
-      : source.route === "linked"
-        ? LINKED_RULES
-        : "";
+  return `Talouden hyväksytyt ainekset (id, nimi):
 
-  return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
+${list || "(ei vielä yhtään)"}`;
+}
 
-Säännöt, joista ei poiketa:
+/**
+ * The rules that describe the draft itself — what a quantity, a unit, an
+ * alternative group and a step's mentions may say. They are about the *shape*
+ * of a draft rather than about where it came from, so a prompt edit (#208)
+ * answers to exactly the same ones.
+ */
+export const DRAFT_RULES = `Säännöt, joista ei poiketa:
 
 - Älä koskaan keksi määrää tai yksikköä. Jos teksti ei sano, jätä null.
 - Säilytä yksikkö täsmälleen sellaisena kuin resepti sen kirjoitti (dl, rkl, tl, kpl, g).
@@ -397,11 +407,24 @@ Säännöt, joista ei poiketa:
   - älä muuta vaiheen tekstiä millään tavalla;
   - yleisiä ilmauksia kuten "lisää loput ainekset" ei tarvitse yhdistää
     mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [];
-  - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.
-${extra}
-Talouden hyväksytyt ainekset (id, nimi):
+  - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.`;
 
-${list || "(ei vielä yhtään)"}`;
+/** The standing rules, from docs/spec.md's intake flow. */
+function systemPrompt(
+  ingredients: IngredientSummary[],
+  source: IntakeSource,
+): string {
+  const extra =
+    source.route === "photographed"
+      ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
+      : source.route === "linked"
+        ? LINKED_RULES
+        : "";
+
+  return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
+
+${DRAFT_RULES}
+${extra}${ingredientDictionary(ingredients)}`;
 }
 
 /**
@@ -502,7 +525,7 @@ export function streamDraft(
   source: IntakeSource,
   ingredients: IngredientSummary[],
 ): ReadableStream<Uint8Array> {
-  const client = anthropic(env);
+  const client = anthropicClient(env);
   return draftStream(
     () => client.messages.stream({ ...requestFor(source, ingredients) }),
     source,
@@ -859,7 +882,7 @@ function invalid(message: string): never {
   throw new RetryableStructuringError(`Invalid draft: ${message}.`);
 }
 
-function anthropic(env: Env): Anthropic {
+export function anthropicClient(env: Env): Anthropic {
   if (!env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY is not configured.");
   }
@@ -875,10 +898,7 @@ function anthropic(env: Env): Anthropic {
 export function requestFor(source: IntakeSource, ingredients: IngredientSummary[]) {
   return {
     model: MODEL,
-    // The model's own ceiling, counted across thinking *and* the draft. It is
-    // a limit rather than a spend, so nothing costs more for it being high —
-    // but a budget this large is why both calls have to stream.
-    max_tokens: 128000,
+    max_tokens: MAX_TOKENS,
     output_config: {
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },

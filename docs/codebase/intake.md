@@ -70,6 +70,17 @@ cookbook in one sitting would cost close to a year's budget.
 `src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
 AgentDeck and paste the result in, rather than looping real imports.
 
+## A second reader of these rules (#208)
+
+`DRAFT_RULES` and `ingredientDictionary` are exported because a prompt edit —
+changing a saved recipe with a sentence — asks the model for the same draft
+under the same standing rules, and a second copy of them would be a second thing
+to drift. It reuses `DRAFT_SCHEMA`, `draftStream`'s attempt loop and
+`draftFromJson` unchanged; what it adds is its own edit rules and its own
+context. The proposal is reviewed in the recipe editor and saved through
+`POST /recipes/:id`, so nothing about intake's own save path is involved. See
+[recipes](recipes.md).
+
 ## A web address, and the decision it reverses (#192)
 
 Wayfinder decision #4 ("Where recipes come from", closed) ruled out fetching

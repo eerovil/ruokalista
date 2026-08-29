@@ -1090,9 +1090,73 @@ export function page(
   viewer: Viewer | null,
   status = 200,
 ): Response {
+  const document = html`${pageHead(title, shell, viewer)}
+${body}
+${pageTail(shell)}`;
+
+  return new Response(document.value, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+/**
+ * A screen sent in pieces, for the one thing on the reading and editing paths
+ * that has to wait on a language model (#208).
+ *
+ * Cloudflare closes a proxied request that goes ~125 s without a byte, which is
+ * why intake streams at all (`src/intake.ts`). A prompt edit is the same shape
+ * of wait but not the same shape of work: nothing is written until the member
+ * saves, so it does not need a background job's durability — it needs the
+ * connection to stay open while the member watches. Sending the shell first and
+ * the answer when it arrives does that with no script, which is the standing
+ * rule on the editing path.
+ *
+ * `render` may emit as much as it likes before returning the body it ends on.
+ * The status is always 200: the headers are gone by the time anything can be
+ * refused, so a refusal is written into the body instead.
+ */
+export function streamingPage(
+  title: string,
+  shell: Shell,
+  viewer: Viewer | null,
+  render: (emit: (chunk: Raw) => void) => Promise<Raw>,
+): Response {
+  const encoder = new TextEncoder();
+
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (chunk: Raw) =>
+        controller.enqueue(encoder.encode(chunk.value));
+
+      emit(pageHead(title, shell, viewer));
+      try {
+        emit(await render(emit));
+      } catch (error) {
+        console.log(JSON.stringify({
+          event: "streamed_page.failed",
+          detail: String((error as Error)?.message ?? error),
+        }));
+        emit(html`<p class="refused">Jokin meni pieleen. Yritä uudelleen.</p>`);
+      }
+      emit(pageTail(shell));
+      controller.close();
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function pageHead(title: string, shell: Shell, viewer: Viewer | null): Raw {
   const signedIn = shell !== "signed-out";
 
-  const document = html`<!doctype html>
+  return html`<!doctype html>
 <html lang="fi">
 <head>
 <meta charset="utf-8">
@@ -1115,16 +1179,15 @@ ${signedIn
   ${accountMenu(viewer)}
 </header>`
     : ""}
-<main>
-${body}
-</main>
+<main>`;
+}
+
+function pageTail(shell: Shell): Raw {
+  const signedIn = shell !== "signed-out";
+
+  return html`</main>
 ${signedIn ? tabs(shell) : ""}
 <script>${raw(PWA_CLIENT_SCRIPT)}</script>
 </body>
 </html>`;
-
-  return new Response(document.value, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
 }
