@@ -248,6 +248,11 @@ export async function saveEditForm(
       // A dish written entirely in named parts has no ingredient lines of its
       // own, and it is still a whole recipe (issue #184).
       hasParts: recipe.parts.length > 0,
+      // A recipe saved from `/intake` with nothing but its name (#211) is
+      // opened here to be filled in, and the first save of it may still add
+      // only a method step or a portion count. Refusing that would make the
+      // quick save a dead end, so the editor lets a recipe stay empty.
+      allowEmpty: true,
       // The parts a submitted section may land on (#208). This form renders no
       // part field, so an ordinary edit names none and they are left alone; a
       // prompt edit's review posts here too, and it does.

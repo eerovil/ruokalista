@@ -308,6 +308,30 @@ ready row opens the same server-rendered review used by the development sample,
 and saving removes the job. The camera route still needs the island because
 downscaling a photograph is a canvas job.
 
+## Two ways off this screen (issue #211)
+
+Proposed here. *Lisää resepti* used to offer one thing, behind a button that
+said **Jäsennä** — a word this codebase uses among itself and one no household
+reads anywhere else. This pull request renames it to **Muodosta resepti**
+(`STRUCTURE_LABEL` in `src/intake-screens.ts`) and puts a sentence under it
+saying what it will do with the text, address or photographs above it.
+
+Beside it, and headed by its own question, sits a second whole way out: a name,
+and **Tallenna keskeneräisenä**. It posts to `/intake/keskeneras`
+(`quickSaveScreen`), writes a recipe with `saveRecipe` and nothing but a title,
+and redirects to it. Nothing on that path calls the model, waits for a queue or
+needs an ingredient — the case it is for is somebody who remembers what the dish
+is called and has the recipe nowhere near them.
+
+It is also the one thing on this screen that works with JavaScript off: an
+ordinary `method="post"` form, no island, no `<script>`. The paragraph below
+about intake requiring JavaScript is still true of the import itself, and only
+of that.
+
+The rule it needed relaxing is `validateRecipe`'s one-ingredient rule; see
+[A recipe may be nothing but its name](recipes.md#a-recipe-may-be-nothing-but-its-name-issue-211)
+for why the import paths keep it.
+
 ## Background lifecycle (issue #186)
 
 `src/intake-jobs.ts` owns the lifecycle. A queue message carries only the job

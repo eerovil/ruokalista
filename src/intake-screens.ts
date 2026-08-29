@@ -314,10 +314,20 @@ function sampleDraftForm(): Raw {
     </form>`;
 }
 
+/**
+ * What the button that calls the model says (#211).
+ *
+ * It used to say *Jäsennä*, which is the word this codebase uses among itself
+ * and not one a household reads anywhere else. What the button does, from where
+ * the member stands, is turn whatever they put above it into a recipe — so that
+ * is what it now says.
+ */
+const STRUCTURE_LABEL = "Muodosta resepti";
+
 /** The JavaScript-owned intake form, optionally with a paste kept for retry. */
 function intakeForm(
   sourceText = "",
-  submitLabel = "Jäsennä",
+  submitLabel: string = STRUCTURE_LABEL,
   sourceUrl = "",
 ): Raw {
   return html`<form class="stacked" id="intake">
@@ -370,6 +380,11 @@ function intakeForm(
       </p>
 
       <button type="submit" disabled>${submitLabel}</button>
+
+      <p class="empty" id="structure-help">
+        Yllä oleva teksti, osoite tai kuvat luetaan ja niistä kootaan resepti
+        aineksineen ja valmistusohjeineen. Se kestää hetken.
+      </p>
     </form>
 
     <p id="status" class="status" aria-live="polite">
@@ -380,6 +395,40 @@ function intakeForm(
     <script>
       ${raw(STREAMING_ISLAND)}
     </script>`;
+}
+
+/**
+ * Save a recipe that is nothing but its name yet (#211).
+ *
+ * The whole point of it is that it is *not* the form above: an ordinary
+ * `method="post"` form, no JavaScript, no model call, no waiting. Somebody who
+ * remembers the name of a dish and has the recipe nowhere near them gets it
+ * into the store now and fills it in later, from the ordinary editor.
+ *
+ * It is deliberately below the import form and headed by its own question, so
+ * the choice on this screen reads as two whole things rather than one thing
+ * with an escape hatch on it.
+ */
+function quickSaveForm(title = ""): Raw {
+  return html`<section aria-labelledby="quick-save-title">
+    <h2 id="quick-save-title">Muistatko vain nimen?</h2>
+    <form method="post" action="/intake/keskeneras" class="stacked">
+      <label for="quickTitle">Reseptin nimi</label>
+      <input
+        id="quickTitle"
+        name="title"
+        type="text"
+        autocomplete="off"
+        value="${title}"
+        placeholder="Esim. mummin lihapullat"
+      />
+      <button type="submit">Tallenna keskeneräisenä</button>
+      <p class="empty">
+        Tallentaa reseptin heti pelkällä nimellä. Aineksia ja valmistusohjetta
+        ei tarvita, eikä resepti käy mallilla — voit täydentää sen myöhemmin.
+      </p>
+    </form>
+  </section>`;
 }
 
 function intakeJobs(jobs: IntakeJob[]): Raw {
@@ -478,6 +527,7 @@ function hostOf(address: string | null): string | null {
 export async function intakeScreen(
   { env, url }: RouteContext,
   member: Member,
+  refusal?: { message: string; title: string },
 ): Promise<Response> {
   const jobs = await listIntakeJobs(env.DB, member.householdId);
   const started = url.searchParams.get("started");
@@ -495,13 +545,66 @@ export async function intakeScreen(
       ${confirmed
         ? html`<p class="status">Reseptiä käsitellään taustalla. Voit jatkaa Ruokalistan käyttöä.</p>`
         : ""}
+      ${refusal === undefined
+        ? ""
+        : html`<p class="refused">${refusal.message}</p>`}
       ${intakeForm()}
+      ${quickSaveForm(refusal?.title ?? "")}
       ${intakeJobs(jobs)}
       ${isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
     member,
+    refusal === undefined ? undefined : 400,
   );
+}
+
+/**
+ * `POST /intake/keskeneras` — save a recipe that is only its name yet (#211).
+ *
+ * Nothing here calls the model, and nothing here is a shortcut around the
+ * ordinary save: it is `saveRecipe` with an empty recipe, which is why the
+ * result is a perfectly ordinary recipe row that the editor, the week and the
+ * shopping list already know how to deal with. The one rule waived is the
+ * one-ingredient rule, and it is waived on purpose — a recipe whose owner has
+ * not written it down yet is exactly what this screen is for.
+ */
+export async function quickSaveScreen(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const form = await ctx.request.formData();
+  const title = String(form.get("title") ?? "");
+
+  try {
+    const recipeId = await saveRecipe(
+      ctx.env.DB,
+      member,
+      {
+        title,
+        yieldPortions: null,
+        sourceText: "",
+        sourceRoute: "pasted",
+        sourceUrl: null,
+        structuredBy: null,
+        steps: [],
+        lines: [],
+        categories: [],
+      },
+      { allowEmpty: true },
+    );
+
+    // Straight to the recipe, so what was just saved is in front of the member
+    // with its Muokkaa reseptiä link — that is where the filling in happens.
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `/recipes/${recipeId}` },
+    });
+  } catch (error) {
+    if (!(error instanceof SaveRefused)) throw error;
+    // The screen's own refusal shape, with what was typed kept (CLAUDE.md).
+    return intakeScreen(ctx, member, { message: error.message, title });
+  }
 }
 
 /** `POST /api/intake/imports` — persist the source and return immediately. */
