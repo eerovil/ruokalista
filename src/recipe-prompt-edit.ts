@@ -14,7 +14,12 @@ import {
   type DraftLine,
   type IntakeSource,
 } from "./intake.ts";
-import { lineValuesFromDraft, MAX_LINES, MAX_STEPS } from "./line-form.ts";
+import {
+  lineValuesFromDraft,
+  MAX_LINES,
+  MAX_STEPS,
+  setExpectedParts,
+} from "./line-form.ts";
 import type { Recipe } from "./recipes.ts";
 
 /**
@@ -428,6 +433,19 @@ export function proposalForm(draft: Draft, recipe: Recipe): FormData {
   // ordinary optimistic check, so an edit made in another tab meanwhile is a
   // 409 here exactly as it would be from the editor.
   form.set("revision", String(recipe.revision));
+  // And the same for each part, because the dish's revision does not move when
+  // one of its parts is edited — a part is a recipe row with its own screen
+  // (ADR-0002). Without these, a proposal read before somebody fixed the
+  // juustokastike would delete that fix on the way in, and nothing would say
+  // so. `replaceRecipe` refuses the whole save if one of them no longer holds.
+  setExpectedParts(
+    form,
+    recipe.parts.map((part) => ({
+      id: part.id,
+      title: part.title,
+      revision: part.revision,
+    })),
+  );
   // Nothing asks the model for a category (#196), so the recipe keeps its own.
   for (const category of recipe.categories) form.append("category", category);
 

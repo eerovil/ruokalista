@@ -86,6 +86,17 @@ deletes/inserts that won a given revision update, so a save is conditional on
 the token rather than just the numeric revision — seeing the same revision
 from somebody else's already-completed edit is never enough to rewrite it.
 
+One revision covers one recipe row, and a named part is a row of its own
+(ADR-0002) with its own editor screen — so the dish's revision says nothing
+about whether one of its parts moved. This pull request proposes closing that
+gap for the save that writes a whole dish at once: a form that names parts
+carries each part's own revision beside the dish's, and the dish's `UPDATE`
+gains a subquery requiring every named part to still be its child at exactly
+that revision. Putting the condition there rather than on each part's own
+statement is the point — that update is what writes the token the rest of the
+batch is guarded by, so a part having moved refuses the whole batch instead of
+leaving the dish rewritten and one part not.
+
 ## Recipe images
 
 `migrations/0006_recipe_images.sql` adds `recipe.image_key` (#89: bytes plus a

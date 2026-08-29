@@ -9,12 +9,14 @@ import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
+  expectedPartFields,
   FormRefused,
   lineCountForRendering,
   lineRows,
   lineValuesFromForm,
   MAX_LINES,
   phaseSelect,
+  readExpectedParts,
   readLineCount,
   readLines,
   readSteps,
@@ -37,6 +39,7 @@ import {
   replaceRecipe,
   SaveRefused,
   StaleRecipe,
+  type ExpectedPart,
 } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -73,8 +76,22 @@ export interface EditorAttempt {
    * dish's parts alone. A prompt edit's review turns it on because the model
    * was shown the whole dish and may have changed a part, and the member has to
    * be able to see — and correct — which part a row landed in.
+   *
+   * Carried in the form as a hidden field once it is on, so adding a line by
+   * hand or being refused for something unrelated does not quietly drop the
+   * part fields — which would send every part's content back onto the dish on
+   * the next submit.
    */
   withSections?: boolean;
+  /**
+   * The dish's parts as this form saw them, at their own revisions (#208).
+   *
+   * Rendered as hidden fields and checked by `replaceRecipe`, so a part edited
+   * or deleted on its own screen while a proposal was being reviewed refuses
+   * the save instead of being overwritten by it. Defaults to whatever the
+   * submitted form already carried.
+   */
+  expectedParts?: readonly ExpectedPart[];
 }
 
 /**
@@ -231,6 +248,9 @@ export async function saveEditForm(
       // part field, so an ordinary edit names none and they are left alone; a
       // prompt edit's review posts here too, and it does.
       parts: recipe.parts.map((part) => ({ id: part.id, title: part.title })),
+      // And which of them the form was written against, so a part edited on its
+      // own screen since then refuses this save rather than losing that edit.
+      expectedParts: readExpectedParts(form),
     });
   } catch (error) {
     if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
@@ -241,6 +261,7 @@ export async function saveEditForm(
     if (latest === null) return notFound(member);
 
     const stale = error instanceof StaleRecipe;
+    const submittedParts = readExpectedParts(form);
     const ingredients = await ingredientsFor(env.DB, member.householdId);
     return page(
       `Muokkaa: ${latest.title}`,
@@ -254,6 +275,11 @@ export async function saveEditForm(
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
+          // The parts move with it, and for the same reason: the member has
+          // been told what changed, so a second, deliberate submit is theirs to
+          // make. A part that has gone is simply not offered again.
+          expectedParts:
+            stale && submittedParts.length > 0 ? currentParts(latest) : submittedParts,
           conflicts:
             error instanceof MentionedRemoval ? error.conflicts : undefined,
         })}`,
@@ -308,6 +334,15 @@ async function addedLine(
     "recipes",
     member,
   );
+}
+
+/** A dish's parts as they stand right now, for a form to be written against. */
+export function currentParts(recipe: Recipe): ExpectedPart[] {
+  return recipe.parts.map((part) => ({
+    id: part.id,
+    title: part.title,
+    revision: part.revision,
+  }));
 }
 
 /**
@@ -564,7 +599,14 @@ export function editorForm(
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
   const hasPicture = recipe.imageKey !== null;
-  const withSections = attempted?.withSections === true;
+  // Once on, it stays on across every re-render of this form: the hidden field
+  // is what carries it through `+ Lisää aines` and through a refusal.
+  const withSections =
+    attempted?.withSections === true ||
+    String(attempted?.form.get("withSections") ?? "") === "1";
+  const expectedParts =
+    attempted?.expectedParts ??
+    (attempted === undefined ? [] : readExpectedParts(attempted.form));
   // A refused save re-renders what was ticked, not what is stored: the point of
   // the refusal is that the member's own edit is still in front of them.
   const categories = attempted
@@ -591,6 +633,10 @@ export function editorForm(
       </button>
       <input type="hidden" name="lineCount" value="${rows.length}" />
       <input type="hidden" name="revision" value="${revision}" />
+      ${withSections ? raw(`<input type="hidden" name="withSections" value="1" />`) : ""}
+      <!-- The dish's parts as this form saw them. The revision above locks the
+           dish; a part is a recipe row of its own and needs its own (#208). -->
+      ${expectedPartFields(expectedParts)}
 
       <label for="title">Nimi</label>
       <input id="title" name="title" value="${title}" required />

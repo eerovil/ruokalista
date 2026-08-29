@@ -2226,3 +2226,120 @@ test.describe("a prompt edit that replaces the recipe (#208)", () => {
     });
   });
 });
+
+test.describe("a prompt edit whose part moved underneath it (#208)", () => {
+  // The refusal this pull request adds. A part is a recipe row with its own
+  // editor screen (ADR-0002), so the dish's revision does not move when the
+  // juustokastike is edited — and a proposal read beforehand would otherwise
+  // replace the sauce wholesale, over the top of that edit, saying nothing.
+  test.beforeAll(reseed);
+
+  test("the sauce was edited while the proposal was open", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    const line = (
+      ingredientId: number | null,
+      name: string,
+      quantity: number | null,
+      unit: string | null,
+      sourceLine: string,
+      section: string | null,
+    ) => ({
+      quantity,
+      quantity_max: null,
+      unit,
+      alt_quantity: null,
+      alt_unit: null,
+      ingredient_id: ingredientId,
+      ingredient_name: name,
+      source_line: sourceLine,
+      section,
+      phase: null,
+      alternative_group: null,
+      note: null,
+    });
+
+    const proposal = {
+      title: "Lasagne",
+      yield_portions: 6,
+      source_text: "",
+      steps: [
+        { text: "Voitele vuoka.", section: null, phase: null, ingredient_refs: [] },
+        { text: "Lämmitä uuni 200 asteeseen.", section: null, phase: "before_parts", ingredient_refs: [] },
+        { text: "Kokoa vuokaan ja paista 40 minuuttia.", section: null, phase: "after_parts", ingredient_refs: [] },
+        { text: "Ruskista jauheliha.", section: "Jauhelihakastike", phase: null, ingredient_refs: [] },
+        { text: "Anna jauhelihan hautua hetki.", section: "Jauhelihakastike", phase: null, ingredient_refs: [] },
+        { text: "Sulata voi ja sekoita joukkoon vehnäjauhot.", section: "Juustokastike", phase: null, ingredient_refs: [] },
+        { text: "Kuumenna maito ja sulata juusto joukkoon.", section: "Juustokastike", phase: null, ingredient_refs: [] },
+      ],
+      lines: [
+        line(10, "lasagnelevy", 12, "kpl", "12 lasagnelevyä", null),
+        line(7, "jauheliha", 400, "g", "400 g jauhelihaa", "Jauhelihakastike"),
+        line(9, "maito", 5, "dl", "5 dl maitoa", "Juustokastike"),
+        line(8, "juusto", 2, "dl", "2 dl juustoa", "Juustokastike"),
+        line(null, "voi", 50, "g", "50 g voita", "Juustokastike"),
+        line(null, "vehnäjauho", 3, "rkl", "3 rkl vehnäjauhoja", "Juustokastike"),
+      ],
+    };
+
+    await page.goto("/recipes/3/prompt");
+    await page.evaluate(
+      ({ draft, instruction, mode }) => {
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = "/recipes/3/prompt/review";
+        for (const [name, value] of [
+          ["draft", draft],
+          ["instruction", instruction],
+          ["mode", mode],
+        ]) {
+          const field = document.createElement("input");
+          field.type = "hidden";
+          field.name = name!;
+          field.value = value!;
+          form.appendChild(field);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      },
+      {
+        draft: JSON.stringify(proposal),
+        instruction: "Lisää kastikkeeseen puuttuvat ainekset.",
+        mode: "extend",
+      },
+    );
+    await page.waitForURL(/\/prompt\/review$/);
+
+    // Meanwhile, on the juustokastike's own editor: the milk was wrong.
+    const other = await context.newPage();
+    await other.goto("/recipes/5/edit");
+    await other.locator(".line").first().locator("input[name$=quantity]").fill("7");
+    await other.locator(".editor-actions button").click();
+    await other.waitForURL(/\/recipes\/5$/);
+    await other.close();
+
+    await page.locator(".editor-actions button").click();
+
+    // The whole save is refused — dish included — and the proposal is still on
+    // screen to be looked at rather than thrown away.
+    await expect(page.locator(".refused")).toContainText(
+      "Reseptin osa on muuttunut",
+    );
+    await expect(page.locator(".edit-lines")).toBeVisible();
+    await capture(page, { path: `${SHOTS}/95-prompt-edit-part-stale.png` });
+
+    // Nothing moved: the newer edit stands and the dish is as it was.
+    await page.goto("/recipes/3");
+    await expect(page.getByRole("heading", { name: "Lasagne" })).toBeVisible();
+    await expect(page.locator(".part")).toHaveCount(2);
+    await expect(page.locator(".part").nth(1)).not.toContainText("voi");
+    await expect(page.locator(".part").nth(1)).toContainText("7 dl");
+    await capture(page, {
+      path: `${SHOTS}/96-prompt-edit-part-stale-recipe.png`,
+      fullPage: true,
+    });
+  });
+});

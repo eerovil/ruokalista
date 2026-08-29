@@ -186,6 +186,15 @@ export async function saveRecipe(
  * function's to count, because a dish whose ingredients all live on its parts
  * has none of its own and must still be saveable (issue #184) — and the caller
  * has already loaded them.
+ *
+ * **Every part this save rewrites is locked too.** The dish's own revision does
+ * not move when one of its parts is edited — a part is a recipe row with its
+ * own editor screen (ADR-0002) — so locking only the dish would let a proposal
+ * read before somebody fixed the juustokastike overwrite that fix on the way
+ * in. Each part the submission names is therefore checked against the revision
+ * the form saw, in the very statement that mints the write token every other
+ * statement here is guarded by. One part having moved thus refuses the whole
+ * batch, dish included: there is no half-saved outcome to explain.
  */
 export async function replaceRecipe(
   db: D1Database,
@@ -211,13 +220,25 @@ export async function replaceRecipe(
     writeToken,
   };
 
+  // Built first, because what it decides to rewrite is what the dish's own
+  // update below has to hold still.
+  const parts = await partStatements(
+    db,
+    member,
+    recipeId,
+    recipe,
+    lines,
+    options,
+    guard,
+  );
+
   const statements: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE recipe
             SET title = ?, yield_portions = ?, revision = revision + 1,
                 edit_token = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
-          WHERE id = ? AND household_id = ? AND revision = ?`,
+          WHERE id = ? AND household_id = ? AND revision = ?${partLock(parts.locked)}`,
       )
       .bind(
         recipe.title.trim(),
@@ -227,6 +248,7 @@ export async function replaceRecipe(
         recipeId,
         member.householdId,
         expectedRevision,
+        ...partLockValues(recipeId, member.householdId, parts.locked),
       ),
     ...ingredientStatements(db, member, newIngredients, guard),
     guardedDelete(db, "recipe_step", recipeId, guard),
@@ -234,26 +256,125 @@ export async function replaceRecipe(
     guardedDelete(db, "recipe_category", recipeId, guard),
     ...childrenOf(db, recipeId, lines, recipe.steps, null, guard),
     ...categoryStatements(db, recipeId, recipe.categories, guard),
-    ...(await partStatements(db, member, recipeId, recipe, lines, options, guard)),
+    ...parts.statements,
   ];
 
   const results = await db.batch(statements);
   if ((results[0]?.meta.changes ?? 0) === 0) {
     throw new StaleRecipe(
-      "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.",
+      await staleMessage(db, member, recipeId, expectedRevision, parts.locked),
     );
   }
+}
+
+/** What the dish's own update says when it turns out not to have happened. */
+const DISH_MOVED =
+  "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.";
+const PART_MOVED =
+  "Reseptin osa on muuttunut tai poistettu sen jälkeen kun avasit tämän. Tarkista uusin versio ennen tallennusta.";
+
+/**
+ * Which half of the lock refused, so the member is told the true thing.
+ *
+ * "The recipe changed" is a confusing thing to read when the recipe on screen
+ * is exactly as you left it and what actually moved is its sauce. One extra
+ * query, only ever on the refusal path, buys the sentence that sends somebody
+ * to the right screen.
+ */
+async function staleMessage(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+  expectedRevision: number,
+  locked: readonly ExpectedPart[],
+): Promise<string> {
+  if (locked.length === 0) return DISH_MOVED;
+
+  // Nothing was written, so the dish still reads as it did a moment ago.
+  const dish = await db
+    .prepare(
+      `SELECT 1 FROM recipe WHERE id = ? AND household_id = ? AND revision = ?`,
+    )
+    .bind(recipeId, member.householdId, expectedRevision)
+    .first();
+
+  return dish === null ? DISH_MOVED : PART_MOVED;
+}
+
+/**
+ * The extra condition that makes the dish's update stand for the whole tree:
+ * every part being rewritten is still a child of this dish, in this household,
+ * at exactly the revision the form saw.
+ *
+ * It hangs off the dish's own `UPDATE` rather than off each part's, because
+ * that update is what writes the token the rest of the batch is guarded by. A
+ * per-part check would leave the dish rewritten and one part not.
+ */
+function partLock(locked: readonly ExpectedPart[]): string {
+  if (locked.length === 0) return "";
+
+  const matches = locked
+    .map(() => "(part.id = ? AND part.revision = ?)")
+    .join(" OR ");
+
+  return ` AND (
+              SELECT count(*) FROM recipe AS part
+               WHERE part.parent_id = ? AND part.household_id = ?
+                 AND (${matches})
+            ) = ${locked.length}`;
+}
+
+function partLockValues(
+  recipeId: number,
+  householdId: number,
+  locked: readonly ExpectedPart[],
+): unknown[] {
+  if (locked.length === 0) return [];
+  return [
+    recipeId,
+    householdId,
+    ...locked.flatMap((part) => [part.id, part.revision]),
+  ];
+}
+
+/** What one submitted edit does to the dish's parts. */
+interface PartPlan {
+  statements: D1PreparedStatement[];
+  /**
+   * The existing parts being rewritten, at the revision the form saw them. The
+   * dish's own update holds all of these still, or nothing is written at all.
+   */
+  locked: ExpectedPart[];
+}
+
+/** The same case-insensitive Finnish comparison the ingredient gate uses. */
+function fold(title: string): string {
+  return title.trim().toLocaleLowerCase("fi");
 }
 
 /**
  * The statements that write the parts a submitted edit names, and nothing else.
  *
- * An existing part is matched by title — the same case-insensitive Finnish
- * comparison the ingredient gate uses — and has its own contents replaced. A
- * name that matches nothing becomes a new part of this dish. Everything here
- * hangs off the *parent's* write token, so the whole tree is written only if
- * the optimistic lock on the dish held; a concurrently edited dish leaves its
- * parts untouched rather than half-rewritten.
+ * A named section is matched by title against the parts the **form** saw, not
+ * against the parts loaded a moment ago, because the proposal the member
+ * reviewed was written against the former. That distinction is the whole point:
+ * matching against what is there now would happily pour a proposal read ten
+ * minutes ago over a part somebody has edited since, and would just as happily
+ * fork a second `Juustokastike` when the first one has been deleted.
+ *
+ * So each name is one of three things:
+ *
+ * - the form expected a part by that name and it is still here → its contents
+ *   are replaced, and its revision goes into `locked`;
+ * - the form expected one and it has gone → refused, because the content being
+ *   saved is about a row that no longer exists;
+ * - the form expected none → a new part, unless the dish has since grown one
+ *   under that name, which is refused rather than silently merged into.
+ *
+ * Everything here hangs off the *parent's* write token, so the whole tree is
+ * written only if the lock on the dish — and, through it, on every part in
+ * `locked` — held. A concurrently edited dish leaves its parts untouched rather
+ * than half-rewritten.
  */
 async function partStatements(
   db: D1Database,
@@ -263,23 +384,30 @@ async function partStatements(
   lines: ResolvedLine[],
   options: ReplaceOptions,
   guard: RecipeGuard,
-): Promise<D1PreparedStatement[]> {
+): Promise<PartPlan> {
   const names = partNames(recipe);
-  if (names.length === 0) return [];
+  if (names.length === 0) return { statements: [], locked: [] };
 
-  const existing = new Map(
-    (options.parts ?? []).map((part) => [
-      part.title.trim().toLocaleLowerCase("fi"),
-      part,
-    ]),
+  const expected = new Map(
+    (options.expectedParts ?? []).map((part) => [fold(part.title), part]),
   );
+  const present = options.parts ?? [];
+  const byTitle = new Map(present.map((part) => [fold(part.title), part]));
+  const byId = new Map(present.map((part) => [part.id, part]));
+
   const reserved = new Set<number>();
   const statements: D1PreparedStatement[] = [];
+  const locked: ExpectedPart[] = [];
 
   for (const [index, name] of names.entries()) {
-    const part = existing.get(name.trim().toLocaleLowerCase("fi"));
+    const want = expected.get(fold(name));
 
-    if (part === undefined) {
+    if (want === undefined) {
+      // Nothing was expected here, so this is a new part — unless the dish has
+      // grown one under that name in the meantime, which is somebody else's
+      // work and not ours to write over.
+      if (byTitle.has(fold(name))) throw new StaleRecipe(PART_MOVED);
+
       const partId = await unusedId(db, "recipe", reserved);
       statements.push(
         recipeRow(
@@ -294,6 +422,17 @@ async function partStatements(
       );
       continue;
     }
+
+    // Matched by id rather than by title: a part renamed since the form was
+    // rendered is the same row, and the revision check below is what decides
+    // whether writing to it is still honest.
+    const part = byId.get(want.id);
+    if (part === undefined) throw new StaleRecipe(PART_MOVED);
+
+    // Two sections differing only in case fold to the same part, so the same
+    // row can be named twice. It is one lock either way — counting it twice
+    // would refuse a save that is perfectly current.
+    if (!locked.some((already) => already.id === want.id)) locked.push(want);
 
     statements.push(
       // The title is rewritten from the section as submitted, so a part whose
@@ -327,7 +466,7 @@ async function partStatements(
     );
   }
 
-  return statements;
+  return { statements, locked };
 }
 
 /** The dish's parts, in the order they first appear on the page. */
@@ -798,9 +937,21 @@ export interface ExistingPart {
   title: string;
 }
 
+/**
+ * One of a dish's parts as the *form* last saw it, with the version it was at.
+ *
+ * A part is a recipe row of its own (ADR-0002) with its own editor screen, so
+ * the dish's revision says nothing at all about whether the juustokastike moved
+ * while a proposal was being read. This is what carries that missing half of
+ * the optimistic lock from the screen back to the save.
+ */
+export interface ExpectedPart extends ExistingPart {
+  revision: number;
+}
+
 export interface ReplaceOptions extends ValidateOptions {
   /**
-   * The dish's existing parts (#208).
+   * The dish's existing parts (#208), freshly loaded.
    *
    * Only consulted when the submitted recipe actually names a section, which
    * the ordinary editor never does. It is what lets a proposal say "these are
@@ -808,6 +959,17 @@ export interface ReplaceOptions extends ValidateOptions {
    * recipe row rather than being dropped for belonging to no row here.
    */
   parts?: readonly ExistingPart[];
+  /**
+   * The same parts as the submitted form saw them, each at its own revision.
+   *
+   * A named section is matched against **these** rather than against `parts`,
+   * because what the member reviewed is what the proposal was built from. A
+   * part that has since been edited, renamed or deleted therefore refuses the
+   * whole save rather than being quietly overwritten with older content, and a
+   * part that somebody else created under that name meanwhile refuses too
+   * rather than being merged into by accident.
+   */
+  expectedParts?: readonly ExpectedPart[];
 }
 
 /**

@@ -555,3 +555,114 @@ test("a part the replacement stops naming is kept, not destroyed", async ({
   await page.goto("/recipes/5");
   await expect(page.locator(".lines li")).toContainText(["maito", "juusto"]);
 });
+
+/**
+ * A part is a recipe row with its own editor screen (ADR-0002), so the dish's
+ * revision does not move when one of its parts is edited. The hidden `revision`
+ * on the review therefore says nothing about the juustokastike, and without the
+ * part's own version travelling with the proposal a save read ten minutes ago
+ * would wholesale replace the sauce's lines and steps over a fix somebody made
+ * in between — silently, because the lock it did win was the dish's.
+ *
+ * Both cases below check the same thing after the refusal: *nothing* moved. Not
+ * the dish, not the part that changed, not the other part. There is no
+ * half-saved outcome to explain, which is why the check hangs off the dish's own
+ * update rather than off each part's.
+ */
+
+/** The proposal these two refuse: it touches the dish *and* the sauce. */
+function sauceAndTitle() {
+  const draft = lasagne();
+  draft.title = "Uunilasagne";
+  draft.lines.push(
+    existing(null, "voi", 50, "g", "50 g voita", { section: "Juustokastike" }),
+  );
+  return draft;
+}
+
+async function expectLasagneUntouched(page: Page): Promise<void> {
+  // The dish kept its name and its own single line.
+  await page.goto("/recipes/3");
+  await expect(page.getByRole("heading", { name: "Lasagne" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Uunilasagne" })).toHaveCount(0);
+
+  // The meat sauce, which the proposal named without changing, is as it was.
+  await page.goto("/recipes/4");
+  await expect(page.locator(".lines li")).toContainText(["jauheliha"]);
+  await expect(page.locator(".lines li")).toHaveCount(1);
+}
+
+test("a part edited while the proposal was open refuses the whole save", async ({
+  page,
+}) => {
+  await review(page, 3, sauceAndTitle(), "Lisää kastikkeeseen voita.");
+
+  // Meanwhile, on the sauce's own screen: five decilitres of milk was wrong.
+  const other = await page.context().newPage();
+  await other.goto("/recipes/5/edit");
+  await other.locator(".line").first().locator("input[name$=quantity]").fill("7");
+  await other.locator(".editor-actions button").click();
+  await other.waitForURL(/\/recipes\/5$/);
+  await other.close();
+
+  await save(page);
+
+  await expect(page.locator(".refused")).toContainText("Reseptin osa on muuttunut");
+  // Answered with the form again rather than with the recipe, so the proposal
+  // is still there to be looked at — including its part fields.
+  await expect(page.locator(".edit-lines")).toBeVisible();
+  await expect(page.locator("input[name='line.0.section']")).toHaveCount(1);
+
+  // The newer edit survived, and the proposal's butter never landed.
+  await page.goto("/recipes/5");
+  await expect(page.locator(".lines li").first()).toContainText("7 dl");
+  await expect(page.locator(".lines li")).toHaveCount(2);
+  await expect(page.locator(".lines li")).not.toContainText(["voi"]);
+  await expect(page.locator(".steps li")).toContainText([
+    "Kuumenna maito ja sulata juusto joukkoon.",
+  ]);
+
+  await expectLasagneUntouched(page);
+});
+
+test("a part deleted while the proposal was open refuses the whole save", async ({
+  page,
+}) => {
+  await review(page, 3, sauceAndTitle(), "Lisää kastikkeeseen voita.");
+
+  // Somebody decides the sauce does not belong to this dish after all.
+  const removed = await page.request.post("/recipes/5/delete");
+  expect(removed.ok()).toBe(true);
+
+  await save(page);
+
+  await expect(page.locator(".refused")).toContainText("Reseptin osa on muuttunut");
+
+  // The proposal did not quietly build the sauce back as a second part, and it
+  // did not rename the dish on the way past either.
+  await page.goto("/recipes/3");
+  await expect(page.locator(".part")).toHaveCount(1);
+  await expect(page.locator(".part").first().locator("h2")).toHaveText(
+    "Jauhelihakastike",
+  );
+  await expectLasagneUntouched(page);
+});
+
+test("an ordinary edit of the dish still leaves its parts alone", async ({
+  page,
+}) => {
+  // The other half of the same rule, and the one that must not have changed:
+  // the ordinary editor renders no part field, names no section, and so writes
+  // no part — nothing here needs a part's revision and nothing refuses for the
+  // want of one.
+  await page.goto("/recipes/3/edit");
+  await page.locator("#title").fill("Lasagne uunissa");
+  await page.locator(".editor-actions button").click();
+
+  await expect(page).toHaveURL(/\/recipes\/3$/);
+  await expect(page.getByRole("heading", { name: "Lasagne uunissa" })).toBeVisible();
+  await expect(page.locator(".part")).toHaveCount(2);
+
+  await page.goto("/recipes/5");
+  await expect(page.locator(".lines li")).toContainText(["maito", "juusto"]);
+});

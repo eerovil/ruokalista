@@ -14,6 +14,7 @@ import {
   recipeWire,
   untouchedParts,
 } from "../src/recipe-prompt-edit.ts";
+import { readExpectedParts } from "../src/line-form.ts";
 import type { Recipe } from "../src/recipes.ts";
 
 /**
@@ -362,6 +363,59 @@ test("the proposal reaches the editor as the editor's own fields", () => {
   // Two spare blanks, so a step can be added by hand without asking again.
   assert.equal(form.get("step.2"), "");
   assert.equal(form.get("step.3"), "");
+});
+
+test("the proposal carries each part's own version, not only the dish's", () => {
+  // A part is a recipe row with its own editor screen (ADR-0002), so the dish's
+  // revision does not move when somebody fixes the juustokastike. Without these
+  // fields a proposal read beforehand would delete that fix on the way in.
+  const dish = lasagne();
+  dish.parts[0]!.revision = 11;
+  dish.parts[1]!.revision = 4;
+
+  const form = proposalForm(draft(), dish);
+
+  assert.equal(form.get("revision"), "3");
+  assert.equal(form.get("partCount"), "2");
+  assert.equal(form.get("part.0.id"), "4");
+  assert.equal(form.get("part.0.title"), "Jauhelihakastike");
+  assert.equal(form.get("part.0.revision"), "11");
+  assert.equal(form.get("part.1.id"), "5");
+  assert.equal(form.get("part.1.title"), "Juustokastike");
+  assert.equal(form.get("part.1.revision"), "4");
+
+  // And they read back as what the save checks against.
+  assert.deepEqual(readExpectedParts(form), [
+    { id: 4, title: "Jauhelihakastike", revision: 11 },
+    { id: 5, title: "Juustokastike", revision: 4 },
+  ]);
+});
+
+test("a dish with no parts has nothing extra to hold still", () => {
+  const form = proposalForm(draft(), recipe());
+
+  assert.equal(form.get("partCount"), "0");
+  assert.deepEqual(readExpectedParts(form), []);
+});
+
+test("a part expectation that arrives mangled is dropped, not trusted", () => {
+  // Dropping one cannot weaken the lock: a section naming a part nobody
+  // expected is refused by the save rather than written over.
+  const form = new FormData();
+  form.set("partCount", "3");
+  form.set("part.0.id", "4");
+  form.set("part.0.title", "Jauhelihakastike");
+  form.set("part.0.revision", "11");
+  form.set("part.1.id", "not a row");
+  form.set("part.1.title", "Juustokastike");
+  form.set("part.1.revision", "4");
+  form.set("part.2.id", "6");
+  form.set("part.2.title", "  ");
+  form.set("part.2.revision", "-1");
+
+  assert.deepEqual(readExpectedParts(form), [
+    { id: 4, title: "Jauhelihakastike", revision: 11 },
+  ]);
 });
 
 test("what changed is worked out here rather than taken from the model", () => {

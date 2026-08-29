@@ -364,11 +364,24 @@ part's title in `section`, and `null` means the dish itself. That is what makes
 what the juustokastike is made of, not just that it exists.
 
 - **A section reaches the part's own recipe row.** `replaceRecipe` writes the
-  parts the submitted recipe names: an existing one matched by title has its
-  contents replaced, a name that matches nothing becomes a new part. Everything
-  hangs off the dish's write token, so a concurrently edited dish leaves its
-  parts untouched rather than half-rewritten, and `parent_id` in the `WHERE` is
-  what stops a part of another dish being reachable at all.
+  parts the submitted recipe names: an existing one has its contents replaced, a
+  name that matches nothing becomes a new part. Everything hangs off the dish's
+  write token, so a concurrently edited dish leaves its parts untouched rather
+  than half-rewritten, and `parent_id` in the `WHERE` is what stops a part of
+  another dish being reachable at all.
+- **Each part is locked too, and matching is against what the form saw.** This
+  pull request adds that half. A part is a recipe row with its own editor screen
+  (ADR-0002), so the dish's revision does not move when the juustokastike is
+  edited — and matching a submitted section against the parts loaded at save
+  time would pour a ten-minute-old proposal straight over that edit, or fork a
+  second `Juustokastike` when the first had been deleted. So `proposalForm`
+  carries every part's id, title and revision as hidden fields
+  (`line-form.ts::setExpectedParts`), a section is matched against **those**,
+  and the check that every one of them still holds rides in the dish's own
+  `UPDATE` — the statement that mints the write token everything else is guarded
+  by. One part having moved therefore writes nothing at all, dish included, and
+  the member is told it was a part rather than the recipe. See
+  [data-model](data-model.md) for the lock itself.
 - **The ordinary editor is unaffected, and that is structural rather than
   lucky.** It renders no part field, so it submits no section, so no part is
   named and none is written — which is exactly what it did before. Only the

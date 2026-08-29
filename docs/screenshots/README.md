@@ -101,3 +101,5 @@ commit what it wrote:
 | `92-prompt-edit-replace-form.png` | The same box with **Korvaa resepti** chosen: the mode is a control, not something read out of the wording |
 | `93-prompt-edit-replace-review.png` | Proposed whole-recipe rewrite under replace mode, with what it dropped named as plainly as what it added |
 | `94-prompt-edit-replace-saved.png` | The rewritten recipe after saving — same record, new contents, and the original source text still kept |
+| `95-prompt-edit-part-stale.png` | Proposed refusal when the juustokastike was edited on its own screen while the proposal was open: the whole save is refused, dish included, and the proposal stays on screen (#208) |
+| `96-prompt-edit-part-stale-recipe.png` | The lasagne after that refusal: the newer 7 dl of milk stands, the proposal's butter never landed, and the dish itself did not move either |
