@@ -20,6 +20,8 @@ import {
   type FetchFailure,
   type PageFetcher,
 } from "./recipe-fetch.ts";
+import { readMode, streamRecipeEdit, type PromptMode } from "./recipe-prompt-edit.ts";
+import { findRecipe, type Recipe } from "./recipes.ts";
 
 export type IntakeJobStatus = "queued" | "running" | "ready" | "failed";
 
@@ -46,6 +48,10 @@ interface IntakeJobRow {
   page_image_type: string | null;
   draft_json: string | null;
   error_message: string | null;
+  target_recipe_id: number | null;
+  target_revision: number | null;
+  edit_mode: PromptMode | null;
+  target_recipe_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +71,10 @@ export interface IntakeJob {
   draftJson: string | null;
   draftTitle: string | null;
   errorMessage: string | null;
+  targetRecipeId: number | null;
+  targetRevision: number | null;
+  editMode: PromptMode | null;
+  targetRecipe: Recipe | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,6 +85,8 @@ interface IntakeBody {
   mediaType?: unknown;
   images?: unknown;
   url?: unknown;
+  recipeId?: unknown;
+  mode?: unknown;
 }
 
 const GENERIC_FAILURE = "Reseptin jäsennys ei onnistunut. Yritä uudelleen.";
@@ -128,6 +140,21 @@ export async function createIntakeJob(
   member: Member,
   body: IntakeBody,
 ): Promise<IntakeJob> {
+  const targetRecipeId = readTargetRecipeId(body.recipeId);
+  const targetRecipe = targetRecipeId === null
+    ? null
+    : await findRecipe(env.DB, member.householdId, targetRecipeId);
+  if (targetRecipeId !== null && targetRecipe === null) {
+    throw new IntakeRefused("Muokattavaa reseptiä ei löytynyt.");
+  }
+  let editMode: PromptMode | null = null;
+  if (targetRecipe !== null) {
+    try {
+      editMode = readMode(body.mode);
+    } catch {
+      throw new IntakeRefused("Valitse, täydennetäänkö nykyistä vai korvataanko se.");
+    }
+  }
   const images = readImages(body);
   if (images.length > MAX_IMAGES) {
     throw new IntakeRefused(`Yhteen reseptiin voi antaa enintään ${MAX_IMAGES} kuvaa.`);
@@ -168,8 +195,9 @@ export async function createIntakeJob(
     await env.DB.prepare(
       `INSERT INTO intake_job
          (id, household_id, created_by, status, source_route, source_text,
-          source_url, image_refs)
-       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          source_url, image_refs, target_recipe_id, target_revision, edit_mode,
+          target_recipe_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -181,6 +209,10 @@ export async function createIntakeJob(
         route === "pasted" ? sourceText : null,
         sourceUrl,
         route === "photographed" ? JSON.stringify(imageRefs) : null,
+        targetRecipe?.id ?? null,
+        targetRecipe?.revision ?? null,
+        editMode,
+        targetRecipe === null ? null : JSON.stringify(targetRecipe),
       )
       .run();
   } catch (error) {
@@ -200,6 +232,32 @@ export async function createIntakeJob(
 }
 
 export class IntakeRefused extends Error {}
+
+/** The server-owned edit snapshot, only when every durable identity agrees. */
+export function editTargetFor(job: IntakeJob): Recipe | null {
+  const target = job.targetRecipe;
+  if (job.targetRecipeId === null) return null;
+  if (
+    target === null ||
+    job.editMode === null ||
+    job.targetRevision === null ||
+    target.id !== job.targetRecipeId ||
+    target.revision !== job.targetRevision ||
+    target.householdId !== job.householdId
+  ) {
+    throw new IntakeRefused("Muokkaustyön reseptitiedot eivät täsmää.");
+  }
+  return target;
+}
+
+function readTargetRecipeId(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new IntakeRefused("Muokattavaa reseptiä ei löytynyt.");
+  }
+  return id;
+}
 
 /**
  * The address a linked import will read, or null when none was given.
@@ -383,19 +441,40 @@ export async function processIntakeJob(
 
   try {
     const source = await sourceForJob(env, job, dependencies.fetchPage);
+    const target = editTargetFor(job);
+    if (
+      job.targetRecipeId !== null &&
+      (target === null || job.editMode === null)
+    ) {
+      throw new IntakeRefused(
+        "Resepti on muuttunut tai poistettu. Aloita muokkaus uudelleen.",
+      );
+    }
     const draftJson = dependencies.structure
       ? await dependencies.structure(env, job)
       : await collectValidatedDraft(
-          streamDraft(
-            env,
-            source,
-            await ingredientsFor(env.DB, job.householdId),
-          ),
+          target === null
+            ? streamDraft(
+                env,
+                source,
+                await ingredientsFor(env.DB, job.householdId),
+              )
+            : streamRecipeEdit(
+                env,
+                target,
+                source,
+                await ingredientsFor(env.DB, job.householdId),
+                job.editMode!,
+              ),
         );
 
     // `draftStream` validates before complete; validate once more at the
     // persistence boundary so a malformed value can never become a ready job.
-    draftFromJson(draftJson, source, STRUCTURED_BY);
+    draftFromJson(
+      draftJson,
+      target === null ? source : { route: "pasted", text: target.sourceText },
+      STRUCTURED_BY,
+    );
 
     const completed = await env.DB.prepare(
       `UPDATE intake_job
@@ -773,9 +852,22 @@ function toJob(row: IntakeJobRow): IntakeJob {
     draftJson: row.draft_json,
     draftTitle: draftTitle(row.draft_json),
     errorMessage: row.error_message,
+    targetRecipeId: row.target_recipe_id ?? null,
+    targetRevision: row.target_revision ?? null,
+    editMode: row.edit_mode ?? null,
+    targetRecipe: parseTargetRecipe(row.target_recipe_json ?? null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseTargetRecipe(json: string | null): Recipe | null {
+  if (json === null) return null;
+  try {
+    return JSON.parse(json) as Recipe;
+  } catch {
+    return null;
+  }
 }
 
 function parseImageRefs(json: string | null): StoredImageRef[] {

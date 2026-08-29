@@ -72,11 +72,6 @@ import {
   uploadRecipeImageForm,
 } from "./recipe-editor.ts";
 import {
-  promptEditForm,
-  promptEditScreen,
-  promptReviewScreen,
-} from "./recipe-prompt-screens.ts";
-import {
   recipeImageAdminScreen,
   recipeImageConfirmScreen,
   recipeImageSplitter,
@@ -187,11 +182,6 @@ const router = new Router()
   .post("/recipes/kategoriat", requireMemberScreen(categoryBulkForm))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
-  // A change asked for in a sentence (#208). It proposes; the save below is
-  // still the only thing that writes.
-  .get("/recipes/:id/prompt", requireMemberScreen(promptEditScreen))
-  .post("/recipes/:id/prompt", requireMemberScreen(promptEditForm))
-  .post("/recipes/:id/prompt/review", requireMemberScreen(promptReviewScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
   .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))

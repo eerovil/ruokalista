@@ -19,8 +19,6 @@ const EXPECTED_TABLES = BACKUP_TABLES.map(({ name }) => name);
 const RESTORE_ORDER: readonly BackupTableName[] = [
   "household",
   "member",
-  // After household and member: each retained import belongs to both.
-  "intake_job",
   // After household and member: an invitation belongs to one and records who made it.
   "member_invitation",
   "ingredient",
@@ -28,6 +26,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   // nothing itself (#199).
   "category",
   "recipe",
+  // After recipe too: an assisted edit job may target one owned recipe (#215).
+  "intake_job",
   // After recipe, household and member: a selective share points at all three.
   "recipe_share",
   // After recipe: a category is a fact about one dish and points at nothing
@@ -329,6 +329,13 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   for (const row of snapshot.tables.intake_job) {
     requireReference(row, "household_id", householdIds, "intake_job.household_id");
     requireReference(row, "created_by", memberIds, "intake_job.created_by");
+    requireOptionalReference(
+      row,
+      "target_recipe_id",
+      recipeIds,
+      "intake_job.target_recipe_id",
+    );
+    validateIntakeEditSnapshot(row);
   }
   for (const row of snapshot.tables.member_invitation) {
     requireReference(
@@ -517,6 +524,48 @@ function requireReference(
 ): void {
   const value = integerCell(row, column, label);
   if (!ids.has(value)) throw new Error(`snapshot has orphan ${label}=${value}`);
+}
+
+function requireOptionalReference(
+  row: BackupRow,
+  column: string,
+  ids: Set<number>,
+  label: string,
+): void {
+  if (row[column] === null || row[column] === undefined) return;
+  requireReference(row, column, ids, label);
+}
+
+function validateIntakeEditSnapshot(row: BackupRow): void {
+  const targetId = row["target_recipe_id"];
+  const revision = row["target_revision"];
+  const mode = row["edit_mode"];
+  const json = row["target_recipe_json"];
+  if (targetId === null || targetId === undefined) {
+    if (
+      revision !== null && revision !== undefined ||
+      mode !== null && mode !== undefined ||
+      json !== null && json !== undefined
+    ) throw new Error("snapshot intake edit target is incomplete");
+    return;
+  }
+  if (
+    typeof targetId !== "number" || !Number.isInteger(targetId) ||
+    typeof revision !== "number" || !Number.isInteger(revision) || revision < 0 ||
+    mode !== "extend" && mode !== "replace" ||
+    typeof json !== "string"
+  ) throw new Error("snapshot intake edit target is invalid");
+  let target: Record<string, unknown>;
+  try {
+    target = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    throw new Error("snapshot intake edit recipe is not JSON");
+  }
+  if (
+    target["id"] !== targetId ||
+    target["revision"] !== revision ||
+    target["householdId"] !== row["household_id"]
+  ) throw new Error("snapshot intake edit recipe does not match its target");
 }
 
 function integerCell(row: BackupRow, column: string, label: string): number {

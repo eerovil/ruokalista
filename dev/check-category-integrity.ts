@@ -30,7 +30,12 @@ import {
   CategoryBulkRefused,
 } from "../src/category-bulk.ts";
 import type { Member } from "../src/members.ts";
-import { SaveRefused, saveRecipe, replaceRecipe } from "../src/recipe-save.ts";
+import {
+  SaveRefused,
+  saveRecipe,
+  replaceRecipe,
+  StaleRecipe,
+} from "../src/recipe-save.ts";
 import type { RecipeToSave } from "../src/recipe-save.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
@@ -168,6 +173,41 @@ test("a category removed under an edit leaves the recipe exactly as it was", asy
   // first statement deletes the old categories, and a batch that half-ran would
   // have left the dish with none.
   assert.deepEqual(storedCategories(fake), ["keitto"]);
+  const after = fake.sql
+    .prepare("SELECT title, revision FROM recipe WHERE id = ?")
+    .get(id) as { title: string; revision: number };
+  assert.deepEqual(after, before);
+});
+
+test("an AI edit atomically locks the category set it was generated from", async () => {
+  const fake = migratedDatabase();
+  household(fake);
+
+  const id = await saveRecipe(fake.db, MEMBER, recipe(["keitto"]));
+  const before = fake.sql
+    .prepare("SELECT title, revision FROM recipe WHERE id = ?")
+    .get(id) as { title: string; revision: number };
+
+  fake.beforeBatch(() => {
+    fake.sql.exec(`
+      DELETE FROM recipe_category WHERE recipe_id = ${id};
+      INSERT INTO recipe_category (recipe_id, category) VALUES (${id}, 'pasta');
+    `);
+  });
+
+  await assert.rejects(
+    () => replaceRecipe(
+      fake.db,
+      MEMBER,
+      id,
+      before.revision,
+      recipe(["keitto"], "Kaalipata"),
+      { expectedCategories: ["keitto"] },
+    ),
+    StaleRecipe,
+  );
+
+  assert.deepEqual(storedCategories(fake), ["pasta"]);
   const after = fake.sql
     .prepare("SELECT title, revision FROM recipe WHERE id = ?")
     .get(id) as { title: string; revision: number };

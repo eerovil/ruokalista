@@ -169,9 +169,25 @@ test("the same change request is sent under either mode, unrewritten", () => {
   for (const mode of ["extend", "replace"] as const) {
     assert.match(
       editRequestFor(recipe(), asked, NO_INGREDIENTS, mode).messages[0].content,
-      /Käyttäjän muutospyyntö:\n\nTee tästä parempi kokonainen resepti\.$/,
+      /Käyttäjän uusi syöte:\n\nTee tästä parempi kokonainen resepti\.$/,
     );
   }
+});
+
+test("photographs follow the same edit request after the recipe snapshot", () => {
+  const content = editRequestFor(
+    recipe(),
+    {
+      route: "photographed",
+      images: [{ base64: "page-one", mediaType: "image/jpeg" }],
+    },
+    NO_INGREDIENTS,
+    "extend",
+  ).messages[0].content;
+
+  assert.ok(Array.isArray(content));
+  assert.match(String(content[0]?.type === "text" ? content[0].text : ""), /Nykyinen resepti kokonaisuudessaan/);
+  assert.equal(content[1]?.type, "image");
 });
 
 test("both modes have a Finnish name the screens can agree on", () => {
@@ -280,6 +296,20 @@ test("only a plain dish being extended is told there is no cooking order", () =>
 test("source_text is not asked back, because it would be discarded", () => {
   const wire = recipeWire(recipe()) as { source_text: string };
   assert.equal(wire.source_text, "");
+});
+
+test("extra photos guide an edit without becoming a new source of record", () => {
+  const system = editRequestFor(
+    recipe(),
+    { route: "photographed", images: [{ base64: "page", mediaType: "image/jpeg" }] },
+    NO_INGREDIENTS,
+    "extend",
+  ).system;
+
+  assert.match(system, /lisäaineistosta/);
+  assert.match(system, /älä myöskään poista nykyisen reseptin tietoja/);
+  assert.doesNotMatch(system, /source_text on oma tarkka transkriptio/);
+  assert.doesNotMatch(system, /jätä vastaava kenttä null/);
 });
 
 // ------------------------------------------------------------ the request text

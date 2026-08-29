@@ -13,6 +13,7 @@ import {
   type Draft,
   type DraftLine,
   type IntakeSource,
+  requestFor,
 } from "./intake.ts";
 import {
   lineValuesFromDraft,
@@ -199,6 +200,7 @@ export function editSystemPrompt(
   recipe: Recipe,
   ingredients: IngredientSummary[],
   mode: PromptMode,
+  source?: IntakeSource,
 ): string {
   const modeRules = mode === "replace" ? REPLACE_RULES : EXTEND_RULES;
   // A dish with no parts today can still be given one in replace mode, so the
@@ -213,7 +215,24 @@ ${SHARED_EDIT_RULES}${noPhase}
 
 ${DRAFT_RULES}
 
+${source === undefined ? "" : editSourceRules(source)}
+
 ${ingredientDictionary(ingredients)}`;
+}
+
+/** Rules for reading extra material without giving it ownership of the recipe. */
+function editSourceRules(source: IntakeSource): string {
+  if (source.route === "photographed") {
+    return `Käyttäjän uusi syöte on yksi tai useampi kuva lisäaineistosta.
+- Lue kuvat annetussa järjestyksessä ja yhdistä niiden tiedot nykyiseen reseptiin ja muutospyyntöön.
+- Älä keksi kuvien ulkopuolelle jäävää tekstiä, mutta älä myöskään poista nykyisen reseptin tietoja vain siksi, ettei niitä näy kuvissa.`;
+  }
+  if (source.route === "linked") {
+    return `Käyttäjän uusi syöte on verkkosivulta luettua lisäaineistoa.
+- Yhdistä sivun tiedot nykyiseen reseptiin ja muutospyyntöön.
+- Älä käsittele sivua uutena alkuperäistekstinä äläkä poista nykyisen reseptin tietoja vain siksi, ettei sivu mainitse niitä.`;
+  }
+  return "";
 }
 
 /**
@@ -304,7 +323,10 @@ export function recipeWire(recipe: Recipe): unknown {
  * käytetyiksi" cannot be answered without it — then the change request last,
  * where it reads as the instruction.
  */
-export function editUserContent(recipe: Recipe, instruction: string): string {
+export function editUserContent(recipe: Recipe, input: IntakeSource | string) {
+  const source: IntakeSource = typeof input === "string"
+    ? { route: "pasted", text: input }
+    : input;
   const parts =
     recipe.parts.length === 0
       ? ""
@@ -314,7 +336,7 @@ ${recipe.parts.map((part) => `- ${part.title}`).join("\n")}
 
 `;
 
-  const source =
+  const background =
     recipe.sourceText.trim() === ""
       ? ""
       : `Reseptin alkuperäinen lähdeteksti, vain taustatiedoksi:
@@ -323,19 +345,22 @@ ${recipe.sourceText}
 
 `;
 
-  return `Nykyinen resepti kokonaisuudessaan:
+  const context = `Nykyinen resepti kokonaisuudessaan:
 
 ${JSON.stringify(recipeWire(recipe), null, 2)}
 
-${parts}${source}Käyttäjän muutospyyntö:
+${parts}${background}Käyttäjän uusi syöte on tämän viestin lopussa. Käytä sitä muutospyyntönä tai uutena reseptiaineistona valitun toimintatavan mukaan.`;
 
-${instruction}`;
+  const incoming = requestFor(source, []).messages[0]!.content;
+  return typeof incoming === "string"
+    ? `${context}\n\nKäyttäjän uusi syöte:\n\n${incoming}`
+    : [{ type: "text" as const, text: context }, ...incoming];
 }
 
 /** The whole model request for one prompt edit. Exported so a check can read it. */
 export function editRequestFor(
   recipe: Recipe,
-  instruction: string,
+  source: IntakeSource | string,
   ingredients: IngredientSummary[],
   mode: PromptMode,
 ) {
@@ -346,9 +371,14 @@ export function editRequestFor(
       effort: EFFORT,
       format: { type: "json_schema" as const, schema: DRAFT_SCHEMA },
     },
-    system: editSystemPrompt(recipe, ingredients, mode),
+    system: editSystemPrompt(
+      recipe,
+      ingredients,
+      mode,
+      typeof source === "string" ? { route: "pasted", text: source } : source,
+    ),
     messages: [
-      { role: "user" as const, content: editUserContent(recipe, instruction) },
+      { role: "user" as const, content: editUserContent(recipe, source) },
     ],
   };
 }
@@ -361,7 +391,7 @@ export function editRequestFor(
 export function streamRecipeEdit(
   env: Env,
   recipe: Recipe,
-  instruction: string,
+  source: IntakeSource,
   ingredients: IngredientSummary[],
   mode: PromptMode,
 ): ReadableStream<Uint8Array> {
@@ -369,7 +399,7 @@ export function streamRecipeEdit(
   return draftStream(
     () =>
       client.messages.stream({
-        ...editRequestFor(recipe, instruction, ingredients, mode),
+        ...editRequestFor(recipe, source, ingredients, mode),
       }),
     sourceFor(recipe),
   );

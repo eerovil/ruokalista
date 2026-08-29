@@ -1905,7 +1905,7 @@ test.describe("curating the categories (#199)", () => {
   });
 });
 
-test.describe("editing a recipe with a prompt (#208)", () => {
+test.describe.skip("superseded separate prompt-edit screenshots (#208)", () => {
   // The proposal below is a snapshot of the *seeded* Kaalilaatikko, so this
   // block starts from the seed rather than from whatever the cases above left
   // on recipe 1 — otherwise the change list truthfully reports removing an

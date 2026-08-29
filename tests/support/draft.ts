@@ -79,6 +79,8 @@ export interface StubbedCall {
     mediaType?: string;
     images?: Array<{ image?: string; mediaType?: string }>;
     url?: string;
+    recipeId?: string;
+    mode?: "extend" | "replace";
   };
 }
 
@@ -153,6 +155,16 @@ export async function stubStructuring(
            ${pageImageKey === null ? "NULL" : "'image/png'"},
            ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       );
+      if (body.recipeId !== undefined && options.targetRecipe !== undefined) {
+        executeLocalSql(
+          `UPDATE intake_job
+              SET target_recipe_id = ${Number(body.recipeId)},
+                  target_revision = ${Number((options.targetRecipe as { revision?: number }).revision ?? 0)},
+                  edit_mode = ${sql(body.mode ?? "extend")},
+                  target_recipe_json = ${sql(JSON.stringify(options.targetRecipe))}
+            WHERE id = ${sql(id)}`,
+        );
+      }
     }
 
     await route.fulfill({
@@ -186,6 +198,8 @@ export interface StubOptions {
    * into the local bucket under the job's own key.
    */
   linkedImage?: string;
+  /** The server-owned recipe snapshot an edit job was started against (#215). */
+  targetRecipe?: unknown;
 }
 
 function sql(value: string): string {
@@ -279,4 +293,3 @@ export const REMOVED_LINE_DRAFT = {
     },
   ],
 };
-

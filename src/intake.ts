@@ -410,16 +410,19 @@ export const DRAFT_RULES = `Säännöt, joista ei poiketa:
   - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.`;
 
 /** The standing rules, from docs/spec.md's intake flow. */
+function sourceRules(source: IntakeSource): string {
+  return source.route === "photographed"
+    ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
+    : source.route === "linked"
+      ? LINKED_RULES
+      : "";
+}
+
 function systemPrompt(
   ingredients: IngredientSummary[],
   source: IntakeSource,
 ): string {
-  const extra =
-    source.route === "photographed"
-      ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
-      : source.route === "linked"
-        ? LINKED_RULES
-        : "";
+  const extra = sourceRules(source);
 
   return `Rakennat suomenkielisestä reseptistä jäsennellyn reseptin.
 
