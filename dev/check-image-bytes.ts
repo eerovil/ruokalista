@@ -1,38 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import zlib from "node:zlib";
 
 import { extensionFor, readImage } from "../src/image-bytes.ts";
+import { png } from "./support/images.ts";
 
 /**
  * The signature reader is what decides whether bytes are stored at all, so it
  * is checked directly rather than through a browser: a browser test always
  * sends a real image and would agree with an implementation that just said yes.
  */
-
-function chunk(type: string, body: Buffer): Buffer {
-  const head = Buffer.alloc(4);
-  head.writeUInt32BE(body.length);
-  const typed = Buffer.concat([Buffer.from(type, "ascii"), body]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(zlib.crc32(typed) >>> 0);
-  return Buffer.concat([head, typed, crc]);
-}
-
-function png(width: number, height: number): Buffer {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  const pixels = Buffer.alloc(height * (1 + width * 3));
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
-    chunk("IDAT", zlib.deflateSync(pixels)),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-}
 
 /** A JPEG with one comment segment before the frame header, as cameras write. */
 function jpeg(width: number, height: number, sofMarker = 0xffc0): Buffer {

@@ -1,5 +1,10 @@
 import { problem } from "./auth.ts";
-import { extensionFor, readImage } from "./image-bytes.ts";
+import {
+  extensionFor,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_EDGE,
+  readImage,
+} from "./image-bytes.ts";
 import {
   imageStatus,
   type ImageOrigin,
@@ -26,14 +31,9 @@ import type { RouteContext } from "./router.ts";
  * fresh / stale.
  */
 
-/**
- * What we will take in. The byte cap is the ingest guard; the edge cap is the
- * one that matters, because it is pixels that make a picture too big to store
- * and too wide to read on a phone. The editor shrinks before it posts, so only
- * a bulk caller ever meets these.
- */
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_IMAGE_EDGE = 2000;
+// What we will take in lives in `image-bytes.ts`, because a picture found on a
+// recipe page has to clear the same two caps before it is worth downloading.
+// The editor shrinks before it posts, so only a bulk caller ever meets these.
 
 /** A refusal, in both languages this app has to refuse in. */
 export interface ImageRefusal {

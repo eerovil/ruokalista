@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { AGENTDECK_BATCH } from "./support/batch";
 import {
@@ -8,7 +10,7 @@ import {
   stubStructuring,
 } from "./support/draft";
 import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
-import { flatPng } from "./support/png";
+import { flatPng, gradientPng } from "./support/png";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -687,6 +689,41 @@ test.describe("signed in", () => {
     // line worth seeing.
     await page.locator(".source-original").scrollIntoViewIfNeeded();
     await capture(page, { path: `${SHOTS}/80-linked-recipe-source.png` });
+  });
+
+  test("a picture found on the linked page", async ({ page }) => {
+    // The consumer would have fetched this off the page and stored it under the
+    // job; the stub puts the same bytes in the same place, so the review screen
+    // and the save below are the real ones (#205).
+    const found = join(mkdtempSync(join(tmpdir(), "ruokalista-shot-")), "found.png");
+    writeFileSync(found, gradientPng(1200, 800));
+
+    await stubStructuring(page, DRAFT_FIXTURE, {
+      linkedUrl: "https://kotikokki.example/reseptit/uunikaali",
+      linkedText:
+        "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä\n\n" +
+        "Kuullota kaali pannulla ja paista uunissa.",
+      linkedImage: found,
+    });
+
+    await page.goto("/intake");
+    await page
+      .getByLabel("…tai hae resepti nettiosoitteesta")
+      .fill("https://kotikokki.example/reseptit/uunikaali");
+    await page.getByRole("button", { name: "Jäsennä" }).click();
+
+    const shown = page.locator(".found-image img");
+    await expect(shown).toBeVisible();
+    await expect(shown).toHaveJSProperty("naturalWidth", 1200);
+    await shown.scrollIntoViewIfNeeded();
+    // Not full-page: the tab strip is position: fixed, and what is worth
+    // seeing here is the picture with its tick under it.
+    await capture(page, { path: `${SHOTS}/84-intake-found-image.png` });
+
+    await page.getByRole("button", { name: "Tallenna resepti" }).click();
+    await expect(page).toHaveURL(/\/recipes\/\d+$/);
+    await expect(page.locator(".recipe-image img")).toBeVisible();
+    await capture(page, { path: `${SHOTS}/85-linked-recipe-image.png`, fullPage: true });
   });
 
   test("check and correct", async ({ page }) => {

@@ -32,6 +32,7 @@ import {
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
+  intakeJobImage,
   intakeJobReviewScreen,
   intakeJobStatus,
   intakeScreen,
@@ -196,6 +197,7 @@ const router = new Router()
   .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
   .post("/api/intake/imports", requireMember(startIntakeJob))
   .get("/api/intake/imports/:id", requireMember(intakeJobStatus))
+  .get("/api/intake/imports/:id/image", requireMember(intakeJobImage))
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))

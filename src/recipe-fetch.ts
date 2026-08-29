@@ -10,7 +10,20 @@
  * This module never calls a model. It turns an address into the plainest text
  * the page can be reduced to, and everything after that is the ordinary intake
  * path — which is what keeps there being one importer rather than two.
+ *
+ * Issue #205 adds the dish's own photograph to what a page gives up. The rule
+ * ADR-0011 wrote down still holds and is what the picture rules are built on:
+ * nothing on the page is trusted. So the page only names candidate addresses
+ * here, every one of them goes back through the same address guard and the
+ * same redirect-by-hand loop as the page itself, and the bytes are only ever
+ * accepted once they have been identified from their own signature.
  */
+
+import {
+  MAX_IMAGE_BYTES,
+  storableImage,
+  type ImageFacts,
+} from "./image-bytes.ts";
 
 /** How long the whole fetch, redirects included, may take. */
 export const FETCH_TIMEOUT_MS = 12_000;
@@ -23,6 +36,24 @@ export const MAX_SOURCE_TEXT = 24_000;
 
 /** How many redirects are followed, each one re-checked like the first. */
 export const MAX_REDIRECTS = 5;
+
+/**
+ * How long the picture may take, separately from the page.
+ *
+ * Shorter than the page's, on purpose: by the time this runs the recipe itself
+ * is already in hand, and a slow image server must not be able to hold up an
+ * import that has everything that matters.
+ */
+export const IMAGE_TIMEOUT_MS = 8_000;
+
+/**
+ * How many of a page's picture addresses are tried before giving up.
+ *
+ * `Recipe.image` is routinely the same photograph in three or four crops, and
+ * the biggest of them can be past the pixel cap while the next one is not — so
+ * trying more than the first is the difference between a picture and none.
+ */
+export const MAX_IMAGE_CANDIDATES = 4;
 
 /** Below this a page yielded nothing worth calling a recipe. */
 const MIN_FALLBACK_TEXT = 200;
@@ -62,6 +93,15 @@ export interface FetchedPage {
   title: string | null;
   /** Whether structured `schema.org/Recipe` data was found, or text scraped. */
   structured: boolean;
+  /**
+   * Addresses the page offered for the dish's own photograph, best first, and
+   * empty when the page said nothing that can be tied to a recipe (#205).
+   *
+   * Candidates rather than a picture: which of them is actually a storable
+   * image is a question only the bytes can answer, and this module is not
+   * where the fetching decision belongs.
+   */
+  imageUrls: string[];
 }
 
 /**
@@ -144,8 +184,47 @@ export async function fetchRecipePage(
   address: string,
   fetcher: PageFetcher = fetch,
 ): Promise<FetchedPage> {
-  let url = normaliseRecipeUrl(address);
-  const deadline = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const { url, response } = await follow(
+    normaliseRecipeUrl(address),
+    "text/html,application/xhtml+xml",
+    fetcher,
+    AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  );
+
+  const contentType = (response.headers.get("Content-Type") ?? "").toLowerCase();
+  if (
+    contentType !== "" &&
+    !contentType.includes("text/html") &&
+    !contentType.includes("application/xhtml+xml")
+  ) {
+    throw new PageRefused("not_a_page", `Not a web page: ${contentType}`);
+  }
+
+  const markup = await readCapped(response);
+  return readRecipeFromPage(markup, url.toString());
+}
+
+/** Where a hop-by-hop fetch finally landed, and what it answered with. */
+interface Followed {
+  url: URL;
+  response: Response;
+}
+
+/**
+ * One GET, with its redirects walked by hand.
+ *
+ * Every hop goes back through `normaliseRecipeUrl`, so a public address that
+ * bounces to a private one is refused at the bounce instead of being fetched.
+ * The picture fetch shares this rather than owning a second copy: an image
+ * address is exactly as much somebody else's input as the page address is.
+ */
+async function follow(
+  start: URL,
+  accept: string,
+  fetcher: PageFetcher,
+  deadline: AbortSignal,
+): Promise<Followed> {
+  let url = start;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     let response: Response;
@@ -158,7 +237,7 @@ export async function fetchRecipePage(
           // Named honestly. A site that would rather not be read this way can
           // see who is reading, which is the least a fetcher owes it.
           "User-Agent": "Ruokalista/1.0 (recipe import; +https://ruokalista.vilpponen.fi)",
-          Accept: "text/html,application/xhtml+xml",
+          Accept: accept,
           "Accept-Language": "fi,en;q=0.8",
         },
       });
@@ -185,17 +264,7 @@ export async function fetchRecipePage(
       throw new PageRefused("unreachable", `Page answered ${response.status}.`);
     }
 
-    const contentType = (response.headers.get("Content-Type") ?? "").toLowerCase();
-    if (
-      contentType !== "" &&
-      !contentType.includes("text/html") &&
-      !contentType.includes("application/xhtml+xml")
-    ) {
-      throw new PageRefused("not_a_page", `Not a web page: ${contentType}`);
-    }
-
-    const markup = await readCapped(response);
-    return readRecipeFromPage(markup, url.toString());
+    return { url, response };
   }
 
   throw new PageRefused("unreachable", "Too many redirects.");
@@ -248,6 +317,8 @@ async function readCapped(response: Response): Promise<string> {
  */
 export function readRecipeFromPage(markup: string, url: string): FetchedPage {
   const recipe = findRecipeData(markup);
+  const imageUrls = recipeImageUrls(recipe, markup, url);
+
   if (recipe !== null && recipeDataIsComplete(recipe)) {
     const sourceText = recipeText(recipe);
     if (sourceText.trim() !== "") {
@@ -256,6 +327,7 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
         sourceText: capped(sourceText),
         title: stringField(recipe["name"]),
         structured: true,
+        imageUrls,
       };
     }
   }
@@ -268,7 +340,13 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
     throw new PageRefused("no_recipe", "The page yielded no readable text.");
   }
 
-  return { url, sourceText: capped(text), title: null, structured: false };
+  return {
+    url,
+    sourceText: capped(text),
+    title: null,
+    structured: false,
+    imageUrls,
+  };
 }
 
 /** The three fields without which structured data is not a usable recipe. */
@@ -464,6 +542,199 @@ function splitParagraphs(value: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
+}
+
+// ------------------------------------------------------------- the picture
+
+/**
+ * The addresses a page offers for the dish's own photograph, best first (#205).
+ *
+ * Two sources, in the order the issue asks for:
+ *
+ * 1. `schema.org/Recipe`'s own `image`. This is the picture the site itself
+ *    says belongs to *this recipe*, which is the only claim worth acting on.
+ * 2. `og:image`, but **only on a page that carried a `Recipe` node at all**.
+ *    That condition is the whole guard: `og:image` on a recipe page is the
+ *    dish, and `og:image` on any other page is a masthead, a logo or an
+ *    advert. A page with no structured recipe on it gets no picture rather
+ *    than a guessed one — the issue asks for exactly that.
+ *
+ * Everything is resolved against the page's own address and put back through
+ * `normaliseRecipeUrl`, so a picture hosted on a private name is dropped here
+ * and never dialled.
+ */
+export function recipeImageUrls(
+  recipe: JsonObject | null,
+  markup: string,
+  pageUrl: string,
+): string[] {
+  if (recipe === null) return [];
+
+  const raw = [...imageCandidates(recipe["image"], 0), ...openGraphImages(markup)];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  for (const candidate of raw) {
+    let absolute: string;
+    try {
+      absolute = new URL(candidate, pageUrl).toString();
+    } catch {
+      continue;
+    }
+    try {
+      normaliseRecipeUrl(absolute);
+    } catch {
+      continue;
+    }
+    if (seen.has(absolute)) continue;
+    seen.add(absolute);
+    urls.push(absolute);
+    if (urls.length >= MAX_IMAGE_CANDIDATES) break;
+  }
+
+  return urls;
+}
+
+/**
+ * `image` in the shapes the wild uses it in: a string, a list, or an
+ * `ImageObject` stating its `url` or `contentUrl`.
+ */
+function imageCandidates(value: unknown, depth: number): string[] {
+  if (depth > 4) return [];
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? [] : [trimmed];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => imageCandidates(entry, depth + 1));
+  }
+  if (value === null || typeof value !== "object") return [];
+
+  const node = value as JsonObject;
+  return [
+    ...imageCandidates(node["url"], depth + 1),
+    ...imageCandidates(node["contentUrl"], depth + 1),
+  ];
+}
+
+/** The page's `og:image`, in the order the document states them. */
+function openGraphImages(markup: string): string[] {
+  const found: string[] = [];
+
+  for (const match of markup.matchAll(/<meta\b([^>]*)>/gi)) {
+    const attributes = match[1] ?? "";
+    const key = metaAttribute(attributes, "property") ??
+      metaAttribute(attributes, "name");
+    if (key === null) continue;
+    const name = key.toLowerCase();
+    if (name !== "og:image" && name !== "og:image:url" && name !== "og:image:secure_url") {
+      continue;
+    }
+    const content = metaAttribute(attributes, "content");
+    if (content !== null && content.trim() !== "") found.push(content.trim());
+  }
+
+  return found;
+}
+
+/** One attribute off a tag's attribute text, quoted or not. */
+function metaAttribute(attributes: string, name: string): string | null {
+  const pattern = new RegExp(
+    `\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`,
+    "i",
+  );
+  const match = pattern.exec(attributes);
+  if (match === null) return null;
+  const value = match[1] ?? match[2] ?? match[3] ?? "";
+  return decodeEntities(value);
+}
+
+/** A picture that was fetched and identified from its own first bytes. */
+export interface FetchedImage {
+  /** The address it finally came from, after any redirect. */
+  url: string;
+  bytes: ArrayBuffer;
+  contentType: ImageFacts["contentType"];
+}
+
+/**
+ * The first candidate that turns out to be a picture we would store, or null.
+ *
+ * Null rather than a refusal, all the way down: a recipe whose text imported
+ * fine must not fail because somebody else's image server was slow, served a
+ * placeholder, or answered with a 4 000-pixel photograph. Every candidate that
+ * does not work out is simply the next one's turn, and running out of
+ * candidates is not an error either.
+ *
+ * The bytes are read to a cap and then identified by `storableImage`, which is
+ * the same signature-and-size check an uploaded picture goes through. What a
+ * site declares in `Content-Type` is not evidence and is not consulted beyond
+ * refusing an obvious `text/html` error page early.
+ */
+export async function fetchRecipeImage(
+  candidates: readonly string[],
+  fetcher: PageFetcher = fetch,
+): Promise<FetchedImage | null> {
+  const deadline = AbortSignal.timeout(IMAGE_TIMEOUT_MS);
+
+  for (const candidate of candidates.slice(0, MAX_IMAGE_CANDIDATES)) {
+    try {
+      const { url, response } = await follow(
+        normaliseRecipeUrl(candidate),
+        "image/jpeg,image/png,image/webp,image/*;q=0.8",
+        fetcher,
+        deadline,
+      );
+
+      const declared = (response.headers.get("Content-Type") ?? "").toLowerCase();
+      if (declared !== "" && !declared.startsWith("image/")) continue;
+
+      const bytes = await readCappedBytes(response);
+      if (bytes === null) continue;
+
+      const facts = storableImage(bytes);
+      if (facts === null) continue;
+
+      return { url: url.toString(), bytes, contentType: facts.contentType };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/** The body as bytes, or null the moment it grows past what we would keep. */
+async function readCappedBytes(response: Response): Promise<ArrayBuffer | null> {
+  const body = response.body;
+  if (body === null) return null;
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > MAX_IMAGE_BYTES) return null;
+      chunks.push(chunk.value);
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+
+  const joined = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return joined.buffer;
 }
 
 // --------------------------------------------------------------- plain text

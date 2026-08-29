@@ -136,18 +136,63 @@ The address is saved on the recipe as `recipe.source_url`, and `source_route`
 gains `linked`, so how a recipe arrived stays recorded truthfully. The recipe
 screen shows the link inside **Näytä alkuperäinen**, next to the text.
 
-Three checks cover it, none of them spending anything or touching the network.
+Four checks cover it, none of them spending anything or touching the network.
 `dev/check-recipe-fetch.ts` covers the address guard and the extraction against
 fixtures. `dev/check-intake-jobs.ts` drives the job half through
 `processIntakeJob` with a stand-in for `fetch`: that the page is read in the
 consumer, that a job which already has text does not read it again, and that a
 fetch refusal lands on the job as Finnish. `tests/intake.spec.ts` covers the
 screens, with the stub standing in for what the consumer would have written.
+`dev/check-intake-page-image.ts` covers the picture, below.
 
-The picture on the page is **not** imported, which is the one thing in #192's
-list this leaves out. #4 already settled that this app keeps text and discards
-images, and a recipe photograph is somebody else's work; a household still
-uploads or generates one as before.
+### The picture on the page (#205)
+
+#192 shipped without the page's photograph, and
+[ADR-0011](../adr/0011-a-web-address-is-a-third-way-in.md) wrote down why. Issue
+#205 reverses that one rejection, and **this pull request proposes the change**:
+a linked import now brings the dish's own picture in with the recipe. Sending
+somebody back to the site to save the picture and upload it by hand is the same
+friction that made an address worth accepting in the first place.
+
+- **The page names it; nothing is guessed.** `recipeImageUrls` in
+  `src/recipe-fetch.ts` reads `schema.org/Recipe`'s own `image` — a string, a
+  list of crops, or an `ImageObject` — and falls back to `og:image` *only on a
+  page that carried a `Recipe` node at all*. That condition is the guard the
+  issue asks for: `og:image` on a recipe page is the dish, and on any other page
+  it is a masthead or an advert. A page with no structured recipe on it offers
+  no picture. Every candidate is resolved against the page's own address and put
+  back through `normaliseRecipeUrl`, so a picture "hosted" on a private name is
+  dropped before anything is dialled.
+- **Candidates, plural.** `Recipe.image` is routinely the same photograph in
+  three or four crops, and the biggest of them can be past the pixel cap while
+  the next is not. `fetchRecipeImage` tries up to `MAX_IMAGE_CANDIDATES` in the
+  page's own order and takes the first that is really storable.
+- **The bytes are ours.** `keepPageImage` in `src/intake-jobs.ts` stores them in
+  R2 under the job (`intake/<job>/found.<ext>`) and records the key on
+  `intake_job.page_image_key` — a column of its own rather than `image_refs`,
+  because those are a *photographed* import's input pages and are deleted the
+  moment a draft exists. Saving the recipe copies the object onto it through
+  `storeRecipeImage`, so what the household ends up with is indistinguishable
+  from a picture somebody uploaded, and nothing depends on the site keeping its
+  URL alive.
+- **What we will keep is one set of rules.** `storableImage` in
+  `src/image-bytes.ts` holds the byte and pixel caps that the upload route uses,
+  and a found picture has to clear the same ones. A site's `Content-Type` is not
+  evidence; the signature is.
+- **Nothing about it can fail an import.** It is fetched *after* the recipe text
+  is written back onto the job, has its own shorter timeout, and every failure —
+  unreachable, an error page served as an image, too many pixels, bytes that are
+  not a picture — is a log line and an import that carries on without one.
+- **The member sees it before it is saved.** The review screen shows it from
+  `GET /api/intake/imports/:id/image` with a tick that is on by default;
+  unticking it saves the recipe with no picture. Saving deletes the job and its
+  object either way.
+
+`dev/check-recipe-fetch.ts` covers which address a page is read as offering and
+what `fetchRecipeImage` will and will not accept;
+`dev/check-intake-page-image.ts` covers the hand-over to the recipe;
+`tests/intake.spec.ts` covers the review screen with a real picture in the local
+bucket.
 
 Decision #4 is also why the model does the structuring rather than a
 Finnish-language ingredient-line parser: no such parser exists. The

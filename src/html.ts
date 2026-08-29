@@ -487,6 +487,22 @@ const STYLES = `
     display: block; margin-top: .15rem;
     color: var(--warn); font-size: .8rem;
   }
+  /* The picture found on an imported page, shown before it is saved (#205).
+     Contained rather than cropped: the point of showing it is to let somebody
+     see that it is the dish and not the site's masthead, and a crop is exactly
+     what would hide that. */
+  .found-image { margin: 1.2rem 0 0; }
+  .found-image img {
+    display: block; width: 100%;
+    max-height: 40vw; object-fit: contain;
+    background: var(--surface); border-radius: var(--radius);
+  }
+  .found-image .tick {
+    display: flex; align-items: center; gap: .5rem;
+    min-height: var(--tap);
+    color: var(--muted); font-size: .9rem;
+  }
+  .found-image .tick input { width: auto; margin: 0; }
   .save-draft { width: 100%; margin: 1.5rem 0 .5rem; }
   .edit-draft > summary {
     display: inline-flex; align-items: center;

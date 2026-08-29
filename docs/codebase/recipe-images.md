@@ -9,6 +9,15 @@ Pictures are made outside Ruokalista and uploaded (#88). The bytes live in R2
 and `recipe.image_key` holds the object key, so an image is optional and a
 recipe without one is not a special case anywhere.
 
+Issue #205 adds a third way one arrives, and **this pull request proposes it**:
+a recipe imported from a web address brings the page's own photograph with it.
+It is not a new kind of picture — the bytes are fetched server-side, checked the
+same way an upload is, and stored under the same `recipe.image_key` with manual
+provenance, so nothing downstream of `storeRecipeImage` knows the difference.
+The finding and fetching live in `src/recipe-fetch.ts` and the hand-over in
+`src/intake-screens.ts::adoptFoundImage`; see
+[intake](intake.md) for the rules about which address on a page is the dish's.
+
 `recipeImage()` in `src/recipes.ts` is the only thing that renders one, and it
 always renders *something* — the picture, or the same space saying there is
 none, so a list row's height never depends on whether a photo exists. It is
@@ -27,7 +36,11 @@ Anything that renders a picture needs `imageKey` on the row it already loads:
 **Nothing trusts the content type a caller declares.** `src/image-bytes.ts`
 reads the signature and pixel size out of the file's own header, and that
 decides whether the bytes are stored, what type they're served as, and the
-key's extension. The response also carries `nosniff`. `dev/check-image-bytes.ts`
+key's extension. It also holds the two caps — `MAX_IMAGE_BYTES` and
+`MAX_IMAGE_EDGE` — because #205 gives them a second reader: a picture found on
+somebody else's page has to clear the same limits before it is worth
+downloading, and `storableImage` is the check that says so without composing a
+refusal nobody will read. The response also carries `nosniff`. `dev/check-image-bytes.ts`
 checks the reader directly — including that HTML calling itself a PNG is
 refused — because a browser test only ever sends real images.
 
