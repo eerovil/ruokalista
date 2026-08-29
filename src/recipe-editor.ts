@@ -732,7 +732,7 @@ export function editorForm(
     <!-- Outside the form above on purpose: a link, so nothing typed into the
          editor is carried into a prompt edit and quietly proposed away (#208). -->
     <p class="recipe-prompt-edit">
-      <a href="/recipes/${recipe.id}/prompt">Muokkaa promptilla</a>
+      <a href="/intake?recipe=${recipe.id}">Täydennä AI:lla</a>
     </p>
 
     <h2>Alkuperäinen teksti</h2>

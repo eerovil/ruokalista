@@ -5,6 +5,7 @@ import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
   createIntakeJob,
   deleteIntakeJob,
+  editTargetFor,
   findIntakeJob,
   intakeJobImageRef,
   IntakeRefused,
@@ -26,6 +27,7 @@ import {
 } from "./intake.ts";
 import {
   emptyLine,
+  expectedPartFields,
   FormRefused,
   lineCountForRendering,
   lineRows,
@@ -36,6 +38,8 @@ import {
   readLines,
   readSteps,
   readWhole,
+  readExpectedParts,
+  setExpectedParts,
   SPARE_LINES,
   stepValuesForRendering,
   type LineFormValues,
@@ -43,7 +47,12 @@ import {
 } from "./line-form.ts";
 import type { Member } from "./members.ts";
 import { formatMeasurement } from "./quantities.ts";
-import { saveRecipe, SaveRefused } from "./recipe-save.ts";
+import {
+  replaceRecipe,
+  saveRecipe,
+  SaveRefused,
+  StaleRecipe,
+} from "./recipe-save.ts";
 import {
   CATEGORY_STYLE,
   categoryChoices,
@@ -55,6 +64,15 @@ import { normaliseRecipeUrl } from "./recipe-fetch.ts";
 import { storeRecipeImage } from "./recipe-images.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
+import {
+  MODE_LABEL,
+  PROMPT_MODES,
+  proposalChanges,
+  proposalForRecipe,
+  type ProposalChange,
+  type PromptMode,
+} from "./recipe-prompt-edit.ts";
+import { findRecipe, type Recipe } from "./recipes.ts";
 
 /**
  * Intake: getting a recipe into the store by pasting text. The correction
@@ -281,11 +299,11 @@ const STREAMING_ISLAND = `
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
 
-    // The page is not fetched here. The address goes into the job and the
-    // queue consumer reads the site, so a slow page cannot hold this request
-    // open and navigating away does not lose the import.
     // The pages are already shrunk — that happened as each one was chosen —
-    // so pressing the button decodes nothing and costs no memory.
+    // so pressing the button decodes nothing and costs no memory. Nor is a
+    // linked page fetched here: the address goes into the job and the queue
+    // consumer reads the site, so a slow page cannot hold this request open
+    // and navigating away does not lose the import.
     var body;
     if (photographed) {
       body = { images: pages.map(function (page) {
@@ -299,6 +317,8 @@ const STREAMING_ISLAND = `
 
     Promise.resolve(body)
       .then(function (body) {
+        if (form.recipeId) body.recipeId = form.recipeId.value;
+        if (form.mode) body.mode = form.mode.value;
         return fetch('/api/intake/imports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -325,7 +345,8 @@ const STREAMING_ISLAND = `
         progress.textContent = '';
         button.disabled = false;
         if (job && job.id) {
-          window.location.assign('/intake?started=' + encodeURIComponent(job.id));
+          window.location.assign('/intake?started=' + encodeURIComponent(job.id) +
+            (form.recipeId ? '&recipe=' + encodeURIComponent(form.recipeId.value) : ''));
         }
       })
       .catch(function (error) {
@@ -364,6 +385,22 @@ interface CorrectionView {
   steps: StepFormValues[];
   /** The categories ticked on this screen (#196). Never guessed by the model. */
   categories: string[];
+  targetRecipeId: number | null;
+  targetRevision: number | null;
+  targetMode: PromptMode | null;
+  expectedParts: Array<{ id: number; title: string; revision: number }>;
+  /**
+   * What this proposal does to the recipe it started from (#208), worked out
+   * against the job's own snapshot rather than asked of the model.
+   *
+   * An assisted edit lives or dies by "content I did not ask about survives",
+   * and nobody can check that by rereading a long recipe — least of all in
+   * replace mode, where the model was allowed to move everything. It is empty
+   * for an ordinary import, which has no before to compare against, and empty
+   * on a re-render after a refused save, where the form on screen is the
+   * member's own edit rather than the model's proposal.
+   */
+  changes: ProposalChange[];
 }
 
 /**
@@ -403,14 +440,29 @@ function intakeForm(
   sourceText = "",
   submitLabel: string = STRUCTURE_LABEL,
   sourceUrl = "",
+  target?: Recipe,
 ): Raw {
   return html`<form class="stacked" id="intake">
-      <label for="sourceText">Liitä reseptin teksti</label>
+      ${target === undefined
+        ? ""
+        : html`<input type="hidden" name="recipeId" value="${target.id}" />
+          <fieldset class="prompt-modes">
+            <legend>Miten ehdotusta käytetään?</legend>
+            ${PROMPT_MODES.map((mode) => html`<label>
+              <input type="radio" name="mode" value="${mode}" ${mode === "extend" ? "checked" : ""} required />
+              <span><strong>${MODE_LABEL[mode]}</strong></span>
+            </label>`)}
+          </fieldset>`}
+      <label for="sourceText">${target === undefined
+        ? "Liitä reseptin teksti"
+        : "Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa"}</label>
       <textarea
         id="sourceText"
         name="sourceText"
         rows="14"
-        placeholder="Liitä tähän resepti sellaisenaan."
+        placeholder="${target === undefined
+          ? "Liitä tähän resepti sellaisenaan."
+          : "Esimerkiksi: Lisää puuttuva lisuke."}"
       >${sourceText}</textarea>
 
       <label for="sourceUrl">…tai hae resepti nettiosoitteesta</label>
@@ -428,8 +480,9 @@ function intakeForm(
         placeholder="https://…"
       />
       <p class="empty" id="link-help">
-        Sivu haetaan taustalla ja siitä luetaan resepti. Osoite jää talteen
-        reseptin lähteeksi.
+        ${target === undefined
+          ? "Sivu haetaan taustalla ja siitä luetaan resepti. Osoite jää talteen reseptin lähteeksi."
+          : "Sivu haetaan taustalla ja sen sisältöä käytetään muutosehdotuksessa."}
       </p>
 
       <label for="camera">…tai ota kuva painetusta sivusta</label>
@@ -448,16 +501,16 @@ function intakeForm(
 
       <p class="empty" id="photo-help">
         Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
-        kaikista tulee yksi resepti siinä järjestyksessä kuin ne ovat tässä.
-        Kuvat pienennetään selaimessa ja säilytetään yksityisesti jäsennyksen
-        ajan. Onnistuneesta tuonnista talteen jää vain sivuilta luettu teksti.
+        niitä käytetään annetussa järjestyksessä. Kuvat pienennetään selaimessa
+        ja säilytetään yksityisesti jäsennyksen ajan.
       </p>
 
       <button type="submit" disabled>${submitLabel}</button>
 
       <p class="empty" id="structure-help">
-        Yllä oleva teksti, osoite tai kuvat luetaan ja niistä kootaan resepti
-        aineksineen ja valmistusohjeineen. Se kestää hetken.
+        ${target === undefined
+          ? "Yllä oleva teksti, osoite tai kuvat luetaan ja niistä kootaan resepti aineksineen ja valmistusohjeineen. Se kestää hetken."
+          : "Yllä oleva teksti, osoite tai kuvat yhdistetään nykyiseen reseptiin. Saat kokonaisen ehdotuksen tarkistettavaksi. Se kestää hetken."}
       </p>
     </form>
 
@@ -603,6 +656,12 @@ export async function intakeScreen(
   member: Member,
   refusal?: { message: string; title: string },
 ): Promise<Response> {
+  const handedTarget = url.searchParams.get("recipe");
+  const targetId = Number(handedTarget);
+  const target = handedTarget !== null && Number.isSafeInteger(targetId) && targetId > 0
+    ? await findRecipe(env.DB, member.householdId, targetId)
+    : null;
+  if (handedTarget !== null && target === null) return intakeNotFound(member);
   const jobs = await listIntakeJobs(env.DB, member.householdId);
   const started = url.searchParams.get("started");
   const startedJob = jobs.find((job) => job.id === started);
@@ -614,18 +673,20 @@ export async function intakeScreen(
   }
   const confirmed = startedJob !== undefined;
   return page(
-    "Lisää resepti",
-    html`<h1>Lisää resepti</h1>
+    target === null ? "Lisää resepti" : `Täydennä reseptiä: ${target.title}`,
+    html`<h1>${target === null ? "Lisää resepti" : "Täydennä reseptiä"}</h1>
+      ${target === null ? "" : html`<p><strong>${target.title}</strong></p>
+        <p class="empty">Nykyinen resepti on mukana taustana. Saat kokonaisen ehdotuksen tarkistettavaksi ennen tallennusta.</p>`}
       ${confirmed
         ? html`<p class="status">Reseptiä käsitellään taustalla. Voit jatkaa Ruokalistan käyttöä.</p>`
         : ""}
       ${refusal === undefined
         ? ""
         : html`<p class="refused">${refusal.message}</p>`}
-      ${intakeForm()}
-      ${quickSaveForm(refusal?.title ?? "")}
+      ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
+      ${target === null ? quickSaveForm(refusal?.title ?? "") : ""}
       ${intakeJobs(jobs)}
-      ${isLocalOrigin(url) ? sampleDraftForm() : ""}
+      ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
     member,
@@ -761,7 +822,21 @@ export async function intakeJobReviewScreen(
   ]);
 
   try {
-    const draft = draftFromJson(job.draftJson, source, STRUCTURED_BY);
+    const target = editTargetFor(job);
+    if (
+      job.targetRecipeId !== null &&
+      (target === null || job.editMode === null)
+    ) return intakeNotFound(member);
+    const current = target === null
+      ? null
+      : await findRecipe(env.DB, member.householdId, target.id);
+    if (target !== null && current === null) return intakeNotFound(member);
+    const parsed = draftFromJson(
+      job.draftJson,
+      target === null ? source : { route: "pasted", text: target.sourceText },
+      STRUCTURED_BY,
+    );
+    const draft = target === null ? parsed : proposalForRecipe(parsed, target);
     return page(
       "Tarkista resepti",
       correctionForm(
@@ -772,6 +847,8 @@ export async function intakeJobReviewScreen(
         address,
         job.id,
         intakeJobImageRef(job) !== null,
+        target,
+        job.editMode,
       ),
       "intake",
       member,
@@ -843,7 +920,15 @@ export async function saveScreen(
     const lineCount = readLineCount(form.get("lineCount"));
     const sourceRoute = readSourceRoute(form.get("sourceRoute"));
     const sourceUrl = readSourceUrl(form.get("sourceUrl"));
-    const recipeId = await saveRecipe(env.DB, member, {
+    const intakeJobId = String(form.get("intakeJobId") ?? "");
+    const intakeJob = intakeJobId === ""
+      ? null
+      : await findIntakeJob(env.DB, intakeJobId, member.householdId);
+    if (intakeJobId !== "" && (intakeJob === null || intakeJob.status !== "ready")) {
+      throw new SaveRefused("Tarkistettavaa tuontia ei enää ole.");
+    }
+    const jobTarget = intakeJob === null ? null : editTargetFor(intakeJob);
+    const recipeToSave = {
       title: String(form.get("title") ?? ""),
       yieldPortions: readWhole(form.get("yield")),
       sourceText: String(form.get("sourceText") ?? ""),
@@ -853,11 +938,71 @@ export async function saveScreen(
       steps: readSteps(form),
       lines: readLines(form, lineCount),
       categories: vocabulary.read(form),
-    });
+    };
+    const handedTarget = String(form.get("targetRecipeId") ?? "");
+    if (
+      (jobTarget === null && handedTarget !== "") ||
+      (jobTarget !== null && (
+        handedTarget !== String(jobTarget.id) ||
+        nonNegativeNumberOrNull(form.get("targetRevision")) !== jobTarget.revision ||
+        form.get("targetMode") !== intakeJob?.editMode
+      ))
+    ) {
+      throw new SaveRefused("Muokattava resepti ei vastaa tarkistettua tuontia.");
+    }
+    const targetId = jobTarget?.id ?? null;
+    const target = targetId === null
+      ? null
+      : await findRecipe(env.DB, member.householdId, targetId);
+    let recipeId: number;
+    if (target === null) {
+      if (handedTarget !== "") {
+        throw new SaveRefused("Muokattavaa reseptiä ei enää ole.");
+      }
+      recipeId = await saveRecipe(env.DB, member, recipeToSave);
+    } else {
+      if (JSON.stringify(target.categories) !== JSON.stringify(jobTarget?.categories)) {
+        throw new StaleRecipe(
+          "Reseptin kategoriat ovat muuttuneet. Aloita AI-muokkaus uudelleen.",
+        );
+      }
+      await replaceRecipe(
+        env.DB,
+        member,
+        target.id,
+        nonNegativeNumberOrNull(form.get("targetRevision")) ?? -1,
+        {
+          ...recipeToSave,
+          sourceText: target.sourceText,
+          sourceRoute: target.sourceRoute,
+          sourceUrl: target.sourceUrl,
+          structuredBy: null,
+        },
+        {
+          hasParts:
+            target.parts.length > 0 ||
+            readLines(form, lineCount).some((line) => line.section !== null) ||
+            readSteps(form).some((step) => step.section !== null),
+          parts: target.parts.map((part) => ({ id: part.id, title: part.title })),
+          expectedParts: jobTarget?.parts.map((part) => ({
+            id: part.id,
+            title: part.title,
+            revision: part.revision,
+          })),
+          expectedCategories: jobTarget?.categories,
+        },
+      );
+      recipeId = target.id;
+    }
 
-    const intakeJobId = String(form.get("intakeJobId") ?? "");
     if (intakeJobId !== "" && form.get("keepImage") === "1") {
-      await adoptFoundImage(env, member, intakeJobId, recipeId);
+      await adoptFoundImage(
+        env,
+        member,
+        intakeJobId,
+        recipeId,
+        jobTarget?.imageKey ?? null,
+      );
     }
     if (intakeJobId !== "") {
       try {
@@ -881,6 +1026,24 @@ export async function saveScreen(
       throw error;
     }
 
+    if (error instanceof StaleRecipe) {
+      const targetId = positiveNumberOrNull(form.get("targetRecipeId"));
+      const latest = targetId === null
+        ? null
+        : await findRecipe(env.DB, member.householdId, targetId);
+      if (latest !== null) {
+        form.set("targetRevision", String(latest.revision));
+        setExpectedParts(
+          form,
+          latest.parts.map((part) => ({
+            id: part.id,
+            title: part.title,
+            revision: part.revision,
+          })),
+        );
+      }
+    }
+
     // Re-render the raw submitted values, not parsed approximations. An invalid
     // number is precisely the value the member needs to see and correct.
     return page(
@@ -892,6 +1055,16 @@ export async function saveScreen(
       400,
     );
   }
+}
+
+function positiveNumberOrNull(value: FormDataEntryValue | null): number | null {
+  const parsed = Number(String(value ?? ""));
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function nonNegativeNumberOrNull(value: FormDataEntryValue | null): number | null {
+  const parsed = Number(String(value ?? ""));
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 /**
@@ -918,6 +1091,7 @@ export async function adoptFoundImage(
   member: Member,
   jobId: string,
   recipeId: number,
+  expectedImageKey: string | null = null,
 ): Promise<void> {
   try {
     const found = await readIntakeJobImage(env, jobId, member.householdId);
@@ -927,7 +1101,7 @@ export async function adoptFoundImage(
       env,
       member.householdId,
       recipeId,
-      null,
+      expectedImageKey,
       found.bytes,
     );
     if (refusal !== null) {
@@ -988,6 +1162,8 @@ function correctionForm(
   sourceUrl = "",
   intakeJobId = "",
   intakeImage = false,
+  target: Recipe | null = null,
+  targetMode: PromptMode | null = null,
 ): Raw {
   const rows = [
     ...draft.lines,
@@ -1021,7 +1197,16 @@ function correctionForm(
       steps,
       // Nothing proposes these. The model is not asked to guess what kind of
       // food a page describes, so the one moment somebody knows is this one.
-      categories: [],
+      categories: target?.categories ?? [],
+      targetRecipeId: target?.id ?? null,
+      targetRevision: target?.revision ?? null,
+      targetMode,
+      expectedParts: target?.parts.map((part) => ({
+        id: part.id,
+        title: part.title,
+        revision: part.revision,
+      })) ?? [],
+      changes: target === null ? [] : proposalChanges(draft, target),
     },
     ingredients,
     vocabulary,
@@ -1052,6 +1237,16 @@ function correctionFormFromSubmission(
       ),
       steps: stepValuesForRendering(form),
       categories: vocabulary.read(form),
+      targetRecipeId: positiveNumberOrNull(form.get("targetRecipeId")),
+      targetRevision: nonNegativeNumberOrNull(form.get("targetRevision")),
+      targetMode:
+        form.get("targetMode") === "extend" || form.get("targetMode") === "replace"
+          ? form.get("targetMode") as PromptMode
+          : null,
+      expectedParts: readExpectedParts(form),
+      // What is on screen after a refusal is what the member typed, so there is
+      // no proposal left to summarise.
+      changes: [],
     },
     ingredients,
     vocabulary,
@@ -1279,6 +1474,32 @@ function isLineFormValues(
   return "ingredientChoice" in row;
 }
 
+/**
+ * "This proposal adds the butter to the juustokastike and drops nothing else."
+ *
+ * Only ever rendered when there is something to say. An empty list means either
+ * a proposal that changed no ingredient, step or name, or a screen re-rendered
+ * from the member's own submission — and neither is worth a sentence claiming
+ * the model left everything alone.
+ */
+function proposedChanges(changes: ProposalChange[]): Raw {
+  if (changes.length === 0) return html``;
+
+  return html`<p>Ehdotus muuttaa seuraavaa:</p>
+    <ul class="prompt-changes">
+      ${changes.map((change) => html`<li>
+        ${change.kind === "added"
+          ? "Lisätty"
+          : change.kind === "removed"
+            ? "Poistettu"
+            : change.kind === "kept"
+              ? "Säilyy"
+              : "Muutettu"}
+        — ${change.what}
+      </li>`)}
+    </ul>`;
+}
+
 function renderCorrection(
   view: CorrectionView,
   ingredients: IngredientSummary[],
@@ -1288,7 +1509,13 @@ function renderCorrection(
     (isLineFormValues(row) ? row.section : row.section ?? "").trim() !== ""
   ) || view.steps.some((step) => step.section.trim() !== "");
 
-  return html`<h1>Tarkista resepti</h1>
+  return html`<h1>${view.targetRecipeId === null
+      ? "Tarkista resepti"
+      : "Tarkista reseptin muutokset"}</h1>
+    ${view.targetMode === null
+      ? ""
+      : html`<p class="status"><strong>${MODE_LABEL[view.targetMode]}</strong> — tallennus päivittää nykyisen reseptin.</p>
+        ${proposedChanges(view.changes)}`}
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
@@ -1296,6 +1523,12 @@ function renderCorrection(
       <input type="hidden" name="structuredBy" value="${view.structuredBy}" />
       <input type="hidden" name="intakeJobId" value="${view.intakeJobId}" />
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
+      ${view.targetRecipeId === null
+        ? ""
+        : html`<input type="hidden" name="targetRecipeId" value="${view.targetRecipeId}" />
+          <input type="hidden" name="targetRevision" value="${view.targetRevision}" />
+          <input type="hidden" name="targetMode" value="${view.targetMode}" />
+          ${expectedPartFields(view.expectedParts)}`}
 
       ${draftReview(view, ingredients)}
 
@@ -1307,7 +1540,9 @@ function renderCorrection(
            and this is the one moment somebody knows what kind of dish it is. -->
       ${categoryChoices(vocabulary, view.categories)}
 
-      <button type="submit" class="button save-draft">Tallenna resepti</button>
+      <button type="submit" class="button save-draft">${view.targetRecipeId === null
+        ? "Tallenna resepti"
+        : "Tallenna muutokset"}</button>
 
       <!-- The same form, one tap down. A closed details still submits, so the
            99% that needs no change never opens it and loses nothing. -->

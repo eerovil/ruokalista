@@ -795,12 +795,14 @@ function itemList(
         >
           <summary>
             <span class="shopping-thumb">${thumbnail(item)}</span>
-            <span class="shopping-name">${item.name}</span>
-            <span class="${item.total === AMOUNT_IN_RECIPE
-              ? "shopping-total is-unstated"
-              : "shopping-total"}"
-              >${item.total}</span
-            >
+            <span class="shopping-line">
+              <span class="shopping-name">${item.name}</span>
+              <span class="${item.total === AMOUNT_IN_RECIPE
+                ? "shopping-total is-unstated"
+                : "shopping-total"}"
+                >${item.total}</span
+              >
+            </span>
           </summary>
           <ul class="shopping-from">
             ${item.contributions.map(

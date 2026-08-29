@@ -7,6 +7,20 @@ so the draft is schema-valid by construction rather than parsed and retried. The
 model id and effort are constants, not env overrides — an override was one of the
 things that drifted in #13.
 
+Issue #215 proposes making this same screen and durable job path the assisted
+editor for an existing recipe. `/intake?recipe=:id` keeps every normal input —
+text, photographs and a web address — but adds the explicit **Täydennä
+nykyistä / Korvaa resepti** choice. The job stores a server-loaded snapshot of
+the owned recipe and its parts, so queue delay or retry cannot silently change
+the context the member started from. Its answer is the ordinary intake draft,
+shown in this same review form; the form carries the saved revisions into
+`replaceRecipe`, updates the same recipe row and keeps its original source and
+categories. An ordinary `/intake` job still creates a recipe exactly as before.
+
+The snapshot rather than only a recipe id is the concurrency boundary. The
+model sees what the member chose to edit, while `replaceRecipe` checks the dish
+and each named part are still at those revisions before writing anything.
+
 **`DRAFT_SCHEMA` may only use the JSON Schema subset structured outputs accept.**
 An unsupported keyword is not ignored and does not degrade: the request is a
 400, so *every* model-backed import stops working at once. `maxItems` did
@@ -70,16 +84,15 @@ cookbook in one sitting would cost close to a year's budget.
 `src/intake.ts` are plain Finnish text — iterate on them with a Sonnet agent in
 AgentDeck and paste the result in, rather than looping real imports.
 
-## A second reader of these rules (#208)
+## Existing-recipe edits reuse these rules (#208, #215)
 
-`DRAFT_RULES` and `ingredientDictionary` are exported because a prompt edit —
-changing a saved recipe with a sentence — asks the model for the same draft
-under the same standing rules, and a second copy of them would be a second thing
-to drift. It reuses `DRAFT_SCHEMA`, `draftStream`'s attempt loop and
-`draftFromJson` unchanged; what it adds is its own edit rules and its own
-context. The proposal is reviewed in the recipe editor and saved through
-`POST /recipes/:id`, so nothing about intake's own save path is involved. See
-[recipes](recipes.md).
+`DRAFT_RULES` and `ingredientDictionary` are exported because changing a saved
+recipe asks the model for the same draft under the same standing rules, and a
+second copy would be a second thing to drift. The edit request reuses
+`DRAFT_SCHEMA`, `draftStream`'s attempt loop and `draftFromJson`; it adds the
+server-captured recipe context and the explicit extend/replace rules. Issue
+#215 proposes moving the review and save onto intake's own durable path as
+described above. See [recipes](recipes.md).
 
 ## A web address, and the decision it reverses (#192)
 
@@ -259,6 +272,8 @@ numbered list with a thumbnail and a `Poista` button each, rebuilt whole on
 every change so the numbering always agrees with the list. Pages are downscaled
 one at a time rather than all at once: the order has to survive, and a phone
 decoding eight full-size photographs at the same time is how a tab gets killed.
+*When* that downscale happens is the subject of the #218 section below, which
+moves it from the button to the moment a page is chosen.
 
 `readImages` in `src/intake-jobs.ts` still accepts the older single-`image`
 body. Ruokalista is an installable PWA (#100), so a browser can be running a

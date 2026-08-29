@@ -422,6 +422,8 @@ const STYLES = `
   }
   .chosen .page-name { flex: 1; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
+  /* What an assisted edit proposes to change (#208), on the intake review. */
+  .prompt-changes { list-style: disc; margin: .35rem 0 1rem; padding-left: 1.1rem; }
   .progress {
     margin: .35rem 0 0; padding: .6rem .8rem;
     font-size: .85rem; color: var(--muted);
@@ -690,9 +692,24 @@ const STYLES = `
     width: 1.6rem; height: 1.6rem; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
   }
-  .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  /* The name and the total are one wrapping line of their own, inside the row
+     rather than the row itself (#213). Two things fall out of that. The pair
+     can take a second line when the total is too long to share the first —
+     "1 + 1 kpl + määrä reseptin mukaan" is a real total, and squeezed beside it
+     the name was drawn about three characters wide and ten lines tall. And the
+     picture and the chevron stay where they are while that happens, because
+     they are the row's items and not this line's. */
+  .shopping-line {
+    display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: baseline;
+    gap: .1rem .75rem; min-width: 0;
+  }
+  /* Sized from what it holds rather than from nothing: the name and the total
+     either share the line or the total takes the next one, and neither shrinks
+     the other to a column of single letters. */
+  .shopping-name { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
   .shopping-item[open] .shopping-name { font-weight: 600; }
-  .shopping-total { font-weight: 600; font-variant-numeric: tabular-nums;
+  .shopping-total { flex: 0 1 auto; min-width: 0; margin-left: auto;
+    font-weight: 600; font-variant-numeric: tabular-nums;
     text-align: right; }
   /* An amount the recipe never gave a number to is not a quantity, so it does
      not get a quantity's weight. */
@@ -1097,59 +1114,6 @@ ${pageTail(shell)}`;
   return new Response(document.value, {
     status,
     headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-/**
- * A screen sent in pieces, for the one thing on the reading and editing paths
- * that has to wait on a language model (#208).
- *
- * Cloudflare closes a proxied request that goes ~125 s without a byte, which is
- * why intake streams at all (`src/intake.ts`). A prompt edit is the same shape
- * of wait but not the same shape of work: nothing is written until the member
- * saves, so it does not need a background job's durability — it needs the
- * connection to stay open while the member watches. Sending the shell first and
- * the answer when it arrives does that with no script, which is the standing
- * rule on the editing path.
- *
- * `render` may emit as much as it likes before returning the body it ends on.
- * The status is always 200: the headers are gone by the time anything can be
- * refused, so a refusal is written into the body instead.
- */
-export function streamingPage(
-  title: string,
-  shell: Shell,
-  viewer: Viewer | null,
-  render: (emit: (chunk: Raw) => void) => Promise<Raw>,
-): Response {
-  const encoder = new TextEncoder();
-
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const emit = (chunk: Raw) =>
-        controller.enqueue(encoder.encode(chunk.value));
-
-      emit(pageHead(title, shell, viewer));
-      try {
-        emit(await render(emit));
-      } catch (error) {
-        console.log(JSON.stringify({
-          event: "streamed_page.failed",
-          detail: String((error as Error)?.message ?? error),
-        }));
-        emit(html`<p class="refused">Jokin meni pieleen. Yritä uudelleen.</p>`);
-      }
-      emit(pageTail(shell));
-      controller.close();
-    },
-  });
-
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
   });
 }
 

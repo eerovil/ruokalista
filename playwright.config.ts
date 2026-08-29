@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { ensureDevVars } from "./tests/support/dev-vars.ts";
 import { ensureLocalD1 } from "./tests/support/local-d1.ts";
+import { browserMaxFailures } from "./tests/support/playwright-policy.ts";
 
 // Before anything starts, and deliberately not in a globalSetup: the `wrangler
 // dev` below reads .dev.vars as it boots, so the values have to be on disk
@@ -36,6 +37,7 @@ export default defineConfig({
   // bytes — and a retry would have kept both hidden. If something starts
   // failing intermittently, that is the finding, not the noise.
   retries: 0,
+  maxFailures: browserMaxFailures(process.env),
   workers: 1,
   reporter: process.env["CI"] ? [["list"]] : [["html"], ["list"]],
   timeout: 30_000,
