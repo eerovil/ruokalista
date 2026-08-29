@@ -11,7 +11,9 @@ import {
   type IntakeSource,
 } from "./intake.ts";
 import type { Member } from "./members.ts";
+import { extensionFor } from "./image-bytes.ts";
 import {
+  fetchRecipeImage,
   fetchRecipePage,
   normaliseRecipeUrl,
   PageRefused,
@@ -24,7 +26,8 @@ export type IntakeJobStatus = "queued" | "running" | "ready" | "failed";
 /** The three ways a recipe arrives (#192 added the third). */
 export type IntakeJobRoute = "pasted" | "photographed" | "linked";
 
-interface StoredImageRef {
+/** An image object in R2 that belongs to a job and dies with it. */
+export interface StoredImageRef {
   key: string;
   mediaType: string;
 }
@@ -39,6 +42,8 @@ interface IntakeJobRow {
   source_text: string | null;
   source_url: string | null;
   image_refs: string | null;
+  page_image_key: string | null;
+  page_image_type: string | null;
   draft_json: string | null;
   error_message: string | null;
   created_at: string;
@@ -55,6 +60,8 @@ export interface IntakeJob {
   /** The address a linked import reads, and null on every other route. */
   sourceUrl: string | null;
   imageRefs: StoredImageRef[];
+  /** The picture found on a linked import's page (#205), or null. */
+  pageImage: StoredImageRef | null;
   draftJson: string | null;
   draftTitle: string | null;
   errorMessage: string | null;
@@ -289,7 +296,10 @@ export async function deleteIntakeJob(
   await env.DB.prepare("DELETE FROM intake_job WHERE id = ? AND household_id = ?")
     .bind(id, householdId)
     .run();
-  await deleteImages(env.RECIPE_IMAGES, job.imageRefs);
+  await deleteImages(
+    env.RECIPE_IMAGES,
+    job.pageImage === null ? job.imageRefs : [...job.imageRefs, job.pageImage],
+  );
 }
 
 /** The Queue entrypoint. Every message is explicitly acknowledged or retried. */
@@ -396,6 +406,10 @@ export async function processIntakeJob(
       .bind(draftJson, id, leaseId)
       .run();
     if (completed.meta.changes !== 1) return "done";
+    // The photographed pages have done their work the moment a draft exists.
+    // A linked job's found picture is deliberately not touched here: it is the
+    // dish's photograph, wanted by the review screen and again at save, and
+    // `deleteIntakeJob` is what takes it.
     await deleteImages(env.RECIPE_IMAGES, job.imageRefs);
   } catch (error) {
     await markOwnedFailed(env.DB, id, leaseId, jobFailureMessage(error));
@@ -448,6 +462,8 @@ async function sourceForJob(
       .bind(page.sourceText, page.url, job.id)
       .run();
 
+    await keepPageImage(env, job, page.imageUrls, fetchPage);
+
     return { route: "linked", url: page.url, text: page.sourceText };
   }
 
@@ -462,6 +478,94 @@ async function sourceForJob(
   }
   if (images.length === 0) throw new Error("The photographed intake has no pages.");
   return { route: "photographed", images };
+}
+
+/**
+ * Store the page's own photograph against the job, if it gave up one (#205).
+ *
+ * The bytes are copied rather than the address kept: a household's recipe must
+ * not go blank because somebody else reorganised their media library or
+ * started refusing hotlinks, which is what ADR-0011's "nothing is stored but
+ * text and the address" has been amended to allow.
+ *
+ * Nothing in here may fail the import. The recipe — the name, the ingredients,
+ * the method — is already read and already written back by the time this runs,
+ * and losing all of it because an image server was slow would be a far worse
+ * trade than importing a recipe with no picture on it. So every failure is a
+ * log line and a job that carries on without one.
+ */
+async function keepPageImage(
+  env: Env,
+  job: IntakeJob,
+  candidates: string[],
+  fetchPage?: PageFetcher,
+): Promise<void> {
+  if (candidates.length === 0) return;
+
+  try {
+    const image = fetchPage
+      ? await fetchRecipeImage(candidates, fetchPage)
+      : await fetchRecipeImage(candidates);
+    if (image === null) {
+      console.log(JSON.stringify({
+        event: "intake.page_image_missed",
+        job_id: job.id,
+        candidates: candidates.length,
+      }));
+      return;
+    }
+
+    const key = `intake/${job.id}/found.${extensionFor(image.contentType)}`;
+    await env.RECIPE_IMAGES.put(key, image.bytes, {
+      httpMetadata: { contentType: image.contentType },
+    });
+
+    await env.DB.prepare(
+      "UPDATE intake_job SET page_image_key = ?, page_image_type = ? WHERE id = ?",
+    )
+      .bind(key, image.contentType, job.id)
+      .run();
+
+    console.log(JSON.stringify({
+      event: "intake.page_image_kept",
+      job_id: job.id,
+      bytes: image.bytes.byteLength,
+      media_type: image.contentType,
+    }));
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: "intake.page_image_failed",
+      job_id: job.id,
+      detail: String((error as Error)?.message ?? error),
+    }));
+  }
+}
+
+/**
+ * The picture a linked job found, ready to become the recipe's own.
+ *
+ * Household-scoped like every other read here, and null whenever there is no
+ * picture to hand over — including for a photographed job, whose stored images
+ * are its input pages and not a photograph of the dish.
+ */
+export async function readIntakeJobImage(
+  env: Env,
+  id: string,
+  householdId: number,
+): Promise<{ bytes: ArrayBuffer; mediaType: string } | null> {
+  const job = await findIntakeJob(env.DB, id, householdId);
+  const ref = intakeJobImageRef(job);
+  if (ref === null) return null;
+
+  const object = await env.RECIPE_IMAGES.get(ref.key);
+  if (object === null) return null;
+  return { bytes: await object.arrayBuffer(), mediaType: ref.mediaType };
+}
+
+/** The one image a linked job may carry, or null on every other route. */
+export function intakeJobImageRef(job: IntakeJob | null): StoredImageRef | null {
+  if (job === null || job.sourceRoute !== "linked") return null;
+  return job.pageImage;
 }
 
 /** Read the existing NDJSON retry protocol without involving a browser. */
@@ -607,10 +711,15 @@ export async function maintainIntakeJobs(env: Env): Promise<void> {
 
 async function deleteOrphanedIntakeImages(env: Env): Promise<void> {
   const { results } = await env.DB.prepare(
-    "SELECT image_refs FROM intake_job WHERE image_refs IS NOT NULL",
-  ).all<{ image_refs: string }>();
+    `SELECT image_refs, page_image_key
+       FROM intake_job
+      WHERE image_refs IS NOT NULL OR page_image_key IS NOT NULL`,
+  ).all<{ image_refs: string | null; page_image_key: string | null }>();
   const referenced = new Set(
-    results.flatMap((row) => parseImageRefs(row.image_refs).map((ref) => ref.key)),
+    results.flatMap((row) => [
+      ...parseImageRefs(row.image_refs).map((ref) => ref.key),
+      ...(row.page_image_key === null ? [] : [row.page_image_key]),
+    ]),
   );
   const oldestOrphan = Date.now() - 24 * 60 * 60 * 1000;
   let cursor: string | undefined;
@@ -649,6 +758,9 @@ function toJob(row: IntakeJobRow): IntakeJob {
     sourceText: row.source_text,
     sourceUrl: row.source_url,
     imageRefs: parseImageRefs(row.image_refs),
+    pageImage: row.page_image_key === null || row.page_image_type === null
+      ? null
+      : { key: row.page_image_key, mediaType: row.page_image_type },
     draftJson: row.draft_json,
     draftTitle: draftTitle(row.draft_json),
     errorMessage: row.error_message,

@@ -1,10 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   DRAFT_FIXTURE,
   stubStructuring,
 } from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
+import { flatPng } from "./support/png";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -144,6 +148,85 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   const link = page.locator(".source-link a");
   await expect(link).toHaveText("kotikokki.example");
   await expect(link).toHaveAttribute("href", LINKED_URL);
+});
+
+/** The picture the consumer found on the page, on disk for the stub to store. */
+function foundPictureFile(): string {
+  const path = join(mkdtempSync(join(tmpdir(), "ruokalista-found-")), "found.png");
+  writeFileSync(path, flatPng(900, 600, [180, 120, 60]));
+  return path;
+}
+
+test("a picture found on the page is shown, and saved with the recipe", async ({
+  page,
+}) => {
+  await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedText: LINKED_TEXT,
+    linkedUrl: LINKED_URL,
+    linkedImage: foundPictureFile(),
+  });
+
+  await page.goto("/intake");
+  await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  // Seen before it is saved, and really loaded rather than a broken image: the
+  // point of showing it is that somebody can tell the dish from a masthead.
+  const shown = page.locator(".found-image img");
+  await expect(shown).toBeVisible();
+  await expect(shown).toHaveJSProperty("naturalWidth", 900);
+  const keep = page.getByLabel("Tallenna sivulta löytynyt kuva reseptin kuvaksi");
+  await expect(keep).toBeChecked();
+
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  // And it is the recipe's own picture now, served from this app rather than
+  // linked back to the site it came from.
+  const hero = page.locator(".recipe-image img");
+  await expect(hero).toBeVisible();
+  await expect(hero).toHaveJSProperty("naturalWidth", 900);
+  await expect(hero).toHaveAttribute("src", /^\/api\/recipes\/\d+\/image/);
+});
+
+test("unticking the found picture saves the recipe without one", async ({
+  page,
+}) => {
+  await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedText: LINKED_TEXT,
+    linkedUrl: LINKED_URL,
+    linkedImage: foundPictureFile(),
+  });
+
+  await page.goto("/intake");
+  await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await page
+    .getByLabel("Tallenna sivulta löytynyt kuva reseptin kuvaksi")
+    .uncheck();
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(page.locator(".recipe-image img")).toHaveCount(0);
+});
+
+test("an import that found no picture offers nothing to tick", async ({
+  page,
+}) => {
+  await stubStructuring(page, DRAFT_FIXTURE, {
+    linkedText: LINKED_TEXT,
+    linkedUrl: LINKED_URL,
+  });
+
+  await page.goto("/intake");
+  await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
+  await page.getByRole("button", { name: "Jäsennä" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  await expect(page.locator(".found-image")).toHaveCount(0);
 });
 
 test("a partial fetched page is preserved through the review", async ({

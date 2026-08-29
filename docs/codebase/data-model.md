@@ -179,6 +179,21 @@ but nothing references `intake_job`, so the plain create-copy-drop-rename works
 with no cascade to worry about and no child's `REFERENCES` clause to follow the
 rename.
 
+`migrations/0019_intake_page_image.sql`, proposed by #205, adds
+`intake_job.page_image_key` and `page_image_type`: the picture a linked import
+found on the page it read, parked in R2 until the recipe is saved. It is
+deliberately *not* `image_refs`, and the schema is what said so — 0018's
+table-level CHECK requires `image_refs IS NULL` on a linked job, because those
+are a photographed import's input pages and are deleted the moment a draft
+exists. A found photograph is wanted after that, and again at save.
+
+That one is the opposite lesson to 0018: two `ALTER TABLE ADD COLUMN`s and no
+rebuild. The table-level CHECKs name `source_route`, `source_text`, `source_url`
+and `image_refs` and would have had to be rewritten if the new columns were part
+of them; they are not, and `ADD COLUMN` takes a column's own CHECK, which is
+where `page_image_type`'s media-type constraint lives. Which route may carry a
+picture is a rule in `intake-jobs.ts`, not a constraint.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One
