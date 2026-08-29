@@ -100,16 +100,18 @@ async function review(
   recipeId: number,
   draft: unknown,
   instruction: string,
+  mode: "extend" | "replace" = "extend",
 ): Promise<void> {
   await page.goto(`/recipes/${recipeId}/prompt`);
   await page.evaluate(
-    ({ action, draft, instruction }) => {
+    ({ action, draft, instruction, mode }) => {
       const form = document.createElement("form");
       form.method = "post";
       form.action = action;
       for (const [name, value] of [
         ["draft", draft],
         ["instruction", instruction],
+        ["mode", mode],
       ]) {
         const field = document.createElement("input");
         field.type = "hidden";
@@ -124,6 +126,7 @@ async function review(
       action: `/recipes/${recipeId}/prompt/review`,
       draft: JSON.stringify(draft),
       instruction,
+      mode,
     },
   );
   await page.waitForURL(/\/prompt\/review$/);
@@ -142,6 +145,27 @@ test("the recipe offers a prompt edit, and it asks for one sentence", async ({
   await expect(page).toHaveURL(/\/recipes\/1\/prompt$/);
   await expect(page.locator("#instruction")).toBeVisible();
   await expect(page.getByRole("button", { name: "Luo ehdotus" })).toBeVisible();
+
+  // The mode is chosen before the request is written, and it is a real control
+  // rather than something read out of the wording (#208).
+  await expect(page.getByRole("radio", { name: /Täydennä nykyistä/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Korvaa resepti/ })).not.toBeChecked();
+});
+
+test("a request with no mode is refused rather than answered by guessing", async ({
+  page,
+}) => {
+  const refused = await page.request.post("/recipes/1/prompt/review", {
+    form: {
+      draft: JSON.stringify(kaalilaatikko()),
+      instruction: "Tee tästä parempi kokonainen resepti.",
+    },
+  });
+
+  expect(refused.status()).toBe(400);
+  expect(await refused.text()).toContain(
+    "Valitse, täydennetäänkö nykyistä vai korvataanko se.",
+  );
 });
 
 test("a proposal that adds an ingredient opens in the editor and saves", async ({
@@ -159,6 +183,7 @@ test("a proposal that adds an ingredient opens in the editor and saves", async (
   await expect(
     page.getByRole("heading", { name: "Ehdotus tarkistettavaksi" }),
   ).toBeVisible();
+  await expect(page.locator(".prompt-proposal")).toContainText("Täydennä nykyistä");
   await expect(page.locator(".prompt-changes")).toContainText(
     "Lisätty — Aines: kermaviili",
   );
@@ -294,4 +319,239 @@ test("another household's shared recipe cannot be prompt-edited", async ({
       form: { draft: JSON.stringify(kaalilaatikko()), instruction: "Lisää lisuke." },
     })).status(),
   ).toBe(404);
+});
+
+/**
+ * Recipe 3 is Lasagne, written in named parts: Jauhelihakastike (400 g
+ * jauhelihaa, two steps) and Juustokastike (5 dl maitoa, 2 dl juustoa, one
+ * step), with the dish itself owning the lasagne sheets and the assembly.
+ *
+ * A part is a recipe row of its own (ADR-0002), and the draft format says which
+ * row a line belongs to with `section` — so the whole dish goes to the model
+ * and comes back as one document. These are the cases #208 names when it asks
+ * for "lisää kastikkeeseen puuttuvat ainekset".
+ */
+function lasagne() {
+  return {
+    title: "Lasagne",
+    yield_portions: 6,
+    source_text: "",
+    steps: [
+      { text: "Voitele vuoka.", section: null, phase: null, ingredient_refs: [] },
+      {
+        text: "Lämmitä uuni 200 asteeseen.",
+        section: null,
+        phase: "before_parts",
+        ingredient_refs: [],
+      },
+      {
+        text: "Kokoa vuokaan ja paista 40 minuuttia.",
+        section: null,
+        phase: "after_parts",
+        ingredient_refs: [],
+      },
+      {
+        text: "Ruskista jauheliha.",
+        section: "Jauhelihakastike",
+        phase: null,
+        ingredient_refs: [],
+      },
+      {
+        text: "Anna jauhelihan hautua hetki.",
+        section: "Jauhelihakastike",
+        phase: null,
+        ingredient_refs: [],
+      },
+      {
+        text: "Kuumenna maito ja sulata juusto joukkoon.",
+        section: "Juustokastike",
+        phase: null,
+        ingredient_refs: [],
+      },
+    ],
+    lines: [
+      existing(10, "lasagnelevy", 12, "kpl", "12 lasagnelevyä", {
+        phase: "after_parts" as unknown as null,
+      }),
+      existing(7, "jauheliha", 400, "g", "400 g jauhelihaa", {
+        section: "Jauhelihakastike",
+      }),
+      existing(9, "maito", 5, "dl", "5 dl maitoa", { section: "Juustokastike" }),
+      existing(8, "juusto", 2, "dl", "2 dl juustoa", { section: "Juustokastike" }),
+    ],
+  };
+}
+
+test("missing sauce ingredients land on the sauce, not on the dish", async ({
+  page,
+}) => {
+  const draft = lasagne();
+  // What "lisää kastikkeeseen puuttuvat ainekset" means for a juustokastike
+  // that has milk and cheese but no butter, flour or salt.
+  draft.lines.push(
+    existing(null, "voi", 50, "g", "50 g voita", { section: "Juustokastike" }),
+    existing(null, "vehnäjauho", 3, "rkl", "3 rkl vehnäjauhoja", {
+      section: "Juustokastike",
+    }),
+  );
+  draft.steps.push({
+    text: "Sulata voi ja sekoita joukkoon vehnäjauhot.",
+    section: "Juustokastike",
+    phase: null,
+    ingredient_refs: [],
+  });
+
+  await review(page, 3, draft, "Lisää kastikkeeseen puuttuvat ainekset.");
+
+  // The review names the part the change lands in, so it cannot be mistaken
+  // for a change to the dish.
+  await expect(page.locator(".prompt-changes")).toContainText(
+    "Lisätty — Juustokastike: Aines: voi",
+  );
+  await expect(page.locator(".prompt-changes")).toContainText(
+    "Lisätty — Juustokastike: Aines: vehnäjauho",
+  );
+
+  await save(page);
+  await expect(page).toHaveURL(/\/recipes\/3$/);
+
+  // The sauce's own recipe row has them, and its old contents are still there.
+  await page.goto("/recipes/5");
+  await expect(page.locator(".lines li")).toContainText([
+    "maito",
+    "juusto",
+    "voi",
+    "vehnäjauho",
+  ]);
+  await expect(page.locator(".steps li")).toContainText([
+    "Kuumenna maito ja sulata juusto joukkoon.",
+    "Sulata voi ja sekoita joukkoon vehnäjauhot.",
+  ]);
+
+  // And nothing leaked onto the dish or the other part.
+  await page.goto("/recipes/4");
+  await expect(page.locator(".lines li")).toHaveCount(1);
+
+  await page.goto("/recipes/3");
+  const parts = page.locator(".part");
+  await expect(parts).toHaveCount(2);
+  await expect(parts.nth(1).locator("h2")).toHaveText("Juustokastike");
+  await expect(parts.nth(1)).toContainText("voi");
+  await expect(parts.nth(0)).not.toContainText("voi");
+});
+
+test("a part edit does not make a second recipe for the same part", async ({
+  page,
+}) => {
+  const draft = lasagne();
+  draft.lines.push(
+    existing(null, "muskottipähkinä", null, null, "ripaus muskottipähkinää", {
+      section: "Juustokastike",
+    }),
+  );
+
+  await review(page, 3, draft, "Lisää kastikkeeseen ripaus muskottia.");
+  await save(page);
+
+  await page.goto("/recipes/3");
+  // Still exactly two parts, and the sauce is still recipe 5.
+  await expect(page.locator(".part")).toHaveCount(2);
+  await page.goto("/recipes/5");
+  await expect(page.getByRole("heading", { name: "Juustokastike" })).toBeVisible();
+});
+
+test("replace mode rewrites the recipe in place, into the same record", async ({
+  page,
+}) => {
+  // Nothing of the old recipe kept except the dish it is: a wholly rewritten
+  // Kaalilaatikko, which is what "tee tästä parempi kokonainen resepti" asks
+  // for. It is still recipe 1 afterwards.
+  const rewritten = {
+    title: "Uunikaalilaatikko",
+    yield_portions: 6,
+    source_text: "",
+    steps: [
+      { text: "Lämmitä uuni 175 asteeseen.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Suikaloi kaali ja kuullota se öljyssä.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Lisää riisi, vesi ja siirappi ja hauduta.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Paista vuoassa tunti.", section: null, phase: null, ingredient_refs: [] },
+    ],
+    lines: [
+      existing(3, "valkokaali", 1, "kpl", "1 kpl valkokaalia"),
+      existing(1, "öljy", 2, "rkl", "2 rkl öljyä"),
+      existing(2, "vesi", 5, "dl", "5 dl vettä"),
+      existing(null, "riisi", 2, "dl", "2 dl riisiä"),
+      existing(null, "siirappi", 2, "rkl", "2 rkl siirappia"),
+    ],
+  };
+
+  await review(page, 1, rewritten, "Tee tästä parempi kokonainen resepti.", "replace");
+
+  await expect(page.locator(".prompt-proposal")).toContainText("Korvaa resepti");
+  // The whole result is shown, so unintended changes can be seen too — the
+  // dropped ingredient is named rather than silently gone.
+  await expect(page.locator(".prompt-changes")).toContainText(
+    "Muutettu — Nimi: Kaalilaatikko → Uunikaalilaatikko",
+  );
+  await expect(page.locator(".prompt-changes")).toContainText("Lisätty — Aines: riisi");
+  await expect(page.locator(".prompt-changes")).toContainText(
+    "Poistettu — Aines: sitruunaruoho",
+  );
+
+  await save(page);
+
+  // Same recipe, new contents. No second record: the list still has one.
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+  await expect(page.getByRole("heading", { name: "Uunikaalilaatikko" })).toBeVisible();
+  await expect(page.locator(".lines li")).toHaveCount(5);
+  await expect(page.locator(".lines li")).toContainText([
+    "valkokaali",
+    "öljy",
+    "vesi",
+    "riisi",
+    "siirappi",
+  ]);
+  await expect(page.locator(".steps li")).toHaveCount(4);
+  // Source text is the record of what arrived, and even a replace leaves it.
+  await expect(page.locator(".source-text")).toContainText("½ dl öljyä");
+
+  await page.goto("/recipes");
+  await expect(page.getByRole("link", { name: /Kaalilaatikko/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Uunikaalilaatikko/ })).toHaveCount(1);
+});
+
+test("a part the replacement stops naming is kept, not destroyed", async ({
+  page,
+}) => {
+  // A rewrite that folds the lasagne's parts back into the dish. The parts are
+  // recipe rows somebody may have on a menu, so they stay — and the review says
+  // so rather than leaving it to be discovered.
+  const flattened = {
+    title: "Lasagne",
+    yield_portions: 6,
+    source_text: "",
+    steps: [
+      { text: "Ruskista jauheliha.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Kuumenna maito ja sulata juusto.", section: null, phase: null, ingredient_refs: [] },
+      { text: "Kokoa ja paista.", section: null, phase: null, ingredient_refs: [] },
+    ],
+    lines: [
+      existing(10, "lasagnelevy", 12, "kpl", "12 lasagnelevyä"),
+      existing(7, "jauheliha", 400, "g", "400 g jauhelihaa"),
+      existing(9, "maito", 5, "dl", "5 dl maitoa"),
+      existing(8, "juusto", 2, "dl", "2 dl juustoa"),
+    ],
+  };
+
+  await review(page, 3, flattened, "Tee tästä parempi kokonainen resepti.", "replace");
+
+  await expect(page.locator(".prompt-changes")).toContainText(
+    'Säilyy — Osa "Jauhelihakastike" jää ennalleen omaksi reseptikseen',
+  );
+
+  await save(page);
+
+  // The sauce is untouched, with its own ingredients still on it.
+  await page.goto("/recipes/5");
+  await expect(page.locator(".lines li")).toContainText(["maito", "juusto"]);
 });

@@ -92,7 +92,12 @@ commit what it wrote:
 | `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
 | `81-recipes-bulk-category.png` | Proposed recipe list with two recipes ticked: the count saying how many the action will hit, and the category control above the publish buttons (#199) |
 | `82-recipes-bulk-category-done.png` | The same list after one press: both recipes carry **Keitto**, the chip row has gained it, and the notice counts what moved |
-| `86-prompt-edit-form.png` | Proposed *Muokkaa promptilla* box on a saved recipe: one short Finnish change request, with examples of what it is for (#208) |
+| `86-prompt-edit-form.png` | Proposed *Muokkaa promptilla* box on a saved recipe: the **Täydennä nykyistä / Korvaa resepti** choice made before the request is written, and one short Finnish change request under it (#208) |
 | `87-prompt-edit-proposal.png` | The proposal that came back, at the head of the recipe editor: what was asked, what moved, and that nothing has been saved yet |
 | `88-prompt-edit-review.png` | The same review whole — the proposal is reviewed *in* the editor, so every ingredient and step can still be corrected by hand before saving |
 | `89-prompt-edit-saved.png` | The recipe after the ordinary **Tallenna muutokset**: the side dish added, and everything the prompt did not ask about unchanged |
+| `90-prompt-edit-part-review.png` | Proposed review of *Lisää kastikkeeseen puuttuvat ainekset* on the lasagne: the change is named as the juustokastike's, because the model was shown the part's own contents |
+| `91-prompt-edit-part-saved.png` | The lasagne after saving: butter and flour are on the juustokastike's own recipe row, the jauhelihakastike is untouched, and there is no second part |
+| `92-prompt-edit-replace-form.png` | The same box with **Korvaa resepti** chosen: the mode is a control, not something read out of the wording |
+| `93-prompt-edit-replace-review.png` | Proposed whole-recipe rewrite under replace mode, with what it dropped named as plainly as what it added |
+| `94-prompt-edit-replace-saved.png` | The rewritten recipe after saving — same record, new contents, and the original source text still kept |

@@ -168,13 +168,24 @@ export async function saveRecipe(
  * it is guarded by a unique token written by that update, so a deleted or
  * concurrently edited recipe cannot have another recipe's children replaced.
  *
- * source_text and source_route are not editable and are not touched here. Parts
- * are recipes of their own and are edited on their own screens, so this leaves
- * them alone too — but whether there are any is still this call's business,
- * because a dish whose ingredients all live on its parts has none of its own
- * and must still be saveable (issue #184). The caller says so rather than this
- * function counting them: the editor has already loaded the recipe's parts, and
- * a second query would only ask the same question again.
+ * source_text and source_route are not editable and are not touched here.
+ *
+ * **A part is written only when the submitted recipe names one.** The ordinary
+ * editor renders no part field, so every line it submits carries a null
+ * section, no part is named, and the dish's parts are left exactly as they were
+ * — which is the behaviour this function has always had. A prompt edit (#208)
+ * does render the field, because the whole dish is what the model was shown and
+ * "lisää kastikkeeseen puuttuvat ainekset" is a change to a part; a section it
+ * names is matched to one of `options.parts` by title and that part's contents
+ * are replaced under the same lock, and a name that matches nothing becomes a
+ * new part of this dish. A part the submission stops naming is **left alone**
+ * rather than deleted: it is a recipe row somebody may have on a menu, and
+ * silently taking it away is not something a proposal gets to do.
+ *
+ * Whether there are parts at all is the caller's to say rather than this
+ * function's to count, because a dish whose ingredients all live on its parts
+ * has none of its own and must still be saveable (issue #184) — and the caller
+ * has already loaded them.
  */
 export async function replaceRecipe(
   db: D1Database,
@@ -182,7 +193,7 @@ export async function replaceRecipe(
   recipeId: number,
   expectedRevision: number,
   recipe: RecipeToSave,
-  options: ValidateOptions = {},
+  options: ReplaceOptions = {},
 ): Promise<void> {
   validateRecipe(recipe, options);
   if (!Number.isSafeInteger(recipeId) || recipeId <= 0) {
@@ -223,6 +234,7 @@ export async function replaceRecipe(
     guardedDelete(db, "recipe_category", recipeId, guard),
     ...childrenOf(db, recipeId, lines, recipe.steps, null, guard),
     ...categoryStatements(db, recipeId, recipe.categories, guard),
+    ...(await partStatements(db, member, recipeId, recipe, lines, options, guard)),
   ];
 
   const results = await db.batch(statements);
@@ -231,6 +243,91 @@ export async function replaceRecipe(
       "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.",
     );
   }
+}
+
+/**
+ * The statements that write the parts a submitted edit names, and nothing else.
+ *
+ * An existing part is matched by title — the same case-insensitive Finnish
+ * comparison the ingredient gate uses — and has its own contents replaced. A
+ * name that matches nothing becomes a new part of this dish. Everything here
+ * hangs off the *parent's* write token, so the whole tree is written only if
+ * the optimistic lock on the dish held; a concurrently edited dish leaves its
+ * parts untouched rather than half-rewritten.
+ */
+async function partStatements(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+  recipe: RecipeToSave,
+  lines: ResolvedLine[],
+  options: ReplaceOptions,
+  guard: RecipeGuard,
+): Promise<D1PreparedStatement[]> {
+  const names = partNames(recipe);
+  if (names.length === 0) return [];
+
+  const existing = new Map(
+    (options.parts ?? []).map((part) => [
+      part.title.trim().toLocaleLowerCase("fi"),
+      part,
+    ]),
+  );
+  const reserved = new Set<number>();
+  const statements: D1PreparedStatement[] = [];
+
+  for (const [index, name] of names.entries()) {
+    const part = existing.get(name.trim().toLocaleLowerCase("fi"));
+
+    if (part === undefined) {
+      const partId = await unusedId(db, "recipe", reserved);
+      statements.push(
+        recipeRow(
+          db,
+          member,
+          partId,
+          recipe,
+          { title: name, yieldPortions: null, parentId: recipeId, position: index + 1 },
+          guard,
+        ),
+        ...childrenOf(db, partId, lines, recipe.steps, name, guard),
+      );
+      continue;
+    }
+
+    statements.push(
+      // The title is rewritten from the section as submitted, so a part whose
+      // name only differs in case settles on what is on the screen. `parent_id`
+      // in the WHERE is what stops an id from another dish being touched at all.
+      db
+        .prepare(
+          `UPDATE recipe
+              SET title = ?, part_position = ?, revision = revision + 1,
+                  updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
+            WHERE id = ? AND household_id = ? AND parent_id = ?
+              AND EXISTS (
+                SELECT 1 FROM recipe AS dish
+                 WHERE dish.id = ? AND dish.household_id = ? AND dish.edit_token = ?
+              )`,
+        )
+        .bind(
+          name,
+          index + 1,
+          member.id,
+          part.id,
+          member.householdId,
+          recipeId,
+          guard.recipeId,
+          guard.householdId,
+          guard.writeToken,
+        ),
+      guardedDelete(db, "recipe_step", part.id, guard),
+      guardedDelete(db, "ingredient_line", part.id, guard),
+      ...childrenOf(db, part.id, lines, recipe.steps, name, guard),
+    );
+  }
+
+  return statements;
 }
 
 /** The dish's parts, in the order they first appear on the page. */
@@ -257,17 +354,28 @@ function recipeRow(
     parentId: number | null;
     position: number | null;
   },
+  guard?: RecipeGuard,
 ): D1PreparedStatement {
-  return db
-    .prepare(
-      `INSERT INTO recipe
-         (id, household_id, title, yield_portions, source_text, source_route,
+  const columns = `(id, household_id, title, yield_portions, source_text, source_route,
           source_url, structured_by, structured_at, created_at, created_by,
-          updated_at, updated_by, parent_id, part_position, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
+          updated_at, updated_by, parent_id, part_position, revision)`;
+  const values = `?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?,
-               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0)`,
-    )
+               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0`;
+
+  const statement =
+    guard === undefined
+      ? db.prepare(`INSERT INTO recipe ${columns} VALUES (${values})`)
+      : db.prepare(
+          `INSERT INTO recipe ${columns}
+           SELECT ${values}
+            WHERE EXISTS (
+              SELECT 1 FROM recipe AS dish
+               WHERE dish.id = ? AND dish.household_id = ? AND dish.edit_token = ?
+            )`,
+        );
+
+  const bound = statement
     .bind(
       id,
       member.householdId,
@@ -282,7 +390,12 @@ function recipeRow(
       member.id,
       as.parentId,
       as.position,
+      ...(guard === undefined
+        ? []
+        : [guard.recipeId, guard.householdId, guard.writeToken]),
     );
+
+  return bound;
 }
 
 /** The lines and steps belonging to one recipe — the dish, or one of its parts. */
@@ -677,6 +790,24 @@ export interface ValidateOptions {
    * empty array there really is an empty recipe.
    */
   hasParts?: boolean;
+}
+
+/** One of a dish's existing parts, as the caller already has it loaded. */
+export interface ExistingPart {
+  id: number;
+  title: string;
+}
+
+export interface ReplaceOptions extends ValidateOptions {
+  /**
+   * The dish's existing parts (#208).
+   *
+   * Only consulted when the submitted recipe actually names a section, which
+   * the ordinary editor never does. It is what lets a proposal say "these are
+   * the juustokastike's ingredients now" and have that land on the part's own
+   * recipe row rather than being dropped for belonging to no row here.
+   */
+  parts?: readonly ExistingPart[];
 }
 
 /**

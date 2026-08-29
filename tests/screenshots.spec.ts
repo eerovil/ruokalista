@@ -1946,21 +1946,26 @@ test.describe("editing a recipe with a prompt (#208)", () => {
   }) => {
     await context.addCookies([sessionCookie(1)]);
 
-    // The box, on a recipe that already exists.
+    // The box, on a recipe that already exists — and the choice made before the
+    // request is written: complete the recipe, or replace it (#208).
     await page.goto("/recipes/1");
     await page.getByRole("link", { name: "Muokkaa promptilla" }).click();
     await page.locator("#instruction").fill("Lisää salaatti tämän ruoan lisukkeeksi.");
+    await expect(
+      page.getByRole("radio", { name: /Täydennä nykyistä/ }),
+    ).toBeChecked();
     await capture(page, { path: `${SHOTS}/86-prompt-edit-form.png`, fullPage: true });
 
     // The proposal, in the recipe editor, with what moved named above it.
     await page.evaluate(
-      ({ draft, instruction }) => {
+      ({ draft, instruction, mode }) => {
         const form = document.createElement("form");
         form.method = "post";
         form.action = "/recipes/1/prompt/review";
         for (const [name, value] of [
           ["draft", draft],
           ["instruction", instruction],
+          ["mode", mode],
         ]) {
           const field = document.createElement("input");
           field.type = "hidden";
@@ -1974,6 +1979,7 @@ test.describe("editing a recipe with a prompt (#208)", () => {
       {
         draft: JSON.stringify(PROPOSAL),
         instruction: "Lisää salaatti tämän ruoan lisukkeeksi.",
+        mode: "extend",
       },
     );
     await page.waitForURL(/\/prompt\/review$/);
@@ -2001,6 +2007,221 @@ test.describe("editing a recipe with a prompt (#208)", () => {
     ]);
     await capture(page, {
       path: `${SHOTS}/89-prompt-edit-saved.png`,
+      fullPage: true,
+    });
+  });
+});
+
+test.describe("a prompt edit that changes a named part (#208)", () => {
+  // Recipe 3 is the seeded lasagne, written in named parts. Same reason as the
+  // block above for starting from the seed: the proposal is a snapshot of it.
+  test.beforeAll(reseed);
+
+  function sauceLine(
+    ingredientId: number | null,
+    name: string,
+    quantity: number | null,
+    unit: string | null,
+    sourceLine: string,
+    section: string | null,
+  ) {
+    return {
+      quantity,
+      quantity_max: null,
+      unit,
+      alt_quantity: null,
+      alt_unit: null,
+      ingredient_id: ingredientId,
+      ingredient_name: name,
+      source_line: sourceLine,
+      section,
+      phase: null,
+      alternative_group: null,
+      note: null,
+    };
+  }
+
+  test("adding the missing sauce ingredients to the juustokastike", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    const proposal = {
+      title: "Lasagne",
+      yield_portions: 6,
+      source_text: "",
+      steps: [
+        { text: "Voitele vuoka.", section: null, phase: null, ingredient_refs: [] },
+        { text: "Lämmitä uuni 200 asteeseen.", section: null, phase: "before_parts", ingredient_refs: [] },
+        { text: "Kokoa vuokaan ja paista 40 minuuttia.", section: null, phase: "after_parts", ingredient_refs: [] },
+        { text: "Ruskista jauheliha.", section: "Jauhelihakastike", phase: null, ingredient_refs: [] },
+        { text: "Anna jauhelihan hautua hetki.", section: "Jauhelihakastike", phase: null, ingredient_refs: [] },
+        { text: "Sulata voi ja sekoita joukkoon vehnäjauhot.", section: "Juustokastike", phase: null, ingredient_refs: [] },
+        { text: "Kuumenna maito ja sulata juusto joukkoon.", section: "Juustokastike", phase: null, ingredient_refs: [] },
+      ],
+      lines: [
+        sauceLine(10, "lasagnelevy", 12, "kpl", "12 lasagnelevyä", null),
+        sauceLine(7, "jauheliha", 400, "g", "400 g jauhelihaa", "Jauhelihakastike"),
+        sauceLine(9, "maito", 5, "dl", "5 dl maitoa", "Juustokastike"),
+        sauceLine(8, "juusto", 2, "dl", "2 dl juustoa", "Juustokastike"),
+        sauceLine(null, "voi", 50, "g", "50 g voita", "Juustokastike"),
+        sauceLine(null, "vehnäjauho", 3, "rkl", "3 rkl vehnäjauhoja", "Juustokastike"),
+      ],
+    };
+
+    await page.goto("/recipes/3/prompt");
+    await page.evaluate(
+      ({ draft, instruction, mode }) => {
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = "/recipes/3/prompt/review";
+        for (const [name, value] of [
+          ["draft", draft],
+          ["instruction", instruction],
+          ["mode", mode],
+        ]) {
+          const field = document.createElement("input");
+          field.type = "hidden";
+          field.name = name!;
+          field.value = value!;
+          form.appendChild(field);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      },
+      {
+        draft: JSON.stringify(proposal),
+        instruction: "Lisää kastikkeeseen puuttuvat ainekset.",
+        mode: "extend",
+      },
+    );
+    await page.waitForURL(/\/prompt\/review$/);
+
+    // The change is named as the sauce's, not as the dish's.
+    await expect(page.locator(".prompt-changes")).toContainText(
+      "Lisätty — Juustokastike: Aines: voi",
+    );
+    await capture(page, { path: `${SHOTS}/90-prompt-edit-part-review.png` });
+
+    await page.locator(".editor-actions button").click();
+    await expect(page).toHaveURL(/\/recipes\/3$/);
+
+    // The dish afterwards: the butter and flour are inside the juustokastike,
+    // and the jauhelihakastike is exactly as it was.
+    const parts = page.locator(".part");
+    await expect(parts.nth(1)).toContainText("voi");
+    await expect(parts.nth(0)).not.toContainText("voi");
+    await capture(page, {
+      path: `${SHOTS}/91-prompt-edit-part-saved.png`,
+      fullPage: true,
+    });
+  });
+});
+
+test.describe("a prompt edit that replaces the recipe (#208)", () => {
+  test.beforeAll(reseed);
+
+  function plain(
+    ingredientId: number | null,
+    name: string,
+    quantity: number | null,
+    unit: string | null,
+    sourceLine: string,
+  ) {
+    return {
+      quantity,
+      quantity_max: null,
+      unit,
+      alt_quantity: null,
+      alt_unit: null,
+      ingredient_id: ingredientId,
+      ingredient_name: name,
+      source_line: sourceLine,
+      section: null,
+      phase: null,
+      alternative_group: null,
+      note: null,
+    };
+  }
+
+  test("rewriting the whole recipe into the same record", async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([sessionCookie(1)]);
+
+    const rewritten = {
+      title: "Uunikaalilaatikko",
+      yield_portions: 6,
+      source_text: "",
+      steps: [
+        { text: "Lämmitä uuni 175 asteeseen.", section: null, phase: null, ingredient_refs: [] },
+        { text: "Suikaloi kaali ja kuullota se öljyssä.", section: null, phase: null, ingredient_refs: [] },
+        { text: "Lisää riisi, vesi ja siirappi ja hauduta hetki.", section: null, phase: null, ingredient_refs: [] },
+        { text: "Kaada vuokaan ja paista tunnin ajan.", section: null, phase: null, ingredient_refs: [] },
+      ],
+      lines: [
+        plain(3, "valkokaali", 1, "kpl", "1 kpl valkokaalia"),
+        plain(1, "öljy", 2, "rkl", "2 rkl öljyä"),
+        plain(2, "vesi", 5, "dl", "5 dl vettä"),
+        {
+          ...plain(null, "riisi", 2, "dl", "2 dl riisiä"),
+          note: "Lisätty, koska laatikko kaipaa sitä.",
+        },
+        plain(null, "siirappi", 2, "rkl", "2 rkl siirappia"),
+      ],
+    };
+
+    // The mode is picked on the way in, and it is what the review says it is.
+    await page.goto("/recipes/1/prompt");
+    await page.getByRole("radio", { name: /Korvaa resepti/ }).check();
+    await page.locator("#instruction").fill("Tee tästä parempi kokonainen resepti.");
+    await capture(page, {
+      path: `${SHOTS}/92-prompt-edit-replace-form.png`,
+      fullPage: true,
+    });
+
+    await page.evaluate(
+      ({ draft, instruction, mode }) => {
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = "/recipes/1/prompt/review";
+        for (const [name, value] of [
+          ["draft", draft],
+          ["instruction", instruction],
+          ["mode", mode],
+        ]) {
+          const field = document.createElement("input");
+          field.type = "hidden";
+          field.name = name!;
+          field.value = value!;
+          form.appendChild(field);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      },
+      {
+        draft: JSON.stringify(rewritten),
+        instruction: "Tee tästä parempi kokonainen resepti.",
+        mode: "replace",
+      },
+    );
+    await page.waitForURL(/\/prompt\/review$/);
+
+    await expect(page.locator(".prompt-proposal")).toContainText("Korvaa resepti");
+    await expect(page.locator(".prompt-changes")).toContainText(
+      "Poistettu — Aines: sitruunaruoho",
+    );
+    await capture(page, { path: `${SHOTS}/93-prompt-edit-replace-review.png` });
+
+    await page.locator(".editor-actions button").click();
+    await expect(page).toHaveURL(/\/recipes\/1$/);
+    await expect(
+      page.getByRole("heading", { name: "Uunikaalilaatikko" }),
+    ).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/94-prompt-edit-replace-saved.png`,
       fullPage: true,
     });
   });

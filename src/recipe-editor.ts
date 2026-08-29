@@ -64,6 +64,17 @@ export interface EditorAttempt {
    * the ingredients is only in the way.
    */
   withoutPicture?: boolean;
+  /**
+   * Show which named part each line and step belongs to (#208).
+   *
+   * Off for an ordinary edit, and that is load-bearing rather than cosmetic: a
+   * saved part is a recipe of its own with its own screen (ADR-0002), and a
+   * form with no part field submits no section, so `replaceRecipe` leaves the
+   * dish's parts alone. A prompt edit's review turns it on because the model
+   * was shown the whole dish and may have changed a part, and the member has to
+   * be able to see — and correct — which part a row landed in.
+   */
+  withSections?: boolean;
 }
 
 /**
@@ -212,9 +223,15 @@ export async function saveEditForm(
       // the dish is what gets browsed for (#196).
       categories: readCategories(form),
     },
-    // A dish written entirely in named parts has no ingredient lines of its
-    // own, and it is still a whole recipe (issue #184).
-    { hasParts: recipe.parts.length > 0 });
+    {
+      // A dish written entirely in named parts has no ingredient lines of its
+      // own, and it is still a whole recipe (issue #184).
+      hasParts: recipe.parts.length > 0,
+      // The parts a submitted section may land on (#208). This form renders no
+      // part field, so an ordinary edit names none and they are left alone; a
+      // prompt edit's review posts here too, and it does.
+      parts: recipe.parts.map((part) => ({ id: part.id, title: part.title })),
+    });
   } catch (error) {
     if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
       throw error;
@@ -547,6 +564,7 @@ export function editorForm(
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
   const hasPicture = recipe.imageKey !== null;
+  const withSections = attempted?.withSections === true;
   // A refused save re-renders what was ticked, not what is stored: the point of
   // the refusal is that the member's own edit is still in front of them.
   const categories = attempted
@@ -597,6 +615,7 @@ export function editorForm(
         compact: true,
         reorderable: true,
         phases: recipe.parts.length > 0,
+        sections: withSections,
         ...(attempted?.autofocusRow === undefined
           ? {}
           : { autofocusRow: attempted.autofocusRow }),
@@ -614,11 +633,24 @@ export function editorForm(
               aria-label="Järjestys"
               class="position"
             />
+            <!-- Which part this step belongs to, worded exactly as the
+                 correction screen words it. Only a prompt edit's review shows
+                 it; without it a step the model put in a part would submit no
+                 section and land back on the dish. -->
+            ${withSections
+              ? html`<input
+                  name="step.${step.index}.section"
+                  value="${step.section}"
+                  aria-label="Osa"
+                  placeholder="Osa"
+                  class="section"
+                />`
+              : ""}
             <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
             <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
               >${step.text}</textarea
             >
-            ${recipe.parts.length > 0
+            ${recipe.parts.length > 0 && step.section.trim() === ""
               ? phaseSelect(`step.${step.index}.phase`, step.phase)
               : ""}
           </li>`,
