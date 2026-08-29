@@ -135,6 +135,18 @@ async function chooseProduct(
   await result.getByRole("button", { name: "Valitse" }).click();
   await saved;
   await expect(item.locator(".s-status .spinner")).toHaveCount(0);
+  // The row is done, so it has closed itself (#204). Every caller that then
+  // wants something from inside the row has to say so with reopen().
+  await expect(item.locator(".s-shopping-product-summary")).toBeHidden();
+}
+
+/**
+ * The tap #204 accepted as the cost of a tidy list: the rarer actions inside a
+ * finished row — a second package size, dropping one — are behind reopening it.
+ */
+async function reopen(item: ReturnType<typeof row>): Promise<void> {
+  await item.locator("summary").click();
+  await expect(item.locator(".s-shopping-product-summary")).toBeVisible();
 }
 
 /** Dismiss the picker: its backdrop covers the list while it is open. */
@@ -575,15 +587,38 @@ test("choosing a product never moves the page under the member", async ({
 
   release();
   await expect(milk.locator(".s-status .spinner")).toHaveCount(0);
-  await still("the save confirmed");
   await page.unroute("**/ostoslista/tuote");
 
-  // The member is still looking at the ingredient they were working on.
-  const where = await milk.boundingBox();
+  // Once the save has landed the row does move: it closes itself, because the
+  // ingredient is finished (#204). Two things have to survive that.
+  //
+  // The page never scrolls *further down*. Collapsing a row near the end of the
+  // list can leave the document too short to hold the offset it was at, and the
+  // browser then hands some scroll back — the list comes up the screen. That is
+  // allowed, and on a list that now fits in one screen it is the whole point;
+  // what is not allowed is the page running away from the member.
+  await expect(milk.locator(".s-shopping-product-summary")).toBeHidden();
+  const settledScroll = await page.evaluate(() => window.scrollY);
+  expect(settledScroll, "collapsed: never further down").toBeLessThanOrEqual(
+    scrolled,
+  );
+  const settled = await milk.boundingBox();
+  expect(settled!.height, "collapsed: shorter than it was").toBeLessThan(height!);
+  // Measured down the document, not down the screen: when the browser hands
+  // scroll back it does so by exactly what the document lost, so the next
+  // ingredient can end up in the same place on screen while genuinely being
+  // closer to the top of the list.
+  const nextNow = (await following.boundingBox())!.y + settledScroll;
+  expect(nextNow, "collapsed: the next ingredient came closer").toBeLessThan(
+    nextTop! + scrolled,
+  );
+
+  // And the member is still looking at the ingredient they were working on,
+  // with the next one beside it — which was the point of closing the row.
   const view = page.viewportSize();
-  expect(where).not.toBeNull();
-  expect(where!.y).toBeGreaterThanOrEqual(0);
-  expect(where!.y).toBeLessThan(view!.height);
+  expect(settled!.y).toBeGreaterThanOrEqual(0);
+  expect(settled!.y).toBeLessThan(view!.height);
+  await expect(following).toBeInViewport();
 });
 
 /**
@@ -604,6 +639,7 @@ test("a reload after adding a package size lands back on the ingredient", async 
     .getAttribute("data-aines");
   expect(await milk.getAttribute("id")).toBe(`aines-${ingredientId}`);
 
+  await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   await chooseAndReload(page, "Valio kevytmaito");
 
@@ -748,6 +784,8 @@ test("a failed background save is shown, undone, and retryable", async ({
     "Lähetystä ei aloitettu",
   );
   expect(sends).toBe(0);
+  // Still open, and it has to be: the refusal and its retry are what the member
+  // needs to see, so a refused save is the one that does not close the row.
   await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
   await expect(milk.locator(".shopping-thumb img")).toHaveCount(0);
 
@@ -763,6 +801,9 @@ test("a failed background save is shown, undone, and retryable", async ({
   await expect(milk.locator(".s-shopping-product-summary")).toContainText(
     "Kotimaista rasvaton maito 1 l",
   );
+  // A retry that works is a save that worked, so it closes the row like any
+  // other.
+  await expect(milk.locator(".s-shopping-product-summary")).toBeHidden();
 
   await page.unroute("**/ostoslista/tuote");
   await page.unroute("**/ostoslista/laheta");
@@ -1208,6 +1249,7 @@ test("an ingredient can be taught a second package size", async ({ page }) => {
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   const milk = row(page, "maito");
+  await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   // Adding a packet is a fact about the ingredient, so the panel does not ask
   // how far the choice reaches.
@@ -1228,6 +1270,7 @@ test("a package size can be dropped again", async ({ page }) => {
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   const milk = row(page, "maito");
+  await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   await chooseAndReload(page, "Valio kevytmaito");
 

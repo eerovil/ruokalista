@@ -1353,6 +1353,12 @@ function reason(error: unknown): string {
  *     the sheet closes at once; a spinner in the row's own reserved status line
  *     says the save is still going, and a failure puts the row back the way it
  *     was with the refusal and a retry.
+ *   - **A row that is done closes itself.** The open row is the tallest thing
+ *     on the screen at exactly the moment there is nothing left to do in it,
+ *     and #204 is somebody finishing an ingredient and having to hunt for where
+ *     they were. Collapsing on a successful save leaves the chosen product's
+ *     picture on the row and the next ingredient on the next line. Only on
+ *     success: a refusal's error and retry live inside the row.
  *   - **One at a time.** A row that is saving ignores a second choice, and the
  *     send button refuses a second press until the first has answered.
  *   - **A failure is not cached.** An error clears its cache entry, so the next
@@ -1936,6 +1942,10 @@ const SHOPPING_ISLAND = `
         // An ingredient that was going as a note is going as a product now, and
         // the line above the send button says how many of each there are.
         if (before.blockClass.indexOf('is-note') !== -1) countProduct();
+        // This ingredient is done, so it stops taking up half the screen. Only
+        // the part below the summary line goes away, so nothing the member is
+        // looking at moves — the rest of the list just comes closer (#204).
+        row.details.open = false;
         saveSettled(true);
         return;
       }

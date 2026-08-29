@@ -149,6 +149,17 @@ What that buys, and the rules each part follows:
   `.shopping-thumb` slot inside the summary. It is smaller than the row's
   existing `--tap` minimum, so no row grows, and the slot collapses when there
   is no picture (`.shopping-thumb:empty`) rather than leaving an empty box.
+- **A row closes itself once its product has saved** — this is what #204
+  proposes. The open row is the tallest thing on the screen at exactly the
+  moment there is nothing left to do in it, and what somebody reported was
+  finishing one ingredient and having to hunt for where they were. The island
+  sets `details.open = false` in `persist`'s success branch, so the picture is
+  what is left saying the row is done and the next ingredient is on the next
+  line. Only on success: a refusal's error and retry are inside the row, so a
+  refused save leaves it open. Collapsing removes only what is below the summary
+  line, so the row's own line and everything above it stay put — #200's promise
+  survives it. The cost is one more tap to reach `Lisää toinen pakkauskoko` or
+  `Löytyy jo kaapista`, which is the trade the card asked for.
 - **Product choice happens in a panel inside the row**, so choosing a product
   is not a page navigation and coming back is not a page load. (Inside the row
   is the part #200 takes back below — the panel is what made the list move.)
