@@ -25,6 +25,16 @@ installing them into the plain node image would need root for apt. The config
 starts its own `wrangler dev` and each spec reseeds the local database first, so
 a test that saves a recipe cannot change what a later test sees.
 
+Keep a full run in the foreground and do not pipe it through `tail`: `tail`
+holds the useful final lines until the command ends, leaving a long run with no
+visible progress or diagnosis if its runner times out first. A local run stops
+after its first failure so that one trace and its underlying Wrangler error
+stay visible instead of being followed by dozens of
+`ECONNREFUSED` failures after a dead server. Re-run that one spec while the
+signal is small. GitHub Actions deliberately keeps running after a failure,
+because its single clean-room run is where the complete cross-browser failure
+surface belongs.
+
 **No browser test calls Anthropic.** `tests/support/draft.ts` intercepts
 `/api/intake/imports` and persists a ready D1 job from the sample fixture, so
 the suite exercises the real later-review route without reaching the Queue or
@@ -64,6 +74,10 @@ picker offers; `tests/parts.spec.ts` is the worked example.
 
 `retries: 0`, on purpose. The one flake this suite ever had turned out to be two
 real faults, and a retry would have kept both hidden.
+
+The fixture helpers in `tests/support/seed.ts` keep stderr from a failed local
+Wrangler command. If a reseed or focused D1/R2 fixture write fails, diagnose the
+reported Wrangler reason; do not replace it with a browser assertion fix.
 
 The S-ostoslista tests proposed by #147 never reach the private service.
 Playwright starts `tests/support/s-ostoslista-server.ts` on the port immediately

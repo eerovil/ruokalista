@@ -14,6 +14,13 @@ commit what it wrote:
 
     PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
 
+The last two are the exception: they are written by
+`tests/shopping-row-213.spec.ts` instead, because what they show is a row on a
+320 px screen rather than on the Pixel 7 every other picture here is taken on.
+The same environment variable gates them.
+
+    PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test shopping-row-213
+
 | file | screen |
 | --- | --- |
 | `01-signin.png` | Sign-in — the one button |
@@ -105,5 +112,7 @@ commit what it wrote:
 | `96-prompt-edit-part-stale-recipe.png` | The lasagne after that refusal: the newer 7 dl of milk stands, the proposal's butter never landed, and the dish itself did not move either |
 | `97-admin-categories.png` | Proposed admin category screen: the vocabulary as rows with slug and recipe count, ↑/↓ ordering, and a freshly added **Wokki** (#199) |
 | `98-admin-category-delete.png` | Proposed removal confirmation: the recipes that would lose **Keitto**, named before anything happens |
+| `101-shopping-long-total.png` | Proposed shopping list at 320 px with two rows whose totals read `1 + 1 kpl + määrä reseptin mukaan`: the name keeps the first line and the long total takes the second, instead of the name being squeezed into a column of single letters (#213) |
+| `102-shopping-long-total-with-picture.png` | The same row shape with a chosen product's picture on it, among ordinary short-total rows |
 | `103-intake-edit.png` | Issue #215's shared **Lisää resepti** screen in existing-recipe mode: the owned recipe is named, complete/replace is explicit, and text, URL and photograph inputs are the ordinary intake controls |
 | `104-intake-edit-review.png` | The ordinary intake draft review for an existing recipe, stating that save updates the current recipe and offering **Tallenna muutokset** rather than creating another recipe |
