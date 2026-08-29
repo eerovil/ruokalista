@@ -487,6 +487,22 @@ const STYLES = `
     display: block; margin-top: .15rem;
     color: var(--warn); font-size: .8rem;
   }
+  /* The picture found on an imported page, shown before it is saved (#205).
+     Contained rather than cropped: the point of showing it is to let somebody
+     see that it is the dish and not the site's masthead, and a crop is exactly
+     what would hide that. */
+  .found-image { margin: 1.2rem 0 0; }
+  .found-image img {
+    display: block; width: 100%;
+    max-height: 40vw; object-fit: contain;
+    background: var(--surface); border-radius: var(--radius);
+  }
+  .found-image .tick {
+    display: flex; align-items: center; gap: .5rem;
+    min-height: var(--tap);
+    color: var(--muted); font-size: .9rem;
+  }
+  .found-image .tick input { width: auto; margin: 0; }
   .save-draft { width: 100%; margin: 1.5rem 0 .5rem; }
   .edit-draft > summary {
     display: inline-flex; align-items: center;
@@ -648,6 +664,10 @@ const STYLES = `
   .shopping-meal-title { font-weight: 600; }
 
   .shopping-list > li { border-bottom: 1px solid var(--edge); }
+  /* Every form that has to leave the page comes back to #aines-<id>, and the
+     header is sticky — without this the row it returns to would land under it
+     and read as the wrong row (#200). */
+  .shopping-list > li[id] { scroll-margin-top: 4.5rem; }
   .shopping-item > summary {
     display: flex; align-items: baseline; gap: .75rem;
     min-height: var(--tap); padding: .35rem 0; cursor: pointer;
@@ -667,7 +687,7 @@ const STYLES = `
   .shopping-thumb { flex: none; align-self: center; line-height: 0; }
   .shopping-thumb:empty { display: none; }
   .shopping-thumb img {
-    width: 1.6rem; height: 1.6rem; object-fit: contain; background: #fff;
+    width: 1.6rem; height: 1.6rem; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
   }
   .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
@@ -714,16 +734,55 @@ const STYLES = `
     display: flex; align-items: center; gap: .7rem; min-width: 0;
   }
   .s-product-scope, .s-package-total { font-size: .85rem; }
+  /* Cropped to the box, not fitted inside it (#204). A product photograph is
+     shot however the package stands, so a carton comes off S's CDN at
+     256 × 705; contain drew that as a narrow sliver in the middle of a square
+     of white, which is a lot of room to spend on saying nothing. Cover fills
+     the square with the package instead, and the name beside it is still what
+     carries the size.
+
+     Cropped from the top, not the middle: a package prints its brand and its
+     product name across the top, and the middle of a milk carton is the side
+     of a milk carton. */
+  .shopping-thumb img, .s-shopping-product-one img, .s-product-results img {
+    object-fit: cover; object-position: center top;
+  }
   .s-shopping-product-one img, .s-product-results img {
-    flex: none; object-fit: contain; background: #fff;
+    flex: none; background: #fff;
     border: 1px solid var(--edge); border-radius: .35rem;
   }
+  /* The sizes have to be said here, not left to the width and height
+     attributes: the shell's own img rule sets height to auto, which outranks the height
+     attribute, so a tall carton photograph was drawing itself several hundred
+     pixels high, and object-fit had no box to fit it inside. That
+     is what made a chosen product tower over the row it replaced (#200), and
+     it is why .shopping-thumb img — the one that always said its size in CSS
+     — was the only picture on this screen behaving. */
+  .s-shopping-product-one img { width: 2.5rem; height: 2.5rem; }
+  .s-product-results img { width: 5rem; height: 5rem; }
   .s-shopping-product-copy, .s-product-result-copy {
     display: flex; flex: 1 1 12rem; flex-direction: column; min-width: 0;
     overflow-wrap: break-word;
   }
-  .s-shopping-product-body { display: flex; flex: 1 1 13rem; min-width: 0; }
-  .s-shopping-product > form.s-product-open:first-of-type { margin-left: auto; }
+  /* Held to one line each, so "Teksti" and a chosen product are the same two
+     lines tall and the swap does not move the rows underneath (#200). The
+     picker's own results are free to wrap — they are inside a fixed sheet. */
+  .s-shopping-product-copy > * {
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  /* The product takes the whole width and its buttons drop below it. Squeezed
+     beside them the name ellipsised away the very thing somebody is shopping
+     for — "Kotimaista rasvaton ma…" is not a carton you can find (#200). */
+  .s-shopping-product-body {
+    display: flex; flex: 1 1 100%; min-width: 0; min-height: 2.6rem;
+  }
+  /* Nothing to add a second package size to yet. The button keeps its place
+     rather than appearing the moment a product is chosen, so the rows below it
+     never move (#200) — which only works if it also reads as unavailable. */
+  .s-shopping-product button[disabled] {
+    color: var(--muted); cursor: default;
+    background: transparent; border-style: dashed;
+  }
 
   /* The package sizes an ingredient knows beyond the one it is buying. Only
      drawn where there is more than one, so an ordinary row shows none of it. */
@@ -762,16 +821,74 @@ const STYLES = `
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 
-  .s-status { flex-basis: 100%; color: var(--muted); font-size: .85rem; }
-  .s-shopping-error {
-    margin: 0 0 .6rem; padding: .6rem .7rem;
-    color: var(--warn); font-size: .85rem;
-    background: var(--surface); border: 1px solid var(--warn);
-    border-radius: var(--radius);
-  }
-  .s-shopping-error button { min-height: var(--tap-compact); }
+  /* The row's one busy line. The server draws it on every mapped-capable row
+     and the island only fills and empties it, so a save starting or finishing
+     never changes a row's height (#200) — hence the reserved min-height. */
+  /* The reserved height and the filled height have to be the same number, or
+     the slot defeats itself: at the shell's 1.55 line-height a .85rem line is
+     taller than a bare min-height, so starting a save would still grow the
+     row. Both are pinned to the same value instead. */
+  .s-status { flex-basis: 100%; min-height: 1.5rem; line-height: 1.5rem;
+    margin: 0; color: var(--muted); font-size: .85rem; }
 
-  .s-product-panel { margin: 0 0 .7rem; }
+  /* A refusal is a fixed strip above the tab bar, not a paragraph pushed into
+     the list. It is the one place on this screen that says a save failed, and
+     it says it without moving what the member was reading (#200). */
+  .s-toast {
+    position: fixed; left: .6rem; right: .6rem; z-index: 11;
+    bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + .6rem);
+    display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+    padding: .6rem .7rem;
+    color: var(--warn); font-size: .85rem;
+    background: var(--bg); border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    box-shadow: 0 .4rem 1.2rem light-dark(rgba(0,0,0,.18), rgba(0,0,0,.5));
+  }
+  .s-toast-text { flex: 1 1 12rem; min-width: 0; overflow-wrap: break-word; }
+  .s-toast button { min-height: var(--tap-compact); }
+
+  /* The product picker: one per screen, fixed to the bottom of the viewport.
+     Being outside the list's flow is the whole point — opening and closing it
+     moves no row, which is what walking a long list needs (#200). */
+  .s-sheet { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; }
+  .s-sheet-backdrop {
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+    background: rgba(0,0,0,.45);
+  }
+  .s-sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 85vh; overflow-y: auto; overscroll-behavior: contain;
+    padding: .8rem .8rem calc(.8rem + env(safe-area-inset-bottom));
+    background: var(--bg);
+    border-top: 1px solid var(--edge);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -.4rem 1.4rem light-dark(rgba(0,0,0,.22), rgba(0,0,0,.6));
+  }
+  /* On a wider screen it is a centred dialog rather than a full-width sheet;
+     the flow is the same one, and nothing about it is phone-only. */
+  @media (min-width: 48rem) {
+    .s-sheet-panel {
+      left: 50%; right: auto; bottom: 5vh; width: 92vw; max-width: 34rem;
+      transform: translateX(-50%);
+      max-height: 80vh; border: 1px solid var(--edge);
+      border-radius: var(--radius);
+    }
+  }
+  /* The heading is the only thing that says which of twenty ingredients this
+     search is for, so it stays put while the results scroll under it. */
+  .s-sheet-head {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: flex-start; gap: .6rem;
+    margin: -.8rem -.8rem .6rem; padding: .8rem;
+    background: var(--bg); border-bottom: 1px solid var(--edge);
+  }
+  .s-sheet-titles { flex: 1; min-width: 0; }
+  .s-sheet-name { margin: 0; font-size: 1.05rem; overflow-wrap: break-word; }
+  .s-sheet-sub { margin: .15rem 0 0; color: var(--muted); font-size: .85rem;
+    overflow-wrap: break-word; }
+  .s-sheet-close { flex: 0 0 auto; min-height: var(--tap-compact); }
+  .s-sheet-scope[hidden] { display: none; }
+
   .s-product-search { display: flex; align-items: flex-end; gap: .5rem;
     margin-bottom: .6rem; }
   .s-product-search label { flex: 1; min-width: 0; margin: 0;
@@ -781,7 +898,7 @@ const STYLES = `
   .s-product-panel-state { margin: 0 0 .6rem; color: var(--muted);
     font-size: .9rem; }
 
-  .s-current { margin-top: .8rem; border-top: 1px solid var(--edge);
+  .s-current { margin: 1.4rem 0 .8rem; border-top: 1px solid var(--edge);
     padding-top: .6rem; }
   .s-current h3 { margin: 0 0 .3rem; font-size: .95rem; }
   .s-current-state { display: flex; align-items: center; gap: .5rem;
@@ -973,9 +1090,73 @@ export function page(
   viewer: Viewer | null,
   status = 200,
 ): Response {
+  const document = html`${pageHead(title, shell, viewer)}
+${body}
+${pageTail(shell)}`;
+
+  return new Response(document.value, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+/**
+ * A screen sent in pieces, for the one thing on the reading and editing paths
+ * that has to wait on a language model (#208).
+ *
+ * Cloudflare closes a proxied request that goes ~125 s without a byte, which is
+ * why intake streams at all (`src/intake.ts`). A prompt edit is the same shape
+ * of wait but not the same shape of work: nothing is written until the member
+ * saves, so it does not need a background job's durability — it needs the
+ * connection to stay open while the member watches. Sending the shell first and
+ * the answer when it arrives does that with no script, which is the standing
+ * rule on the editing path.
+ *
+ * `render` may emit as much as it likes before returning the body it ends on.
+ * The status is always 200: the headers are gone by the time anything can be
+ * refused, so a refusal is written into the body instead.
+ */
+export function streamingPage(
+  title: string,
+  shell: Shell,
+  viewer: Viewer | null,
+  render: (emit: (chunk: Raw) => void) => Promise<Raw>,
+): Response {
+  const encoder = new TextEncoder();
+
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (chunk: Raw) =>
+        controller.enqueue(encoder.encode(chunk.value));
+
+      emit(pageHead(title, shell, viewer));
+      try {
+        emit(await render(emit));
+      } catch (error) {
+        console.log(JSON.stringify({
+          event: "streamed_page.failed",
+          detail: String((error as Error)?.message ?? error),
+        }));
+        emit(html`<p class="refused">Jokin meni pieleen. Yritä uudelleen.</p>`);
+      }
+      emit(pageTail(shell));
+      controller.close();
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function pageHead(title: string, shell: Shell, viewer: Viewer | null): Raw {
   const signedIn = shell !== "signed-out";
 
-  const document = html`<!doctype html>
+  return html`<!doctype html>
 <html lang="fi">
 <head>
 <meta charset="utf-8">
@@ -998,16 +1179,15 @@ ${signedIn
   ${accountMenu(viewer)}
 </header>`
     : ""}
-<main>
-${body}
-</main>
+<main>`;
+}
+
+function pageTail(shell: Shell): Raw {
+  const signedIn = shell !== "signed-out";
+
+  return html`</main>
 ${signedIn ? tabs(shell) : ""}
 <script>${raw(PWA_CLIENT_SCRIPT)}</script>
 </body>
 </html>`;
-
-  return new Response(document.value, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
 }

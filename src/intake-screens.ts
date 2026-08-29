@@ -6,8 +6,10 @@ import {
   createIntakeJob,
   deleteIntakeJob,
   findIntakeJob,
+  intakeJobImageRef,
   IntakeRefused,
   listIntakeJobs,
+  readIntakeJobImage,
   retryIntakeJob,
   type IntakeJob,
 } from "./intake-jobs.ts";
@@ -48,6 +50,7 @@ import {
 } from "./categories.ts";
 import { isLocalOrigin } from "./public-origin.ts";
 import { normaliseRecipeUrl } from "./recipe-fetch.ts";
+import { storeRecipeImage } from "./recipe-images.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
 
@@ -279,6 +282,10 @@ interface CorrectionView {
   sourceUrl: string;
   structuredBy: string;
   intakeJobId: string;
+  /** Whether a picture was found on the page this import was read from (#205). */
+  intakeImage: boolean;
+  /** Whether that picture is still ticked to be saved with the recipe. */
+  keepImage: boolean;
   rows: Array<DraftLine | LineFormValues>;
   steps: StepFormValues[];
   /** The categories ticked on this screen (#196). Never guessed by the model. */
@@ -580,7 +587,15 @@ export async function intakeJobReviewScreen(
     const draft = draftFromJson(job.draftJson, source, STRUCTURED_BY);
     return page(
       "Tarkista resepti",
-      correctionForm(draft, ingredients, vocabulary, job.sourceRoute, address, job.id),
+      correctionForm(
+        draft,
+        ingredients,
+        vocabulary,
+        job.sourceRoute,
+        address,
+        job.id,
+        intakeJobImageRef(job) !== null,
+      ),
       "intake",
       member,
     );
@@ -664,6 +679,9 @@ export async function saveScreen(
     });
 
     const intakeJobId = String(form.get("intakeJobId") ?? "");
+    if (intakeJobId !== "" && form.get("keepImage") === "1") {
+      await adoptFoundImage(env, member, intakeJobId, recipeId);
+    }
     if (intakeJobId !== "") {
       try {
         await deleteIntakeJob(env, intakeJobId, member.householdId);
@@ -699,6 +717,90 @@ export async function saveScreen(
   }
 }
 
+/**
+ * Make the page's photograph the recipe's own picture (#205).
+ *
+ * It goes through `storeRecipeImage` like any upload, so the same signature,
+ * byte and pixel checks apply and the picture ends up indistinguishable from
+ * one somebody chose by hand — which is what the issue asks for, and what
+ * keeps the recipe screen, the freshness rules and the backup from having to
+ * know where it came from. Its provenance is manual rather than generated:
+ * nothing here made a picture, and a fingerprint against it would claim
+ * something untrue.
+ *
+ * The recipe is already saved when this runs, so a failure loses the picture
+ * and nothing else. That is the right way round: the member came for the
+ * recipe.
+ *
+ * Exported for `dev/check-intake-page-image.ts`: whether a picture found on a
+ * page actually lands on the recipe is an acceptance criterion, and a browser
+ * run has no way to put bytes in the bucket for a job that never ran.
+ */
+export async function adoptFoundImage(
+  env: RouteContext["env"],
+  member: Member,
+  jobId: string,
+  recipeId: number,
+): Promise<void> {
+  try {
+    const found = await readIntakeJobImage(env, jobId, member.householdId);
+    if (found === null) return;
+
+    const refusal = await storeRecipeImage(
+      env,
+      member.householdId,
+      recipeId,
+      null,
+      found.bytes,
+    );
+    if (refusal !== null) {
+      console.log(JSON.stringify({
+        event: "intake.page_image_refused",
+        job_id: jobId,
+        detail: refusal.english,
+      }));
+    }
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: "intake.page_image_not_saved",
+      job_id: jobId,
+      detail: String((error as Error)?.message ?? error),
+    }));
+  }
+}
+
+/**
+ * `GET /api/intake/imports/:id/image` — the picture found on the page, for the
+ * review screen to show before it is saved.
+ *
+ * Household-scoped like every other read of a job, and short-lived by nature:
+ * saving the recipe copies the bytes onto it and deletes the job, after which
+ * this address is a 404 and the recipe's own image route is the one that
+ * serves it.
+ */
+export async function intakeJobImage(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const found = await readIntakeJobImage(
+    env,
+    params["id"] ?? "",
+    member.householdId,
+  );
+  if (found === null) return problem(404, "No image for that import.");
+
+  return new Response(found.bytes, {
+    headers: {
+      "Content-Type": found.mediaType,
+      "Cache-Control": "private, no-store",
+      // These bytes came off somebody else's website and are served from this
+      // app's own origin. The signature check when they were fetched says they
+      // are an image; this says no browser may decide otherwise.
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 // ---------------------------------------------------------------- rendering
 
 function correctionForm(
@@ -708,6 +810,7 @@ function correctionForm(
   sourceRoute: SourceRoute,
   sourceUrl = "",
   intakeJobId = "",
+  intakeImage = false,
 ): Raw {
   const rows = [
     ...draft.lines,
@@ -733,6 +836,10 @@ function correctionForm(
       sourceUrl,
       structuredBy: draft.structuredBy,
       intakeJobId,
+      intakeImage,
+      // Found means wanted, until somebody says otherwise: the member asked
+      // for this page's recipe, and the picture on it is that recipe's.
+      keepImage: true,
       rows,
       steps,
       // Nothing proposes these. The model is not asked to guess what kind of
@@ -759,6 +866,10 @@ function correctionFormFromSubmission(
       sourceUrl: readSourceUrl(form.get("sourceUrl")),
       structuredBy: String(form.get("structuredBy") ?? ""),
       intakeJobId: String(form.get("intakeJobId") ?? ""),
+      // Only what to draw: whether a picture really exists, and whether it is
+      // really stored, is decided against the job row at save.
+      intakeImage: form.get("intakeImage") === "1",
+      keepImage: form.get("keepImage") === "1",
       rows: Array.from({ length: lineCount }, (_, index) =>
         lineValuesFromForm(form, index),
       ),
@@ -942,6 +1053,38 @@ function notesNotice(rows: LineFormValues[]): Raw {
   </div>`;
 }
 
+/**
+ * The picture the page had on it, shown before it is saved (#205).
+ *
+ * Outside the "Muokkaa ennen tallennusta" disclosure and next to the save
+ * button, for the reason the categories are: this is the one moment somebody
+ * can see whether the site's own photograph is the dish or its masthead, and a
+ * picture a member never noticed being added is not a picture they chose. The
+ * tick is on, so the ordinary import saves it without a decision being asked
+ * for, and unticking it is the whole of "poista tai vaihda" — a different
+ * picture is the recipe screen's upload, which already exists.
+ */
+function foundImage(view: CorrectionView): Raw {
+  if (!view.intakeImage || view.intakeJobId === "") return html``;
+
+  return html`<div class="found-image">
+    <input type="hidden" name="intakeImage" value="1" />
+    <img
+      src="/api/intake/imports/${view.intakeJobId}/image"
+      alt="Sivulta löytynyt kuva reseptistä"
+    />
+    <label class="tick">
+      <input
+        type="checkbox"
+        name="keepImage"
+        value="1"
+        ${view.keepImage ? raw("checked") : ""}
+      />
+      Tallenna sivulta löytynyt kuva reseptin kuvaksi
+    </label>
+  </div>`;
+}
+
 /** A spare row nobody filled in is not part of the recipe being reviewed. */
 function isBlank(row: LineFormValues): boolean {
   return (
@@ -978,6 +1121,8 @@ function renderCorrection(
       <input type="hidden" name="lineCount" value="${view.rows.length}" />
 
       ${draftReview(view, ingredients)}
+
+      ${foundImage(view)}
 
       <!-- Outside the "Muokkaa ennen tallennusta" disclosure, unlike every
            other field on this screen: 99% of imports need no correction and

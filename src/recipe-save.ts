@@ -169,13 +169,33 @@ export async function saveRecipe(
  * it is guarded by a unique token written by that update, so a deleted or
  * concurrently edited recipe cannot have another recipe's children replaced.
  *
- * source_text and source_route are not editable and are not touched here. Parts
- * are recipes of their own and are edited on their own screens, so this leaves
- * them alone too — but whether there are any is still this call's business,
- * because a dish whose ingredients all live on its parts has none of its own
- * and must still be saveable (issue #184). The caller says so rather than this
- * function counting them: the editor has already loaded the recipe's parts, and
- * a second query would only ask the same question again.
+ * source_text and source_route are not editable and are not touched here.
+ *
+ * **A part is written only when the submitted recipe names one.** The ordinary
+ * editor renders no part field, so every line it submits carries a null
+ * section, no part is named, and the dish's parts are left exactly as they were
+ * — which is the behaviour this function has always had. A prompt edit (#208)
+ * does render the field, because the whole dish is what the model was shown and
+ * "lisää kastikkeeseen puuttuvat ainekset" is a change to a part; a section it
+ * names is matched to one of `options.parts` by title and that part's contents
+ * are replaced under the same lock, and a name that matches nothing becomes a
+ * new part of this dish. A part the submission stops naming is **left alone**
+ * rather than deleted: it is a recipe row somebody may have on a menu, and
+ * silently taking it away is not something a proposal gets to do.
+ *
+ * Whether there are parts at all is the caller's to say rather than this
+ * function's to count, because a dish whose ingredients all live on its parts
+ * has none of its own and must still be saveable (issue #184) — and the caller
+ * has already loaded them.
+ *
+ * **Every part this save rewrites is locked too.** The dish's own revision does
+ * not move when one of its parts is edited — a part is a recipe row with its
+ * own editor screen (ADR-0002) — so locking only the dish would let a proposal
+ * read before somebody fixed the juustokastike overwrite that fix on the way
+ * in. Each part the submission names is therefore checked against the revision
+ * the form saw, in the very statement that mints the write token every other
+ * statement here is guarded by. One part having moved thus refuses the whole
+ * batch, dish included: there is no half-saved outcome to explain.
  */
 export async function replaceRecipe(
   db: D1Database,
@@ -183,7 +203,7 @@ export async function replaceRecipe(
   recipeId: number,
   expectedRevision: number,
   recipe: RecipeToSave,
-  options: ValidateOptions = {},
+  options: ReplaceOptions = {},
 ): Promise<void> {
   validateRecipe(recipe, options);
   await assertKnownCategories(db, recipe.categories);
@@ -202,13 +222,25 @@ export async function replaceRecipe(
     writeToken,
   };
 
+  // Built first, because what it decides to rewrite is what the dish's own
+  // update below has to hold still.
+  const parts = await partStatements(
+    db,
+    member,
+    recipeId,
+    recipe,
+    lines,
+    options,
+    guard,
+  );
+
   const statements: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE recipe
             SET title = ?, yield_portions = ?, revision = revision + 1,
                 edit_token = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
-          WHERE id = ? AND household_id = ? AND revision = ?`,
+          WHERE id = ? AND household_id = ? AND revision = ?${partLock(parts.locked)}`,
       )
       .bind(
         recipe.title.trim(),
@@ -218,6 +250,7 @@ export async function replaceRecipe(
         recipeId,
         member.householdId,
         expectedRevision,
+        ...partLockValues(recipeId, member.householdId, parts.locked),
       ),
     ...ingredientStatements(db, member, newIngredients, guard),
     guardedDelete(db, "recipe_step", recipeId, guard),
@@ -225,14 +258,217 @@ export async function replaceRecipe(
     guardedDelete(db, "recipe_category", recipeId, guard),
     ...childrenOf(db, recipeId, lines, recipe.steps, null, guard),
     ...categoryStatements(db, recipeId, recipe.categories, guard),
+    ...parts.statements,
   ];
 
   const results = await db.batch(statements);
   if ((results[0]?.meta.changes ?? 0) === 0) {
     throw new StaleRecipe(
-      "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.",
+      await staleMessage(db, member, recipeId, expectedRevision, parts.locked),
     );
   }
+}
+
+/** What the dish's own update says when it turns out not to have happened. */
+const DISH_MOVED =
+  "Resepti on muuttunut tai poistettu. Tarkista uusin versio ennen tallennusta.";
+const PART_MOVED =
+  "Reseptin osa on muuttunut tai poistettu sen jälkeen kun avasit tämän. Tarkista uusin versio ennen tallennusta.";
+
+/**
+ * Which half of the lock refused, so the member is told the true thing.
+ *
+ * "The recipe changed" is a confusing thing to read when the recipe on screen
+ * is exactly as you left it and what actually moved is its sauce. One extra
+ * query, only ever on the refusal path, buys the sentence that sends somebody
+ * to the right screen.
+ */
+async function staleMessage(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+  expectedRevision: number,
+  locked: readonly ExpectedPart[],
+): Promise<string> {
+  if (locked.length === 0) return DISH_MOVED;
+
+  // Nothing was written, so the dish still reads as it did a moment ago.
+  const dish = await db
+    .prepare(
+      `SELECT 1 FROM recipe WHERE id = ? AND household_id = ? AND revision = ?`,
+    )
+    .bind(recipeId, member.householdId, expectedRevision)
+    .first();
+
+  return dish === null ? DISH_MOVED : PART_MOVED;
+}
+
+/**
+ * The extra condition that makes the dish's update stand for the whole tree:
+ * every part being rewritten is still a child of this dish, in this household,
+ * at exactly the revision the form saw.
+ *
+ * It hangs off the dish's own `UPDATE` rather than off each part's, because
+ * that update is what writes the token the rest of the batch is guarded by. A
+ * per-part check would leave the dish rewritten and one part not.
+ */
+function partLock(locked: readonly ExpectedPart[]): string {
+  if (locked.length === 0) return "";
+
+  const matches = locked
+    .map(() => "(part.id = ? AND part.revision = ?)")
+    .join(" OR ");
+
+  return ` AND (
+              SELECT count(*) FROM recipe AS part
+               WHERE part.parent_id = ? AND part.household_id = ?
+                 AND (${matches})
+            ) = ${locked.length}`;
+}
+
+function partLockValues(
+  recipeId: number,
+  householdId: number,
+  locked: readonly ExpectedPart[],
+): unknown[] {
+  if (locked.length === 0) return [];
+  return [
+    recipeId,
+    householdId,
+    ...locked.flatMap((part) => [part.id, part.revision]),
+  ];
+}
+
+/** What one submitted edit does to the dish's parts. */
+interface PartPlan {
+  statements: D1PreparedStatement[];
+  /**
+   * The existing parts being rewritten, at the revision the form saw them. The
+   * dish's own update holds all of these still, or nothing is written at all.
+   */
+  locked: ExpectedPart[];
+}
+
+/** The same case-insensitive Finnish comparison the ingredient gate uses. */
+function fold(title: string): string {
+  return title.trim().toLocaleLowerCase("fi");
+}
+
+/**
+ * The statements that write the parts a submitted edit names, and nothing else.
+ *
+ * A named section is matched by title against the parts the **form** saw, not
+ * against the parts loaded a moment ago, because the proposal the member
+ * reviewed was written against the former. That distinction is the whole point:
+ * matching against what is there now would happily pour a proposal read ten
+ * minutes ago over a part somebody has edited since, and would just as happily
+ * fork a second `Juustokastike` when the first one has been deleted.
+ *
+ * So each name is one of three things:
+ *
+ * - the form expected a part by that name and it is still here → its contents
+ *   are replaced, and its revision goes into `locked`;
+ * - the form expected one and it has gone → refused, because the content being
+ *   saved is about a row that no longer exists;
+ * - the form expected none → a new part, unless the dish has since grown one
+ *   under that name, which is refused rather than silently merged into.
+ *
+ * Everything here hangs off the *parent's* write token, so the whole tree is
+ * written only if the lock on the dish — and, through it, on every part in
+ * `locked` — held. A concurrently edited dish leaves its parts untouched rather
+ * than half-rewritten.
+ */
+async function partStatements(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+  recipe: RecipeToSave,
+  lines: ResolvedLine[],
+  options: ReplaceOptions,
+  guard: RecipeGuard,
+): Promise<PartPlan> {
+  const names = partNames(recipe);
+  if (names.length === 0) return { statements: [], locked: [] };
+
+  const expected = new Map(
+    (options.expectedParts ?? []).map((part) => [fold(part.title), part]),
+  );
+  const present = options.parts ?? [];
+  const byTitle = new Map(present.map((part) => [fold(part.title), part]));
+  const byId = new Map(present.map((part) => [part.id, part]));
+
+  const reserved = new Set<number>();
+  const statements: D1PreparedStatement[] = [];
+  const locked: ExpectedPart[] = [];
+
+  for (const [index, name] of names.entries()) {
+    const want = expected.get(fold(name));
+
+    if (want === undefined) {
+      // Nothing was expected here, so this is a new part — unless the dish has
+      // grown one under that name in the meantime, which is somebody else's
+      // work and not ours to write over.
+      if (byTitle.has(fold(name))) throw new StaleRecipe(PART_MOVED);
+
+      const partId = await unusedId(db, "recipe", reserved);
+      statements.push(
+        recipeRow(
+          db,
+          member,
+          partId,
+          recipe,
+          { title: name, yieldPortions: null, parentId: recipeId, position: index + 1 },
+          guard,
+        ),
+        ...childrenOf(db, partId, lines, recipe.steps, name, guard),
+      );
+      continue;
+    }
+
+    // Matched by id rather than by title: a part renamed since the form was
+    // rendered is the same row, and the revision check below is what decides
+    // whether writing to it is still honest.
+    const part = byId.get(want.id);
+    if (part === undefined) throw new StaleRecipe(PART_MOVED);
+
+    // Two sections differing only in case fold to the same part, so the same
+    // row can be named twice. It is one lock either way — counting it twice
+    // would refuse a save that is perfectly current.
+    if (!locked.some((already) => already.id === want.id)) locked.push(want);
+
+    statements.push(
+      // The title is rewritten from the section as submitted, so a part whose
+      // name only differs in case settles on what is on the screen. `parent_id`
+      // in the WHERE is what stops an id from another dish being touched at all.
+      db
+        .prepare(
+          `UPDATE recipe
+              SET title = ?, part_position = ?, revision = revision + 1,
+                  updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
+            WHERE id = ? AND household_id = ? AND parent_id = ?
+              AND EXISTS (
+                SELECT 1 FROM recipe AS dish
+                 WHERE dish.id = ? AND dish.household_id = ? AND dish.edit_token = ?
+              )`,
+        )
+        .bind(
+          name,
+          index + 1,
+          member.id,
+          part.id,
+          member.householdId,
+          recipeId,
+          guard.recipeId,
+          guard.householdId,
+          guard.writeToken,
+        ),
+      guardedDelete(db, "recipe_step", part.id, guard),
+      guardedDelete(db, "ingredient_line", part.id, guard),
+      ...childrenOf(db, part.id, lines, recipe.steps, name, guard),
+    );
+  }
+
+  return { statements, locked };
 }
 
 /** The dish's parts, in the order they first appear on the page. */
@@ -259,17 +495,28 @@ function recipeRow(
     parentId: number | null;
     position: number | null;
   },
+  guard?: RecipeGuard,
 ): D1PreparedStatement {
-  return db
-    .prepare(
-      `INSERT INTO recipe
-         (id, household_id, title, yield_portions, source_text, source_route,
+  const columns = `(id, household_id, title, yield_portions, source_text, source_route,
           source_url, structured_by, structured_at, created_at, created_by,
-          updated_at, updated_by, parent_id, part_position, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
+          updated_at, updated_by, parent_id, part_position, revision)`;
+  const values = `?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?,
-               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0)`,
-    )
+               strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, 0`;
+
+  const statement =
+    guard === undefined
+      ? db.prepare(`INSERT INTO recipe ${columns} VALUES (${values})`)
+      : db.prepare(
+          `INSERT INTO recipe ${columns}
+           SELECT ${values}
+            WHERE EXISTS (
+              SELECT 1 FROM recipe AS dish
+               WHERE dish.id = ? AND dish.household_id = ? AND dish.edit_token = ?
+            )`,
+        );
+
+  const bound = statement
     .bind(
       id,
       member.householdId,
@@ -284,7 +531,12 @@ function recipeRow(
       member.id,
       as.parentId,
       as.position,
+      ...(guard === undefined
+        ? []
+        : [guard.recipeId, guard.householdId, guard.writeToken]),
     );
+
+  return bound;
 }
 
 /** The lines and steps belonging to one recipe — the dish, or one of its parts. */
@@ -679,6 +931,47 @@ export interface ValidateOptions {
    * empty array there really is an empty recipe.
    */
   hasParts?: boolean;
+}
+
+/** One of a dish's existing parts, as the caller already has it loaded. */
+export interface ExistingPart {
+  id: number;
+  title: string;
+}
+
+/**
+ * One of a dish's parts as the *form* last saw it, with the version it was at.
+ *
+ * A part is a recipe row of its own (ADR-0002) with its own editor screen, so
+ * the dish's revision says nothing at all about whether the juustokastike moved
+ * while a proposal was being read. This is what carries that missing half of
+ * the optimistic lock from the screen back to the save.
+ */
+export interface ExpectedPart extends ExistingPart {
+  revision: number;
+}
+
+export interface ReplaceOptions extends ValidateOptions {
+  /**
+   * The dish's existing parts (#208), freshly loaded.
+   *
+   * Only consulted when the submitted recipe actually names a section, which
+   * the ordinary editor never does. It is what lets a proposal say "these are
+   * the juustokastike's ingredients now" and have that land on the part's own
+   * recipe row rather than being dropped for belonging to no row here.
+   */
+  parts?: readonly ExistingPart[];
+  /**
+   * The same parts as the submitted form saw them, each at its own revision.
+   *
+   * A named section is matched against **these** rather than against `parts`,
+   * because what the member reviewed is what the proposal was built from. A
+   * part that has since been edited, renamed or deleted therefore refuses the
+   * whole save rather than being quietly overwritten with older content, and a
+   * part that somebody else created under that name meanwhile refuses too
+   * rather than being merged into by accident.
+   */
+  expectedParts?: readonly ExpectedPart[];
 }
 
 /**

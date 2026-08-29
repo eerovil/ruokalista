@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   SOstoslistaClient,
   SOstoslistaError,
+  sProductImageAtWidth,
   sProductImageUrl,
 } from "../src/s-ostoslista.ts";
 
@@ -121,4 +122,22 @@ test("network errors do not masquerade as provider responses", async () => {
     throw new Error("offline");
   });
   await assert.rejects(api.list(), /request failed: offline/);
+});
+
+test("a product picture can be asked for at the width it is drawn at", () => {
+  const full = sProductImageUrl("6415712506032");
+  assert.equal(
+    sProductImageAtWidth(full, 96),
+    "https://cdn.s-cloud.fi/v1/w96_q75/product/ean/6415712506032_kuva1.jpg",
+  );
+  // Twice over is the case that matters: what is stored is already a sized URL,
+  // and asking again has to replace the width rather than stack another one.
+  assert.equal(sProductImageAtWidth(sProductImageAtWidth(full, 96), 192),
+    sProductImageAtWidth(full, 192));
+  // Anything that is not this CDN is not ours to rewrite, and neither is a URL
+  // whose path stops at the size.
+  assert.equal(sProductImageAtWidth("https://example.test/kuva.jpg", 96),
+    "https://example.test/kuva.jpg");
+  assert.equal(sProductImageAtWidth("https://cdn.s-cloud.fi/v1/w256_q75", 96),
+    "https://cdn.s-cloud.fi/v1/w256_q75");
 });

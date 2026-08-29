@@ -5,7 +5,12 @@ import type { IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import { formatDecimal } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import type { LineIngredient, LineToSave, StepToSave } from "./recipe-save.ts";
+import type {
+  ExpectedPart,
+  LineIngredient,
+  LineToSave,
+  StepToSave,
+} from "./recipe-save.ts";
 
 /**
  * One editable ingredient line, shared by the intake correction screen and the
@@ -640,6 +645,88 @@ export function readSteps(form: FormData): StepToSave[] {
     .sort((a, b) => a.position - b.position)
     .map((entry) => entry.step)
     .filter((step) => step.text.trim() !== "");
+}
+
+/**
+ * How many parts one dish's form may carry expectations for. Well past any real
+ * dish; it is here only so an untrusted `partCount` cannot ask for a long loop.
+ */
+const MAX_PARTS = 100;
+
+/**
+ * The dish's parts as this form last saw them (#208): which rows they were, and
+ * at which revision.
+ *
+ * A part is a recipe row with its own editor screen (ADR-0002), so the dish's
+ * own hidden `revision` says nothing about whether a part moved. These fields
+ * are the rest of that lock, and `replaceRecipe` refuses the whole save if one
+ * of them no longer holds. They ride in the form rather than being re-read at
+ * save time on purpose: what has to be checked is what the member reviewed, not
+ * what happens to be in the database when they press the button.
+ */
+export function setExpectedParts(
+  form: FormData,
+  parts: readonly ExpectedPart[],
+): void {
+  form.set("partCount", String(parts.length));
+  parts.forEach((part, index) => {
+    form.set(`part.${index}.id`, String(part.id));
+    form.set(`part.${index}.title`, part.title);
+    form.set(`part.${index}.revision`, String(part.revision));
+  });
+}
+
+/**
+ * The same, read back.
+ *
+ * A malformed entry is dropped rather than refused, and that is safe in the
+ * direction that matters: an expectation that goes missing does not weaken the
+ * lock, because a section naming a part nobody expected is refused by
+ * `replaceRecipe` rather than written. Refusing here instead would throw inside
+ * the re-render of the very form being refused.
+ */
+export function readExpectedParts(form: FormData): ExpectedPart[] {
+  const declared = Number(String(form.get("partCount") ?? "").trim());
+  if (!Number.isSafeInteger(declared) || declared <= 0) return [];
+
+  const parts: ExpectedPart[] = [];
+  for (let index = 0; index < Math.min(declared, MAX_PARTS); index += 1) {
+    const id = Number(formField(form, `part.${index}.id`));
+    const revision = Number(formField(form, `part.${index}.revision`));
+    const title = formField(form, `part.${index}.title`).trim();
+
+    if (!Number.isSafeInteger(id) || id <= 0) continue;
+    if (!Number.isSafeInteger(revision) || revision < 0) continue;
+    if (title === "") continue;
+
+    parts.push({ id, title, revision });
+  }
+
+  return parts;
+}
+
+/** Those expectations as the hidden fields that carry them to the next post. */
+export function expectedPartFields(parts: readonly ExpectedPart[]): Raw {
+  if (parts.length === 0) return raw("");
+
+  return html`<input type="hidden" name="partCount" value="${parts.length}" />
+    ${parts.map(
+      (part, index) => html`<input
+          type="hidden"
+          name="part.${index}.id"
+          value="${part.id}"
+        />
+        <input
+          type="hidden"
+          name="part.${index}.title"
+          value="${part.title}"
+        />
+        <input
+          type="hidden"
+          name="part.${index}.revision"
+          value="${part.revision}"
+        />`,
+    )}`;
 }
 
 export function readIngredient(form: FormData, index: number): LineIngredient {

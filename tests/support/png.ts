@@ -54,6 +54,47 @@ export function flatPng(
   ]);
 }
 
+/**
+ * A picture with something in it: a warm gradient with a rough oval in the
+ * middle of it, at whatever size is asked for.
+ *
+ * A flat colour is enough for a test that only measures a picture, and not
+ * enough for a screenshot that is meant to show somebody what an imported
+ * photograph looks like on the review screen. This is not art; it is a shape
+ * that reads as a photograph at thumbnail size.
+ */
+export function gradientPng(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(width * 3 + 1);
+    for (let x = 0; x < width; x += 1) {
+      const across = x / width;
+      const down = y / height;
+      const dx = (x - width / 2) / (width / 3);
+      const dy = (y - height / 2) / (height / 3);
+      const inside = dx * dx + dy * dy < 1;
+      const at = 1 + x * 3;
+      row[at] = inside ? 214 : Math.round(120 + across * 60);
+      row[at + 1] = inside ? 150 : Math.round(90 + down * 70);
+      row[at + 2] = inside ? 70 : Math.round(60 + (1 - down) * 40);
+    }
+    rows.push(row);
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 /** A transparent PNG with nothing drawn on it — a sheet the model wasted. */
 export function emptySheet(edge = 512): string {
   const ihdr = Buffer.alloc(13);

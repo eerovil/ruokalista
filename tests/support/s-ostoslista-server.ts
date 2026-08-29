@@ -44,6 +44,56 @@ const products = {
       available: false,
     },
   ],
+  // #204's audit walks several ingredients in a row, and a walk where only
+  // milk ever finds anything photographs the fixture rather than the flow.
+  // Deliberately not sitruunaruoho: shopping.spec.ts leans on the row after
+  // maito finding nothing.
+  jauheliha: [
+    {
+      ean: "6408430000159",
+      sokId: "100523111",
+      name: "Kotimaista nauta-sikajauheliha 400 g",
+      price: 4.29,
+      priceUnit: "KPL",
+      available: true,
+    },
+    {
+      ean: "6408430000753",
+      sokId: "100523112",
+      name: "Atria naudan jauheliha 10 % 400 g",
+      price: 5.49,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
+  juusto: [
+    {
+      ean: "6408430011117",
+      sokId: "100477001",
+      name: "Kotimaista juustoraaste 250 g",
+      price: 2.19,
+      priceUnit: "KPL",
+      available: true,
+    },
+    {
+      ean: "6408430011124",
+      sokId: "100477002",
+      name: "Valio Polar 15 juustoviipale 350 g",
+      price: 3.95,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
+  oljy: [
+    {
+      ean: "6414893000019",
+      sokId: "100311444",
+      name: "Keiju rypsiöljy 1 l",
+      price: 3.59,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
 } as const;
 
 createServer(async (request, response) => {
@@ -128,7 +178,17 @@ createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/products") {
     const query = (url.searchParams.get("q") ?? "").toLocaleLowerCase("fi-FI");
     if (query === "virhe") return send(response, 503, { error: "test outage" });
-    const found = query.includes("kahvi") ? products.kahvi : query.includes("maito") ? products.maito : [];
+    const found = query.includes("kahvi")
+      ? products.kahvi
+      : query.includes("maito")
+        ? products.maito
+        : query.includes("jauheliha")
+          ? products.jauheliha
+          : query.includes("juusto")
+            ? products.juusto
+            : query.includes("öljy") || query.includes("oljy")
+              ? products.oljy
+              : [];
     return send(response, 200, { query, results: found });
   }
   return send(response, 404, { error: "not found" });

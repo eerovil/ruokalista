@@ -9,6 +9,7 @@ import {
 } from "../src/intake-jobs.ts";
 import { encodeDraftStreamRecord } from "../src/intake.ts";
 import { SAMPLE_DRAFT } from "../src/sample-draft.ts";
+import { png } from "./support/images.ts";
 
 test("the queued consumer keeps only the validated retry attempt", async () => {
   const body = [
@@ -214,6 +215,90 @@ test("a linked job that already read its page does not read it again", async () 
   assert.equal(db.storedText(), null);
 });
 
+const PICTURE = "https://kuvat.example/uunikaali.png";
+
+const ILLUSTRATED_PAGE = `<!doctype html><html><head><title>Uunikaali</title>
+  <script type="application/ld+json">${JSON.stringify({
+    "@type": "Recipe",
+    name: "Uunikaali",
+    image: PICTURE,
+    recipeYield: "4 annosta",
+    recipeIngredient: ["500 g valkokaalia", "1 l vettä"],
+    recipeInstructions: "Kuullota kaali pannulla ja paista uunissa tunnin ajan.",
+  })}</script></head>
+  <body><main><h1>Uunikaali</h1></main></body></html>`;
+
+test("a linked job keeps the picture the page had on it", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+  const bytes = png(900, 600);
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: siteServer(ILLUSTRATED_PAGE, { [PICTURE]: bytes }),
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  // The bytes are ours now, in the job's own place in the bucket — not a link
+  // back to somebody else's media library.
+  assert.equal(db.storedPageImage()?.key, "intake/owned/found.png");
+  assert.equal(db.storedPageImage()?.type, "image/png");
+  assert.equal(db.storedObjects().get("intake/owned/found.png")?.bytes, bytes.byteLength);
+
+  // And it is still there once the job is ready: unlike a photographed job's
+  // input pages, this picture is wanted by the review screen and by the save.
+  assert.equal(db.claimLease(), db.readyLease());
+  assert.ok(db.storedObjects().has("intake/owned/found.png"));
+});
+
+test("a picture that will not download loses only the picture", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async (url) =>
+      url === PICTURE
+        ? new Response("", { status: 500 })
+        : new Response(ILLUSTRATED_PAGE, {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          }),
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  // The recipe imported. That is the thing the member asked for, and an image
+  // server having a bad day must not be able to take it away from them.
+  assert.equal(db.claimLease(), db.readyLease());
+  assert.equal(db.failedLease(), null);
+  assert.match(db.storedText() ?? "", /valkokaalia/);
+  assert.equal(db.storedPageImage(), null);
+  assert.equal(db.storedObjects().size, 0);
+});
+
+test("a page with no picture on it imports exactly as it did before", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: null,
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+  const server = pageServer(RECIPE_PAGE);
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: server.fetchPage,
+    structure: async () => JSON.stringify(SAMPLE_DRAFT),
+  });
+
+  // Nothing was fetched beyond the page itself: no candidate, no request.
+  assert.deepEqual(server.requests(), ["https://kotikokki.example/uunikaali"]);
+  assert.equal(db.storedPageImage(), null);
+  assert.equal(db.claimLease(), db.readyLease());
+});
+
 test("a page that gives up no recipe fails the job in Finnish", async () => {
   const db = intakeDatabase({
     source_route: "linked",
@@ -294,12 +379,16 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
   failedLease(): string | null;
   failureMessage(): string | null;
   storedText(): string | null;
+  storedPageImage(): { key: string; type: string } | null;
+  storedObjects(): Map<string, { bytes: number; contentType: string }>;
 } {
   let claimLease: string | null = null;
   let readyLease: string | null = null;
   let failedLease: string | null = null;
   let failureMessage: string | null = null;
   let storedText: string | null = null;
+  let storedPageImage: { key: string; type: string } | null = null;
+  const storedObjects = new Map<string, { bytes: number; contentType: string }>();
   const row = {
     id: "owned",
     household_id: 1,
@@ -310,6 +399,8 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
     source_text: SAMPLE_DRAFT.source_text,
     source_url: null,
     image_refs: null,
+    page_image_key: null,
+    page_image_type: null,
     draft_json: null,
     error_message: null,
     created_at: "2026-08-28 00:00:00",
@@ -335,6 +426,10 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
             failureMessage = String(values[0]);
           } else if (sql.includes("SET source_text = ?, source_url = ?")) {
             storedText = String(values[0]);
+          } else if (sql.includes("SET page_image_key = ?")) {
+            storedPageImage = { key: String(values[0]), type: String(values[1]) };
+            row.page_image_key = storedPageImage.key;
+            row.page_image_type = storedPageImage.type;
           }
           return { meta: { changes: 1 } };
         },
@@ -346,7 +441,21 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
   return {
     env: {
       DB: db,
-      RECIPE_IMAGES: {},
+      RECIPE_IMAGES: {
+        put: async (
+          key: string,
+          bytes: ArrayBuffer,
+          options?: { httpMetadata?: { contentType?: string } },
+        ) => {
+          storedObjects.set(key, {
+            bytes: bytes.byteLength,
+            contentType: options?.httpMetadata?.contentType ?? "",
+          });
+        },
+        delete: async (key: string) => {
+          storedObjects.delete(key);
+        },
+      },
       INTAKE_QUEUE: {},
     } as unknown as import("../src/env.ts").Env,
     claimLease: () => claimLease,
@@ -354,6 +463,28 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
     failedLease: () => failedLease,
     failureMessage: () => failureMessage,
     storedText: () => storedText,
+    storedPageImage: () => storedPageImage,
+    storedObjects: () => storedObjects,
+  };
+}
+
+/**
+ * A stand-in site: one page, plus the pictures hanging off it. Fresh responses
+ * per call, because a body can only be read once.
+ */
+function siteServer(
+  markup: string,
+  images: Record<string, Buffer>,
+): import("../src/recipe-fetch.ts").PageFetcher {
+  return async (url) => {
+    const image = images[url];
+    if (image !== undefined) {
+      return new Response(image, { headers: { "Content-Type": "image/png" } });
+    }
+    return new Response(markup, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
   };
 }
 

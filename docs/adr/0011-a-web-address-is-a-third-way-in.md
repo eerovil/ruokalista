@@ -2,7 +2,12 @@
 
 ## Status
 
-Proposed by issue #192. This change **reverses part of wayfinder decision #4**
+Proposed by issue #192. **Amended by issue #205**, which reverses one of the
+rejections below: a picture found on the page now comes in with the recipe. See
+"Amendment: the page's picture" at the foot of this document. Everything else
+here stands.
+
+This change **reverses part of wayfinder decision #4**
 ("Where recipes come from", closed), which ruled URL import out. The reasoning
 recorded in `docs/codebase/intake.md` under "Why pasted text, not a URL
 importer" is superseded by this document; the rest of #4 — the model does the
@@ -91,6 +96,7 @@ recipe text the household would have pasted by hand anyway.
   else's work, and #4 already settled that this app stores text and discards
   images. A household can still upload or generate a picture as before. This is
   the one thing in #192's wish list this change deliberately leaves out.
+  **Reversed by #205 — see the amendment below.**
 - **Trusting the platform's redirect following.** A public address that redirects
   to a private one is exactly the case the address guard exists for, so hops are
   followed by hand and each one is re-checked.
@@ -99,3 +105,40 @@ recipe text the household would have pasted by hand anyway.
   what that means.
 - **A per-site scraper for the Finnish recipe sites.** #2 found it unnecessary,
   and it is the maintenance burden #4 was right to refuse.
+
+## Amendment: the page's picture (#205)
+
+Issue #205, raised by the same person as #192, changes this one decision:
+**when a linked import finds the dish's own photograph, it comes in with the
+recipe.** The reasoning above was about somebody else's work and about #4's
+"stores text, discards images". What #205 weighs against that is the household
+in front of the screen: they have imported the recipe they were reading, and
+asking them to go back, save the picture and upload it by hand — or to pay for
+a generated one that is not the dish — is the same abandoned-import friction
+that made a URL importer worth building in the first place.
+
+What this pull request introduces:
+
+- **The page names the picture; it is never guessed.** `schema.org/Recipe`'s
+  own `image` first. `og:image` only as a fallback, and only on a page that
+  carried a `Recipe` node at all — that condition is the whole guard, because
+  `og:image` on a recipe page is the dish and on any other page is a masthead.
+  A page with no structured recipe gets no picture.
+- **The bytes are copied, not linked.** `recipe.image_key`, in this household's
+  own prefix, through the same `storeRecipeImage` an upload goes through and
+  the same signature, byte and pixel checks. Nothing depends on the site
+  keeping its URL stable or allowing hotlinks. #4's "images are discarded" is
+  what changes; "the model still structures" and "nothing is trusted" do not.
+- **Nothing about the picture can fail an import.** It is fetched after the
+  recipe text is already written back onto the job, every failure is a log line,
+  and a candidate that turns out to be an error page, too many pixels or not an
+  image at all is simply the next candidate's turn.
+- **The address guard is not weakened to fetch it.** Every picture address goes
+  through `normaliseRecipeUrl` and the same redirect-by-hand loop, so a
+  photograph "hosted" on a private name is refused exactly as a page would be.
+- **The member sees it before it is saved.** It is shown on *Tarkista resepti*
+  with a tick that is on by default; unticking it saves the recipe without one.
+
+What stays as written above: pasting is still the route that covers
+everything, the model still does the structuring, `recipe-fetch.ts` still parses
+no ingredient lines, and every route is still behind `requireMember`.

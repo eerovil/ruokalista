@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
  * by CI cannot drift apart.
  */
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
-import { executeLocalSql } from "./seed";
+import { executeLocalSql, putLocalObject } from "./seed";
 
 export { SAMPLE_DRAFT as DRAFT_FIXTURE };
 const DRAFT_FIXTURE = SAMPLE_DRAFT;
@@ -114,28 +114,43 @@ export async function stubStructuring(
           mediaType: image.mediaType ?? "image/jpeg",
         }))
       : null;
+
+    // The picture the consumer would have found on the page and stored (#205),
+    // in the bucket under the job's own key before the review screen asks for it.
+    const pageImageKey = linked && options.linkedImage !== undefined
+      ? `intake/${id}/found.png`
+      : null;
+    if (pageImageKey !== null) {
+      putLocalObject(pageImageKey, options.linkedImage!, "image/png");
+    }
     const route_ = photographed ? "photographed" : linked ? "linked" : "pasted";
 
     if (options.failWith !== undefined) {
       executeLocalSql(
         `INSERT INTO intake_job
           (id, household_id, created_by, status, source_route, source_text,
-           source_url, image_refs, error_message, created_at, updated_at)
+           source_url, image_refs, page_image_key, page_image_type,
+           error_message, created_at, updated_at)
          VALUES (${sql(id)}, 1, 1, 'failed', ${sql(route_)},
            ${linked ? "NULL" : sql(sourceText)},
            ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
            ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
+           ${pageImageKey === null ? "NULL" : "'image/png'"},
            ${sql(options.failWith)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       );
     } else {
       executeLocalSql(
         `INSERT INTO intake_job
           (id, household_id, created_by, status, source_route, source_text,
-           source_url, image_refs, draft_json, created_at, updated_at)
+           source_url, image_refs, page_image_key, page_image_type,
+           draft_json, created_at, updated_at)
          VALUES (${sql(id)}, 1, 1, 'ready', ${sql(route_)},
            ${photographed ? "NULL" : sql(sourceText)},
            ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
            ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+           ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
+           ${pageImageKey === null ? "NULL" : "'image/png'"},
            ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       );
     }
@@ -166,6 +181,11 @@ export interface StubOptions {
   linkedUrl?: string;
   /** Finnish failure wording, when the job should land as failed instead. */
   failWith?: string;
+  /**
+   * A PNG on disk that the consumer found on the page and stored (#205), put
+   * into the local bucket under the job's own key.
+   */
+  linkedImage?: string;
 }
 
 function sql(value: string): string {

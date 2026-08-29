@@ -86,6 +86,17 @@ deletes/inserts that won a given revision update, so a save is conditional on
 the token rather than just the numeric revision — seeing the same revision
 from somebody else's already-completed edit is never enough to rewrite it.
 
+One revision covers one recipe row, and a named part is a row of its own
+(ADR-0002) with its own editor screen — so the dish's revision says nothing
+about whether one of its parts moved. This pull request proposes closing that
+gap for the save that writes a whole dish at once: a form that names parts
+carries each part's own revision beside the dish's, and the dish's `UPDATE`
+gains a subquery requiring every named part to still be its child at exactly
+that revision. Putting the condition there rather than on each part's own
+statement is the point — that update is what writes the token the rest of the
+batch is guarded by, so a part having moved refuses the whole batch instead of
+leaving the dish rewritten and one part not.
+
 ## Recipe images
 
 `migrations/0006_recipe_images.sql` adds `recipe.image_key` (#89: bytes plus a
@@ -178,6 +189,21 @@ table-level and name `source_route`, so no `DROP COLUMN` can carry them away,
 but nothing references `intake_job`, so the plain create-copy-drop-rename works
 with no cascade to worry about and no child's `REFERENCES` clause to follow the
 rename.
+
+`migrations/0019_intake_page_image.sql`, proposed by #205, adds
+`intake_job.page_image_key` and `page_image_type`: the picture a linked import
+found on the page it read, parked in R2 until the recipe is saved. It is
+deliberately *not* `image_refs`, and the schema is what said so — 0018's
+table-level CHECK requires `image_refs IS NULL` on a linked job, because those
+are a photographed import's input pages and are deleted the moment a draft
+exists. A found photograph is wanted after that, and again at save.
+
+That one is the opposite lesson to 0018: two `ALTER TABLE ADD COLUMN`s and no
+rebuild. The table-level CHECKs name `source_route`, `source_text`, `source_url`
+and `image_refs` and would have had to be rewritten if the new columns were part
+of them; they are not, and `ADD COLUMN` takes a column's own CHECK, which is
+where `page_image_type`'s media-type constraint lives. Which route may carry a
+picture is a rule in `intake-jobs.ts`, not a constraint.
 
 ## Admin
 

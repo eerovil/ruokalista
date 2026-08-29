@@ -38,6 +38,7 @@ import {
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
+  intakeJobImage,
   intakeJobReviewScreen,
   intakeJobStatus,
   intakeScreen,
@@ -69,6 +70,11 @@ import {
   saveEditForm,
   uploadRecipeImageForm,
 } from "./recipe-editor.ts";
+import {
+  promptEditForm,
+  promptEditScreen,
+  promptReviewScreen,
+} from "./recipe-prompt-screens.ts";
 import {
   recipeImageAdminScreen,
   recipeImageConfirmScreen,
@@ -180,6 +186,11 @@ const router = new Router()
   .post("/recipes/kategoriat", requireMemberScreen(categoryBulkForm))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
+  // A change asked for in a sentence (#208). It proposes; the save below is
+  // still the only thing that writes.
+  .get("/recipes/:id/prompt", requireMemberScreen(promptEditScreen))
+  .post("/recipes/:id/prompt", requireMemberScreen(promptEditForm))
+  .post("/recipes/:id/prompt/review", requireMemberScreen(promptReviewScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
   .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
@@ -202,6 +213,7 @@ const router = new Router()
   .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
   .post("/api/intake/imports", requireMember(startIntakeJob))
   .get("/api/intake/imports/:id", requireMember(intakeJobStatus))
+  .get("/api/intake/imports/:id/image", requireMember(intakeJobImage))
   .post("/recipes", requireMemberScreen(saveScreen))
   .get("/api/recipes", requireMember(apiListRecipes))
   .get("/api/recipes/:id", requireMember(apiShowRecipe))

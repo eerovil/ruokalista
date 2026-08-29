@@ -10,12 +10,14 @@ import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
 import {
+  expectedPartFields,
   FormRefused,
   lineCountForRendering,
   lineRows,
   lineValuesFromForm,
   MAX_LINES,
   phaseSelect,
+  readExpectedParts,
   readLineCount,
   readLines,
   readSteps,
@@ -38,6 +40,7 @@ import {
   replaceRecipe,
   SaveRefused,
   StaleRecipe,
+  type ExpectedPart,
 } from "./recipe-save.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -50,7 +53,7 @@ import type { RouteContext } from "./router.ts";
  * needs exactly that text.
  */
 
-interface EditorAttempt {
+export interface EditorAttempt {
   form: FormData;
   lineCount: number;
   revision: number;
@@ -58,6 +61,38 @@ interface EditorAttempt {
   autofocusRow?: number;
   /** Removals the steps still argue with (issue #128). */
   conflicts?: RemovalConflict[];
+  /**
+   * Leave the picture block off. A prompt edit's review (#208) is about the
+   * words: the picture is not part of the proposal, and its upload form posts
+   * somewhere else entirely, so a whole file input between the proposal and
+   * the ingredients is only in the way.
+   */
+  withoutPicture?: boolean;
+  /**
+   * Show which named part each line and step belongs to (#208).
+   *
+   * Off for an ordinary edit, and that is load-bearing rather than cosmetic: a
+   * saved part is a recipe of its own with its own screen (ADR-0002), and a
+   * form with no part field submits no section, so `replaceRecipe` leaves the
+   * dish's parts alone. A prompt edit's review turns it on because the model
+   * was shown the whole dish and may have changed a part, and the member has to
+   * be able to see — and correct — which part a row landed in.
+   *
+   * Carried in the form as a hidden field once it is on, so adding a line by
+   * hand or being refused for something unrelated does not quietly drop the
+   * part fields — which would send every part's content back onto the dish on
+   * the next submit.
+   */
+  withSections?: boolean;
+  /**
+   * The dish's parts as this form saw them, at their own revisions (#208).
+   *
+   * Rendered as hidden fields and checked by `replaceRecipe`, so a part edited
+   * or deleted on its own screen while a proposal was being reviewed refuses
+   * the save instead of being overwritten by it. Defaults to whatever the
+   * submitted form already carried.
+   */
+  expectedParts?: readonly ExpectedPart[];
 }
 
 /**
@@ -209,9 +244,18 @@ export async function saveEditForm(
       // the dish is what gets browsed for (#196).
       categories: (await loadVocabulary(env.DB)).read(form),
     },
-    // A dish written entirely in named parts has no ingredient lines of its
-    // own, and it is still a whole recipe (issue #184).
-    { hasParts: recipe.parts.length > 0 });
+    {
+      // A dish written entirely in named parts has no ingredient lines of its
+      // own, and it is still a whole recipe (issue #184).
+      hasParts: recipe.parts.length > 0,
+      // The parts a submitted section may land on (#208). This form renders no
+      // part field, so an ordinary edit names none and they are left alone; a
+      // prompt edit's review posts here too, and it does.
+      parts: recipe.parts.map((part) => ({ id: part.id, title: part.title })),
+      // And which of them the form was written against, so a part edited on its
+      // own screen since then refuses this save rather than losing that edit.
+      expectedParts: readExpectedParts(form),
+    });
   } catch (error) {
     if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
       throw error;
@@ -221,6 +265,7 @@ export async function saveEditForm(
     if (latest === null) return notFound(member);
 
     const stale = error instanceof StaleRecipe;
+    const submittedParts = readExpectedParts(form);
     const [ingredients, vocabulary] = await Promise.all([
       ingredientsFor(env.DB, member.householdId),
       loadVocabulary(env.DB),
@@ -237,6 +282,11 @@ export async function saveEditForm(
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
+          // The parts move with it, and for the same reason: the member has
+          // been told what changed, so a second, deliberate submit is theirs to
+          // make. A part that has gone is simply not offered again.
+          expectedParts:
+            stale && submittedParts.length > 0 ? currentParts(latest) : submittedParts,
           conflicts:
             error instanceof MentionedRemoval ? error.conflicts : undefined,
         })}`,
@@ -294,6 +344,15 @@ async function addedLine(
     "recipes",
     member,
   );
+}
+
+/** A dish's parts as they stand right now, for a form to be written against. */
+export function currentParts(recipe: Recipe): ExpectedPart[] {
+  return recipe.parts.map((part) => ({
+    id: part.id,
+    title: part.title,
+    revision: part.revision,
+  }));
 }
 
 /**
@@ -453,7 +512,16 @@ function seeEditor(recipeId: number): Response {
 
 // ---------------------------------------------------------------- rendering
 
-function editorForm(
+/**
+ * The editor, optionally rendered from a submitted form rather than from the
+ * stored recipe.
+ *
+ * Exported because a prompt edit (#208) reviews its proposal *in this form*.
+ * That is the whole trick: the member corrects the proposal with the controls
+ * they already know, and the save is this screen's own `POST /recipes/:id`, so
+ * a proposed recipe and a hand-typed one reach the database the same way.
+ */
+export function editorForm(
   recipe: Recipe,
   ingredients: IngredientSummary[],
   vocabulary: Vocabulary,
@@ -543,6 +611,14 @@ function editorForm(
     : String(recipe.yieldPortions ?? "");
   const revision = attempted?.revision ?? recipe.revision;
   const hasPicture = recipe.imageKey !== null;
+  // Once on, it stays on across every re-render of this form: the hidden field
+  // is what carries it through `+ Lisää aines` and through a refusal.
+  const withSections =
+    attempted?.withSections === true ||
+    String(attempted?.form.get("withSections") ?? "") === "1";
+  const expectedParts =
+    attempted?.expectedParts ??
+    (attempted === undefined ? [] : readExpectedParts(attempted.form));
   // A refused save re-renders what was ticked, not what is stored: the point of
   // the refusal is that the member's own edit is still in front of them.
   const categories = attempted
@@ -550,7 +626,125 @@ function editorForm(
     : recipe.categories;
 
   return html`<h1>Muokkaa reseptiä</h1>
-    <section class="recipe-image-editor">
+    ${attempted?.withoutPicture === true ? "" : pictureBlock(recipe, hasPicture)}
+
+    <form method="post" action="/recipes/${recipe.id}" class="stacked">
+      <!-- The browser submits a form through its *first* submit button when
+           somebody presses Enter in a text field, and the first one on this
+           form is now the add-an-ingredient one. This copy of the save button
+           is here so
+           that Enter still saves. Hidden from the accessibility tree and out of
+           the tab order, because it is the same button as the one at the end. -->
+      <button
+        type="submit"
+        class="default-submit"
+        tabindex="-1"
+        aria-hidden="true"
+      >
+        Tallenna muutokset
+      </button>
+      <input type="hidden" name="lineCount" value="${rows.length}" />
+      <input type="hidden" name="revision" value="${revision}" />
+      ${withSections ? raw(`<input type="hidden" name="withSections" value="1" />`) : ""}
+      <!-- The dish's parts as this form saw them. The revision above locks the
+           dish; a part is a recipe row of its own and needs its own (#208). -->
+      ${expectedPartFields(expectedParts)}
+
+      <label for="title">Nimi</label>
+      <input id="title" name="title" value="${title}" required />
+
+      <!-- What the source said the recipe makes. Since #165 this is metadata
+           and nothing scales by it, so the label says whose claim it is. -->
+      <label for="yield">Annoksia lähteen mukaan</label>
+      <input
+        id="yield"
+        name="yield"
+        inputmode="numeric"
+        value="${yieldValue}"
+        placeholder="Tyhjä, jos teksti ei kerro"
+      />
+
+      <!-- Only a dish carries categories. A part is a recipe row (ADR-0002),
+           but nobody browses the store for a juustokastike. -->
+      ${recipe.parentId === null ? categoryChoices(vocabulary, categories) : ""}
+
+      <h2>Ainekset</h2>
+      ${lineRows(rows, ingredients, {
+        compact: true,
+        reorderable: true,
+        phases: recipe.parts.length > 0,
+        sections: withSections,
+        ...(attempted?.autofocusRow === undefined
+          ? {}
+          : { autofocusRow: attempted.autofocusRow }),
+      })}
+      ${mentionedRemovals(attempted?.conflicts ?? [])}
+
+      <h2>Valmistus</h2>
+      <ol class="edit-steps">
+        ${steps.map(
+          (step) => html`<li class="${recipe.parts.length > 0 ? "has-phase" : ""}">
+            <input
+              name="step.${step.index}.position"
+              inputmode="numeric"
+              value="${step.position}"
+              aria-label="Järjestys"
+              class="position"
+            />
+            <!-- Which part this step belongs to, worded exactly as the
+                 correction screen words it. Only a prompt edit's review shows
+                 it; without it a step the model put in a part would submit no
+                 section and land back on the dish. -->
+            ${withSections
+              ? html`<input
+                  name="step.${step.index}.section"
+                  value="${step.section}"
+                  aria-label="Osa"
+                  placeholder="Osa"
+                  class="section"
+                />`
+              : ""}
+            <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
+            <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
+              >${step.text}</textarea
+            >
+            ${recipe.parts.length > 0 && step.section.trim() === ""
+              ? phaseSelect(`step.${step.index}.phase`, step.phase)
+              : ""}
+          </li>`,
+        )}
+      </ol>
+
+      <!-- Sticky rather than at the end of the form: the editor is long enough
+           that on a phone the save button used to be several screens below
+           whatever was being changed (issue #184). It rides just above the tab
+           strip while the form scrolls and settles here at the end. -->
+      <div class="editor-actions">
+        <button type="submit" class="primary">Tallenna muutokset</button>
+      </div>
+    </form>
+
+    <!-- Outside the form above on purpose: a link, so nothing typed into the
+         editor is carried into a prompt edit and quietly proposed away (#208). -->
+    <p class="recipe-prompt-edit">
+      <a href="/recipes/${recipe.id}/prompt">Muokkaa promptilla</a>
+    </p>
+
+    <h2>Alkuperäinen teksti</h2>
+    <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
+    <p class="source-text">${recipe.sourceText}</p>
+
+    <!-- A link, not a submit: deleting a recipe is not something a mistyped tap
+         should finish. The confirmation screen is where the button lives. -->
+    <p class="recipe-delete">
+      <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
+    </p>
+    ${CATEGORY_STYLE}`;
+}
+
+/** The picture and its upload, which is the only upload control anywhere. */
+function pictureBlock(recipe: Recipe, hasPicture: boolean): Raw {
+  return html`<section class="recipe-image-editor">
       <h2>Kuva</h2>
       ${recipeImage(recipe)}
       <form
@@ -580,96 +774,7 @@ function editorForm(
           </form>`
         : ""}
     </section>
-    ${raw(`<script>${SHRINK_ISLAND}</script>`)}
-
-    <form method="post" action="/recipes/${recipe.id}" class="stacked">
-      <!-- The browser submits a form through its *first* submit button when
-           somebody presses Enter in a text field, and the first one on this
-           form is now the add-an-ingredient one. This copy of the save button
-           is here so
-           that Enter still saves. Hidden from the accessibility tree and out of
-           the tab order, because it is the same button as the one at the end. -->
-      <button
-        type="submit"
-        class="default-submit"
-        tabindex="-1"
-        aria-hidden="true"
-      >
-        Tallenna muutokset
-      </button>
-      <input type="hidden" name="lineCount" value="${rows.length}" />
-      <input type="hidden" name="revision" value="${revision}" />
-
-      <label for="title">Nimi</label>
-      <input id="title" name="title" value="${title}" required />
-
-      <!-- What the source said the recipe makes. Since #165 this is metadata
-           and nothing scales by it, so the label says whose claim it is. -->
-      <label for="yield">Annoksia lähteen mukaan</label>
-      <input
-        id="yield"
-        name="yield"
-        inputmode="numeric"
-        value="${yieldValue}"
-        placeholder="Tyhjä, jos teksti ei kerro"
-      />
-
-      <!-- Only a dish carries categories. A part is a recipe row (ADR-0002),
-           but nobody browses the store for a juustokastike. -->
-      ${recipe.parentId === null ? categoryChoices(vocabulary, categories) : ""}
-
-      <h2>Ainekset</h2>
-      ${lineRows(rows, ingredients, {
-        compact: true,
-        reorderable: true,
-        phases: recipe.parts.length > 0,
-        ...(attempted?.autofocusRow === undefined
-          ? {}
-          : { autofocusRow: attempted.autofocusRow }),
-      })}
-      ${mentionedRemovals(attempted?.conflicts ?? [])}
-
-      <h2>Valmistus</h2>
-      <ol class="edit-steps">
-        ${steps.map(
-          (step) => html`<li class="${recipe.parts.length > 0 ? "has-phase" : ""}">
-            <input
-              name="step.${step.index}.position"
-              inputmode="numeric"
-              value="${step.position}"
-              aria-label="Järjestys"
-              class="position"
-            />
-            <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
-            <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
-              >${step.text}</textarea
-            >
-            ${recipe.parts.length > 0
-              ? phaseSelect(`step.${step.index}.phase`, step.phase)
-              : ""}
-          </li>`,
-        )}
-      </ol>
-
-      <!-- Sticky rather than at the end of the form: the editor is long enough
-           that on a phone the save button used to be several screens below
-           whatever was being changed (issue #184). It rides just above the tab
-           strip while the form scrolls and settles here at the end. -->
-      <div class="editor-actions">
-        <button type="submit" class="primary">Tallenna muutokset</button>
-      </div>
-    </form>
-
-    <h2>Alkuperäinen teksti</h2>
-    <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
-    <p class="source-text">${recipe.sourceText}</p>
-
-    <!-- A link, not a submit: deleting a recipe is not something a mistyped tap
-         should finish. The confirmation screen is where the button lives. -->
-    <p class="recipe-delete">
-      <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
-    </p>
-    ${CATEGORY_STYLE}`;
+    ${raw(`<script>${SHRINK_ISLAND}</script>`)}`;
 }
 
 /**

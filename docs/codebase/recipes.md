@@ -32,6 +32,12 @@ field; `saveRecipe` turns distinct names into child recipes. Nothing carries a
 section once saved, which is why the editor has no part field: a saved part is a
 recipe you edit on its own screen.
 
+Issue #208 proposes the one exception, and it is narrow: a prompt edit is shown
+the whole dish, parts and all, so its review does carry the field and
+`replaceRecipe` does write the parts a submitted recipe names. The editor still
+renders no part field and still submits no section, so nothing about editing by
+hand changes. See [Changing a recipe with a sentence](#changing-a-recipe-with-a-sentence-issue-208).
+
 See `docs/adr/0002-a-part-is-a-recipe.md`, including what it deliberately does
 not decide — scaling parts with the parent is still open (parts are shown
 exactly as written, unscaled, alongside a scaled parent).
@@ -334,6 +340,122 @@ how somebody finds it, so a caller reads the same dish with or without it — an
 `tests/alternatives.spec.ts` pins that key set. `dev/check-categories.ts` covers
 the vocabulary and the filter's links; `tests/categories.spec.ts` covers the
 screens.
+
+## Changing a recipe with a sentence (issue #208)
+
+Proposed here: *Muokkaa promptilla* — the member writes a short Finnish change
+request against a recipe they already have, and gets a proposed version to check
+before anything is written. `src/recipe-prompt-edit.ts` owns what the model is
+asked and what is done with its answer; `src/recipe-prompt-screens.ts` owns the
+two screens.
+
+**The proposal is reviewed in the recipe editor, not in a screen of its own.**
+That is the load-bearing decision here, and it collapses three of the issue's
+requirements into one fact: the member can correct the proposal by hand because
+it is a form they already know, and the save is that form's own `POST
+/recipes/:id` through `validateRecipe` and `replaceRecipe`, so a proposed recipe
+and a hand-typed one reach the database by exactly the same path. Nothing in
+either screen writes. `editorForm` is exported for this, and a proposal reaches
+it as `FormData` — the same re-render-from-what-was-submitted path a refused save
+uses, so there is one rendering of the editor rather than two that drift.
+
+### Two ways to mean it
+
+The member picks one **before** the request is written, and it is passed to the
+model as its own instruction:
+
+- **Täydennä nykyistä** (`extend`) — the recipe is the base and it stays. The
+  rules forbid renaming, re-yielding, rewriting the method and removing
+  anything unasked, because a model told to add a missing side dish will
+  otherwise do all four and the member cannot tell at a glance which of them
+  they asked for.
+- **Korvaa resepti** (`replace`) — the member has said the recipe is not good
+  enough. The model may restructure everything, and the rules say only that the
+  answer is still this dish, still based on the current recipe and the prompt,
+  and still **one complete saveable draft**. It updates the same recipe row:
+  same optimistic revision check, no second record.
+
+`readMode` refuses anything that is not one of the two, with no default. The
+mode is never read out of the change request's wording — told apart by guessing,
+*tee tästä parempi kokonainen resepti* and *lisää puuttuva lisuke* would
+sometimes refuse a rewrite somebody asked for and sometimes rewrite a recipe
+somebody wanted kept.
+
+### The whole dish, parts included
+
+`recipeWire` serialises the dish **and every part**, flattened the way the draft
+format has always flattened a multipart dish: each line and step carries its
+part's title in `section`, and `null` means the dish itself. That is what makes
+*lisää kastikkeeseen puuttuvat ainekset* answerable at all — the model can see
+what the juustokastike is made of, not just that it exists.
+
+- **A section reaches the part's own recipe row.** `replaceRecipe` writes the
+  parts the submitted recipe names: an existing one has its contents replaced, a
+  name that matches nothing becomes a new part. Everything hangs off the dish's
+  write token, so a concurrently edited dish leaves its parts untouched rather
+  than half-rewritten, and `parent_id` in the `WHERE` is what stops a part of
+  another dish being reachable at all.
+- **Each part is locked too, and matching is against what the form saw.** This
+  pull request adds that half. A part is a recipe row with its own editor screen
+  (ADR-0002), so the dish's revision does not move when the juustokastike is
+  edited — and matching a submitted section against the parts loaded at save
+  time would pour a ten-minute-old proposal straight over that edit, or fork a
+  second `Juustokastike` when the first had been deleted. So `proposalForm`
+  carries every part's id, title and revision as hidden fields
+  (`line-form.ts::setExpectedParts`), a section is matched against **those**,
+  and the check that every one of them still holds rides in the dish's own
+  `UPDATE` — the statement that mints the write token everything else is guarded
+  by. One part having moved therefore writes nothing at all, dish included, and
+  the member is told it was a part rather than the recipe. See
+  [data-model](data-model.md) for the lock itself.
+- **The ordinary editor is unaffected, and that is structural rather than
+  lucky.** It renders no part field, so it submits no section, so no part is
+  named and none is written — which is exactly what it did before. Only the
+  prompt review turns `withSections` on.
+- **A part the proposal stops naming is kept, not deleted.** It is a recipe row
+  of its own that another household may have on a menu, and silently taking it
+  away is not something a proposal gets to do. `untouchedParts` finds them and
+  the review says so in as many words, so the member can go and delete one on
+  its own screen if that is what they meant. This is the one place a *Korvaa
+  resepti* rewrite does not fully land, and it is deliberate.
+
+### The rest of it
+
+- **It is an intake draft, not a second recipe format.** `DRAFT_SCHEMA`,
+  `draftStream`'s retry loop and `assertDraftWire` are the intake ones. The
+  standing rules about quantities, units, alternative groups and a step's
+  mentions are literally the same string: `DRAFT_RULES` in `src/intake.ts` was
+  split out of `systemPrompt` so both prompts read from one copy.
+- **What changed is worked out here, not asked of the model.**
+  `proposalChanges` compares the proposal against the stored dish *and its
+  parts* and names what moved, per part. The question it answers — did something
+  I did not ask about move? — is the one a model's own summary is worst at, and
+  it matters more in replace mode, not less.
+- **A phase the model invented where none can be shown is dropped before the
+  review.** A named part's content carries no cooking-order phase (ADR-0003) and
+  a plain dish has no phase select, so `proposalForRecipe` drops one rather than
+  letting it be discarded on save without ever having been on screen.
+- **Nothing widens who may write.** Both routes load through `findRecipe`, which
+  is own-household only. Somebody else's published dish is a 404 here for the
+  same reason it is a 404 in the editor, and the recipe screen offers the link
+  only to the household that owns it.
+- **The screen is streamed, and it is not a background job.** A model call with
+  thinking on outlasts Cloudflare's ~125 s silence limit, which is why intake
+  streams at all — `html.ts::streamingPage` sends the shell first and the
+  proposal when it arrives, keeping a byte flowing per delta, with no script.
+  Unlike an import (#186) it does *not* need to survive the member navigating
+  away, because nothing has been written to survive. The cost is that the status
+  is always 200 and a refusal is written into the body; a later `<style>` hides
+  the "working on it" block once the answer is under it.
+
+`POST /recipes/:id/prompt/review` is the seam `/intake/correct` already is: the
+model call on one side, the review and the save on the other. It carries the
+mode along with the proposal, and it is what lets `tests/prompt-edit.spec.ts`
+drive both modes, adding an ingredient, adding a step, adding a side dish,
+adding missing ingredients to a named part, a full in-place replacement and the
+whole ownership boundary without spending anything.
+`dev/check-recipe-prompt-edit.ts` covers the two prompts, the parts round-trip
+and the draft-to-form conversion for free.
 
 ## Publishing a recipe (issue #143)
 

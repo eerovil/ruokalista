@@ -19,6 +19,34 @@ export interface ImageFacts {
   height: number;
 }
 
+/**
+ * What we will keep as a recipe picture, whoever it arrived from.
+ *
+ * The byte cap is the ingest guard; the edge cap is the one that matters,
+ * because it is pixels that make a picture too big to store and too wide to
+ * read on a phone. They live here rather than with the upload route because
+ * the same two numbers now decide what a page's own photograph has to be for
+ * `recipe-fetch.ts` to bother downloading it (#205) — one set of limits, not
+ * two that can drift.
+ */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_EDGE = 2000;
+
+/**
+ * The picture these bytes are, if they are one we would store — null when they
+ * are not an image at all, or are past either cap.
+ *
+ * A caller that owes somebody a reason for the refusal reads `readImage` and
+ * the caps itself; this is for the callers that simply move on to the next
+ * candidate.
+ */
+export function storableImage(bytes: ArrayBuffer): ImageFacts | null {
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) return null;
+  const facts = readImage(bytes);
+  if (facts === null) return null;
+  return Math.max(facts.width, facts.height) > MAX_IMAGE_EDGE ? null : facts;
+}
+
 /** The file extension we store a given type under. */
 export function extensionFor(contentType: ImageFacts["contentType"]): string {
   if (contentType === "image/jpeg") return "jpg";
