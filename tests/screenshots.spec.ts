@@ -869,6 +869,66 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/65-editor-save-bar.png` });
   });
 
+  /**
+   * Issue #217's three, and viewport shots for the same reason #184's are: a
+   * full-page capture paints a sticky bar at the end of its container, which is
+   * the position this change exists to stop it being in.
+   */
+  test("the save bar on the import review, with the draft edited", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 720 });
+    await stubStructuring(page);
+
+    await page.goto("/intake");
+    await page.getByLabel("Liitä reseptin teksti").fill(DRAFT_FIXTURE.source_text);
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await expect(page.getByRole("heading", { name: "Tarkista resepti" }))
+      .toBeVisible();
+
+    // The state the card is about: the draft opened for editing and changed,
+    // which is when the save used to be several screens above.
+    await openDraftEditor(page);
+    await page.locator("#title").fill("Uunikaali ja juustokastike");
+    // The rows themselves, not the heading: this screen names its ingredients
+    // twice, once in the review above and once in the form.
+    await page.locator(".line").first().scrollIntoViewIfNeeded();
+
+    await expect(page.locator(".line").first()).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Tallenna resepti" }))
+      .toBeInViewport();
+    await expect(page.locator(".save-bar"))
+      .toContainText("Tallentamattomia muutoksia");
+    await capture(page, { path: `${SHOTS}/105-review-save-bar.png` });
+  });
+
+  test("who can see a dish, said under its title and changed in one tap", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 720 });
+
+    await page.goto("/recipes/1");
+    await expect(page.locator(".sharing-shortcut"))
+      .toContainText("Näkyvyys: vain oma talous");
+    await expect(page.locator(".sharing-shortcut")).toBeInViewport();
+    await capture(page, { path: `${SHOTS}/106-sharing-shortcut.png` });
+
+    await page.locator(".sharing-shortcut").getByRole("link", { name: "Muuta" })
+      .click();
+    await page.getByLabel("Julkinen").check();
+    await expect(page.getByRole("button", { name: "Tallenna jako" }))
+      .toBeInViewport();
+    await expect(page.locator(".recipe-sharing .save-bar"))
+      .toContainText("Tallentamattomia muutoksia");
+    await capture(page, { path: `${SHOTS}/107-sharing-save-bar.png` });
+
+    // Left as it was found: this file seeds once for the whole run.
+    await page.getByLabel("Oma").check();
+    await page.getByRole("button", { name: "Tallenna jako" }).click();
+    await expect(page.locator(".sharing-shortcut"))
+      .toContainText("Näkyvyys: vain oma talous");
+  });
+
   test("editing a dish that has no ingredients of its own", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 720 });
 
@@ -1977,7 +2037,7 @@ async function askFor(page: Page, instruction: string): Promise<void> {
 
 /** The review's own save, which updates the recipe rather than adding one. */
 async function save(page: Page): Promise<void> {
-  await page.locator("button.save-draft").click();
+  await page.locator(".save-bar button").click();
 }
 
 /**
@@ -2300,7 +2360,7 @@ test.describe("an assisted edit whose part moved underneath it (#215)", () => {
     const other = await context.newPage();
     await other.goto("/recipes/5/edit");
     await other.locator(".line").first().locator("input[name$=quantity]").fill("7");
-    await other.locator(".editor-actions button").click();
+    await other.locator(".save-bar button").click();
     await other.waitForURL(/\/recipes\/5$/);
     await other.close();
 
