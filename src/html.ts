@@ -690,9 +690,24 @@ const STYLES = `
     width: 1.6rem; height: 1.6rem; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
   }
-  .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  /* The name and the total are one wrapping line of their own, inside the row
+     rather than the row itself (#213). Two things fall out of that. The pair
+     can take a second line when the total is too long to share the first —
+     "1 + 1 kpl + määrä reseptin mukaan" is a real total, and squeezed beside it
+     the name was drawn about three characters wide and ten lines tall. And the
+     picture and the chevron stay where they are while that happens, because
+     they are the row's items and not this line's. */
+  .shopping-line {
+    display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: baseline;
+    gap: .1rem .75rem; min-width: 0;
+  }
+  /* Sized from what it holds rather than from nothing: the name and the total
+     either share the line or the total takes the next one, and neither shrinks
+     the other to a column of single letters. */
+  .shopping-name { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
   .shopping-item[open] .shopping-name { font-weight: 600; }
-  .shopping-total { font-weight: 600; font-variant-numeric: tabular-nums;
+  .shopping-total { flex: 0 1 auto; min-width: 0; margin-left: auto;
+    font-weight: 600; font-variant-numeric: tabular-nums;
     text-align: right; }
   /* An amount the recipe never gave a number to is not a quantity, so it does
      not get a quantity's weight. */
