@@ -422,6 +422,8 @@ const STYLES = `
   }
   .chosen .page-name { flex: 1; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
+  /* What an assisted edit proposes to change (#208), on the intake review. */
+  .prompt-changes { list-style: disc; margin: .35rem 0 1rem; padding-left: 1.1rem; }
   .progress {
     margin: .35rem 0 0; padding: .6rem .8rem;
     font-size: .85rem; color: var(--muted);

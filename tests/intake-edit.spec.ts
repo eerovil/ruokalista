@@ -1,33 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
+import { KAALILAATIKKO as TARGET } from "./support/edit-targets";
 import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { captureReview } from "./support/review-capture";
 import { sessionCookie } from "./support/session";
-
-const TARGET = {
-  id: 1,
-  title: "Kaalilaatikko",
-  yieldPortions: 4,
-  sourceText: "Kaalilaatikko\n½ dl öljyä\n1–1 ja ½ l vettä\n½ (500 g) valkokaali\nhieman sitruunaruohoa",
-  sourceRoute: "pasted",
-  sourceUrl: null,
-  revision: 0,
-  categories: [],
-  parts: [],
-  parentId: null,
-  householdId: 1,
-  householdName: "Koti",
-  createdAt: "",
-  createdBy: "Eero",
-  yield: 4,
-  imageKey: null,
-  publishedAt: null,
-  shareCount: 0,
-  lines: [],
-  steps: [],
-};
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(reseed);

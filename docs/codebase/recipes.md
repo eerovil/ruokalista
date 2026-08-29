@@ -482,7 +482,12 @@ what the juustokastike is made of, not just that it exists.
   `proposalChanges` compares the proposal against the stored dish *and its
   parts* and names what moved, per part. The question it answers — did something
   I did not ask about move? — is the one a model's own summary is worst at, and
-  it matters more in replace mode, not less.
+  it matters more in replace mode, not less. This proposal keeps that list and
+  moves it onto the shared review: `intake-screens.ts::renderCorrection` renders
+  it under the mode line whenever the draft has a target, and only then. An
+  ordinary import has no before to compare against, and a screen re-rendered
+  after a refused save is showing the member's own edit rather than the model's
+  proposal, so both get no list rather than a misleading one.
 - **A phase the model invented where none can be shown is dropped before the
   review.** A named part's content carries no cooking-order phase (ADR-0003) and
   a plain dish has no phase select, so `proposalForRecipe` drops one rather than
@@ -491,23 +496,21 @@ what the juustokastike is made of, not just that it exists.
   is own-household only. Somebody else's published dish is a 404 here for the
   same reason it is a 404 in the editor, and the recipe screen offers the link
   only to the household that owns it.
-- **The screen is streamed, and it is not a background job.** A model call with
-  thinking on outlasts Cloudflare's ~125 s silence limit, which is why intake
-  streams at all — `html.ts::streamingPage` sends the shell first and the
-  proposal when it arrives, keeping a byte flowing per delta, with no script.
-  Unlike an import (#186) it does *not* need to survive the member navigating
-  away, because nothing has been written to survive. The cost is that the status
-  is always 200 and a refusal is written into the body; a later `<style>` hides
-  the "working on it" block once the answer is under it.
+- **The wait is a queued job rather than a streamed screen.** #208 streamed the
+  proposal into an open connection, because a model call with thinking on
+  outlasts Cloudflare's ~125 s silence limit. This proposal drops that screen
+  and `html.ts::streamingPage` with it: an assisted edit waits the way an import
+  waits, on the durable job, so navigating away no longer loses it.
 
-`POST /recipes/:id/prompt/review` is the seam `/intake/correct` already is: the
-model call on one side, the review and the save on the other. It carries the
-mode along with the proposal, and it is what lets `tests/prompt-edit.spec.ts`
-drive both modes, adding an ingredient, adding a step, adding a side dish,
-adding missing ingredients to a named part, a full in-place replacement and the
-whole ownership boundary without spending anything.
-`dev/check-recipe-prompt-edit.ts` covers the two prompts, the parts round-trip
-and the draft-to-form conversion for free.
+The job row is the seam `/intake/correct` already was: the model call on one
+side, the review and the save on the other. It carries the target snapshot and
+the mode, which is what lets `tests/intake-edit.spec.ts` and the assisted-edit
+blocks of `tests/screenshots.spec.ts` drive both modes, adding a side dish,
+adding missing ingredients to a named part, a full in-place replacement, a part
+that moved underneath an open proposal and the whole ownership boundary without
+spending anything. `dev/check-recipe-prompt-edit.ts` covers the two prompts, the
+source rules for a photograph or a page in each mode, the parts round-trip and
+the draft-to-form conversion for free.
 
 ## Publishing a recipe (issue #143)
 

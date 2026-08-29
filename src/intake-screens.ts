@@ -65,7 +65,9 @@ import { SAMPLE_DRAFT } from "./sample-draft.ts";
 import {
   MODE_LABEL,
   PROMPT_MODES,
+  proposalChanges,
   proposalForRecipe,
+  type ProposalChange,
   type PromptMode,
 } from "./recipe-prompt-edit.ts";
 import { findRecipe, type Recipe } from "./recipes.ts";
@@ -313,6 +315,18 @@ interface CorrectionView {
   targetRevision: number | null;
   targetMode: PromptMode | null;
   expectedParts: Array<{ id: number; title: string; revision: number }>;
+  /**
+   * What this proposal does to the recipe it started from (#208), worked out
+   * against the job's own snapshot rather than asked of the model.
+   *
+   * An assisted edit lives or dies by "content I did not ask about survives",
+   * and nobody can check that by rereading a long recipe — least of all in
+   * replace mode, where the model was allowed to move everything. It is empty
+   * for an ordinary import, which has no before to compare against, and empty
+   * on a re-render after a refused save, where the form on screen is the
+   * member's own edit rather than the model's proposal.
+   */
+  changes: ProposalChange[];
 }
 
 /**
@@ -1118,6 +1132,7 @@ function correctionForm(
         title: part.title,
         revision: part.revision,
       })) ?? [],
+      changes: target === null ? [] : proposalChanges(draft, target),
     },
     ingredients,
     vocabulary,
@@ -1155,6 +1170,9 @@ function correctionFormFromSubmission(
           ? form.get("targetMode") as PromptMode
           : null,
       expectedParts: readExpectedParts(form),
+      // What is on screen after a refusal is what the member typed, so there is
+      // no proposal left to summarise.
+      changes: [],
     },
     ingredients,
     vocabulary,
@@ -1382,6 +1400,32 @@ function isLineFormValues(
   return "ingredientChoice" in row;
 }
 
+/**
+ * "This proposal adds the butter to the juustokastike and drops nothing else."
+ *
+ * Only ever rendered when there is something to say. An empty list means either
+ * a proposal that changed no ingredient, step or name, or a screen re-rendered
+ * from the member's own submission — and neither is worth a sentence claiming
+ * the model left everything alone.
+ */
+function proposedChanges(changes: ProposalChange[]): Raw {
+  if (changes.length === 0) return html``;
+
+  return html`<p>Ehdotus muuttaa seuraavaa:</p>
+    <ul class="prompt-changes">
+      ${changes.map((change) => html`<li>
+        ${change.kind === "added"
+          ? "Lisätty"
+          : change.kind === "removed"
+            ? "Poistettu"
+            : change.kind === "kept"
+              ? "Säilyy"
+              : "Muutettu"}
+        — ${change.what}
+      </li>`)}
+    </ul>`;
+}
+
 function renderCorrection(
   view: CorrectionView,
   ingredients: IngredientSummary[],
@@ -1396,7 +1440,8 @@ function renderCorrection(
       : "Tarkista reseptin muutokset"}</h1>
     ${view.targetMode === null
       ? ""
-      : html`<p class="status"><strong>${MODE_LABEL[view.targetMode]}</strong> — tallennus päivittää nykyisen reseptin.</p>`}
+      : html`<p class="status"><strong>${MODE_LABEL[view.targetMode]}</strong> — tallennus päivittää nykyisen reseptin.</p>
+        ${proposedChanges(view.changes)}`}
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
