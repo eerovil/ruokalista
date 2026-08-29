@@ -70,6 +70,30 @@ a phone the button sat several screens below whatever was being changed. It is
 CSS only — `position: sticky` clear of the fixed tab strip — so a browser
 without it gets today's behaviour and nothing on this path needs a script.
 
+### A recipe may be nothing but its name (issue #211)
+
+Proposed here, and it widens the rule above. Somebody remembers the name of a
+dish and has the recipe nowhere near them; they want it in the store now and
+written down later. This pull request adds an `allowEmpty` option to
+`validateRecipe` (`src/recipe-save.ts`) and an optional `options` argument to
+`saveRecipe`, so a recipe with no lines, no parts and no method is a legitimate
+thing to write.
+
+Two callers pass it and no others. The quick save on `/intake`
+(`src/intake-screens.ts::quickSaveScreen`) passes it because saving nothing but
+a name is the whole point of it. The editor
+(`src/recipe-editor.ts::saveEditForm`) passes it because otherwise that recipe
+would be a dead end: its first edit may well add only a portion count or a
+method step, and the old rule would have refused that save. The cost is that the
+editor no longer refuses emptying a recipe out — that refusal, and the test that
+held it, go with this change.
+
+The import paths still pass nothing, so they refuse exactly what they refused
+before. That is deliberate and it is the reason the option is opt-in rather than
+a removed rule: on an import an empty `lines` means the model gave back nothing
+usable, and writing that quietly would turn a failed import into a recipe
+nobody asked for.
+
 ### Cooking order has a phase (issue #58, decision #50, ADR-0003)
 
 Parent-level content on a multipart dish — a line or step that belongs to the

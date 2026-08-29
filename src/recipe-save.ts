@@ -120,8 +120,9 @@ export async function saveRecipe(
   db: D1Database,
   member: Member,
   recipe: RecipeToSave,
+  options: ValidateOptions = {},
 ): Promise<number> {
-  validateRecipe(recipe);
+  validateRecipe(recipe, options);
   await assertKnownCategories(db, recipe.categories);
   const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
 
@@ -936,6 +937,20 @@ export interface ValidateOptions {
    * empty array there really is an empty recipe.
    */
   hasParts?: boolean;
+
+  /**
+   * Whether a recipe with nothing in it at all is a legitimate thing to write
+   * (issue #211).
+   *
+   * A member who remembers only the name of a dish can save it now and write it
+   * down later, and that recipe stays editable while it is still empty — so the
+   * quick save on `/intake` and the editor both pass this.
+   *
+   * The import path does not, and must not: there an empty `lines` means the
+   * model gave back nothing usable, and saving that silently would turn a
+   * failed import into a recipe nobody asked for.
+   */
+  allowEmpty?: boolean;
 }
 
 /** One of a dish's existing parts, as the caller already has it loaded. */
@@ -1057,7 +1072,11 @@ export function validateRecipe(
   ) {
     throw new SaveRefused("Annosmäärän pitää olla positiivinen kokonaisluku.");
   }
-  if (recipe.lines.length === 0 && options.hasParts !== true) {
+  if (
+    recipe.lines.length === 0 &&
+    options.hasParts !== true &&
+    options.allowEmpty !== true
+  ) {
     throw new SaveRefused("Reseptissä pitää olla ainakin yksi aines tai osa.");
   }
   if (recipe.lines.some((line) => line.ingredient.kind === "unanswered")) {

@@ -343,7 +343,7 @@ test("duplicate ingredient lines reveal all useful amounts before and after an e
   await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(
     page.getByRole("heading", { name: "Tarkista resepti" }),
   ).toBeVisible();
@@ -386,7 +386,7 @@ async function importAndSave(
   await stubStructuring(page, draft);
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill(title);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(
     page.getByRole("heading", { name: "Tarkista resepti" }),
   ).toBeVisible();

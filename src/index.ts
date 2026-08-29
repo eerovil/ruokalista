@@ -42,6 +42,7 @@ import {
   intakeJobReviewScreen,
   intakeJobStatus,
   intakeScreen,
+  quickSaveScreen,
   retryIntakeJobForm,
   saveScreen,
   startIntakeJob,
@@ -209,6 +210,7 @@ const router = new Router()
   .patch("/api/ingredients/:id", requireAdmin(apiRename))
   .get("/intake", requireMemberScreen(intakeScreen))
   .post("/intake/correct", requireMemberScreen(correctScreen))
+  .post("/intake/keskeneras", requireMemberScreen(quickSaveScreen))
   .get("/intake/imports/:id/review", requireMemberScreen(intakeJobReviewScreen))
   .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
   .post("/api/intake/imports", requireMember(startIntakeJob))
