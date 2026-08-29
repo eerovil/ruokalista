@@ -415,6 +415,18 @@ model as its own instruction:
   and still **one complete saveable draft**. It updates the same recipe row:
   same optimistic revision check, no second record.
 
+What a photograph or a linked page means depends on that choice, and this
+proposal makes `editSourceRules` take the mode for exactly that reason.
+Extending, the new material is *lisäaineisto*: it may not take the recipe over,
+and content it happens not to show is not thereby deleted. Replacing, it is the
+draft's primary source — a photographed or linked replace often carries no
+written change request at all, so a rule protecting whatever the picture left
+out would make *Korvaa resepti* an extend under another name. The current
+recipe is still in the request either way, but replacing it keeps it only for
+what the new material cannot say: which dish this is, and what its parts are
+called. The `älä pudota ainesta` rule survives for the one case that needs it —
+a replace whose new input is a sentence rather than a recipe.
+
 `readMode` refuses anything that is not one of the two, with no default. The
 mode is never read out of the change request's wording — told apart by guessing,
 *tee tästä parempi kokonainen resepti* and *lisää puuttuva lisuke* would

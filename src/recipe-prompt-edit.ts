@@ -185,9 +185,15 @@ const REPLACE_RULES = `Toimintatapa: KORVAA RESEPTI.
 - Saat nimetä reseptin uudelleen vain, jos ruokalajin nimi on nykyisellään
   selvästi väärä tai puutteellinen.
 - Palauta täydellinen, tallennuskelpoinen resepti: jokainen aines omalla
-  rivillään määrineen ja koko valmistusohje vaiheittain. Vaikka kirjoitat
-  kaiken uusiksi, älä pudota ainesta jonka nykyinen resepti mainitsee, ellei
+  rivillään määrineen ja koko valmistusohje vaiheittain.
+- Jos käyttäjän uusi syöte on pelkkä muutospyyntö eikä sisällä itse
+  reseptiaineistoa, nykyinen resepti on ainoa lähde: vaikka kirjoitat kaiken
+  uusiksi, älä pudota ainesta jonka nykyinen resepti mainitsee, ellei
   muutospyyntö sitä pyydä.
+- Jos uusi syöte on itsessään reseptiaineistoa — kuvattu sivu, verkkosivu tai
+  liitetty kokonainen resepti — se määrittää lopputuloksen. Kirjoita resepti
+  sen pohjalta, äläkä säilytä nykyisen reseptin ainesta tai vaihetta pelkästään
+  siksi, ettei uusi aineisto mainitse sitä.
 - Voit järjestää ruokalajin nimettyihin osiin tai purkaa nykyiset osat takaisin
   ruokalajiin itseensä. Huomaa, että osa jota et enää mainitse jää talteen
   omaksi reseptikseen; se ei katoa, vaan käyttäjä poistaa sen halutessaan.`;
@@ -215,20 +221,42 @@ ${SHARED_EDIT_RULES}${noPhase}
 
 ${DRAFT_RULES}
 
-${source === undefined ? "" : editSourceRules(source)}
+${source === undefined ? "" : editSourceRules(source, mode)}
 
 ${ingredientDictionary(ingredients)}`;
 }
 
-/** Rules for reading extra material without giving it ownership of the recipe. */
-function editSourceRules(source: IntakeSource): string {
+/**
+ * What a photograph or a linked page means here — and that depends on the mode,
+ * because the two modes want opposite things from it.
+ *
+ * Extending, the picture is extra material: it may not take the recipe over,
+ * and content it happens not to show is not thereby deleted. Replacing, the
+ * member said *Korvaa nykyinen resepti*, and with a photograph or an address
+ * there is often no written change request at all — so if the incoming material
+ * were still forbidden from leaving anything out, replace would quietly be
+ * extend under another name. The current recipe stays in the request either
+ * way, but replacing it only keeps it for what the new material cannot say:
+ * which dish this is, and what its parts are called.
+ */
+function editSourceRules(source: IntakeSource, mode: PromptMode): string {
   if (source.route === "photographed") {
-    return `Käyttäjän uusi syöte on yksi tai useampi kuva lisäaineistosta.
+    return mode === "replace"
+      ? `Käyttäjän uusi syöte on yksi tai useampi kuva uudesta reseptiaineistosta.
+- Lue kuvat annetussa järjestyksessä. Ne ovat korvaavan reseptin ensisijainen lähde.
+- Kirjoita koko resepti kuvien pohjalta. Nykyinen resepti kertoo, mistä ruokalajista on kyse ja millä nimillä sen osat kulkevat, mutta se ei enää määrää sisältöä.
+- Älä keksi kuvien ulkopuolelle jäävää tekstiä. Jos jokin nykyisen reseptin aines tai vaihe ei ole kuvissa, jätä se pois; sitä ei säilytetä pelkästään siksi, että se on nykyisessä reseptissä.`
+      : `Käyttäjän uusi syöte on yksi tai useampi kuva lisäaineistosta.
 - Lue kuvat annetussa järjestyksessä ja yhdistä niiden tiedot nykyiseen reseptiin ja muutospyyntöön.
 - Älä keksi kuvien ulkopuolelle jäävää tekstiä, mutta älä myöskään poista nykyisen reseptin tietoja vain siksi, ettei niitä näy kuvissa.`;
   }
   if (source.route === "linked") {
-    return `Käyttäjän uusi syöte on verkkosivulta luettua lisäaineistoa.
+    return mode === "replace"
+      ? `Käyttäjän uusi syöte on verkkosivulta luettua uutta reseptiaineistoa.
+- Sivun resepti on korvaavan reseptin ensisijainen lähde. Kirjoita koko resepti sen pohjalta.
+- Nykyinen resepti kertoo, mistä ruokalajista on kyse ja millä nimillä sen osat kulkevat, mutta se ei enää määrää sisältöä.
+- Jos jokin nykyisen reseptin aines tai vaihe ei ole sivulla, jätä se pois; sitä ei säilytetä pelkästään siksi, että se on nykyisessä reseptissä.`
+      : `Käyttäjän uusi syöte on verkkosivulta luettua lisäaineistoa.
 - Yhdistä sivun tiedot nykyiseen reseptiin ja muutospyyntöön.
 - Älä käsittele sivua uutena alkuperäistekstinä äläkä poista nykyisen reseptin tietoja vain siksi, ettei sivu mainitse niitä.`;
   }
