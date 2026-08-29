@@ -187,12 +187,36 @@ export class SOstoslistaClient {
   }
 }
 
+/** Where every product picture comes from, and the shape of the size dial. */
+const S_IMAGE_BASE = "https://cdn.s-cloud.fi/v1/";
+
 /**
  * Product images are not signed API results. S-group's public CDN is keyed by
  * EAN and sends long-lived cache headers, so this stable URL is safe to persist.
  */
 export function sProductImageUrl(ean: string): string {
-  return `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/${encodeURIComponent(ean)}_kuva1.jpg`;
+  return `${S_IMAGE_BASE}w256_q75/product/ean/${encodeURIComponent(ean)}_kuva1.jpg`;
+}
+
+/**
+ * The same picture, rendered by the CDN at the width it is about to be drawn
+ * at. The width is the first segment of the path, so asking for a smaller one
+ * costs nothing but a different URL — and it is worth asking: a milk carton at
+ * `w256` is 256 × 705 and 44 kB, which is a wasteful thing to send a phone for
+ * a 26 px slot, twenty times over. `w80` is the same carton at 6 kB.
+ *
+ * This is applied where a picture is drawn rather than in `sProductImageUrl`,
+ * because that URL is already saved in `image_url` for every product any
+ * household has chosen. Changing only the builder would leave all of them on
+ * the full-size picture forever. A URL that is not this CDN's is handed back
+ * untouched.
+ */
+export function sProductImageAtWidth(url: string, width: number): string {
+  if (!url.startsWith(S_IMAGE_BASE)) return url;
+  const path = url.slice(S_IMAGE_BASE.length);
+  const slash = path.indexOf("/");
+  if (slash <= 0) return url;
+  return `${S_IMAGE_BASE}w${width}_q75/${path.slice(slash + 1)}`;
 }
 
 /**

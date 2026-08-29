@@ -149,6 +149,17 @@ What that buys, and the rules each part follows:
   `.shopping-thumb` slot inside the summary. It is smaller than the row's
   existing `--tap` minimum, so no row grows, and the slot collapses when there
   is no picture (`.shopping-thumb:empty`) rather than leaving an empty box.
+- **A row closes itself once its product has saved** — this is what #204
+  proposes. The open row is the tallest thing on the screen at exactly the
+  moment there is nothing left to do in it, and what somebody reported was
+  finishing one ingredient and having to hunt for where they were. The island
+  sets `details.open = false` in `persist`'s success branch, so the picture is
+  what is left saying the row is done and the next ingredient is on the next
+  line. Only on success: a refusal's error and retry are inside the row, so a
+  refused save leaves it open. Collapsing removes only what is below the summary
+  line, so the row's own line and everything above it stay put — #200's promise
+  survives it. The cost is one more tap to reach `Lisää toinen pakkauskoko` or
+  `Löytyy jo kaapista`, which is the trade the card asked for.
 - **Product choice happens in a panel inside the row**, so choosing a product
   is not a page navigation and coming back is not a page load. (Inside the row
   is the part #200 takes back below — the panel is what made the list move.)
@@ -221,6 +232,19 @@ restored.
   `.shopping-thumb` picture always stated its size in CSS, which is why it was
   the only one on this screen behaving. `.s-shopping-product-one img` and
   `.s-product-results img` now state theirs too.
+- **A product picture is asked for at the width it is drawn at, and cropped from
+  the top** — this is what #204 proposes. There are three slots (26 px on the
+  row, 40 px in the open row's summary, 80 px in the picker's results) and a
+  single `PRODUCT_PICTURE` in `shopping-screens.ts` holds each one's size and the
+  width to fetch, handed to the island rather than written twice.
+  `s-ostoslista.ts::sProductImageAtWidth` swaps the width into the CDN path at
+  render time — not in `sProductImageUrl`, because that URL is already saved in
+  `image_url` for every product any household has chosen. Two reasons for all
+  this: S sends one 256 px picture whatever the slot, which on a portrait carton
+  is 44 kB apiece; and a product photograph is shot however the package stands,
+  so `object-fit: contain` drew a 256 × 705 carton as a 9 px sliver of white in
+  its square. `cover` with `object-position: center top` fills the square with
+  the part of the package that carries the brand and the product name.
 - **`Lisää toinen pakkauskoko` is disabled on an unmapped row, not hidden.**
   There is still nothing to add a second size to until a product is chosen, but
   hidden it *appeared* the moment one was — a whole tap target arriving mid-row,

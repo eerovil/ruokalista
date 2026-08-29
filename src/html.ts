@@ -687,7 +687,7 @@ const STYLES = `
   .shopping-thumb { flex: none; align-self: center; line-height: 0; }
   .shopping-thumb:empty { display: none; }
   .shopping-thumb img {
-    width: 1.6rem; height: 1.6rem; object-fit: contain; background: #fff;
+    width: 1.6rem; height: 1.6rem; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
   }
   .shopping-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
@@ -734,8 +734,21 @@ const STYLES = `
     display: flex; align-items: center; gap: .7rem; min-width: 0;
   }
   .s-product-scope, .s-package-total { font-size: .85rem; }
+  /* Cropped to the box, not fitted inside it (#204). A product photograph is
+     shot however the package stands, so a carton comes off S's CDN at
+     256 × 705; contain drew that as a narrow sliver in the middle of a square
+     of white, which is a lot of room to spend on saying nothing. Cover fills
+     the square with the package instead, and the name beside it is still what
+     carries the size.
+
+     Cropped from the top, not the middle: a package prints its brand and its
+     product name across the top, and the middle of a milk carton is the side
+     of a milk carton. */
+  .shopping-thumb img, .s-shopping-product-one img, .s-product-results img {
+    object-fit: cover; object-position: center top;
+  }
   .s-shopping-product-one img, .s-product-results img {
-    flex: none; object-fit: contain; background: #fff;
+    flex: none; background: #fff;
     border: 1px solid var(--edge); border-radius: .35rem;
   }
   /* The sizes have to be said here, not left to the width and height
