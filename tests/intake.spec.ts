@@ -37,7 +37,7 @@ test("intake requires JavaScript instead of posting a plain fallback", async ({
   await expect(page.locator("#status")).toHaveText(
     "Reseptin tuonti tarvitsee JavaScriptin.",
   );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeDisabled();
   await expect(page.locator("#intake")).not.toHaveAttribute("action", /.+/);
 
   const response = await context.request.post("/intake", {
@@ -59,7 +59,7 @@ test("pasted text works without the photo resize API", async ({ page }) => {
 
   await page.goto("/intake");
 
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
   await expect(page.locator("#camera")).toBeDisabled();
   await expect(page.locator("#photo")).toBeDisabled();
   await expect(page.locator("#photo-help")).toHaveText(
@@ -67,7 +67,7 @@ test("pasted text works without the photo resize API", async ({ page }) => {
   );
 
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 });
 
@@ -81,7 +81,7 @@ test("pasted intake no longer needs a stream decoder", async ({ page }) => {
 
   await page.goto("/intake");
 
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
 });
 
 test("pasted intake no longer needs streamed responses", async ({ page }) => {
@@ -96,17 +96,67 @@ test("pasted intake no longer needs streamed responses", async ({ page }) => {
 
   await page.goto("/intake");
 
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
 });
 
 test("an empty intake is refused without leaving the screen", async ({ page }) => {
   await page.goto("/intake");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(page).toHaveURL(/\/intake$/);
   await expect(page.locator("#status")).toHaveText(
     "Anna reseptin osoite, liitä sen teksti tai valitse kuva.",
   );
+});
+
+/**
+ * The quick save (#211): the name is all somebody has, and it must reach the
+ * store without JavaScript, without a model call and without ingredients.
+ */
+test("a recipe can be saved from its name alone, with no model call", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  await context.addCookies([sessionCookie(1)]);
+  const page = await context.newPage();
+
+  // Nothing stubs the model here on purpose: a call would fail this test rather
+  // than be answered, which is the acceptance criterion.
+  await page.goto("/intake");
+  await page.getByLabel("Reseptin nimi").fill("Mummin lihapullat");
+  await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(
+    page.getByRole("heading", { name: "Mummin lihapullat" }),
+  ).toBeVisible();
+  await expect(page.locator(".lines li")).toHaveCount(0);
+
+  // And it is an ordinary recipe: the editor opens on it and fills it in.
+  await page.getByRole("link", { name: "Muokkaa reseptiä" }).click();
+  await page.locator("#yield").fill("4");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Mummin lihapullat" }),
+  ).toBeVisible();
+
+  await context.close();
+  reseed();
+});
+
+test("the quick save refuses a nameless recipe and keeps the screen", async ({
+  page,
+}) => {
+  await page.goto("/intake");
+  await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
+
+  await expect(page.locator(".refused")).toContainText(
+    "Reseptillä pitää olla nimi.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Muodosta resepti" }),
+  ).toBeVisible();
 });
 
 const LINKED_URL = "https://kotikokki.example/reseptit/uunikaali";
@@ -124,7 +174,7 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   await page
     .getByLabel("…tai hae resepti nettiosoitteesta")
     .fill("kotikokki.example/reseptit/uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // The address is what was submitted — not page text. Nothing was fetched in
   // this request; the queue consumer is what reads the site.
@@ -168,7 +218,7 @@ test("a picture found on the page is shown, and saved with the recipe", async ({
 
   await page.goto("/intake");
   await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // Seen before it is saved, and really loaded rather than a broken image: the
   // point of showing it is that somebody can tell the dish from a masthead.
@@ -200,7 +250,7 @@ test("unticking the found picture saves the recipe without one", async ({
 
   await page.goto("/intake");
   await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await page
     .getByLabel("Tallenna sivulta löytynyt kuva reseptin kuvaksi")
@@ -221,7 +271,7 @@ test("an import that found no picture offers nothing to tick", async ({
 
   await page.goto("/intake");
   await page.getByLabel("…tai hae resepti nettiosoitteesta").fill(LINKED_URL);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Tarkista resepti" }),
@@ -241,7 +291,7 @@ test("a partial fetched page is preserved through the review", async ({
   await page
     .getByLabel("…tai hae resepti nettiosoitteesta")
     .fill("https://kotikokki.example/vajaa");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Tarkista resepti" }),
@@ -266,7 +316,7 @@ test("a page with no recipe on it fails the import in Finnish, with a retry", as
   await page
     .getByLabel("…tai hae resepti nettiosoitteesta")
     .fill("https://kotikokki.example/etusivu");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // The failure lives on the import list, like every other background failure,
   // rather than as a message that disappears with the page.
@@ -293,14 +343,14 @@ test("an address that is not one is refused before a job exists", async ({
   const before = await page.locator("[data-intake-job]").count();
 
   await page.getByLabel("…tai hae resepti nettiosoitteesta").fill("ei mikään osoite");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // Refused by the server while the member is still looking at the field, in
   // the server's own Finnish rather than the island's fallback wording.
   await expect(page.locator("#status")).toHaveText(
     "Osoite ei näytä nettiosoitteelta. Tarkista linkki.",
   );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
   // Nothing was queued: an address that could never be fetched does not become
   // a job that is certain to fail.
   await expect(page.locator("[data-intake-job]")).toHaveCount(before);
@@ -313,7 +363,7 @@ test("pasting text queues a draft and opens the completed review", async ({
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
@@ -604,7 +654,7 @@ test("a photographed page is downscaled in the browser before it is sent", async
     { text: "Uunikaali", width: 3000, height: 2000 },
   ]);
 
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
   expect(calls).toHaveLength(1);
@@ -633,7 +683,7 @@ test("a photographed recipe keeps the model's transcription as its source", asyn
 
   await choosePages(page, "photo", [{ text: "Uunikaali" }]);
 
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
   const kept = await page.locator('input[name="sourceText"]').inputValue();
@@ -658,7 +708,7 @@ test("several pages make one recipe, in the order they were added", async ({
     "Sivu 2",
   ]);
 
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
     timeout: 15_000,
   });
@@ -716,7 +766,7 @@ test("camera shots and library pictures collect into the same recipe", async ({
 
   await expect(page.locator("#chosen li")).toHaveCount(3);
 
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
     timeout: 15_000,
   });
@@ -745,7 +795,7 @@ test("a page can be dropped before the recipe is parsed", async ({ page }) => {
     "Sivu 2",
   ]);
 
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible({
     timeout: 15_000,
   });
@@ -857,7 +907,7 @@ test("an import survives leaving and opens later without a second model call", a
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByText("Reseptiä käsitellään taustalla.")).toBeVisible();
 
   await page.goto("/recipes");
@@ -911,7 +961,7 @@ test("pasted protocol words arrive whole in the review", async ({ page }) => {
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill(pasted);
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
   await expect(page.locator('input[name="sourceText"]')).toHaveValue(pasted);
@@ -960,7 +1010,7 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(page.locator("#status")).toHaveText(
     "Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.",
@@ -970,13 +1020,13 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
     "Uunikaali\n½ dl öljyä",
   );
   // And it lets you try again rather than stranding you.
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
 });
 
 async function pasteAndStructure(page: import("@playwright/test").Page) {
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 }
 

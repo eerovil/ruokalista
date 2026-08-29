@@ -135,7 +135,7 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
   await stubStructuring(page, draft);
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Lasagne");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
   // The correction screen shows which part the model put each line in.
@@ -181,7 +181,7 @@ test("correcting a part name before saving moves the lines", async ({ page }) =>
 
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // Rename the part on both of its lines.
   await openDraftEditor(page);
@@ -229,7 +229,7 @@ test("a dish with no sub-headings makes no parts", async ({ page }) => {
   await stubStructuring(page);
   await page.goto("/intake");
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-  await page.getByRole("button", { name: "Jäsennä" }).click();
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/\d+$/);

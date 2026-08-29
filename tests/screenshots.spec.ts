@@ -169,7 +169,7 @@ test("intake requires JavaScript", async ({ browser }) => {
   await expect(page.locator("#status")).toHaveText(
     "Reseptin tuonti tarvitsee JavaScriptin.",
   );
-  await expect(page.getByRole("button", { name: "Jäsennä" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeDisabled();
   await page.locator("#status").evaluate((element) =>
     element.scrollIntoView({ block: "center" }),
   );
@@ -420,7 +420,7 @@ test.describe("signed in", () => {
     await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page).toHaveURL(/\/recipes\/\d+$/);
     const recipe = page.url();
@@ -675,7 +675,7 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
-    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await expect(
       page.getByRole("heading", { name: "Tarkista resepti" }),
     ).toBeVisible();
@@ -710,7 +710,7 @@ test.describe("signed in", () => {
     await page
       .getByLabel("…tai hae resepti nettiosoitteesta")
       .fill("https://kotikokki.example/reseptit/uunikaali");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
     const shown = page.locator(".found-image img");
     await expect(shown).toBeVisible();
@@ -730,7 +730,7 @@ test.describe("signed in", () => {
     await stubStructuring(page);
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
     await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
   });
@@ -760,7 +760,7 @@ test.describe("signed in", () => {
     await stubStructuring(page);
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
-    await page.getByRole("button", { name: "Jäsennä" }).click();
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await openDraftEditor(page);
     await page.locator(".line.is-new select").selectOption("");
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
@@ -2378,5 +2378,52 @@ test.describe("a prompt edit whose part moved underneath it (#208)", () => {
       path: `${SHOTS}/96-prompt-edit-part-stale-recipe.png`,
       fullPage: true,
     });
+  });
+});
+
+test.describe("saving a recipe from its name alone (#211)", () => {
+  test.beforeAll(reseed);
+
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("the two ways out of Lisää resepti, and the recipe one of them makes", async ({
+    browser,
+  }) => {
+    // JavaScript off, because the quick save is the path that does not need it
+    // — and with it off the import button is disabled, which is exactly the
+    // contrast the shot is here to show.
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    await context.addCookies([sessionCookie(1)]);
+    const page = await context.newPage();
+
+    await page.goto("/intake");
+    await expect(
+      page.getByRole("button", { name: "Muodosta resepti" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Tallenna keskeneräisenä" }),
+    ).toBeVisible();
+    await page.getByLabel("Reseptin nimi").fill("Mummin lihapullat");
+    await capture(page, {
+      path: `${SHOTS}/99-intake-quick-save.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Mummin lihapullat" }),
+    ).toBeVisible();
+    await expect(page.locator(".lines li")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Muokkaa reseptiä" }),
+    ).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/100-wip-recipe.png`,
+      fullPage: true,
+    });
+
+    await context.close();
   });
 });

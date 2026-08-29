@@ -476,10 +476,13 @@ test("a dish whose ingredients all sit on its parts can still be saved", async (
   await expect(page.getByRole("heading", { name: "Lasagne" })).toBeVisible();
 });
 
-test("a recipe with no parts still needs at least one ingredient", async ({
+test("a recipe with no ingredients left is saved rather than refused", async ({
   page,
 }) => {
   // Öljykastike has two lines, no parts, and one step nothing is linked to.
+  // The editor used to refuse this save with "Reseptissä pitää olla ainakin
+  // yksi aines tai osa."; since #211 a recipe is allowed to have nothing in it,
+  // because a recipe saved from its name alone has to stay editable.
   await page.goto("/recipes/2/edit");
   for (const index of [0, 1]) {
     const line = page.locator(".line").nth(index);
@@ -488,13 +491,9 @@ test("a recipe with no parts still needs at least one ingredient", async ({
   }
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
-  await expect(page.locator(".refused")).toContainText(
-    "Reseptissä pitää olla ainakin yksi aines tai osa.",
-  );
-
-  // Nothing was written: both lines are still there.
-  await page.goto("/recipes/2");
-  await expect(page.locator(".lines li")).toHaveCount(2);
+  await expect(page).toHaveURL(/\/recipes\/2$/);
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(page.locator(".lines li")).toHaveCount(0);
 });
 
 test("Tallenna stays on screen while the long editor is scrolled", async ({
