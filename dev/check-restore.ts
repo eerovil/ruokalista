@@ -121,6 +121,35 @@ test("orphan foreign keys are rejected before restore", async () => {
   );
 });
 
+test("an intake edit snapshot stays bound to its recipe and revision", async () => {
+  const snapshot = await validSnapshot();
+  let unsigned = unsignedOf(snapshot);
+  Object.assign(unsigned.tables.intake_job[0]!, {
+    target_recipe_id: 1,
+    target_revision: 0,
+    edit_mode: "extend",
+    target_recipe_json: JSON.stringify({ id: 2, revision: 0, householdId: 1 }),
+  });
+  let invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /intake edit recipe does not match its target/,
+  );
+
+  unsigned = unsignedOf(snapshot);
+  Object.assign(unsigned.tables.intake_job[0]!, {
+    target_recipe_id: 1,
+    target_revision: null,
+    edit_mode: "extend",
+    target_recipe_json: JSON.stringify({ id: 1, revision: 0, householdId: 1 }),
+  });
+  invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /intake edit target is invalid/,
+  );
+});
+
 test("orphan and duplicate batch occurrences are rejected", async () => {
   const snapshot = await validSnapshot();
   let unsigned = unsignedOf(snapshot);

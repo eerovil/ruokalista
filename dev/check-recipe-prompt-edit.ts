@@ -169,9 +169,25 @@ test("the same change request is sent under either mode, unrewritten", () => {
   for (const mode of ["extend", "replace"] as const) {
     assert.match(
       editRequestFor(recipe(), asked, NO_INGREDIENTS, mode).messages[0].content,
-      /Käyttäjän muutospyyntö:\n\nTee tästä parempi kokonainen resepti\.$/,
+      /Käyttäjän uusi syöte:\n\nTee tästä parempi kokonainen resepti\.$/,
     );
   }
+});
+
+test("photographs follow the same edit request after the recipe snapshot", () => {
+  const content = editRequestFor(
+    recipe(),
+    {
+      route: "photographed",
+      images: [{ base64: "page-one", mediaType: "image/jpeg" }],
+    },
+    NO_INGREDIENTS,
+    "extend",
+  ).messages[0].content;
+
+  assert.ok(Array.isArray(content));
+  assert.match(String(content[0]?.type === "text" ? content[0].text : ""), /Nykyinen resepti kokonaisuudessaan/);
+  assert.equal(content[1]?.type, "image");
 });
 
 test("both modes have a Finnish name the screens can agree on", () => {
@@ -280,6 +296,77 @@ test("only a plain dish being extended is told there is no cooking order", () =>
 test("source_text is not asked back, because it would be discarded", () => {
   const wire = recipeWire(recipe()) as { source_text: string };
   assert.equal(wire.source_text, "");
+});
+
+test("extra photos guide an edit without becoming a new source of record", () => {
+  const system = editRequestFor(
+    recipe(),
+    { route: "photographed", images: [{ base64: "page", mediaType: "image/jpeg" }] },
+    NO_INGREDIENTS,
+    "extend",
+  ).system;
+
+  assert.match(system, /lisäaineistosta/);
+  assert.match(system, /älä myöskään poista nykyisen reseptin tietoja/);
+  assert.doesNotMatch(system, /source_text on oma tarkka transkriptio/);
+  assert.doesNotMatch(system, /jätä vastaava kenttä null/);
+});
+
+const PHOTO = {
+  route: "photographed" as const,
+  images: [{ base64: "page", mediaType: "image/jpeg" as const }],
+};
+const PAGE = { route: "linked" as const, text: "Uunikaali\n1 dl vettä" };
+
+/**
+ * The failure this pair exists to stop: a photographed or linked *replace* has
+ * no written change request, so rules that protect whatever the new material
+ * left out turn `Korvaa nykyinen resepti` into an extend. Both routes are
+ * checked because each has its own wording, and both are checked against extend
+ * because the protection is right there and must survive.
+ */
+for (const [route, source] of [
+  ["photographed", PHOTO],
+  ["linked", PAGE],
+] as const) {
+  test(`a ${route} replace lets the new material leave old content out`, () => {
+    const system = editRequestFor(recipe(), source, NO_INGREDIENTS, "replace").system;
+
+    assert.match(system, /ensisijainen lähde/);
+    assert.match(system, /jätä se pois/);
+    assert.match(system, /ei enää määrää sisältöä/);
+    // The two rules that would otherwise merge the old recipe back in.
+    assert.doesNotMatch(system, /älä myöskään poista nykyisen reseptin tietoja/);
+    assert.doesNotMatch(system, /äläkä poista nykyisen reseptin tietoja/);
+    // What replace still keeps: the same dish, saveable, in one document.
+    assert.match(system, /Älä keksi kokonaan toista ruokaa/);
+    assert.match(system, /Palauta täydellinen, tallennuskelpoinen resepti/);
+    assert.match(system, /Kirjoita olemassa olevan osan nimi täsmälleen/);
+  });
+
+  test(`a ${route} extend still protects what the new material omits`, () => {
+    const system = editRequestFor(recipe(), source, NO_INGREDIENTS, "extend").system;
+
+    assert.match(system, /lisäaineisto/);
+    assert.match(system, /poista nykyisen reseptin tietoja vain siksi/);
+    assert.match(system, /Älä poista ainesta tai vaihetta/);
+    assert.doesNotMatch(system, /ensisijainen lähde/);
+  });
+}
+
+test("only a replace with no new material is told to keep every ingredient", () => {
+  const asked = "Tee tästä parempi kokonainen resepti.";
+  const written = editRequestFor(recipe(), asked, NO_INGREDIENTS, "replace").system;
+  const photographed = editRequestFor(recipe(), PHOTO, NO_INGREDIENTS, "replace").system;
+
+  // Written and photographed replace share one conditional rule rather than two
+  // wordings: it is the model that can see whether the new input carries a
+  // recipe, and only the routes above can say so for certain.
+  for (const system of [written, photographed]) {
+    assert.match(system, /pelkkä muutospyyntö eikä sisällä itse\s+reseptiaineistoa/);
+    assert.match(system, /se määrittää lopputuloksen/);
+  }
+  assert.doesNotMatch(written, /ensisijainen lähde/);
 });
 
 // ------------------------------------------------------------ the request text

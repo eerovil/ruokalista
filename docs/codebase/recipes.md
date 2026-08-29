@@ -365,23 +365,39 @@ how somebody finds it, so a caller reads the same dish with or without it — an
 the vocabulary and the filter's links; `tests/categories.spec.ts` covers the
 screens.
 
-## Changing a recipe with a sentence (issue #208)
+## Changing a recipe through intake (issue #215)
 
-Proposed here: *Muokkaa promptilla* — the member writes a short Finnish change
-request against a recipe they already have, and gets a proposed version to check
-before anything is written. `src/recipe-prompt-edit.ts` owns what the model is
-asked and what is done with its answer; `src/recipe-prompt-screens.ts` owns the
-two screens.
+This pull request proposes replacing #208's separate *Muokkaa promptilla*
+screen with edit mode on **Lisää resepti**. Recipe and editor links point to
+`/intake?recipe=:id`; `src/intake-screens.ts::intakeScreen` renders the same
+paste, photograph and link controls as a new import, plus the explicit
+**Täydennä nykyistä / Korvaa resepti** choice.
 
-**The proposal is reviewed in the recipe editor, not in a screen of its own.**
-That is the load-bearing decision here, and it collapses three of the issue's
-requirements into one fact: the member can correct the proposal by hand because
-it is a form they already know, and the save is that form's own `POST
-/recipes/:id` through `validateRecipe` and `replaceRecipe`, so a proposed recipe
-and a hand-typed one reach the database by exactly the same path. Nothing in
-either screen writes. `editorForm` is exported for this, and a proposal reaches
-it as `FormData` — the same re-render-from-what-was-submitted path a refused save
-uses, so there is one rendering of the editor rather than two that drift.
+The durable `intake_job` stores the whole server-loaded recipe snapshot, the
+target id and revisions, and the chosen mode. The queue combines that snapshot
+with whichever intake source the member supplied and uses #208's structured
+edit rules. The ready draft opens in intake's normal review form. Saving uses
+`replaceRecipe` with the snapshot's dish and part revisions, preserves the
+existing recipe's source and categories, and redirects to the same recipe id.
+No edit job can create a second recipe row, and `findRecipe` keeps the entry,
+job creation, review and save owner-scoped.
+
+The detailed mode, multipart and locking rules below remain the rules this
+shared path uses. References there to the former separate screen describe the
+#208 implementation being replaced by this proposal.
+
+## Earlier separate prompt editor (issue #208)
+
+Issue #208 proposed *Muokkaa promptilla*: the member wrote a short Finnish
+change request against a recipe they already had and got a proposed version to
+check before anything was written. `src/recipe-prompt-edit.ts` still owns what
+the model is asked and how its answer is combined with the existing recipe;
+issue #215 proposes removing the two dedicated screens.
+
+The separate implementation reviewed the proposal in the recipe editor and
+saved through `POST /recipes/:id`. Issue #215 keeps the important part — a
+proposal remains editable and reaches `replaceRecipe` — while proposing that
+intake's existing review form and durable job own that path instead.
 
 ### Two ways to mean it
 
@@ -398,6 +414,18 @@ model as its own instruction:
   answer is still this dish, still based on the current recipe and the prompt,
   and still **one complete saveable draft**. It updates the same recipe row:
   same optimistic revision check, no second record.
+
+What a photograph or a linked page means depends on that choice, and this
+proposal makes `editSourceRules` take the mode for exactly that reason.
+Extending, the new material is *lisäaineisto*: it may not take the recipe over,
+and content it happens not to show is not thereby deleted. Replacing, it is the
+draft's primary source — a photographed or linked replace often carries no
+written change request at all, so a rule protecting whatever the picture left
+out would make *Korvaa resepti* an extend under another name. The current
+recipe is still in the request either way, but replacing it keeps it only for
+what the new material cannot say: which dish this is, and what its parts are
+called. The `älä pudota ainesta` rule survives for the one case that needs it —
+a replace whose new input is a sentence rather than a recipe.
 
 `readMode` refuses anything that is not one of the two, with no default. The
 mode is never read out of the change request's wording — told apart by guessing,
@@ -454,7 +482,12 @@ what the juustokastike is made of, not just that it exists.
   `proposalChanges` compares the proposal against the stored dish *and its
   parts* and names what moved, per part. The question it answers — did something
   I did not ask about move? — is the one a model's own summary is worst at, and
-  it matters more in replace mode, not less.
+  it matters more in replace mode, not less. This proposal keeps that list and
+  moves it onto the shared review: `intake-screens.ts::renderCorrection` renders
+  it under the mode line whenever the draft has a target, and only then. An
+  ordinary import has no before to compare against, and a screen re-rendered
+  after a refused save is showing the member's own edit rather than the model's
+  proposal, so both get no list rather than a misleading one.
 - **A phase the model invented where none can be shown is dropped before the
   review.** A named part's content carries no cooking-order phase (ADR-0003) and
   a plain dish has no phase select, so `proposalForRecipe` drops one rather than
@@ -463,23 +496,21 @@ what the juustokastike is made of, not just that it exists.
   is own-household only. Somebody else's published dish is a 404 here for the
   same reason it is a 404 in the editor, and the recipe screen offers the link
   only to the household that owns it.
-- **The screen is streamed, and it is not a background job.** A model call with
-  thinking on outlasts Cloudflare's ~125 s silence limit, which is why intake
-  streams at all — `html.ts::streamingPage` sends the shell first and the
-  proposal when it arrives, keeping a byte flowing per delta, with no script.
-  Unlike an import (#186) it does *not* need to survive the member navigating
-  away, because nothing has been written to survive. The cost is that the status
-  is always 200 and a refusal is written into the body; a later `<style>` hides
-  the "working on it" block once the answer is under it.
+- **The wait is a queued job rather than a streamed screen.** #208 streamed the
+  proposal into an open connection, because a model call with thinking on
+  outlasts Cloudflare's ~125 s silence limit. This proposal drops that screen
+  and `html.ts::streamingPage` with it: an assisted edit waits the way an import
+  waits, on the durable job, so navigating away no longer loses it.
 
-`POST /recipes/:id/prompt/review` is the seam `/intake/correct` already is: the
-model call on one side, the review and the save on the other. It carries the
-mode along with the proposal, and it is what lets `tests/prompt-edit.spec.ts`
-drive both modes, adding an ingredient, adding a step, adding a side dish,
-adding missing ingredients to a named part, a full in-place replacement and the
-whole ownership boundary without spending anything.
-`dev/check-recipe-prompt-edit.ts` covers the two prompts, the parts round-trip
-and the draft-to-form conversion for free.
+The job row is the seam `/intake/correct` already was: the model call on one
+side, the review and the save on the other. It carries the target snapshot and
+the mode, which is what lets `tests/intake-edit.spec.ts` and the assisted-edit
+blocks of `tests/screenshots.spec.ts` drive both modes, adding a side dish,
+adding missing ingredients to a named part, a full in-place replacement, a part
+that moved underneath an open proposal and the whole ownership boundary without
+spending anything. `dev/check-recipe-prompt-edit.ts` covers the two prompts, the
+source rules for a photograph or a page in each mode, the parts round-trip and
+the draft-to-form conversion for free.
 
 ## Publishing a recipe (issue #143)
 

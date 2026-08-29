@@ -241,7 +241,8 @@ export async function replaceRecipe(
         `UPDATE recipe
             SET title = ?, yield_portions = ?, revision = revision + 1,
                 edit_token = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
-          WHERE id = ? AND household_id = ? AND revision = ?${partLock(parts.locked)}`,
+          WHERE id = ? AND household_id = ? AND revision = ?
+            ${categoryLock(options.expectedCategories)}${partLock(parts.locked)}`,
       )
       .bind(
         recipe.title.trim(),
@@ -251,6 +252,7 @@ export async function replaceRecipe(
         recipeId,
         member.householdId,
         expectedRevision,
+        ...categoryLockValues(options.expectedCategories),
         ...partLockValues(recipeId, member.householdId, parts.locked),
       ),
     ...ingredientStatements(db, member, newIngredients, guard),
@@ -338,6 +340,27 @@ function partLockValues(
     householdId,
     ...locked.flatMap((part) => [part.id, part.revision]),
   ];
+}
+
+/** Hold the category set still in the same write that locks the recipe row. */
+function categoryLock(expected: readonly string[] | undefined): string {
+  if (expected === undefined) return "";
+  const present = expected
+    .map(() => `AND EXISTS (
+              SELECT 1 FROM recipe_category AS expected_category
+               WHERE expected_category.recipe_id = recipe.id
+                 AND expected_category.category = ?
+            )`)
+    .join("\n");
+  return `AND (
+              SELECT count(*) FROM recipe_category AS current_category
+               WHERE current_category.recipe_id = recipe.id
+            ) = ?
+            ${present}`;
+}
+
+function categoryLockValues(expected: readonly string[] | undefined): unknown[] {
+  return expected === undefined ? [] : [expected.length, ...expected];
 }
 
 /** What one submitted edit does to the dish's parts. */
@@ -992,6 +1015,8 @@ export interface ReplaceOptions extends ValidateOptions {
    * rather than being merged into by accident.
    */
   expectedParts?: readonly ExpectedPart[];
+  /** Categories present in the server snapshot this edit was generated from. */
+  expectedCategories?: readonly string[];
 }
 
 /**

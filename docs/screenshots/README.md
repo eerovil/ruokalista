@@ -99,18 +99,19 @@ The same environment variable gates them.
 | `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
 | `81-recipes-bulk-category.png` | Proposed recipe list with two recipes ticked: the count saying how many the action will hit, and the category control above the publish buttons (#199) |
 | `82-recipes-bulk-category-done.png` | The same list after one press: both recipes carry **Keitto**, the chip row has gained it, and the notice counts what moved |
-| `86-prompt-edit-form.png` | Proposed *Muokkaa promptilla* box on a saved recipe: the **Täydennä nykyistä / Korvaa resepti** choice made before the request is written, and one short Finnish change request under it (#208) |
-| `87-prompt-edit-proposal.png` | The proposal that came back, at the head of the recipe editor: what was asked, what moved, and that nothing has been saved yet |
-| `88-prompt-edit-review.png` | The same review whole — the proposal is reviewed *in* the editor, so every ingredient and step can still be corrected by hand before saving |
-| `89-prompt-edit-saved.png` | The recipe after the ordinary **Tallenna muutokset**: the side dish added, and everything the prompt did not ask about unchanged |
+| `87-prompt-edit-proposal.png` | The proposal that came back, at the head of the shared intake review: which mode was used, what moved, and that nothing has been saved yet (#215) |
+| `88-prompt-edit-review.png` | The same review whole — an assisted edit is reviewed in the ordinary import review, so every ingredient and step can still be corrected by hand before saving |
+| `89-prompt-edit-saved.png` | The recipe after **Tallenna muutokset**: the side dish added, and everything the change request did not ask about unchanged |
 | `90-prompt-edit-part-review.png` | Proposed review of *Lisää kastikkeeseen puuttuvat ainekset* on the lasagne: the change is named as the juustokastike's, because the model was shown the part's own contents |
 | `91-prompt-edit-part-saved.png` | The lasagne after saving: butter and flour are on the juustokastike's own recipe row, the jauhelihakastike is untouched, and there is no second part |
-| `92-prompt-edit-replace-form.png` | The same box with **Korvaa resepti** chosen: the mode is a control, not something read out of the wording |
+| `92-prompt-edit-replace-form.png` | The shared intake screen with **Korvaa resepti** chosen: the mode is a control, not something read out of the wording |
 | `93-prompt-edit-replace-review.png` | Proposed whole-recipe rewrite under replace mode, with what it dropped named as plainly as what it added |
 | `94-prompt-edit-replace-saved.png` | The rewritten recipe after saving — same record, new contents, and the original source text still kept |
-| `95-prompt-edit-part-stale.png` | Proposed refusal when the juustokastike was edited on its own screen while the proposal was open: the whole save is refused, dish included, and the proposal stays on screen (#208) |
+| `95-prompt-edit-part-stale.png` | Proposed refusal when the juustokastike was edited on its own screen while the proposal was open: the whole save is refused, dish included, and the proposal stays on screen |
 | `96-prompt-edit-part-stale-recipe.png` | The lasagne after that refusal: the newer 7 dl of milk stands, the proposal's butter never landed, and the dish itself did not move either |
 | `97-admin-categories.png` | Proposed admin category screen: the vocabulary as rows with slug and recipe count, ↑/↓ ordering, and a freshly added **Wokki** (#199) |
 | `98-admin-category-delete.png` | Proposed removal confirmation: the recipes that would lose **Keitto**, named before anything happens |
 | `101-shopping-long-total.png` | Proposed shopping list at 320 px with two rows whose totals read `1 + 1 kpl + määrä reseptin mukaan`: the name keeps the first line and the long total takes the second, instead of the name being squeezed into a column of single letters (#213) |
 | `102-shopping-long-total-with-picture.png` | The same row shape with a chosen product's picture on it, among ordinary short-total rows |
+| `103-intake-edit.png` | Issue #215's shared **Lisää resepti** screen in existing-recipe mode: the owned recipe is named, complete/replace is explicit, and text, URL and photograph inputs are the ordinary intake controls |
+| `104-intake-edit-review.png` | The ordinary intake draft review for an existing recipe, stating that save updates the current recipe and offering **Tallenna muutokset** rather than creating another recipe |
