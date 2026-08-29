@@ -110,8 +110,34 @@ async function applyCategory(
     );
   }
 
-  if (statements.length > 0) await db.batch(statements);
+  if (statements.length > 0) {
+    try {
+      await db.batch(statements);
+    } catch (error) {
+      // The vocabulary was checked at the top of this function, and that check
+      // is a separate read: an admin removing the category in between would,
+      // without the key `recipe_category.category` carries since #210, have let
+      // this batch write a slug nothing can filter by. With the key the batch
+      // fails, and a D1 batch is one transaction, so not one of these recipes
+      // moved. Say so; re-throw anything that was not this.
+      if (action === "add" && !(await categoryExists(db, category))) {
+        throw new CategoryBulkRefused(
+          "Kategoria poistettiin kesken toiminnon. Mikään resepti ei muuttunut.",
+        );
+      }
+      throw error;
+    }
+  }
   return outcome;
+}
+
+/** Whether the vocabulary still has this slug, asked at the moment it matters. */
+async function categoryExists(db: D1Database, slug: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS found FROM category WHERE slug = ?")
+    .bind(slug)
+    .first<{ found: number }>();
+  return row !== null;
 }
 
 /**

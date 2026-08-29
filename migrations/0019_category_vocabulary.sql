@@ -13,11 +13,13 @@
 -- naming layer: there is no `household_id` here, for exactly the reasons
 -- ADR-0012 gives.
 --
--- No foreign key from `recipe_category`. Adding one would mean rebuilding that
--- table, and it would buy little: the only writer validates against this table
--- first, deleting a category detaches its recipes in the same batch, and an
--- orphaned slug already renders as itself and reads as no filter rather than as
--- an error. The rebuild is the risk; the fallback is already there.
+-- `recipe_category` gains a foreign key onto this table, which is why it is
+-- rebuilt at the bottom of this file. An earlier draft of #199 left it off,
+-- reasoning that the only writer validates against the vocabulary first. That
+-- is true and it is not enough: the validation is a separate read, so an admin
+-- who removes a category in the moment between one member's check and that same
+-- member's write lands an orphan slug no screen can ever filter by or clear.
+-- The constraint closes the window in the one place both writers go through.
 CREATE TABLE category (
   slug     TEXT PRIMARY KEY,
   label    TEXT NOT NULL UNIQUE,
@@ -46,3 +48,43 @@ INSERT INTO category (slug, label, position) VALUES
   ('leivonta',       'Leivonta',       7),
   ('jalkiruoka',     'Jälkiruoka',     8),
   ('lisuke',         'Lisuke',         9);
+
+
+-- ------------------------------------------- recipe_category gets the key
+
+-- Rebuilt rather than altered: SQLite cannot add a foreign key to an existing
+-- column, and this is the constraint that makes "every stored category is one
+-- the vocabulary has" true at write time rather than only just before it.
+--
+-- The rebuild is the simple kind. Nothing references `recipe_category`, so
+-- dropping it cascades into nothing and renaming the replacement into place
+-- rewrites no other table's clauses — the trap `0011_public_recipes.sql`
+-- documents does not apply here. `category` is created and seeded above, so the
+-- new table's target exists before a single row is copied.
+--
+-- No `ON DELETE` action on the new key, so removing a category that recipes
+-- still carry is refused by the database. `src/category-admin.ts::deleteCategory`
+-- already detaches the recipes first, in the same batch and before the category
+-- row goes, which is the order that satisfies it.
+CREATE TABLE recipe_category_scoped (
+  recipe_id INTEGER NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
+  category  TEXT NOT NULL REFERENCES category(slug),
+  PRIMARY KEY (recipe_id, category)
+);
+
+-- Every slug written before this file ran came from the closed list #196
+-- shipped, and all nine of those are seeded above, so this copies everything.
+-- The join is here so that a row somehow naming a slug the vocabulary does not
+-- have cannot fail the migration on the live database: such a row is already
+-- invisible on every screen, and losing it is what the constraint means.
+INSERT INTO recipe_category_scoped (recipe_id, category)
+SELECT recipe_category.recipe_id, recipe_category.category
+  FROM recipe_category
+  JOIN category ON category.slug = recipe_category.category;
+
+DROP TABLE recipe_category;
+ALTER TABLE recipe_category_scoped RENAME TO recipe_category;
+
+-- The filter asks "which recipes are Keitto", so the category is the lookup.
+-- Recreated because the index went with the old table.
+CREATE INDEX recipe_category_by_category ON recipe_category(category);

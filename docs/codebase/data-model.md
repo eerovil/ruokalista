@@ -526,12 +526,18 @@ the decision and what it costs; ADR-0012's other half is untouched.
 
 Three things about this table are worth knowing before changing it:
 
-- **There is no foreign key from `recipe_category`.** Adding one would mean
-  rebuilding that table for little gain: the only writer validates against the
-  vocabulary first, removing a category detaches its recipes in the same batch,
-  and an orphaned slug already renders as itself and reads as no filter.
-  `validateRelationships` in `src/restore.ts` checks the relationship where it
-  actually matters, so a snapshot naming a category it does not carry is refused.
+- **`recipe_category.category` points at it, by a real foreign key.** The same
+  migration rebuilds `recipe_category` to add it. Without the key, "every stored
+  category is one the vocabulary has" was only true *just before* each write:
+  both writers check it in a separate read, and an admin removing a category in
+  between would let a stale request store an orphan slug nothing can filter by
+  or clear. The rebuild is the cheap kind — nothing references
+  `recipe_category`, so the trap in "Rebuilding a table" below does not apply.
+  The key has no `ON DELETE` action, so removing a category means detaching its
+  recipes first, which is what `deleteCategory` does in one batch.
+  `dev/check-category-integrity.ts` is the regression, and
+  `validateRelationships` in `src/restore.ts` still checks the same relationship
+  for a snapshot, which is the one place the constraint cannot reach.
 - **It is the one backup table a migration seeds.** Every other table is restored
   into an empty target; a freshly migrated one already holds this vocabulary. So
   `generateRestoreSql` clears `category` first and `assertCompatibleTarget`

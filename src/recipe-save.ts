@@ -155,7 +155,7 @@ export async function saveRecipe(
     );
   }
 
-  await db.batch(statements);
+  await batchWithCategories(db, statements, recipe.categories);
   return recipeId;
 }
 
@@ -261,7 +261,7 @@ export async function replaceRecipe(
     ...parts.statements,
   ];
 
-  const results = await db.batch(statements);
+  const results = await batchWithCategories(db, statements, recipe.categories);
   if ((results[0]?.meta.changes ?? 0) === 0) {
     throw new StaleRecipe(
       await staleMessage(db, member, recipeId, expectedRevision, parts.locked),
@@ -799,9 +799,14 @@ function ingredientStatements(
 /**
  * A recipe's categories (#196), replaced wholesale like its other children.
  *
- * `readCategories` has already dropped anything outside the vocabulary and
+ * `Vocabulary.read` has already dropped anything outside the vocabulary and
  * collapsed duplicates, so nothing here can collide on the table's
  * `(recipe_id, category)` key.
+ *
+ * The slug is not checked again in the statement, because the column carries a
+ * foreign key onto `category` since #210: the database is the check, and a
+ * category removed under a request in flight fails this whole batch rather than
+ * writing an orphan. `batchWithCategories` is what turns that into a sentence.
  */
 function categoryStatements(
   db: D1Database,
@@ -1007,6 +1012,35 @@ async function assertKnownCategories(
   const vocabulary = await loadVocabulary(db);
   if (categories.some((slug) => !vocabulary.has(slug))) {
     throw new SaveRefused("Tuntematon kategoria.");
+  }
+}
+
+/**
+ * The save batch, with the database's own category check read back as Finnish.
+ *
+ * `assertKnownCategories` runs before any of this, and it is a separate read:
+ * an admin who removes a category in the moment between that read and this
+ * batch would, without the key `0019_category_vocabulary.sql` puts on
+ * `recipe_category.category`, have let a stale request write a slug the
+ * vocabulary no longer has. With the key the batch fails instead, and because a
+ * D1 batch is one transaction, nothing at all is written — not the recipe, not
+ * its lines, not its steps. The recipe is exactly as it was.
+ *
+ * All this adds is the sentence. The vocabulary is read again on the way out,
+ * so a failure that really was the missing category refuses the way every other
+ * refusal on these screens does; anything else is re-thrown untouched, which is
+ * what keeps this from quietly swallowing an unrelated database error.
+ */
+async function batchWithCategories(
+  db: D1Database,
+  statements: D1PreparedStatement[],
+  categories: readonly string[],
+): Promise<D1Result[]> {
+  try {
+    return await db.batch(statements);
+  } catch (error) {
+    await assertKnownCategories(db, categories);
+    throw error;
   }
 }
 

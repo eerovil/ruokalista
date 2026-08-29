@@ -58,13 +58,22 @@ and not something a member can add to while saving.
   screen that lists those recipes and says how many, and the delete is one batch
   that detaches the category and removes it together. No recipe is ever deleted,
   and there is no cascade in the schema that could delete one.
-- **There is no foreign key from `recipe_category` to `category`.** Adding one
-  would mean rebuilding `recipe_category`, which this repo has documented reasons
-  to avoid, and it would buy little: the only writer validates against the
-  vocabulary first, removal detaches in the same batch, and an orphaned slug
-  already renders as itself and reads as no filter. `src/restore.ts` checks the
-  relationship where it actually matters — a snapshot naming a category it does
-  not carry is refused.
+- **`recipe_category.category` carries a foreign key onto `category`.** An
+  earlier draft of this decision left it off, on the grounds that the only
+  writers validate against the vocabulary first and that a rebuild of
+  `recipe_category` is a cost this repo has documented reasons to avoid. That was
+  wrong, and reviewing #203 is where it showed: validating is a *separate read*,
+  so an admin removing a category between one member's check and that same
+  member's write lands a slug no screen can filter by and no screen can clear.
+  Making it true at write time is the only version of the rule that holds under
+  two people working at once. The rebuild turned out to be the cheap kind —
+  nothing references `recipe_category`, so the sequence
+  `0011_public_recipes.sql` warns about does not apply. `src/restore.ts` still
+  checks the same relationship for a snapshot, which is the one place the
+  constraint cannot help.
+- **The key has no `ON DELETE` action, so removal has to detach first.** That is
+  what `deleteCategory` already does, in one batch, and it is now the order the
+  database requires rather than the order the code happened to pick.
 - **Every screen reads the vocabulary per request.** `loadVocabulary` is one
   small query and a `Vocabulary` is passed down; there is no module-level cache,
   because an admin's rename has to be true on the next screen and a cache that
