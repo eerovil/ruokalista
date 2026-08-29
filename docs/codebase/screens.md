@@ -344,6 +344,52 @@ Two things follow from making removal a one-tap action:
   that forces it through. The rule is pure and tested in
   `dev/check-line-removal.ts`.
 
+## Saving a recipe, in every screen that writes one (issue #217)
+
+This pull request proposes one save action with one shape, because there were
+three. #184 gave the editor a sticky bar; the import review put
+`Tallenna resepti` *above* its `Muokkaa ennen tallennusta` disclosure, so
+opening that disclosure and editing the draft pushed the save several screens
+up — the one case where somebody certainly has changes to save; and changing who
+can see a dish meant scrolling the whole recipe screen to its foot, which is why
+people opened the editor looking for a control that was never in it.
+
+- **`html.ts::saveBar` is the one save action**, and a form gets exactly one, at
+  its end. `.save-bar` is #184's `.editor-actions` renamed and generalised —
+  same `position: sticky` clear of the fixed tab strip, so the placement is
+  still CSS only and a browser without sticky positioning gets the button at the
+  end of the form as before. The editor, the import review
+  (`intake-screens.ts::renderCorrection`) and the sharing form
+  (`recipes.ts::sharingSection`) all use it.
+- **The bar's status line has a reserved height**, and the reserved height and
+  the filled height are the same number — the rule the shopping list's busy line
+  follows (#200). Untouched, unsaved and saving are the same size, so nothing
+  moves under the member's thumb at the moment they are being told something.
+- **What saving does here is said by the server where it differs.** The import
+  review's bar starts out reading `Uusi resepti — ei vielä tallennettu`, which is
+  true with no JavaScript at all; the editor of a stored recipe has nothing to
+  say until something changes.
+- **`html.ts::SAVE_BAR_ISLAND` adds the two things markup cannot say**: that
+  there are changes not yet saved (`Tallentamattomia muutoksia`, plus
+  `.is-dirty` on the bar) and that a save is running (`Tallennetaan…` with the
+  shared `.spinner`, and the button disabled against a second tap). Same
+  discipline as the other islands — ES5, no regular expressions, feature
+  detected, every string written as a text node.
+- **Only the bar's own button puts the bar into the saving state.** The editor's
+  form has other submit buttons — `+ Lisää aines`, `Poista silti` — that
+  re-render the screen rather than save it, and the island leaves those alone. A
+  submit with no submitter is Enter in a text field, which *is* a save.
+- **The button is disabled from a timeout, not inside the submit handler.** A
+  disabled button is not a successful submitter, so disabling it synchronously
+  would take `action=save` out of the sharing form's post.
+- **`.sharing-shortcut` says who can see the dish, under its title**, with a
+  link to `#jakaminen`. Only for the household that owns it, and never for a
+  part, because `sharingSection` draws nothing for one. This is what stops a
+  member opening the editor for a control the editor does not have.
+
+`tests/save-action.spec.ts` walks the two cases the issue names plus the long
+editor #184 covered, in both directions: with JavaScript and without.
+
 ## The cooking view on a wider screen
 
 Issue #160 proposes using a tablet's width for the recipe itself, without
@@ -392,9 +438,13 @@ never becomes a scrolling TV page.
 
 ### Server-rendered inline script islands
 
-Six screens ship a hand-written `<script>` rather than a build step, and all
+Seven screens ship a hand-written `<script>` rather than a build step, and all
 follow the same discipline because the string reaches the browser without
 transpilation:
+
+- `src/html.ts::SAVE_BAR_ISLAND` — proposed for issue #217, see the save bar
+  above. It ships with the bar rather than from the shell, so a screen without
+  one carries no script at all.
 
 - `src/intake-screens.ts::STREAMING_ISLAND` — starts a durable background import
   and prepares camera pages; see `docs/codebase/intake.md`.
@@ -424,7 +474,7 @@ transpilation:
   hidden when unavailable; the receiver validates custom messages and writes
   their strings with `textContent`.
 
-All six islands are written in ES5 (`var`, no arrow functions, no regular
+All seven islands are written in ES5 (`var`, no arrow functions, no regular
 expressions) — see Browser compatibility below.
 
 ## Browser compatibility

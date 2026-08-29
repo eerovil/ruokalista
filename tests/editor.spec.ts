@@ -503,7 +503,7 @@ test("Tallenna stays on screen while the long editor is scrolled", async ({
   await page.goto("/recipes/1/edit");
 
   const save = page.getByRole("button", { name: "Tallenna muutokset" });
-  const bar = page.locator(".editor-actions");
+  const bar = page.locator(".save-bar");
 
   // The form is taller than the phone, so without the sticky bar the button
   // would be somewhere far below the fold.

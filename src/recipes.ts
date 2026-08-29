@@ -18,7 +18,7 @@ import {
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
-import { html, multiplierField, page, raw, type Raw } from "./html.ts";
+import { html, multiplierField, page, raw, type Raw, saveBar } from "./html.ts";
 import {
   parseStepRefs,
   resolveMentions,
@@ -1244,6 +1244,11 @@ function recipeBody(
              the recipe's own facts, not beside the edit link: it is part of
              reading the recipe, not part of changing it. -->
         ${categoryTags(view.vocabulary, recipe.categories)}
+        <!-- Who can see this, said under the title and one tap from where it is
+             changed (#217). Somebody who came to change the visibility of one
+             dish used to open the editor for it — where there is no such
+             control — and then scroll the whole thing looking. -->
+        ${sharingShortcut(recipe, view)}
         ${castSender(recipe, multiplier, castApplicationId)}
       </div>
     </div>
@@ -1326,7 +1331,7 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
 
   const preference = view.preference;
 
-  return html`<section class="recipe-sharing">
+  return html`<section class="recipe-sharing" id="jakaminen">
     <h2>Tämä resepti taloudessamme</h2>
 
     <form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
@@ -1385,11 +1390,40 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
                 )}
               </ul>
             </div>
-            <button type="submit" name="action" value="save">Tallenna jako</button>
+            <!-- The same bar as the editor and the import review (issue #217).
+                 The recipient list has no length limit, so on a phone the save
+                 could sit well below the household somebody had just ticked. -->
+            ${saveBar({ submit: "Tallenna jako", name: "action", value: "save" })}
           </form>
           <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`
       : ""}
   </section>`;
+}
+
+/**
+ * Who can see this dish, under the title, with the way to change it (#217).
+ *
+ * Only for the household that owns the recipe, because only it can change the
+ * answer — for anybody else the `shared-from` line above already says whose
+ * recipe this is. A part gets none: `sharingSection` refuses to draw for one,
+ * so the link would lead to a section that is not on the page.
+ */
+function sharingShortcut(recipe: Recipe, view: RecipeView): Raw {
+  if (!view.owned || view.sharing === null || recipe.parentId !== null) {
+    return raw("");
+  }
+
+  const saved = view.sharing.savedVisibility;
+  const said =
+    saved === "public"
+      ? "Näkyvyys: kaikki taloudet"
+      : saved === "selected"
+        ? "Näkyvyys: valitut taloudet"
+        : "Näkyvyys: vain oma talous";
+
+  return html`<p class="meta sharing-shortcut">
+    ${said}<a href="#jakaminen">Muuta</a>
+  </p>`;
 }
 
 function sharingSummary(sharing: RecipeSharingState): string {
@@ -1486,6 +1520,13 @@ const PUBLISH_STYLE = html`<style>
   .recipient-list { padding: .3rem 0; margin: 0; list-style: none; }
   .recipient-list li { border-bottom: 1px solid var(--edge); }
   .recipient-list li:last-child { border-bottom: 0; }
+  /* The save bar sits inside a panel with a surface of its own, so its own
+     backdrop has to match that rather than the page's, or the rows it covers
+     while it is stuck would show through it. */
+  .recipe-sharing .save-bar { background: var(--surface); }
+  .sharing-shortcut { margin: .1rem 0 0; }
+  .sharing-shortcut a { margin-left: .4rem; color: var(--accent);
+    font-weight: 600; }
   .preference-label { margin: 0 0 .4rem; font-weight: 600; }
   .source-yield { margin: .1rem 0 0; }
 </style>`;

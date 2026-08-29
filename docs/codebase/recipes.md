@@ -65,10 +65,11 @@ loaded. Passing the answer in rather than counting the parts inside
 `replaceRecipe` avoids a second query for something the editor knows.
 
 The editor's **Tallenna muutokset** moves into a sticky bar in the same change
-(`.editor-actions` in `src/html.ts`), because the editor is long enough that on
-a phone the button sat several screens below whatever was being changed. It is
-CSS only — `position: sticky` clear of the fixed tab strip — so a browser
-without it gets today's behaviour and nothing on this path needs a script.
+(`.save-bar` in `src/html.ts`, named `.editor-actions` until #217 made it
+shared), because the editor is long enough that on a phone the button sat
+several screens below whatever was being changed. The placement is CSS only —
+`position: sticky` clear of the fixed tab strip — so a browser without it gets
+today's behaviour. See [screens](screens.md) for the bar as it now stands.
 
 ### A recipe may be nothing but its name (issue #211)
 

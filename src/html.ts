@@ -505,7 +505,6 @@ const STYLES = `
     color: var(--muted); font-size: .9rem;
   }
   .found-image .tick input { width: auto; margin: 0; }
-  .save-draft { width: 100%; margin: 1.5rem 0 .5rem; }
   .edit-draft > summary {
     display: inline-flex; align-items: center;
     min-height: var(--tap); cursor: pointer;
@@ -568,19 +567,32 @@ const STYLES = `
     padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0);
   }
 
-  /* The editor's save bar (issue #184). It sticks to the bottom of the screen,
-     clear of the fixed tab strip, so Tallenna is one tap away wherever you are
-     in a long form; once the end of the form scrolls into view the bar simply
-     sits there. A browser without position:sticky gets exactly the old
-     behaviour, which is why this needs no script. */
-  .editor-actions {
+  /* The one save bar (issue #184, generalised by #217). It sticks to the bottom
+     of the screen, clear of the fixed tab strip, so the save is one tap away
+     wherever you are in a long form; once the end of the form scrolls into view
+     the bar simply sits there. A browser without position:sticky gets exactly
+     the old behaviour, which is why the placement needs no script.
+
+     Three screens use it — the recipe editor, the import review and the
+     sharing form — and they use it the same way round: what the save will do
+     on the line above, the one button under it. */
+  .save-bar {
     position: sticky; z-index: 1;
     bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom));
-    display: flex; gap: .5rem;
+    display: flex; flex-wrap: wrap; gap: .5rem;
     padding: .6rem 0; margin-top: 1rem;
     background: var(--bg); border-top: 1px solid var(--edge);
   }
-  .editor-actions button { flex: 1; }
+  .save-bar button { flex: 1; }
+  /* The bar's one status line. Its height is reserved and the reserved height
+     and the filled height are the same number, so a form going from untouched
+     to unsaved to saving never moves the button under the member's thumb —
+     the same rule the shopping list's busy line follows (#200). */
+  .save-state {
+    flex-basis: 100%; min-height: 1.4rem; line-height: 1.4rem;
+    margin: 0; color: var(--muted); font-size: .85rem;
+  }
+  .save-bar.is-dirty .save-state { color: var(--warn); font-weight: 600; }
 
   .line-conflicts {
     padding: .7rem .8rem; margin: 0 0 1rem;
@@ -998,6 +1010,178 @@ export function multiplierField(
     />
     <button type="submit">${options.submit}</button>
   </div>`;
+}
+
+/**
+ * What the save bar says once the member has touched the form, and while the
+ * save is on its way. Here rather than in the island's own source so the two
+ * screens' tests can assert the same strings the markup promises.
+ */
+export const SAVE_BAR_DIRTY = "Tallentamattomia muutoksia";
+export const SAVE_BAR_SAVING = "Tallennetaan…";
+
+/**
+ * The save bar's script (issue #217).
+ *
+ * Everything about *finding* the save is CSS and markup, and stays working with
+ * this script absent — what the script adds is the two things a server-rendered
+ * form cannot say for itself: that there are changes not yet saved, and that a
+ * save is running.
+ *
+ * ES5, no regular expressions, feature-detected, and every string it writes goes
+ * in as a text node — the standing rules for an inline island, see
+ * docs/codebase/screens.md.
+ *
+ * Two details worth keeping:
+ *
+ * - The button is disabled from a timeout rather than inside the submit
+ *   handler. A disabled button is not a successful submitter, so disabling it
+ *   synchronously would drop `name=action` out of the sharing form's post — and
+ *   in some browsers cancel the submission outright.
+ * - Only the bar's own button puts the bar into its saving state. The editor's
+ *   form has other submit buttons (`+ Lisää aines`, `Poista silti`) that
+ *   re-render the screen rather than save it, and one of them saying
+ *   "Tallennetaan…" would be a lie.
+ */
+export const SAVE_BAR_ISLAND = `
+(function () {
+  if (!document.querySelectorAll || !window.addEventListener) return;
+
+  var bars = document.querySelectorAll('.save-bar');
+  for (var i = 0; i < bars.length; i++) setUp(bars[i]);
+
+  function setUp(bar) {
+    // Each bar carries its own copy of this script, so a screen with two of
+    // them would otherwise wire the first one up twice.
+    if (bar.getAttribute('data-wired') === '1') return;
+    bar.setAttribute('data-wired', '1');
+
+    var form = formOf(bar);
+    if (!form) return;
+    var state = bar.querySelector('.save-state');
+    var button = bar.querySelector('button');
+    if (!state || !button) return;
+
+    var resting = text(state);
+    var dirty = false;
+    var pressed = null;
+
+    form.addEventListener('input', touched, false);
+    form.addEventListener('change', touched, false);
+
+    // Which button was pressed, for browsers without event.submitter.
+    form.addEventListener('click', function (event) {
+      pressed = submitAncestor(event.target, form);
+    }, false);
+
+    form.addEventListener('submit', function (event) {
+      var by = event.submitter || pressed;
+      // No submitter at all, or the off-screen copy, means somebody pressed
+      // Enter in a text field — which is a save.
+      if (by && by !== button && !hasClass(by, 'default-submit')) return;
+      saving();
+      window.setTimeout(function () { button.disabled = true; }, 0);
+    }, false);
+
+    // Safari hands a cached page back exactly as it left, which without this is
+    // a dead save button still claiming to be saving.
+    window.addEventListener('pageshow', function (event) {
+      if (!event.persisted) return;
+      button.disabled = false;
+      dirty = false;
+      mark(bar, false);
+      write(state, resting);
+    }, false);
+
+    function touched() {
+      if (dirty) return;
+      dirty = true;
+      mark(bar, true);
+      write(state, ${JSON.stringify(SAVE_BAR_DIRTY)});
+    }
+
+    function saving() {
+      mark(bar, false);
+      write(state, '');
+      var wheel = document.createElement('span');
+      wheel.className = 'spinner';
+      state.appendChild(wheel);
+      state.appendChild(document.createTextNode(${JSON.stringify(SAVE_BAR_SAVING)}));
+    }
+  }
+
+  function formOf(node) {
+    while (node && node.nodeName !== 'FORM') node = node.parentNode;
+    return node && node.nodeName === 'FORM' ? node : null;
+  }
+
+  function submitAncestor(node, form) {
+    while (node && node !== form) {
+      if (node.nodeName === 'BUTTON') return node;
+      if (node.nodeName === 'INPUT' && node.type === 'submit') return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function hasClass(node, name) {
+    var parts = String(node.className || '').split(' ');
+    for (var i = 0; i < parts.length; i++) if (parts[i] === name) return true;
+    return false;
+  }
+
+  function mark(node, on) {
+    var parts = String(node.className || '').split(' ');
+    var kept = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] !== '' && parts[i] !== 'is-dirty') kept.push(parts[i]);
+    }
+    if (on) kept.push('is-dirty');
+    node.className = kept.join(' ');
+  }
+
+  function text(node) {
+    return node.textContent === undefined ? node.innerText : node.textContent;
+  }
+
+  function write(node, value) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+    if (value !== '') node.appendChild(document.createTextNode(value));
+  }
+})();
+`;
+
+/**
+ * The one save action of a screen that edits a recipe (issue #217).
+ *
+ * A form gets exactly one of these, at its end, and the CSS above pins it to
+ * the bottom of the viewport while the form is on screen. That is the whole of
+ * "the member should not have to know the button is at the bottom of the page":
+ * it is at the bottom of the *screen* instead, in the same place on the editor,
+ * the import review and the sharing form.
+ *
+ * `hint` is what the bar says before anything is touched, and it is where a
+ * screen says what saving does there. The import review states that the recipe
+ * is new and not saved yet; the editor of a stored recipe has nothing to say
+ * until something changes, so it says nothing.
+ */
+export function saveBar(
+  options: { submit: string; hint?: string; name?: string; value?: string },
+): Raw {
+  return html`<div class="save-bar">
+      <p class="save-state" aria-live="polite">${options.hint ?? ""}</p>
+      <button
+        type="submit"
+        class="primary"
+        ${options.name === undefined
+          ? ""
+          : raw(`name="${escape(options.name)}"`)}
+        ${options.value === undefined
+          ? ""
+          : raw(`value="${escape(options.value)}"`)}
+      >${options.submit}</button>
+    </div>
+    <script>${raw(SAVE_BAR_ISLAND)}</script>`;
 }
 
 /**

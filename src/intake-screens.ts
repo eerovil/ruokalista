@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { html, page, raw, type Raw } from "./html.ts";
+import { html, page, raw, type Raw, saveBar } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
@@ -1540,10 +1540,6 @@ function renderCorrection(
            and this is the one moment somebody knows what kind of dish it is. -->
       ${categoryChoices(vocabulary, view.categories)}
 
-      <button type="submit" class="button save-draft">${view.targetRecipeId === null
-        ? "Tallenna resepti"
-        : "Tallenna muutokset"}</button>
-
       <!-- The same form, one tap down. A closed details still submits, so the
            99% that needs no change never opens it and loses nothing. -->
       <details class="edit-draft">
@@ -1595,6 +1591,25 @@ function renderCorrection(
         )}
       </ol>
       </details>
+
+      <!-- After the disclosure, not before it (issue #217). Above it the save
+           was on screen only until somebody opened "Muokkaa ennen
+           tallennusta" — the one case where a member is certain to have
+           changes worth saving is the one case where the button had scrolled
+           away. At the end of the form the sticky bar keeps it on screen with
+           the draft edited and with it untouched alike. -->
+      ${saveBar({
+        // What this save does, which on this screen is two different things
+        // since #215: making a recipe, or updating the one being edited.
+        submit: view.targetRecipeId === null
+          ? "Tallenna resepti"
+          : "Tallenna muutokset",
+        // Said by the server, so it is true without JavaScript: nothing on this
+        // screen is stored yet either way.
+        hint: view.targetRecipeId === null
+          ? "Uusi resepti — ei vielä tallennettu"
+          : "Muutokset nykyiseen reseptiin — ei vielä tallennettu",
+      })}
     </form>
     ${CATEGORY_STYLE}`;
 }

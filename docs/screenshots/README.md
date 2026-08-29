@@ -115,4 +115,7 @@ The same environment variable gates them.
 | `102-shopping-long-total-with-picture.png` | The same row shape with a chosen product's picture on it, among ordinary short-total rows |
 | `103-intake-edit.png` | Issue #215's shared **Lisää resepti** screen in existing-recipe mode: the owned recipe is named, complete/replace is explicit, and text, URL and photograph inputs are the ordinary intake controls |
 | `104-intake-edit-review.png` | The ordinary intake draft review for an existing recipe, stating that save updates the current recipe and offering **Tallenna muutokset** rather than creating another recipe |
+| `105-review-save-bar.png` | Proposed import review with the draft opened and its name changed: the save bar rides the scroll saying there are unsaved changes, instead of sitting several screens above (#217) |
+| `106-sharing-shortcut.png` | Proposed recipe screen saying who can see the dish under its title, with the way to change it — so nobody opens the editor for a control it does not have (#217) |
+| `107-sharing-save-bar.png` | The sharing control one tap later: the visibility choice and **Tallenna jako** on screen together, in the same bar the editor and the import review use |
 | `108-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |

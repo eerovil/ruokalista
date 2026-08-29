@@ -5,7 +5,7 @@ import {
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
-import { html, page, raw, type Raw } from "./html.ts";
+import { html, page, raw, type Raw, saveBar } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
@@ -723,10 +723,10 @@ export function editorForm(
       <!-- Sticky rather than at the end of the form: the editor is long enough
            that on a phone the save button used to be several screens below
            whatever was being changed (issue #184). It rides just above the tab
-           strip while the form scrolls and settles here at the end. -->
-      <div class="editor-actions">
-        <button type="submit" class="primary">Tallenna muutokset</button>
-      </div>
+           strip while the form scrolls and settles here at the end. Since #217
+           it is the same bar the import review and the sharing form use, and it
+           says when there are changes not yet saved. -->
+      ${saveBar({ submit: "Tallenna muutokset" })}
     </form>
 
     <!-- Outside the form above on purpose: a link, so nothing typed into the
