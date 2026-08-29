@@ -105,3 +105,4 @@ commit what it wrote:
 | `96-prompt-edit-part-stale-recipe.png` | The lasagne after that refusal: the newer 7 dl of milk stands, the proposal's butter never landed, and the dish itself did not move either |
 | `97-admin-categories.png` | Proposed admin category screen: the vocabulary as rows with slug and recipe count, ↑/↓ ordering, and a freshly added **Wokki** (#199) |
 | `98-admin-category-delete.png` | Proposed removal confirmation: the recipes that would lose **Keitto**, named before anything happens |
+| `101-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |
