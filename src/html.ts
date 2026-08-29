@@ -1032,8 +1032,21 @@ export const SAVE_BAR_SAVING = "Tallennetaan…";
  * in as a text node — the standing rules for an inline island, see
  * docs/codebase/screens.md.
  *
- * Two details worth keeping:
+ * Four details worth keeping:
  *
+ * - **Unsaved is a comparison, not a latch.** The bar remembers what the server
+ *   sent — every *named* control's default — and asks whether the form still
+ *   says that. An event-driven latch got this wrong twice: typing in the
+ *   sharing form's `#recipient-search`, which has no `name` and exists only to
+ *   filter the household list, announced changes that could not be saved
+ *   because they were never posted; and editing a field back to what it was
+ *   left the bar still claiming otherwise. The defaults rather than a reading
+ *   of the live fields, because a browser restores form values on a back
+ *   navigation *before* any script runs, and a snapshot taken then would agree
+ *   with the restored edit and call it clean.
+ * - **A save re-takes that memory**, because the values being submitted are the
+ *   ones about to be stored. Coming back to a saved page therefore reads clean,
+ *   while coming back to one edited and left unsaved still says so.
  * - The button is disabled from a timeout rather than inside the submit
  *   handler. A disabled button is not a successful submitter, so disabling it
  *   synchronously would drop `name=action` out of the sharing form's post — and
@@ -1063,11 +1076,14 @@ export const SAVE_BAR_ISLAND = `
     if (!state || !button) return;
 
     var resting = text(state);
+    // What is stored, as far as this document knows: the values the server put
+    // in the markup, until a save of its own replaces them.
+    var stored = snapshot(form, true);
     var dirty = false;
     var pressed = null;
 
-    form.addEventListener('input', touched, false);
-    form.addEventListener('change', touched, false);
+    form.addEventListener('input', refresh, false);
+    form.addEventListener('change', refresh, false);
 
     // Which button was pressed, for browsers without event.submitter.
     form.addEventListener('click', function (event) {
@@ -1079,25 +1095,37 @@ export const SAVE_BAR_ISLAND = `
       // No submitter at all, or the off-screen copy, means somebody pressed
       // Enter in a text field — which is a save.
       if (by && by !== button && !hasClass(by, 'default-submit')) return;
+      // What is going to the server is what will be stored, so from here on
+      // these values are the ones there is nothing unsaved about.
+      stored = snapshot(form, false);
       saving();
       window.setTimeout(function () { button.disabled = true; }, 0);
     }, false);
 
-    // Safari hands a cached page back exactly as it left, which without this is
-    // a dead save button still claiming to be saving.
+    // Every time this page is shown, including when it is shown again.
+    //
+    // A back navigation arrives one of two ways: the browser hands the whole
+    // page back from its cache exactly as it left — save button disabled on the
+    // way out, bar still claiming to be saving, which is what the first line
+    // undoes — or it builds the document again and puts the field values back
+    // into it. Either way the honest thing is to ask the fields rather than to
+    // assert an answer: an edit nobody saved still says so, and a form that
+    // matches what its own markup was sent with says nothing.
+    //
+    // pageshow rather than load, because it is the one event that fires in both
+    // cases, and it fires after the browser has finished restoring.
     window.addEventListener('pageshow', function (event) {
-      if (!event.persisted) return;
-      button.disabled = false;
-      dirty = false;
-      mark(bar, false);
-      write(state, resting);
+      if (event.persisted) button.disabled = false;
+      dirty = null;
+      refresh();
     }, false);
 
-    function touched() {
-      if (dirty) return;
-      dirty = true;
-      mark(bar, true);
-      write(state, ${JSON.stringify(SAVE_BAR_DIRTY)});
+    function refresh() {
+      var now = snapshot(form, false) !== stored;
+      if (now === dirty) return;
+      dirty = now;
+      mark(bar, now);
+      write(state, now ? ${JSON.stringify(SAVE_BAR_DIRTY)} : resting);
     }
 
     function saving() {
@@ -1113,6 +1141,51 @@ export const SAVE_BAR_ISLAND = `
   function formOf(node) {
     while (node && node.nodeName !== 'FORM') node = node.parentNode;
     return node && node.nodeName === 'FORM' ? node : null;
+  }
+
+  /**
+   * Everything this form would post, as one string to compare with another.
+   *
+   * Only named controls, because a control without a name is not part of the
+   * submission — the sharing form's household search is one, and typing in it
+   * changes nothing that could be saved. With 'asSent' the answer is what the
+   * server put in the markup rather than what the fields hold now.
+   *
+   * A file input is skipped: its value cannot be read back, so it can only ever
+   * compare equal to itself and would add nothing.
+   */
+  function snapshot(form, asSent) {
+    var parts = [];
+    var fields = form.elements;
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i];
+      if (!field.name || field.type === 'file') continue;
+      parts.push(field.name + '=' + fieldValue(field, asSent));
+    }
+    // A separator no field's value can contain, so two different forms cannot
+    // flatten to the same string.
+    return parts.join(String.fromCharCode(30));
+  }
+
+  function fieldValue(field, asSent) {
+    if (field.type === 'checkbox' || field.type === 'radio') {
+      var on = asSent ? field.defaultChecked : field.checked;
+      return on ? '1' : '0';
+    }
+    if (field.nodeName === 'SELECT') {
+      if (!asSent) return field.value;
+      // A select's stored answer is the option the server marked, or — when it
+      // marked none — the first one, which is what the browser shows.
+      var fallback = field.options.length === 0 ? '' : field.options[0].value;
+      for (var i = 0; i < field.options.length; i++) {
+        if (field.options[i].defaultSelected) return field.options[i].value;
+      }
+      return fallback;
+    }
+    if (asSent && typeof field.defaultValue === 'string') {
+      return field.defaultValue;
+    }
+    return field.value;
   }
 
   function submitAncestor(node, form) {

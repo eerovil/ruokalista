@@ -375,6 +375,25 @@ people opened the editor looking for a control that was never in it.
   shared `.spinner`, and the button disabled against a second tap). Same
   discipline as the other islands — ES5, no regular expressions, feature
   detected, every string written as a text node.
+- **Unsaved is a comparison, not a latch.** The island remembers every *named*
+  control's server-rendered default and asks whether the form still says that.
+  Two faults follow from getting this wrong, and both were found in review of
+  this change: typing in the sharing form's `#recipient-search`, which has no
+  `name` and only filters the household list, announced changes that were never
+  going to be posted; and editing a field back to what it was left the bar still
+  claiming otherwise. The defaults rather than a reading of the live fields,
+  because a browser puts form values back on a back navigation *before* any
+  script runs, and a snapshot taken then would agree with the restored edit and
+  call it clean.
+- **`pageshow` re-asks the question rather than answering it.** A back
+  navigation arrives either from the browser's page cache — whole document,
+  script state and all — or as a rebuilt document with the field values put
+  back. Either way the island clears the disabled button, then works the answer
+  out again from the fields. An edit nobody saved still says so. A page returned
+  to after its own save reads clean when it came from the cache; when the
+  document was rebuilt, its markup predates the save and the newer values
+  restored into it really do differ from it, so the bar says so — of a page
+  whose save the revision check would refuse as stale anyway.
 - **Only the bar's own button puts the bar into the saving state.** The editor's
   form has other submit buttons — `+ Lisää aines`, `Poista silti` — that
   re-render the screen rather than save it, and the island leaves those alone. A

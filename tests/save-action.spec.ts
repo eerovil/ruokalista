@@ -152,6 +152,83 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
     .toContainText("Näkyvyys: vain oma talous");
 });
 
+test("B. searching the household list is not an unsaved change", async ({
+  page,
+}) => {
+  // #recipient-search has no name and is never posted: it exists only to narrow
+  // the list of households below it. Typing in it used to put the bar into its
+  // unsaved state, announcing changes that could not be saved because there
+  // were none.
+  await page.goto("/recipes/1");
+  const bar = page.locator(".recipe-sharing .save-bar");
+  const households = page.locator(".recipient-list li");
+
+  await expect(households).toHaveCount(1);
+  await page.locator("#recipient-search").fill("Naapuri");
+  // The box really is live — this is the same typing, doing its own job.
+  await expect(households.first()).toBeVisible();
+  await page.locator("#recipient-search").fill("Ei tällaista taloutta");
+  await expect(households.first()).toBeHidden();
+
+  await expect(bar).not.toHaveClass(/is-dirty/);
+  await expect(bar).not.toContainText("Tallentamattomia muutoksia");
+
+  // A control that *is* posted still counts, so this is not the bar having
+  // stopped noticing.
+  await page.getByLabel("Julkinen").check();
+  await expect(bar).toContainText("Tallentamattomia muutoksia");
+
+  // And putting it back the way the server sent it is not a change either.
+  await page.getByLabel("Oma").check();
+  await expect(bar).not.toContainText("Tallentamattomia muutoksia");
+});
+
+test("an edit left unsaved still says so after going back", async ({ page }) => {
+  await page.goto("/recipes/1/edit");
+  const bar = page.locator(".save-bar");
+
+  await page.locator("#title").fill("Kaalilaatikko illalla");
+  await expect(bar).toContainText("Tallentamattomia muutoksia");
+
+  // Away without saving, then back. The browser puts the edited field back —
+  // and the bar used to greet it by announcing there was nothing to save.
+  await page.goto("/recipes");
+  await page.goBack();
+
+  await expect(page.locator("#title")).toHaveValue("Kaalilaatikko illalla");
+  await expect(bar).toContainText("Tallentamattomia muutoksia");
+  await expect(page.getByRole("button", { name: "Tallenna muutokset" }))
+    .toBeEnabled();
+});
+
+test("going back after a save leaves the bar usable, not stuck saving", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+  await page.locator("#title").fill("Kaalilaatikko aamulla");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+
+  await page.goBack();
+
+  // The save the member started is over, so nothing on the returned page may
+  // still claim to be running it. What the bar says about unsaved changes is
+  // deliberately not asserted here: a browser that rebuilds the document serves
+  // the markup from before the save and puts the newer values back into it, and
+  // a bar that then says the two differ is telling the truth about a page whose
+  // save would be refused as stale anyway.
+  const bar = page.locator(".save-bar");
+  await expect(bar).not.toContainText("Tallennetaan…");
+  await expect(page.getByRole("button", { name: "Tallenna muutokset" }))
+    .toBeEnabled();
+
+  // Left as it was found: this file seeds once for the whole run.
+  await page.goto("/recipes/1/edit");
+  await page.locator("#title").fill("Kaalilaatikko");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+});
+
 test("the save bar's button still carries its own value", async ({ page }) => {
   // The sharing form's save posts `action=save`. The island disables the
   // button once the save is on its way, and a button disabled a moment too
