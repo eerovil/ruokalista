@@ -14,9 +14,9 @@ import {
   categoriesForRecipes,
   categoryBulkControls,
   categoryFilter,
-  categoryLabel,
   categoryTags,
-  isCategorySlug,
+  loadVocabulary,
+  type Vocabulary,
 } from "./categories.ts";
 import { html, multiplierField, page, raw, type Raw } from "./html.ts";
 import {
@@ -247,8 +247,11 @@ async function withCategories(
  * An unknown slug is read as no filter rather than as an empty list: a stale
  * bookmark should show the recipes, not an empty screen with no way back.
  */
-export function askedCategory(value: string | null): string | null {
-  return value !== null && isCategorySlug(value) ? value : null;
+export function askedCategory(
+  vocabulary: Vocabulary,
+  value: string | null,
+): string | null {
+  return value !== null && vocabulary.has(value) ? value : null;
 }
 
 function inCategory(
@@ -646,14 +649,16 @@ export async function recipeListScreen(
   member: Member,
 ): Promise<Response> {
   const query = url.searchParams.get("q") ?? "";
+  const vocabulary = await loadVocabulary(env.DB);
   return page(
     "Reseptit",
     await ownRecipeList(
       env.DB,
+      vocabulary,
       member,
       query,
       null,
-      askedCategory(url.searchParams.get("kategoria")),
+      askedCategory(vocabulary, url.searchParams.get("kategoria")),
     ),
     "recipes",
     member,
@@ -668,6 +673,7 @@ export interface ListNotice {
 
 export async function ownRecipeList(
   db: D1Database,
+  vocabulary: Vocabulary,
   member: Member,
   query: string,
   notice: ListNotice | null,
@@ -696,7 +702,13 @@ export async function ownRecipeList(
         : html`<input type="hidden" name="kategoria" value="${category}" />`}
       <button type="submit">Hae</button>
     </form>
-    ${categoryFilter("/recipes", query, category, availableCategories(matching))}
+    ${categoryFilter(
+      vocabulary,
+      "/recipes",
+      query,
+      category,
+      availableCategories(matching),
+    )}
     ${noticeLine(notice)}
     ${recipes.length === 0
       ? // An empty state that only states the emptiness leaves the reader to
@@ -704,7 +716,7 @@ export async function ownRecipeList(
         html`<div class="nothing">
           <p class="empty">
             ${category !== null
-              ? `Kategoriassa ${categoryLabel(category)} ei ole yhtään reseptiä.`
+              ? `Kategoriassa ${vocabulary.label(category)} ei ole yhtään reseptiä.`
               : query.trim() === ""
                 ? "Reseptejä ei ole vielä yhtään."
                 : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
@@ -739,7 +751,7 @@ export async function ownRecipeList(
                   <span class="recipes-text">
                     ${recipe.title}
                     <span class="meta"
-                      >${metaLine(recipe)}</span
+                      >${metaLine(vocabulary, recipe)}</span
                     >
                   </span>
                   ${sharingBadge(recipe)}
@@ -754,7 +766,7 @@ export async function ownRecipeList(
           <p class="selection-count">
             Toiminto kohdistuu valitsemiisi resepteihin.
           </p>
-          ${categoryBulkControls(bulkCategory)}
+          ${categoryBulkControls(vocabulary, bulkCategory)}
           <p class="bulk-actions">
             <button type="submit" name="action" value="publish">
               Julkaise valitut
@@ -783,7 +795,8 @@ export async function publicRecipeListScreen(
   member: Member,
 ): Promise<Response> {
   const query = url.searchParams.get("q") ?? "";
-  const category = askedCategory(url.searchParams.get("kategoria"));
+  const vocabulary = await loadVocabulary(env.DB);
+  const category = askedCategory(vocabulary, url.searchParams.get("kategoria"));
   const matching = await publicRecipeSummaries(
     env.DB,
     member.householdId,
@@ -813,6 +826,7 @@ export async function publicRecipeListScreen(
         <button type="submit">Hae</button>
       </form>
       ${categoryFilter(
+        vocabulary,
         "/recipes/julkiset",
         query,
         category,
@@ -822,7 +836,7 @@ export async function publicRecipeListScreen(
         ? html`<div class="nothing">
             <p class="empty">
               ${category !== null
-                ? `Kategoriassa ${categoryLabel(category)} ei ole yhtään jaettua reseptiä.`
+                ? `Kategoriassa ${vocabulary.label(category)} ei ole yhtään jaettua reseptiä.`
                 : query.trim() === ""
                   ? "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille."
                   : `Haku "${query.trim()}" ei löytänyt yhtään jaettua reseptiä.`}
@@ -841,7 +855,9 @@ export async function publicRecipeListScreen(
                     <span class="meta"
                       >${recipe.categories.length === 0
                         ? recipe.householdName
-                        : `${recipe.householdName} · ${recipe.categories.map(categoryLabel).join(", ")}`}</span
+                        : `${recipe.householdName} · ${recipe.categories
+                            .map((slug) => vocabulary.label(slug))
+                            .join(", ")}`}</span
                     >
                   </span>
                   <span class="badge is-published">
@@ -872,10 +888,10 @@ function availableCategories(recipes: readonly RecipeSummary[]): string[] {
  * rather than on chips of their own, because a list of a few hundred recipes
  * with a chip row inside every row is a list nobody can scan.
  */
-function metaLine(recipe: RecipeSummary): string {
+function metaLine(vocabulary: Vocabulary, recipe: RecipeSummary): string {
   const parts = [finnishDate(recipe.createdAt), recipe.createdBy];
   if (recipe.categories.length > 0) {
-    parts.push(recipe.categories.map(categoryLabel).join(", "));
+    parts.push(recipe.categories.map((slug) => vocabulary.label(slug)).join(", "));
   }
   return parts.join(" · ");
 }
@@ -948,11 +964,12 @@ export async function renderRecipe(
   sharingDraft?: SharingDraft,
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
-  const [preference, sharing] = await Promise.all([
+  const [preference, sharing, vocabulary] = await Promise.all([
     preferredMultiplierFor(db, member.householdId, recipe.id),
     owned && recipe.parentId === null
       ? recipeSharingState(db, member.householdId, recipe.id, sharingDraft)
       : Promise.resolve(null),
+    loadVocabulary(db),
   ]);
 
   return page(
@@ -962,6 +979,7 @@ export async function renderRecipe(
       preference,
       refusal,
       sharing,
+      vocabulary,
     }, castApplicationId),
     "recipes",
     member,
@@ -1176,6 +1194,8 @@ interface RecipeView {
   preference: number | null;
   refusal: string | null;
   sharing: RecipeSharingState | null;
+  /** The vocabulary the tags under the title are labelled from (#199). */
+  vocabulary: Vocabulary;
 }
 
 function recipeBody(
@@ -1223,7 +1243,7 @@ function recipeBody(
         <!-- What kind of food this is (#196). Under the title with the rest of
              the recipe's own facts, not beside the edit link: it is part of
              reading the recipe, not part of changing it. -->
-        ${categoryTags(recipe.categories)}
+        ${categoryTags(view.vocabulary, recipe.categories)}
         ${castSender(recipe, multiplier, castApplicationId)}
       </div>
     </div>

@@ -7,6 +7,12 @@ import {
 } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
 import { categoryBulkForm } from "./category-bulk.ts";
+import {
+  categoryAdminForm,
+  categoryAdminScreen,
+  categoryDeleteForm,
+  categoryDeleteScreen,
+} from "./category-admin.ts";
 import { castReceiver } from "./cast.ts";
 import {
   batchIntakeScreen,
@@ -216,6 +222,13 @@ const router = new Router()
   .get("/intake/batch", requireAdminScreen(batchIntakeScreen))
   .post("/intake/batch/review", requireAdminScreen(reviewBatchScreen))
   .post("/intake/batch/import", requireAdminScreen(importBatchScreen))
+  .get("/admin/kategoriat", requireAdminScreen(categoryAdminScreen))
+  .post("/admin/kategoriat", requireAdminScreen(categoryAdminForm))
+  // Removing a category is a GET that asks and a POST that does, like deleting
+  // a recipe: the question is which recipes it would change, and that is a
+  // screen rather than a dialog.
+  .get("/admin/kategoriat/:slug/poista", requireAdminScreen(categoryDeleteScreen))
+  .post("/admin/kategoriat/:slug/poista", requireAdminScreen(categoryDeleteForm))
   .get("/admin/households", requireAdminScreen(householdListScreen))
   .post("/admin/households", requireAdminScreen(createHouseholdForm))
   .get("/admin/households/:id", requireAdminScreen(householdScreen))

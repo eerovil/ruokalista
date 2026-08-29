@@ -215,3 +215,53 @@ the app answering.
   area error, not ~2% — `dev/check-contact-sheet.ts` uses 0.04.
 
 See also `docs/agents/verification.md` for which spec covers what.
+
+## The dev checks run without a TypeScript compiler
+
+`npm run check` runs `node --experimental-strip-types --test dev/*.ts`. Types are
+*erased*, never compiled, so anything that needs code generation is a hard error
+at import time — and it is an error in whichever `src/` module the check imports,
+not in the check itself.
+
+The one that has already cost a session: a constructor parameter property.
+
+```ts
+// Fails the check with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+constructor(readonly categories: readonly Category[]) {}
+
+// Fine.
+readonly categories: readonly Category[];
+constructor(categories: readonly Category[]) { this.categories = categories; }
+```
+
+It typechecks, and it runs under `npx tsx`, which is what makes it confusing:
+running the one check file directly with `tsx` passes while `npm run check`
+reports the whole file as failed with no assertion in sight. Reach for
+`node --experimental-strip-types --test dev/check-<name>.ts` when a check fails
+in the suite but not on its own.
+
+Enums and namespaces are the other members of that family. Nothing in `src/`
+uses them today.
+
+## A dev check with a real database
+
+Almost everything in `dev/` tests a pure function, and anything that needs a
+database goes to the browser suite instead. `dev/check-category-integrity.ts`
+(#210) is the exception, and the shape is worth reusing when the same problem
+comes up again.
+
+What it is for is a race, not a screen: a category removed in the moment between
+a save validating the vocabulary and the save writing it. That window is a few
+statements wide and closes by itself, so no browser test can be aimed at it —
+Playwright can press a button at the wrong moment, but not at that moment.
+
+`dev/support/d1.ts::migratedDatabase` builds the answer. `node:sqlite` applies
+the real migration files, `beforeBatch` runs something in exactly the window,
+and the returned object satisfies enough of `D1Database` that `saveRecipe`,
+`replaceRecipe` and the bulk category action run against it unchanged. Foreign
+keys are on and a batch really is one transaction, because those are the two
+things being checked; nothing else about it is a simulation.
+
+It costs no wrangler, no container port and no live database. What it cannot
+prove is that D1 accepts the statements — `npm run migrate:local` and the browser
+suite are what do that.

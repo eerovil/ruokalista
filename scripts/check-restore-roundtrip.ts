@@ -33,7 +33,7 @@ try {
     "--persist-to",
     sourceState,
     "--command",
-    "INSERT INTO intake_job (id, household_id, created_by, status, source_route, source_text, error_message, created_at, updated_at) VALUES ('job-1', 1, 1, 'failed', 'pasted', 'Uunikaali', 'Jäsennys epäonnistui.', '2026-08-25 12:00:00', '2026-08-25 12:01:00'); INSERT INTO recipe_share (recipe_id, household_id, shared_at, shared_by) VALUES (1, 2, '2026-08-25 12:00:00', 1); INSERT INTO recipe_category (recipe_id, category) VALUES (3, 'uuniruoka'), (3, 'pasta'); INSERT INTO planned_batch (id, household_id, recipe_id, multiplier, legacy_portions, created_at, created_by) VALUES (1, 1, 3, 1.5, NULL, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1); INSERT INTO recipe_preference (id, household_id, recipe_id, default_multiplier, updated_at, updated_by) VALUES (1, 2, 1, 2, '2026-08-25 12:00:00', 2); INSERT INTO ingredient_product (id, ingredient_id, ean, name, image_url, package_quantity, package_unit, position) VALUES (1, 1, '6415712506032', 'Kotimaista rypsiöljy 500 ml', 'https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg', 500, 'ml', 1), (2, 1, '6415712506049', 'Kotimaista rypsiöljy 1 l', NULL, 1, 'l', 2); INSERT INTO recipe_ingredient_product (id, household_id, recipe_id, ingredient_id, ean, name, image_url, package_quantity, package_unit) VALUES (1, 1, 1, 1, '6415712506049', 'Kotimaista rypsiöljy 1 l', NULL, 1, 'l')",
+    "INSERT INTO intake_job (id, household_id, created_by, status, source_route, source_text, error_message, created_at, updated_at) VALUES ('job-1', 1, 1, 'failed', 'pasted', 'Uunikaali', 'Jäsennys epäonnistui.', '2026-08-25 12:00:00', '2026-08-25 12:01:00'); INSERT INTO recipe_share (recipe_id, household_id, shared_at, shared_by) VALUES (1, 2, '2026-08-25 12:00:00', 1); INSERT INTO category (slug, label, position) VALUES ('wokki', 'Wokki', 10); INSERT INTO recipe_category (recipe_id, category) VALUES (3, 'uuniruoka'), (3, 'pasta'), (3, 'wokki'); INSERT INTO planned_batch (id, household_id, recipe_id, multiplier, legacy_portions, created_at, created_by) VALUES (1, 1, 3, 1.5, NULL, '2026-08-25 12:00:00', 1); INSERT INTO batch_occurrence (batch_id, date, slot) VALUES (1, '2026-08-25', 'dinner'), (1, '2026-08-26', 'lunch'); INSERT INTO pantry_entry (id, household_id, ingredient_id, state, added_at, added_by) VALUES (1, 1, 1, 'unlimited', '2026-08-25 12:00:00', 1); INSERT INTO recipe_preference (id, household_id, recipe_id, default_multiplier, updated_at, updated_by) VALUES (1, 2, 1, 2, '2026-08-25 12:00:00', 2); INSERT INTO ingredient_product (id, ingredient_id, ean, name, image_url, package_quantity, package_unit, position) VALUES (1, 1, '6415712506032', 'Kotimaista rypsiöljy 500 ml', 'https://cdn.s-cloud.fi/v1/w256_q75/product/ean/6415712506032_kuva1.jpg', 500, 'ml', 1), (2, 1, '6415712506049', 'Kotimaista rypsiöljy 1 l', NULL, 1, 'l', 2); INSERT INTO recipe_ingredient_product (id, household_id, recipe_id, ingredient_id, ean, name, image_url, package_quantity, package_unit) VALUES (1, 1, 1, 1, '6415712506049', 'Kotimaista rypsiöljy 1 l', NULL, 1, 'l')",
   ]);
 
   const snapshot = await captureSnapshot(sourceState);
@@ -77,8 +77,18 @@ try {
     .filter((row) => row.recipe_id === 3)
     .map((row) => row.category)
     .sort();
-  if (canonicalJson(categories) !== canonicalJson(["pasta", "uuniruoka"])) {
+  if (canonicalJson(categories) !== canonicalJson(["pasta", "uuniruoka", "wokki"])) {
     throw new Error("round-trip did not preserve the recipe's categories");
+  }
+  // The vocabulary itself, including a category an admin added after the
+  // migration seeded the list (#199). A restore that skipped this table would
+  // put the recipe back in a category nothing can name or filter by.
+  const wokki = target.category.find((row) => row.slug === "wokki");
+  if (wokki?.label !== "Wokki" || wokki.position !== 10) {
+    throw new Error("round-trip did not preserve an admin-added category");
+  }
+  if (target.category.length !== 10) {
+    throw new Error("round-trip did not preserve the whole category vocabulary");
   }
   if (target.intake_job[0]?.source_text !== "Uunikaali" || target.intake_job[0]?.status !== "failed") {
     throw new Error("round-trip did not preserve the retained intake job");

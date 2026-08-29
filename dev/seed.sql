@@ -21,6 +21,22 @@ DELETE FROM member_invitation;
 DELETE FROM member;
 DELETE FROM household;
 
+-- The category vocabulary (#199). Seeded by migration 0019 and curated from
+-- the admin panel afterwards, so it is reset here like every other table: a
+-- local database that has been played with should still start each suite as
+-- the nine categories the migration ships.
+DELETE FROM category;
+INSERT INTO category (slug, label, position) VALUES
+  ('pasta',          'Pasta',          1),
+  ('keitto',         'Keitto',         2),
+  ('salaatti',       'Salaatti',       3),
+  ('uuniruoka',      'Uuniruoka',      4),
+  ('kastike',        'Kastike',        5),
+  ('pizza-piirakka', 'Pizza/piirakka', 6),
+  ('leivonta',       'Leivonta',       7),
+  ('jalkiruoka',     'Jälkiruoka',     8),
+  ('lisuke',         'Lisuke',         9);
+
 INSERT INTO household (id, name) VALUES
   (1, 'Koti'),
   (2, 'Naapuri');

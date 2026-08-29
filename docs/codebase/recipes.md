@@ -300,13 +300,39 @@ something in the list is categorised.
 - **The chip row scrolls sideways rather than wrapping**, because the point of a
   filter above a list on a phone is that the list is still visible under it.
 
-Issue #199 proposes one more way in, on top of the picker rather than instead of
-it: the recipe list's existing selection can add or remove **one** category
-across every ticked dish at once (`src/category-bulk.ts`). It never replaces a
-recipe's whole set, so nothing a member cannot see on that screen can be lost to
-a button on it, and the per-recipe picker stays the only place a recipe's
-categories are set wholesale. See
-[screens](screens.md) for the control and the count beside it.
+Issue #199 proposes two more things on top of that, neither of them replacing
+the picker.
+
+**One category across a selection.** The recipe list's existing selection can
+add or remove **one** category across every ticked dish at once
+(`src/category-bulk.ts`). It never replaces a recipe's whole set, so nothing a
+member cannot see on that screen can be lost to a button on it, and the
+per-recipe picker stays the only place a recipe's categories are set wholesale.
+See [screens](screens.md) for the control and the count beside it.
+
+**The vocabulary becomes a table an admin curates.** This is the one bullet
+above that #199 reverses: the list is no longer a constant in
+`src/categories.ts` but the `category` table, edited from `/admin/kategoriat`
+(`src/category-admin.ts`). [ADR-0013](../adr/0013-the-category-vocabulary-is-curated-not-compiled.md)
+records the swap and what it costs; ADR-0012's other half — a category belongs
+to the dish, not the household — is untouched, and it is what makes one shared
+list safe to curate. The migration seeds the seven #196 shipped plus `Kastike`
+and `Pizza/piirakka`.
+
+Three things follow that are worth knowing before touching this code:
+
+- **Nothing reads a module global any more.** `loadVocabulary(db)` returns a
+  `Vocabulary`, read once per request and passed to whatever renders or reads a
+  category. There is no cache: an admin's rename has to be true on the next
+  screen.
+- **Loading a recipe still does not need one.** `categoriesForRecipes` orders by
+  the vocabulary's own `position` in SQL, so `loadRecipe` and the summaries carry
+  no `Vocabulary` down with them. A slug the vocabulary no longer has sorts last
+  and still renders as itself.
+- **The category gate on a save is a query now.** It moved out of the
+  synchronous `validateRecipe` into `assertKnownCategories`, called by
+  `saveRecipe` and `replaceRecipe`, and it costs nothing for a recipe with no
+  categories.
 
 `categories` is deliberately **not** on the `/api/recipes` wire. Unlike
 `alternativeGroup`, which changes what a recipe means, a category only changes

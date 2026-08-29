@@ -1,4 +1,8 @@
-import { categoriesForRecipes, categoryLabel, isCategorySlug } from "./categories.ts";
+import {
+  categoriesForRecipes,
+  loadVocabulary,
+  type Vocabulary,
+} from "./categories.ts";
 import { page } from "./html.ts";
 import type { Member } from "./members.ts";
 import { ownedDishes } from "./recipe-publish.ts";
@@ -34,31 +38,34 @@ export interface CategoryBulkOutcome {
 /** Add one category to every owned dish among the given ids. */
 export async function addCategoryToRecipes(
   db: D1Database,
+  vocabulary: Vocabulary,
   member: Member,
   ids: number[],
   category: string,
 ): Promise<CategoryBulkOutcome> {
-  return applyCategory(db, member, ids, category, "add");
+  return applyCategory(db, vocabulary, member, ids, category, "add");
 }
 
 /** Take one category off every owned dish among the given ids. */
 export async function removeCategoryFromRecipes(
   db: D1Database,
+  vocabulary: Vocabulary,
   member: Member,
   ids: number[],
   category: string,
 ): Promise<CategoryBulkOutcome> {
-  return applyCategory(db, member, ids, category, "remove");
+  return applyCategory(db, vocabulary, member, ids, category, "remove");
 }
 
 async function applyCategory(
   db: D1Database,
+  vocabulary: Vocabulary,
   member: Member,
   ids: number[],
   category: string,
   action: "add" | "remove",
 ): Promise<CategoryBulkOutcome> {
-  if (!isCategorySlug(category)) {
+  if (!vocabulary.has(category)) {
     throw new CategoryBulkRefused("Valitse kategoria.");
   }
 
@@ -103,8 +110,34 @@ async function applyCategory(
     );
   }
 
-  if (statements.length > 0) await db.batch(statements);
+  if (statements.length > 0) {
+    try {
+      await db.batch(statements);
+    } catch (error) {
+      // The vocabulary was checked at the top of this function, and that check
+      // is a separate read: an admin removing the category in between would,
+      // without the key `recipe_category.category` carries since #210, have let
+      // this batch write a slug nothing can filter by. With the key the batch
+      // fails, and a D1 batch is one transaction, so not one of these recipes
+      // moved. Say so; re-throw anything that was not this.
+      if (action === "add" && !(await categoryExists(db, category))) {
+        throw new CategoryBulkRefused(
+          "Kategoria poistettiin kesken toiminnon. Mikään resepti ei muuttunut.",
+        );
+      }
+      throw error;
+    }
+  }
   return outcome;
+}
+
+/** Whether the vocabulary still has this slug, asked at the moment it matters. */
+async function categoryExists(db: D1Database, slug: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS found FROM category WHERE slug = ?")
+    .bind(slug)
+    .first<{ found: number }>();
+  return row !== null;
 }
 
 /**
@@ -120,14 +153,18 @@ export async function categoryBulkForm(
   member: Member,
 ): Promise<Response> {
   const form = await request.formData();
+  const vocabulary = await loadVocabulary(env.DB);
   const action = String(form.get("action") ?? "");
   const query = String(form.get("q") ?? "");
-  const filter = askedCategory(String(form.get("kategoria") ?? "") || null);
+  const filter = askedCategory(
+    vocabulary,
+    String(form.get("kategoria") ?? "") || null,
+  );
   const category = String(form.get("bulkCategory") ?? "");
   const ids = form.getAll("recipeId").map((value) => Number(String(value)));
 
   if (action !== "add" && action !== "remove") {
-    return list(env, member, query, filter, category, {
+    return list(env, vocabulary, member, query, filter, category, {
       message: "Tuntematon toiminto.",
       refused: true,
     });
@@ -137,11 +174,11 @@ export async function categoryBulkForm(
   try {
     outcome =
       action === "add"
-        ? await addCategoryToRecipes(env.DB, member, ids, category)
-        : await removeCategoryFromRecipes(env.DB, member, ids, category);
+        ? await addCategoryToRecipes(env.DB, vocabulary, member, ids, category)
+        : await removeCategoryFromRecipes(env.DB, vocabulary, member, ids, category);
   } catch (error) {
     if (!(error instanceof CategoryBulkRefused)) throw error;
-    return list(env, member, query, filter, category, {
+    return list(env, vocabulary, member, query, filter, category, {
       message: error.message,
       refused: true,
     });
@@ -149,11 +186,12 @@ export async function categoryBulkForm(
 
   return list(
     env,
+    vocabulary,
     member,
     query,
     filter,
     category,
-    doneNotice(action, category, outcome),
+    doneNotice(vocabulary, action, category, outcome),
   );
 }
 
@@ -162,11 +200,12 @@ export async function categoryBulkForm(
  * selection back. A member who ticked six and moved two wants to read two.
  */
 export function doneNotice(
+  vocabulary: Vocabulary,
   action: "add" | "remove",
   category: string,
   outcome: CategoryBulkOutcome,
 ): ListNotice {
-  const label = categoryLabel(category);
+  const label = vocabulary.label(category);
 
   if (outcome.changed.length === 0) {
     return {
@@ -197,6 +236,7 @@ export function doneNotice(
 
 async function list(
   env: RouteContext["env"],
+  vocabulary: Vocabulary,
   member: Member,
   query: string,
   filter: string | null,
@@ -207,11 +247,12 @@ async function list(
     "Reseptit",
     await ownRecipeList(
       env.DB,
+      vocabulary,
       member,
       query,
       notice,
       filter,
-      isCategorySlug(chosen) ? chosen : null,
+      vocabulary.has(chosen) ? chosen : null,
     ),
     "recipes",
     member,

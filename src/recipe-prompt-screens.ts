@@ -1,3 +1,4 @@
+import { loadVocabulary, type Vocabulary } from "./categories.ts";
 import { html, page, raw, streamingPage, type Raw } from "./html.ts";
 import { ingredientsFor } from "./ingredients.ts";
 import { collectValidatedDraft } from "./intake-jobs.ts";
@@ -125,7 +126,10 @@ export function promptEditForm(
         </p>
       </div>`);
 
-      const ingredients = await ingredientsFor(env.DB, member.householdId);
+      const [ingredients, vocabulary] = await Promise.all([
+        ingredientsFor(env.DB, member.householdId),
+        loadVocabulary(env.DB),
+      ]);
 
       let text: string;
       try {
@@ -143,7 +147,7 @@ export function promptEditForm(
 
       try {
         return html`${HIDE_WORKING}
-          ${reviewBody(recipe, ingredients, instruction, mode, text)}`;
+          ${reviewBody(recipe, ingredients, vocabulary, instruction, mode, text)}`;
       } catch (error) {
         // The stream said the draft parsed, so this is rare — but a refusal
         // here still has to read as Finnish rather than as a broken page.
@@ -175,7 +179,10 @@ export async function promptReviewScreen(
 
   const form = await request.formData();
   const instruction = String(form.get("instruction") ?? "").trim();
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
+  const [ingredients, vocabulary] = await Promise.all([
+    ingredientsFor(env.DB, member.householdId),
+    loadVocabulary(env.DB),
+  ]);
 
   let mode: PromptMode;
   try {
@@ -197,6 +204,7 @@ export async function promptReviewScreen(
     body = reviewBody(
       recipe,
       ingredients,
+      vocabulary,
       instruction,
       mode,
       String(form.get("draft") ?? ""),
@@ -226,6 +234,7 @@ export async function promptReviewScreen(
 function reviewBody(
   recipe: Recipe,
   ingredients: Awaited<ReturnType<typeof ingredientsFor>>,
+  vocabulary: Vocabulary,
   instruction: string,
   mode: PromptMode,
   text: string,
@@ -251,7 +260,7 @@ function reviewBody(
     [...draft.lines, ...draft.steps].some((item) => item.section !== null);
 
   return html`${proposal(recipe, instruction, mode, proposalChanges(draft, recipe))}
-    ${editorForm(recipe, ingredients, {
+    ${editorForm(recipe, ingredients, vocabulary, {
       form: proposalForm(draft, recipe),
       lineCount: draft.lines.length,
       revision: recipe.revision,

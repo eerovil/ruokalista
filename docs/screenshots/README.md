@@ -103,3 +103,5 @@ commit what it wrote:
 | `94-prompt-edit-replace-saved.png` | The rewritten recipe after saving — same record, new contents, and the original source text still kept |
 | `95-prompt-edit-part-stale.png` | Proposed refusal when the juustokastike was edited on its own screen while the proposal was open: the whole save is refused, dish included, and the proposal stays on screen (#208) |
 | `96-prompt-edit-part-stale-recipe.png` | The lasagne after that refusal: the newer 7 dl of milk stands, the proposal's butter never landed, and the dish itself did not move either |
+| `97-admin-categories.png` | Proposed admin category screen: the vocabulary as rows with slug and recipe count, ↑/↓ ordering, and a freshly added **Wokki** (#199) |
+| `98-admin-category-delete.png` | Proposed removal confirmation: the recipes that would lose **Keitto**, named before anything happens |

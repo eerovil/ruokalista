@@ -1,14 +1,14 @@
 import { html, raw, type Raw } from "./html.ts";
 
 /**
- * What kind of food a recipe is (issue #196).
+ * What kind of food a recipe is (issues #196 and #199).
  *
  * A recipe carries any number of categories, including none — which is what
- * every recipe saved before this carries, and what the screens are written to
+ * every recipe saved before #196 carries, and what the screens are written to
  * read as an ordinary state rather than as data somebody forgot to fill in.
  *
- * **The vocabulary is closed and lives here.** Two things follow from that, and
- * both are the point:
+ * **The vocabulary is one closed list, shared by every household.** That half
+ * of #196's decision is unchanged, and it is the important half:
  *
  * - A category means the same thing in every household. Since #143 a recipe can
  *   be read and planned by a household that does not own it, so a per-household
@@ -16,12 +16,19 @@ import { html, raw, type Raw } from "./html.ts";
  *   owner and an unlabelled recipe to everybody else. A household's own habit
  *   belongs on `recipe_preference`; what a dish *is* belongs on the dish.
  * - The picker stays one tap per category and the list filter stays a short row
- *   of chips. Free text would have grown a management screen, a merge problem
- *   and a spelling problem, none of which #196 asks for.
+ *   of chips. Free text per recipe would grow a merge problem and a spelling
+ *   problem; a list somebody curates does not.
  *
- * The database stores the slug (`jalkiruoka`), never the label. Renaming a
- * label is then a code change and never a data migration, and the slugs are
- * plain ASCII so nothing downstream has to think about `ä` in an identifier.
+ * **What #199 changes is where the list lives.** It was a constant in this file
+ * and is now the `category` table, so an admin can add, rename, reorder and
+ * remove a category without a release (`src/category-admin.ts`, ADR-0013).
+ * Loading it is a query, so a `Vocabulary` is read once per request and handed
+ * to whatever renders or reads a category — nothing here reaches for a module
+ * global, because there no longer is one to reach for.
+ *
+ * The database still stores the slug (`jalkiruoka`), never the label. Renaming
+ * a label still touches no recipe row, and the slugs are still plain ASCII so
+ * nothing downstream has to think about `ä` in an identifier.
  */
 
 export interface Category {
@@ -29,48 +36,70 @@ export interface Category {
   label: string;
 }
 
-/** The whole vocabulary, in the order it is offered and drawn. */
-export const CATEGORIES: readonly Category[] = [
-  { slug: "pasta", label: "Pasta" },
-  { slug: "keitto", label: "Keitto" },
-  { slug: "salaatti", label: "Salaatti" },
-  { slug: "uuniruoka", label: "Uuniruoka" },
-  { slug: "leivonta", label: "Leivonta" },
-  { slug: "jalkiruoka", label: "Jälkiruoka" },
-  { slug: "lisuke", label: "Lisuke" },
-];
+/**
+ * The vocabulary as one screen sees it: the whole list, in its stored order,
+ * with the three questions everything asks of it.
+ *
+ * A value object rather than a cache. It is read once per request and passed
+ * down; two screens in one request would rather share this than agree on
+ * invalidation, and an admin's rename has to be visible on the next screen.
+ */
+export class Vocabulary {
+  readonly categories: readonly Category[];
+  private readonly bySlug: Map<string, Category>;
 
-const BY_SLUG = new Map(CATEGORIES.map((category) => [category.slug, category]));
+  // Written out rather than declared as a constructor parameter property:
+  // `npm run check` runs the dev checks under Node's strip-only TypeScript,
+  // which refuses that syntax outright.
+  constructor(categories: readonly Category[]) {
+    this.categories = categories;
+    this.bySlug = new Map(categories.map((category) => [category.slug, category]));
+  }
 
-export function isCategorySlug(value: string): boolean {
-  return BY_SLUG.has(value);
-}
+  has(slug: string): boolean {
+    return this.bySlug.has(slug);
+  }
 
-/** The Finnish label for a slug, or the slug itself if it is not one of ours. */
-export function categoryLabel(slug: string): string {
-  return BY_SLUG.get(slug)?.label ?? slug;
-}
+  /** The Finnish label for a slug, or the slug itself if it is not one of ours. */
+  label(slug: string): string {
+    return this.bySlug.get(slug)?.label ?? slug;
+  }
 
-/** Slugs in vocabulary order, whatever order they arrived in. */
-export function sortCategories(slugs: readonly string[]): string[] {
-  return CATEGORIES.map((category) => category.slug).filter((slug) =>
-    slugs.includes(slug),
-  );
+  /** Slugs in vocabulary order, whatever order they arrived in. */
+  sort(slugs: readonly string[]): string[] {
+    return this.categories
+      .map((category) => category.slug)
+      .filter((slug) => slugs.includes(slug));
+  }
+
+  /**
+   * The categories a submitted form asks for.
+   *
+   * A value outside the vocabulary is dropped rather than refused. Every one of
+   * these is a checkbox with a fixed value, so an unknown slug cannot come from
+   * somebody typing — it is a hand-written request, or a form left open across
+   * the moment an admin removed a category, and neither is worth putting a
+   * refusal in front of a member who did nothing wrong. Duplicates collapse.
+   */
+  read(form: FormData): string[] {
+    return this.sort(
+      form
+        .getAll("category")
+        .map((value) => String(value))
+        .filter((slug) => this.has(slug)),
+    );
+  }
 }
 
 /**
- * The categories a submitted form asks for.
- *
- * A value outside the vocabulary is dropped rather than refused. Every one of
- * these is a checkbox with a fixed value, so an unknown slug cannot come from
- * somebody typing — it is a hand-written request or a form left open across a
- * release that removed a category, and neither is worth putting a refusal in
- * front of a member who did nothing wrong. Duplicates collapse.
+ * The vocabulary as it is stored. One small query, ordered by the position an
+ * admin can change.
  */
-export function readCategories(form: FormData): string[] {
-  return sortCategories(
-    form.getAll("category").map((value) => String(value)).filter(isCategorySlug),
-  );
+export async function loadVocabulary(db: D1Database): Promise<Vocabulary> {
+  const { results } = await db
+    .prepare("SELECT slug, label FROM category ORDER BY position, slug")
+    .all<Category>();
+  return new Vocabulary(results);
 }
 
 /** Every category of the given recipes, keyed by recipe id. */
@@ -84,9 +113,15 @@ export async function categoriesForRecipes(
   const placeholders = recipeIds.map(() => "?").join(", ");
   const { results } = await db
     .prepare(
-      `SELECT recipe_id, category
+      // Ordered by the vocabulary's own order, in SQL, so that loading a
+      // recipe does not have to carry a `Vocabulary` down with it. A slug the
+      // vocabulary no longer has sorts last and still renders as itself.
+      `SELECT recipe_category.recipe_id, recipe_category.category
          FROM recipe_category
-        WHERE recipe_id IN (${placeholders})`,
+         LEFT JOIN category ON category.slug = recipe_category.category
+        WHERE recipe_category.recipe_id IN (${placeholders})
+        ORDER BY category.position IS NULL, category.position,
+                 recipe_category.category`,
     )
     .bind(...recipeIds)
     .all<{ recipe_id: number; category: string }>();
@@ -98,9 +133,6 @@ export async function categoriesForRecipes(
     ]);
   }
 
-  for (const [recipeId, slugs] of byRecipe) {
-    byRecipe.set(recipeId, sortCategories(slugs));
-  }
   return byRecipe;
 }
 
@@ -123,10 +155,14 @@ export async function categoriesForRecipe(
  * lines on a phone and cost one tap each, so the form does not get heavier for
  * carrying it.
  */
-export function categoryChoices(selected: readonly string[]): Raw {
+export function categoryChoices(
+  vocabulary: Vocabulary,
+  selected: readonly string[],
+): Raw {
+  if (vocabulary.categories.length === 0) return raw("");
   return html`<fieldset class="category-choices">
     <legend>Kategoriat</legend>
-    ${CATEGORIES.map(
+    ${vocabulary.categories.map(
       (category) => html`<label
         ><input
           type="checkbox"
@@ -157,11 +193,15 @@ export function categoryChoices(selected: readonly string[]): Raw {
  * option — and adding one category to two separate selections in a row is two
  * presses, not two presses and two re-pickings.
  */
-export function categoryBulkControls(selected: string | null): Raw {
+export function categoryBulkControls(
+  vocabulary: Vocabulary,
+  selected: string | null,
+): Raw {
+  if (vocabulary.categories.length === 0) return raw("");
   return html`<fieldset class="bulk-categories">
     <legend>Kategoria valituille</legend>
     <select name="bulkCategory" aria-label="Kategoria">
-      ${CATEGORIES.map(
+      ${vocabulary.categories.map(
         (category) =>
           html`<option
             value="${category.slug}"
@@ -191,11 +231,15 @@ export function categoryBulkControls(selected: string | null): Raw {
 }
 
 /** A recipe's categories, as they are printed on the recipe and in a list. */
-export function categoryTags(slugs: readonly string[]): Raw {
+export function categoryTags(
+  vocabulary: Vocabulary,
+  slugs: readonly string[],
+): Raw {
   if (slugs.length === 0) return raw("");
   return html`<p class="category-tags">
     ${slugs.map(
-      (slug) => html`<span class="category-tag">${categoryLabel(slug)}</span>`,
+      (slug) =>
+        html`<span class="category-tag">${vocabulary.label(slug)}</span>`,
     )}
   </p>`;
 }
@@ -213,12 +257,13 @@ export function categoryTags(slugs: readonly string[]): Raw {
  * button, a bookmark and a reload, and it needs no script to apply itself.
  */
 export function categoryFilter(
+  vocabulary: Vocabulary,
   path: string,
   query: string,
   current: string | null,
   available: readonly string[],
 ): Raw {
-  const shown = sortCategories([
+  const shown = vocabulary.sort([
     ...available,
     // A chip the reader is standing on stays even if it now matches nothing,
     // or "Kaikki" would be the only way back and the screen would look broken.
@@ -246,7 +291,7 @@ export function categoryFilter(
         class="${slug === current ? "chip is-on" : "chip"}"
         href="${href(slug)}"
         ${slug === current ? raw('aria-current="page"') : ""}
-        >${categoryLabel(slug)}</a
+        >${vocabulary.label(slug)}</a
       >`,
     )}
   </nav>`;

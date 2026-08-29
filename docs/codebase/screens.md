@@ -528,3 +528,37 @@ The list comes back in the same search and category filter it was posted from,
 and a refusal keeps the chosen category in the box — `ownRecipeList` takes the
 bulk control's state as its own parameter, deliberately separate from the
 category the list is filtered to.
+
+## Curating the categories, from the admin panel (issue #199)
+
+This pull request also proposes `/admin/kategoriat`
+(`src/category-admin.ts::categoryAdminScreen`), behind `requireAdminScreen`, and
+a row on the admin panel pointing at it. It is the screen that makes the
+vocabulary data rather than code — see
+[ADR-0013](../adr/0013-the-category-vocabulary-is-curated-not-compiled.md) and
+[recipes](recipes.md).
+
+The shape, and why:
+
+- **One row per category**, each with the label in a text box, the slug and the
+  recipe count in the meta line under it, and the actions under that. The slug
+  is printed rather than editable: it is what recipes store, so it is derived
+  from the label once and never again.
+- **Every action is its own form.** A row with one text field and four submit
+  buttons is a row where pressing Enter does something surprising, so renaming,
+  ↑, ↓ and Poista do not share a form.
+- **↑ and ↓ swap two positions**, and the button that would do nothing is simply
+  not drawn on the first and last rows.
+- **Removal is a screen, not a dialog**
+  (`categoryDeleteScreen`): it lists the recipes that would lose the category
+  and says how many, because that list is the whole point and a browser confirm
+  cannot show it. The POST then detaches and deletes in one batch. No recipe is
+  ever deleted.
+- **An empty vocabulary is a legal state.** `categoryChoices` and
+  `categoryBulkControls` render nothing at all when the list is empty, and
+  `categoryFilter` already did — which is the same markup a recipe with no
+  category has always produced.
+
+Nothing here needs a script, and no screen on the reading path changed shape:
+the picker and the chip row are the same markup drawn from a query instead of a
+constant.
