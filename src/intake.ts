@@ -102,6 +102,23 @@ export interface IntakeImage {
 export const MAX_IMAGES = 8;
 
 /**
+ * How large one photographed page may be, as base64, and how large the whole
+ * set may be (#218).
+ *
+ * A page the browser has shrunk to 1500 px weighs about 400 kB base64, so
+ * neither of these fires on an ordinary import. They exist because the number
+ * that must never be guessed at is the one nobody checked: without them an
+ * over-large set is a request that fails somewhere with nothing a household
+ * can read, and the per-page figure is the model's own base64 limit, which we
+ * would rather refuse in Finnish than have refused in English three hops away.
+ *
+ * The browser applies the same two numbers as each page is chosen, so the
+ * usual answer arrives before anything is uploaded at all.
+ */
+export const MAX_PAGE_BASE64_BYTES = 5 * 1024 * 1024;
+export const MAX_PAGES_BASE64_BYTES = 8 * 1024 * 1024;
+
+/**
  * The three routes in, and only three.
  *
  * A photographed import carries one *or more* pages, in the order the member

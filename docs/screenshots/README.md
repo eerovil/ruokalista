@@ -115,3 +115,4 @@ The same environment variable gates them.
 | `102-shopping-long-total-with-picture.png` | The same row shape with a chosen product's picture on it, among ordinary short-total rows |
 | `103-intake-edit.png` | Issue #215's shared **Lisää resepti** screen in existing-recipe mode: the owned recipe is named, complete/replace is explicit, and text, URL and photograph inputs are the ordinary intake controls |
 | `104-intake-edit-review.png` | The ordinary intake draft review for an existing recipe, stating that save updates the current recipe and offering **Tallenna muutokset** rather than creating another recipe |
+| `108-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |

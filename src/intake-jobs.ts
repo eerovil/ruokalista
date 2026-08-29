@@ -4,6 +4,8 @@ import {
   draftFromJson,
   importFailureMessage,
   MAX_IMAGES,
+  MAX_PAGE_BASE64_BYTES,
+  MAX_PAGES_BASE64_BYTES,
   streamDraft,
   STRUCTURED_BY,
   type DraftStreamRecord,
@@ -158,6 +160,32 @@ export async function createIntakeJob(
   const images = readImages(body);
   if (images.length > MAX_IMAGES) {
     throw new IntakeRefused(`Yhteen reseptiin voi antaa enintään ${MAX_IMAGES} kuvaa.`);
+  }
+
+  // What the pages weigh, refused in Finnish rather than left to fail further
+  // in (#218). The browser applies the same limits as each page is chosen, so
+  // reaching here means something sent pages that screen never prepared.
+  const pageBytes = images.map((image) => image.base64.length);
+  const totalBytes = pageBytes.reduce((total, bytes) => total + bytes, 0);
+  if (images.length > 0) {
+    // The one line that says what an import was actually asked to carry. A
+    // photographed import that goes wrong is otherwise a job id and a guess.
+    console.log(JSON.stringify({
+      event: "intake.pages_received",
+      pages: images.length,
+      base64_bytes: totalBytes,
+      largest_page_bytes: Math.max(...pageBytes),
+    }));
+  }
+  if (pageBytes.some((bytes) => bytes > MAX_PAGE_BASE64_BYTES)) {
+    throw new IntakeRefused(
+      "Yksi kuvista on liian suuri lähetettäväksi. Ota se uudelleen.",
+    );
+  }
+  if (totalBytes > MAX_PAGES_BASE64_BYTES) {
+    throw new IntakeRefused(
+      "Kuvat ovat yhteensä liian suuria. Poista jokin sivu ja yritä uudelleen.",
+    );
   }
 
   const sourceText =

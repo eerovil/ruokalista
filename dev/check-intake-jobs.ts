@@ -3,11 +3,17 @@ import test from "node:test";
 
 import {
   collectValidatedDraft,
+  createIntakeJob,
+  IntakeRefused,
   maintainIntakeJobs,
   processIntakeJob,
   processIntakeQueue,
 } from "../src/intake-jobs.ts";
-import { encodeDraftStreamRecord } from "../src/intake.ts";
+import {
+  encodeDraftStreamRecord,
+  MAX_PAGE_BASE64_BYTES,
+  MAX_PAGES_BASE64_BYTES,
+} from "../src/intake.ts";
 import { SAMPLE_DRAFT } from "../src/sample-draft.ts";
 import { png } from "./support/images.ts";
 
@@ -92,6 +98,69 @@ test("an exhausted duplicate keeps retrying while another lease is live", async 
     reconcile: async () => "busy",
   });
   assert.deepEqual(final.actions, ["retry:60"]);
+});
+
+/**
+ * Issue #218 asks that an import too large to carry says so in Finnish rather
+ * than failing somewhere with nothing a household can read. The browser holds
+ * the same two limits, so reaching these means something sent pages the import
+ * screen never prepared.
+ */
+test("photographed pages too large to carry are refused in Finnish", async () => {
+  const stored: string[] = [];
+  const env = {
+    DB: { prepare: () => { throw new Error("nothing may be written"); } },
+    RECIPE_IMAGES: { put: async (key: string) => { stored.push(key); } },
+    INTAKE_QUEUE: { send: async () => {} },
+  } as unknown as import("../src/env.ts").Env;
+  const member = { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member;
+
+  const page = (bytes: number) => ({ image: "A".repeat(bytes), mediaType: "image/jpeg" });
+
+  await assert.rejects(
+    createIntakeJob(env, member, { images: [page(MAX_PAGE_BASE64_BYTES + 1)] }),
+    (error: Error) =>
+      error instanceof IntakeRefused
+      && error.message === "Yksi kuvista on liian suuri lähetettäväksi. Ota se uudelleen.",
+  );
+
+  // Under the per-page limit each, over it together.
+  const each = Math.ceil(MAX_PAGES_BASE64_BYTES / 3);
+  await assert.rejects(
+    createIntakeJob(env, member, { images: [page(each), page(each), page(each), page(each)] }),
+    (error: Error) =>
+      error instanceof IntakeRefused
+      && error.message === "Kuvat ovat yhteensä liian suuria. Poista jokin sivu ja yritä uudelleen.",
+  );
+
+  // Refused before anything was written, so a refusal leaves no orphan behind.
+  assert.deepEqual(stored, []);
+});
+
+test("four ordinary photographed pages are not refused for their size", async () => {
+  const written: string[] = [];
+  const enqueued: string[] = [];
+  const env = intakeDatabase({ source_route: "photographed", source_text: null });
+  const bucket = { put: async (key: string) => { written.push(key); } };
+
+  // What the import screen really produces: about 400 kB of base64 a page.
+  const pages = [1, 2, 3, 4].map(() => ({
+    image: "A".repeat(400 * 1024),
+    mediaType: "image/jpeg",
+  }));
+
+  await createIntakeJob(
+    {
+      ...env.env,
+      RECIPE_IMAGES: bucket,
+      INTAKE_QUEUE: { send: async ({ jobId }: { jobId: string }) => { enqueued.push(jobId); } },
+    } as unknown as import("../src/env.ts").Env,
+    { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+    { images: pages },
+  );
+
+  assert.equal(written.length, 4);
+  assert.equal(enqueued.length, 1);
 });
 
 test("maintenance recreates lost messages and deletes only real R2 orphans", async () => {

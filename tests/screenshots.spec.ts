@@ -655,6 +655,61 @@ test.describe("signed in", () => {
     });
   });
 
+  test("four photographed pages of one recipe (#218)", async ({ page }) => {
+    await page.goto("/intake");
+
+    // Photographs the size a phone really takes, because that is the case
+    // that used to kill the tab: the thumbnails now come from the shrunk copy
+    // rather than from the originals, which are let go as each page is read.
+    await page.evaluate(async () => {
+      const shoot = async (heading: string, body: string[]) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 3000;
+        canvas.height = 2250;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = "#f4efe6";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#221c14";
+        context.font = "bold 150px Georgia, serif";
+        context.fillText(heading, 180, 380);
+        context.font = "96px Georgia, serif";
+        body.forEach((line, index) => {
+          context.fillText(line, 180, 620 + index * 170);
+        });
+
+        const blob = await new Promise<Blob>((resolve) =>
+          canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.9),
+        );
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([blob], `${heading}.jpg`, { type: "image/jpeg" }),
+        );
+        const input = document.getElementById("camera") as HTMLInputElement;
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+
+      await shoot("Lohikeitto", ["4 annosta", "600 g lohta", "1 l vettä"]);
+      await shoot("Ainekset jatkuvat", ["2 porkkanaa", "1 purjo", "2 dl kermaa"]);
+      await shoot("Näin teet", ["Keitä juurekset.", "Lisää lohi."]);
+      await shoot("Viimeistely", ["Kaada kerma.", "Silppua tilli."]);
+    });
+
+    await expect(page.locator("#chosen li .page-name")).toHaveText([
+      "Sivu 1",
+      "Sivu 2",
+      "Sivu 3",
+      "Sivu 4",
+    ]);
+    await expect(
+      page.getByRole("button", { name: "Muodosta resepti" }),
+    ).toBeEnabled();
+    await capture(page, {
+      path: `${SHOTS}/108-intake-four-pages.png`,
+      fullPage: true,
+    });
+  });
+
   test("a recipe brought in from a web address", async ({ page }) => {
     // The page is stubbed, not fetched: a screenshot must not depend on
     // somebody else's website being up, and this run has no network anyway.
