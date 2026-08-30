@@ -710,6 +710,57 @@ test.describe("signed in", () => {
     });
   });
 
+  test("a photographed import that never left the phone (#222)", async ({
+    page,
+  }) => {
+    // The request is aborted, which is what a dropped connection looks like to
+    // the island: nothing reaches the Worker at all. That is the case that
+    // used to read on screen exactly like a server refusal.
+    await page.route("**/api/intake/imports", (route) => route.abort());
+
+    await page.goto("/intake");
+    await page.evaluate(async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2400;
+      canvas.height = 1800;
+      const context = canvas.getContext("2d")!;
+      context.fillStyle = "#f4efe6";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#221c14";
+      context.font = "bold 150px Georgia, serif";
+      context.fillText("Lohikeitto", 160, 340);
+      context.font = "96px Georgia, serif";
+      ["4 annosta", "600 g lohta", "1 l vettä"].forEach((line, index) => {
+        context.fillText(line, 160, 560 + index * 170);
+      });
+
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.9),
+      );
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], "sivu.jpg", { type: "image/jpeg" }));
+      const input = document.getElementById("camera") as HTMLInputElement;
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await expect(page.locator("#chosen li .page-name")).toHaveText(["Sivu 1"]);
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+    // Assert the wording is on screen before the picture is taken, so the
+    // screenshot cannot be of a screen that has not failed yet.
+    await expect(page.locator("#status")).toHaveText(
+      "Reseptin lähetys ei onnistunut tällä laitteella. Tarkista verkkoyhteys ja yritä uudelleen.",
+    );
+    await expect(
+      page.getByRole("button", { name: "Muodosta resepti" }),
+    ).toBeEnabled();
+    await capture(page, {
+      path: `${SHOTS}/109-intake-send-failed.png`,
+      fullPage: true,
+    });
+  });
+
   test("a recipe brought in from a web address", async ({ page }) => {
     // The page is stubbed, not fetched: a screenshot must not depend on
     // somebody else's website being up, and this run has no network anyway.

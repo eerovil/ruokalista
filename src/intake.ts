@@ -174,6 +174,115 @@ export function importFailureMessage(error: unknown): string {
     : GENERIC_REFUSAL;
 }
 
+/**
+ * The hops of an import that give way *before the Worker has answered* (#222).
+ * A failure at any of them used to leave nothing behind anywhere — no request,
+ * no log line, no row — so the only evidence a later investigation had was the
+ * absence of evidence.
+ *
+ * `shrink` and `oversize` happen while a page is being chosen; `encode` and
+ * `send` while the request is being built and dispatched. Nothing here has
+ * reached the Worker, which is the whole reason these need reporting at all.
+ */
+export const CLIENT_FAILURE_STEPS = [
+  "shrink",
+  "oversize",
+  "encode",
+  "send",
+] as const;
+
+/**
+ * Hops the island reaches only once the Worker has answered. It does not
+ * report them — the request arrived, so the Worker's own logging is what
+ * represents it — but the names stay recognised here, because a report that
+ * names one must not be mistaken for the browser having given up.
+ */
+export const SERVER_ANSWERED_STEPS = ["refused", "reply"] as const;
+
+/** The ways in, as the browser names them. */
+const CLIENT_ROUTES = ["photographed", "linked", "pasted"] as const;
+
+/**
+ * How much of the browser's English detail is kept. A log line is for naming
+ * the step that gave way, not for carrying a stack trace, and the body arrives
+ * from a page so its length is not this app's to trust.
+ */
+const MAX_CLIENT_DETAIL = 300;
+
+/**
+ * The name a browser's report is logged under.
+ *
+ * `intake.client_failed` is a promise about *where* the import died: nothing
+ * left the device, so no server-side record of it can exist. It is therefore
+ * given only to the steps that cannot have a response behind them. Anything
+ * else — a step this app does not know, or one the island only reaches after
+ * the Worker has answered — is logged under the neutral name, which claims
+ * nothing. Reading the event alone stays enough to tell the browser giving up
+ * from the server refusing, which is what #222 asked for.
+ */
+export type ClientReportEvent = "intake.client_failed" | "intake.client_report";
+
+/** One log record shaped from a browser's report. */
+export interface ClientFailureLog {
+  event: ClientReportEvent;
+  step: string;
+  route: string;
+  status: number;
+  pages: number;
+  bytes: number;
+  detail: string;
+  household_id: number;
+}
+
+const oneOf = (value: unknown, allowed: readonly string[]): string =>
+  typeof value === "string" && allowed.indexOf(value) !== -1 ? value : "unknown";
+
+const whole = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0;
+
+/**
+ * Which name this step earns. Decided from the step here rather than taken
+ * from the body, so a report that claims `refused` — whether the island sent
+ * it or something else did — cannot borrow the browser-gave-up name.
+ */
+export function clientReportEvent(step: string): ClientReportEvent {
+  return CLIENT_FAILURE_STEPS.indexOf(step as never) !== -1
+    ? "intake.client_failed"
+    : "intake.client_report";
+}
+
+/**
+ * Shape a browser's report into the line that goes to the log.
+ *
+ * Every field is narrowed here rather than trusted: the report comes from a
+ * page, so an unrecognised step stays `unknown` and a long detail is cut.
+ */
+export function clientFailureLog(
+  body: unknown,
+  householdId: number,
+): ClientFailureLog {
+  const report = (body ?? {}) as Record<string, unknown>;
+  const detail = report["detail"];
+  const step = oneOf(report["step"], [
+    ...CLIENT_FAILURE_STEPS,
+    ...SERVER_ANSWERED_STEPS,
+  ]);
+
+  return {
+    event: clientReportEvent(step),
+    step,
+    route: oneOf(report["route"], CLIENT_ROUTES),
+    status: whole(report["status"]),
+    pages: whole(report["pages"]),
+    bytes: whole(report["bytes"]),
+    detail:
+      typeof detail === "string" ? detail.slice(0, MAX_CLIENT_DETAIL) : "",
+    household_id: householdId,
+  };
+}
+
 /** How many times one import calls the model before it gives up. */
 const ATTEMPTS = 2;
 

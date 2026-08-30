@@ -43,6 +43,65 @@ reach a member as Finnish through `importFailureMessage`, which logs the
 English detail; `intake.model_usage` carries `stop_reason` alongside the token
 counts, so a truncated import is visible in `wrangler tail`.
 
+## A failure in the browser leaves a line too (#222)
+
+**This section describes what this pull request proposes; none of it is on
+`main` yet.** Until it lands, an import that dies before the request goes out
+leaves nothing anywhere — no request, no log line, no row — so the only
+evidence an investigation has is the absence of evidence. Diagnosing #218 took
+two attempts and produced two different answers for exactly that reason, and
+settling it needed a Cloudflare log query and a database query where reading
+one screen should have been enough.
+
+The change adds `POST /api/intake/failures`
+(`intake-screens.ts::reportIntakeFailure`), which logs one
+`intake.client_failed` record and answers 204 to anything — including a body it
+could not read. It is best-effort by construction: nothing waits for it, it is
+never on the path of a working import, and every way it can fail is swallowed
+in the island. A report route must not become a second thing that can fail an
+import.
+
+The island tags each hop it can give way at: `shrink` and `oversize` while a
+page is being chosen, `encode` and `send` while the request is being built and
+dispatched, `refused` and `reply` once the Worker has answered.
+`intake.ts::clientFailureLog` narrows every field rather than trusting it — the
+report comes from a page, so an unrecognised step is recorded as `unknown` and
+a long detail is cut at 300 characters.
+
+**`intake.client_failed` is a promise about where the import died, so only the
+first four steps earn it.** Once the Worker has answered, the request
+demonstrably arrived and the Worker's own logging is what represents it — a
+line saying the browser gave up would be false. So the island reports nothing
+for `refused` and `reply`, and `intake.ts::clientReportEvent` decides the name
+from the step rather than from the body, which is what stops a report the
+island did not send from borrowing it; anything else is logged under the
+neutral `intake.client_report`, which claims nothing.
+
+`startIntakeJob`'s 503 branch gains a line of its own, `intake.start_failed`.
+It is what makes "a server refusal is represented server-side" true: before
+this the branch logged nothing at all, which is why the browser's report was
+covering for it under a name that said the opposite.
+
+**Three names, and reading one is enough.** `intake.failed` is a refusal that
+reached the model or the queue; `intake.start_failed` is the Worker declining
+an import it received; `intake.client_failed` is the browser giving up before
+anything left the device. On screen the two generic sentences are different
+too: *Reseptin lähetys ei onnistunut tällä laitteella…* when nothing left the
+device, *Palvelin ei ottanut reseptiä vastaan…* when the Worker answered badly.
+Before this they read almost identically — the island's own sentence was
+mistaken for the server's during #218, which is what made an error message look
+like it contradicted the fix.
+
+**The removed synchronous route had one unguarded `await`, and it is gone.**
+`POST /api/intake/structure` (deleted 2026-08-28 in 374efb2) called
+`ingredientsFor` outside any `try`, before the `Response` was built, so a D1
+failure there escaped as an uncaught exception with no status and no message —
+`importFailureMessage` is the only thing that logs `intake.failed`, and the
+throw never reached it. Today's `startIntakeJob` has no such call: its body
+parse is guarded and `createIntakeJob` is wrapped in a `catch` that answers 400
+or 503, so nothing on the request side can throw uncaught. Every failure on the
+queue side goes through `importFailureMessage`.
+
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
 `src/sample-draft.ts` to the same `/intake/correct` the ready-job route uses,

@@ -43,6 +43,7 @@ import {
   intakeJobStatus,
   intakeScreen,
   quickSaveScreen,
+  reportIntakeFailure,
   retryIntakeJobForm,
   saveScreen,
   startIntakeJob,
@@ -204,6 +205,7 @@ const router = new Router()
   .get("/intake/imports/:id/review", requireMemberScreen(intakeJobReviewScreen))
   .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
   .post("/api/intake/imports", requireMember(startIntakeJob))
+  .post("/api/intake/failures", requireMember(reportIntakeFailure))
   .get("/api/intake/imports/:id", requireMember(intakeJobStatus))
   .get("/api/intake/imports/:id/image", requireMember(intakeJobImage))
   .post("/recipes", requireMemberScreen(saveScreen))
