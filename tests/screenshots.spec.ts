@@ -779,10 +779,16 @@ test.describe("signed in", () => {
       .fill("https://kotikokki.example/reseptit/uunikaali");
     await page
       .getByLabel("Lisäohje tuontiin (valinnainen)")
-      .fill("Tee jokaisesta makuvaihtoehdosta oma aliresepti.");
+      .fill("Sivulla on kaksi reseptiä; lue vain alempi.");
     await expect(
       page.getByLabel("Lisäohje tuontiin (valinnainen)"),
     ).toBeVisible();
+    // The helper text is the point of the picture: the field is a clarification
+    // for an unusual page, not where a member asks for the default reading.
+    await expect(page.locator("#guidance-help")).toHaveText(
+      "Käytä tätä vain, jos haluat tarkentaa sivun tulkintaa. Selkeät reseptin " +
+        "osat ja maku-/versiovaihtoehdot tunnistetaan automaattisesti.",
+    );
     await capture(page, {
       path: `${SHOTS}/79-intake-from-link.png`,
       fullPage: true,
