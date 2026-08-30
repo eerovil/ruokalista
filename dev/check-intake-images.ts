@@ -51,7 +51,7 @@ test("linked guidance is a separate instruction, not source text", () => {
     route: "linked",
     url: "https://example.test/resepti",
     text: "Välipalapatukat\n100 g pähkinöitä",
-    guidance: "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+    guidance: "Sivulla on kaksi reseptiä; lue vain alempi.",
   };
 
   assert.deepEqual(contentOf(source), [
@@ -60,7 +60,7 @@ test("linked guidance is a separate instruction, not source text", () => {
       type: "text",
       text:
         "Käyttäjän lisäohje tuontiin:\n" +
-        "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+        "Sivulla on kaksi reseptiä; lue vain alempi.",
     },
   ]);
   assert.match(systemOf(source), /noudata sitä ensisijaisena tulkintaohjeena/);

@@ -268,7 +268,7 @@ test("a linked job reads its page in the consumer, not in the request", async ()
     source_route: "linked",
     source_text: null,
     source_url: "https://kotikokki.example/uunikaali",
-    import_guidance: "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+    import_guidance: "Sivulla on kaksi reseptiä; lue vain alempi.",
   });
   const server = pageServer(RECIPE_PAGE);
 
@@ -283,7 +283,7 @@ test("a linked job reads its page in the consumer, not in the request", async ()
         assert.match(source.text, /valkokaalia/);
         assert.equal(
           source.guidance,
-          "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+          "Sivulla on kaksi reseptiä; lue vain alempi.",
         );
       }
       return JSON.stringify(SAMPLE_DRAFT);

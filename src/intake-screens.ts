@@ -587,10 +587,10 @@ function intakeForm(
           rows="3"
           maxlength="${MAX_IMPORT_GUIDANCE}"
           aria-describedby="guidance-help"
-          placeholder="Esim. Tee jokaisesta makuvaihtoehdosta oma aliresepti."
         ></textarea>
         <p class="empty" id="guidance-help">
-          Käytetään vain nettiosoitteen tulkintaan. Tyhjä kenttä ei muuta tuontia.
+          Käytä tätä vain, jos haluat tarkentaa sivun tulkintaa. Selkeät reseptin
+          osat ja maku-/versiovaihtoehdot tunnistetaan automaattisesti.
         </p>
       </div>
 
