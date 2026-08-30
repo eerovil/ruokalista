@@ -545,5 +545,15 @@ const CAST_RECEIVER_ISLAND = `
   context.addCustomMessageListener(namespace, function (event) {
     render(event.data);
   });
-  context.start();
+  /*
+    A cook puts the phone down, locks it, or closes Ruokalista, and the recipe
+    has to stay on the TV. By default the framework closes the receiver once it
+    has gone idle — which for a receiver that plays no media means as soon as
+    the last sender is gone — so the app's own lifetime was deciding how long
+    the recipe stayed up. disableIdleTimeout is Google's documented switch for
+    exactly this, and says it is for non-media applications, which this is. The
+    session still ends the moment somebody stops casting: that is an explicit
+    stop from the sender, not an idle timeout.
+  */
+  context.start({ disableIdleTimeout: true });
 }());`;

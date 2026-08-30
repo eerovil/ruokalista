@@ -39,11 +39,22 @@ async function stubSenderSdk(
       sent.push({ namespace: namespace, recipe: recipe });
       sessionStorage.setItem('cast-messages', JSON.stringify(sent));
       return Promise.resolve();
+    },
+    // Anything that would take the recipe off the TV leaves a trace here.
+    endSession: function (stop) {
+      active = false;
+      sessionStorage.setItem('cast-active', '0');
+      sessionStorage.setItem('cast-ended', stop ? 'stopped' : 'left');
     }
   };
   var context = {
     setOptions: function (options) {
       sessionStorage.setItem('cast-options', JSON.stringify(options));
+    },
+    requestSession: function () {
+      var asked = Number(sessionStorage.getItem('cast-requests') || '0');
+      sessionStorage.setItem('cast-requests', String(asked + 1));
+      return Promise.resolve();
     },
     getCurrentSession: function () { return active ? session : null; },
     getCastState: function () { return castState; },
@@ -82,6 +93,7 @@ async function stubSenderSdk(
   var launcher = document.getElementById('cast-launcher');
   if (launcher) {
     launcher.addEventListener('click', function () {
+      context.requestSession();
       active = true;
       sessionStorage.setItem('cast-active', '1');
       listeners.forEach(function (listener) { listener({ sessionState: 'started' }); });
@@ -171,6 +183,35 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
   await expect(page).toHaveURL(/\/recipes$/);
 });
 
+test("closing and reopening Ruokalista keeps the one Cast session", async ({
+  page,
+}) => {
+  await stubSenderSdk(page);
+  await page.goto("/recipes/1");
+  await page.getByRole("button", { name: "Näytä Cast-laitteet" }).click();
+  expect(await sentMessages(page)).toHaveLength(1);
+
+  // The cook puts the phone down and closes Ruokalista. Nothing on the way out
+  // may take the recipe off the TV: the page leaves the session behind rather
+  // than ending it.
+  await page.goto("about:blank");
+  await page.goto("/recipes/1");
+
+  expect(
+    await page.evaluate(() => ({
+      ended: sessionStorage.getItem("cast-ended"),
+      active: sessionStorage.getItem("cast-active"),
+      requests: sessionStorage.getItem("cast-requests"),
+    })),
+  ).toEqual({ ended: null, active: "1", requests: "1" });
+
+  // Reopening joins that same session — one request, not two — and pushes the
+  // recipe again, so the cook can still change it or stop casting.
+  expect(await sentMessages(page)).toHaveLength(2);
+  expect(await page.evaluate(() => sessionStorage.getItem("cast-options")))
+    .toContain("origin");
+});
+
 async function stubReceiverSdk(page: Page): Promise<void> {
   await page.route(RECEIVER_SDK, async (route) => {
     await route.fulfill({
@@ -182,7 +223,10 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
       window.__castReceiverListener = listener;
       window.__castReceiverNamespace = namespace;
     },
-    start: function () { window.__castReceiverStarted = true; }
+    start: function (options) {
+      window.__castReceiverStarted = true;
+      window.__castReceiverStartOptions = options || null;
+    }
   };
 } } } };`,
     });
@@ -226,6 +270,21 @@ test("the public receiver renders a normal recipe in one 16:9 screen", async ({
     recipeClientHeight: 1080,
     recipeScrollHeight: 1080,
   }));
+});
+
+test("the receiver holds the recipe once no sender is left", async ({ page }) => {
+  await stubReceiverSdk(page);
+  await page.goto("/cast/receiver");
+  await receive(page, normalRecipe());
+  await expect(page.getByRole("heading", { name: "Kaalilaatikko" }))
+    .toBeVisible();
+
+  // Started any other way, the framework closes the receiver once it goes
+  // idle — which for a receiver that plays no media is the moment the last
+  // sender disconnects, so backgrounding Ruokalista cleared the TV.
+  expect(await page.evaluate(() => window.__castReceiverStarted)).toBe(true);
+  expect(await page.evaluate(() => window.__castReceiverStartOptions))
+    .toMatchObject({ disableIdleTimeout: true });
 });
 
 test("a long recipe splits the ingredients in two rather than shrinking to the floor", async ({
@@ -624,5 +683,6 @@ declare global {
     __castReceiverListener(event: { data: unknown }): void;
     __castReceiverNamespace: string;
     __castReceiverStarted: boolean;
+    __castReceiverStartOptions: { disableIdleTimeout?: boolean } | null;
   }
 }
