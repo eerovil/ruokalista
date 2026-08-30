@@ -468,6 +468,30 @@ multiplier. `src/cast.ts::CAST_RECEIVER_ISLAND` reduces a shared type scale
 until an ordinary recipe fits the available height, while the viewport itself
 never becomes a scrolling TV page.
 
+Shrinking is the last thing it does, because the whole recipe being on one
+screen is the point. `fit()` first tries each of three column layouts and keeps
+whichever ends at the biggest type, with a tie going to the plainest: the even
+`columns`, then `split` — a long ingredient list flowed into two sub-columns
+with width taken from the method (#180) — and, this change proposes, `lean`,
+which is the opposite shape, a handful of ingredients narrowed so a page of
+method gets the width. Flowing the method itself into sub-columns is
+deliberately not a candidate: a paragraph needs the same area whatever shape it
+is poured into.
+
+This change also proposes treating a receiver no taller than 800 px as a small
+dense panel rather than a small television. A Nest Hub is 1024×600 across seven
+diagonal inches — about 170 pixels to the inch, against roughly fifty on a TV —
+so the same `vw` size is a fraction of the physical height in the kitchen that
+it is on the television, and a 1024×600 screenshot looked at on a laptop
+flatters it by nearly two to one. Under that media query the type has a much
+larger `rem` minimum and the page's margins, gaps and row spacing are cut back
+to pay for it, while the title is allowed to get smaller so a long recipe name
+stops taking an eighth of the screen. A television is untouched, because a
+receiver that trims its margins loses them to overscan. `tests/cast.spec.ts`
+measures the result in millimetres at the panel's own density rather than in
+CSS pixels, and writes the two review pictures described in
+`docs/screenshots/README.md` (#227).
+
 ### Server-rendered inline script islands
 
 Seven screens ship a hand-written `<script>` rather than a build step, and all

@@ -14,12 +14,21 @@ commit what it wrote:
 
     PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots
 
-The last two are the exception: they are written by
-`tests/shopping-row-213.spec.ts` instead, because what they show is a row on a
-320 px screen rather than on the Pixel 7 every other picture here is taken on.
-The same environment variable gates them.
+Two sets are the exception, because what they show is not a Pixel 7. The
+shopping row is a 320 px screen, written by `tests/shopping-row-213.spec.ts`;
+the Nest Hub pair is a Cast receiver on its own panel, written by
+`tests/cast.spec.ts`. The same environment variable gates both.
 
     PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test shopping-row-213
+    PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test cast
+
+This pull request proposes the second of those. A Nest Hub is 1024×600 across a
+seven-inch panel — about 170 pixels to the inch, against a desktop monitor's
+96 — so a 1024×600 picture looked at on a laptop shows the screen nearly twice
+the size the kitchen ever sees. `110-cast-nest-hub.png` is the panel's own
+pixels, one for one. `111-cast-nest-hub-life-size.png` is the same screen
+rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
+1:1, it is what somebody standing at the worktop sees (#227).
 
 | file | screen |
 | --- | --- |
@@ -83,7 +92,7 @@ The same environment variable gates them.
 | `61-package-count.png` | Proposed shopping row buying two litres of milk because the week needs fifteen decilitres, with what the packets hold said underneath |
 | `62-package-sizes.png` | Proposed same ingredient after a second package size was added from the row itself, each with its stored size and a way to drop it |
 | `63-cast-receiver.png` | Proposed 16:9 Cast receiver with the recipe title and multiplier above ingredients and preparation shown together |
-| `64-cast-receiver-long.png` | Proposed 20-line recipe on a 1024×600 receiver: the ingredients flow into two sub-columns instead of shrinking to the scale floor (#180) |
+| `64-cast-receiver-long.png` | Proposed 20-line recipe on a 1024×600 receiver: the ingredients flow into two sub-columns instead of shrinking to the scale floor (#180), at the larger small-panel type this pull request proposes (#227) |
 | `65-editor-save-bar.png` | Proposed editor on a phone, scrolled to the ingredient rows: **Tallenna muutokset** rides the scroll just above the tab strip instead of waiting at the end of the form (#184) |
 | `66-parts-only-editor.png` | Proposed editor of a dish written entirely in named parts — no ingredient rows of its own, and no refusal (#184) |
 | `67-parts-only-dish.png` | The same dish after saving: both parts and their ingredients intact, the dish itself carrying only its method |
@@ -120,3 +129,5 @@ The same environment variable gates them.
 | `107-sharing-save-bar.png` | The sharing control one tap later: the visibility choice and **Tallenna jako** on screen together, in the same bar the editor and the import review use |
 | `108-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |
 | `109-intake-send-failed.png` | Proposed wording for a photographed import whose request never left the phone: it names the device and the connection rather than reading like the server's refusal, and the pages stay chosen so the same import can be sent again (#222) |
+| `110-cast-nest-hub.png` | Proposed 20-line recipe on a Nest Hub's own 1024×600 pixels: the ingredients in two sub-columns and the body text raised from 2.5 mm to 3.5 mm on the panel (#227) |
+| `111-cast-nest-hub-life-size.png` | The same screen at life size — six inches wide at 96 dpi, so looking at it 1:1 shows what the kitchen sees rather than a magnified copy (#227) |

@@ -346,6 +346,13 @@ const CAST_RECEIVER_STYLE = `
   */
   .columns.split { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
   .columns.split .ingredients .groups { column-count: 2; column-gap: 2.4vw; }
+  /*
+    The mirror image: four ingredients beside a page of method. The ingredient
+    column is then mostly empty, and the width is worth more to the side that
+    did not fit. The receiver adds .lean on the same terms as .split — only
+    when it ends up with bigger type than the plain layout.
+  */
+  .columns.lean { grid-template-columns: minmax(0, .5fr) minmax(0, 1.5fr); }
   section { min-width: 0; }
   h2 {
     margin: 0 0 .35em; color: var(--accent);
@@ -365,6 +372,43 @@ const CAST_RECEIVER_STYLE = `
   }
   .ingredients li { padding: .16em 0; border-bottom: 1px solid #304039; }
   .instructions li { padding-left: .2em; }
+  /*
+    A Nest Hub is 1024×600 across a seven-inch panel: about 170 pixels to the
+    inch, against roughly fifty on a television. So the same vw size is a third
+    of the physical height in the kitchen that it is on the TV — 1.65vw lands at
+    2.5 mm there, at the edge of what an eye resolves from the other side of a
+    worktop, and a 1024×600 screenshot looked at on a laptop flatters it by
+    nearly two to one.
+
+    A short screen is therefore treated as a small dense panel rather than a
+    small television: a bigger minimum type size, and the page's own margins,
+    gaps and row spacing cut back to pay for it. A television is left alone,
+    because a receiver that trims its margins loses them to overscan (#227).
+  */
+  @media (max-height: 800px) {
+    main {
+      padding: calc(2vh * var(--fit)) 2.4vw; gap: calc(1.6vh * var(--fit));
+    }
+    /*
+      The title is the one thing that gets smaller here. At 4.2vw a long recipe
+      name wraps to a second line and takes an eighth of the screen away from
+      the text somebody is actually cooking from.
+    */
+    h1 { font-size: calc(clamp(1.5rem, 2.8vw, 5rem) * var(--fit)); }
+    .multiplier { font-size: calc(clamp(1.25rem, 2.2vw, 3rem) * var(--fit)); }
+    .columns { gap: 2.6vw; }
+    .columns.split .ingredients .groups { column-gap: 2vw; }
+    h2 {
+      margin-bottom: .25em;
+      font-size: calc(clamp(1.6rem, 2.2vw, 2.7rem) * var(--fit));
+    }
+    h3 { font-size: calc(clamp(1.15rem, 1.45vw, 1.8rem) * var(--fit)); }
+    li {
+      margin-bottom: .16em;
+      font-size: calc(clamp(1.5rem, 1.65vw, 2rem) * var(--fit));
+    }
+    .ingredients li { padding: .1em 0; }
+  }
 `;
 
 /* Deliberately ES5: this inline receiver code is not passed through a build. */
@@ -432,7 +476,7 @@ const CAST_RECEIVER_ISLAND = `
     var scale = 1;
     root.style.setProperty('--fit', String(scale));
     while (root.scrollHeight > root.clientHeight && scale > .58) {
-      scale = Math.round((scale - .04) * 100) / 100;
+      scale = Math.round((scale - .02) * 100) / 100;
       root.style.setProperty('--fit', String(scale));
     }
     return scale;
@@ -440,24 +484,40 @@ const CAST_RECEIVER_ISLAND = `
 
   /*
     Shrinking the type is the last resort, and which layout shrinks least is
-    not something a single measurement can be trusted with: the split widens
-    the ingredients but narrows the instructions, and every line re-wraps as
-    the scale changes. So both layouts are taken all the way to the scale they
-    actually need, and the one that ends up with the bigger type wins. A tie
-    keeps the single column, and a recipe that already fits never tries the
-    split at all.
+    not something a single measurement can be trusted with: each candidate
+    moves width from one column to the other, and every line re-wraps as the
+    scale changes. So each is taken all the way to the scale it actually needs
+    and the one that ends up with the biggest type wins. A tie keeps the
+    earlier, plainer layout, and a recipe that already fits at full size never
+    tries anything else.
+
+    'split' is for a long ingredient list: short lines wasting the rest of
+    their row, so flowing them into two sub-columns and taking width from the
+    instructions buys height. 'lean' is the opposite shape — a handful of
+    ingredients beside a page of method — where the width is worth more to the
+    side that did not fit. Flowing the method itself into two sub-columns is
+    not a candidate: a paragraph needs the same area whatever shape it is
+    poured into, so two narrow sub-columns of it come out just as tall.
   */
+  var LAYOUTS = ['columns', 'columns split', 'columns lean'];
+
   function fit() {
     var columns = root.querySelector('.columns');
-    if (columns) columns.className = 'columns';
-    var single = shrinkToFit();
-    if (!columns || single === 1) return;
+    if (columns) columns.className = LAYOUTS[0];
+    var best = shrinkToFit();
+    if (!columns || best === 1) return;
 
-    columns.className = 'columns split';
-    if (shrinkToFit() <= single) {
-      columns.className = 'columns';
-      root.style.setProperty('--fit', String(single));
+    var chosen = LAYOUTS[0];
+    for (var index = 1; index < LAYOUTS.length; index += 1) {
+      columns.className = LAYOUTS[index];
+      var reached = shrinkToFit();
+      if (reached > best) {
+        best = reached;
+        chosen = LAYOUTS[index];
+      }
     }
+    columns.className = chosen;
+    root.style.setProperty('--fit', String(best));
   }
 
   function render(recipe) {
