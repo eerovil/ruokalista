@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Browser,
+  type Page,
+  type Route,
+} from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -243,10 +249,12 @@ test("a long recipe splits the ingredients in two rather than shrinking to the f
   const last = await items.last().boundingBox();
   expect(last!.x).toBeGreaterThan(first!.x + first!.width);
 
-  // Nowhere near the .58 floor: with the width spent, it does not shrink at
-  // all.
+  // Nowhere near the .58 floor: with the width spent, the type gives almost no
+  // ground. It is no longer exactly 1, because the small-panel type this change
+  // ships starts bigger than a twenty-line recipe can quite hold (#227) — and
+  // ends up larger than the old full-scale layout even so.
   const kept = await scale(page);
-  expect(kept).toBe(1);
+  expect(kept).toBeGreaterThan(0.9);
   expect(await page.evaluate(() => ({
     clientHeight: document.getElementById("recipe")!.clientHeight,
     scrollHeight: document.getElementById("recipe")!.scrollHeight,
@@ -269,9 +277,11 @@ test("an instructions-heavy recipe is not split, because widening the ingredient
     .toBeVisible();
 
   // Splitting here would take width from the column that did not fit. The
-  // receiver takes both layouts all the way to the scale each needs, finds the
-  // split ends smaller, and keeps the single column.
-  await expect(page.locator(".columns")).toHaveClass("columns");
+  // receiver takes every layout all the way to the scale each needs, finds the
+  // ingredient split ends smaller, and leaves the list in one column. What it
+  // does instead is narrow that near-empty column and hand the width to the
+  // method — `lean`, not `split` (#227).
+  await expect(page.locator(".columns")).not.toHaveClass(/split/);
   const items = page.locator(".ingredients li");
   const first = await items.first().boundingBox();
   const last = await items.last().boundingBox();
@@ -308,6 +318,161 @@ test("a short recipe keeps one ingredient column at full size on a small receive
   expect(await scale(page)).toBe(1);
 });
 
+/*
+ * ---------------------------------------------------------------------------
+ * The Nest Hub, measured in millimetres (#227)
+ *
+ * #180 got a long recipe to fit on a 1024×600 receiver. Whether the result was
+ * big enough to read was never checked, and a 1024×600 screenshot on a laptop
+ * cannot answer it: the Hub packs those 1024 pixels into six inches, so its
+ * text is physically about half the size the same picture shows on a desktop
+ * monitor. These tests measure the rendered type against the panel's own
+ * density instead, and the screenshots below are written at both scales.
+ * ---------------------------------------------------------------------------
+ */
+
+/** The panel: 1024×600 pixels across seven diagonal inches, no ratio between. */
+const NEST_HUB = { width: 1024, height: 600 };
+const NEST_HUB_DIAGONAL_INCHES = 7;
+const NEST_HUB_PPI =
+  Math.hypot(NEST_HUB.width, NEST_HUB.height) / NEST_HUB_DIAGONAL_INCHES;
+const MM_PER_INCH = 25.4;
+
+/** A desktop monitor's nominal density — what a screenshot gets looked at on. */
+const REVIEW_PPI = 96;
+
+/**
+ * The floor every recipe has to clear. An em of 2.5 mm is a cap height near
+ * 1.8 mm, about six arcminutes at a metre — small, but clear of the four and a
+ * half this screen was drawing before. It is a floor and not a target: the one
+ * recipe that sits on it is fourteen paragraphs of method, which is close to
+ * the most text a seven-inch panel can hold at any size at all. Raising the
+ * floor past that would mean cutting recipes off, and having the whole thing on
+ * one screen is the point of casting it.
+ */
+const READABLE_MM = 2.5;
+
+/** What an ordinary long recipe should manage, rather than merely survive. */
+const COMFORTABLE_MM = 3;
+
+/** What one CSS pixel measures on the Hub's panel. */
+function millimetres(px: number): number {
+  return (px / NEST_HUB_PPI) * MM_PER_INCH;
+}
+
+/** The rendered font size of the first item in a column, in CSS pixels. */
+async function itemFontSize(page: Page, column: string): Promise<number> {
+  return page.evaluate((selector) =>
+    Number.parseFloat(
+      getComputedStyle(document.querySelector(selector)!).fontSize,
+    ), `${column} li`);
+}
+
+/**
+ * A page on the Hub's own pixels. Playwright's per-test viewport cannot carry a
+ * device pixel ratio, so the receiver gets its own context: `deviceScaleFactor`
+ * fixes what a screenshot pixel means, and 1 is what the Hub reports.
+ */
+async function nestHub(browser: Browser, deviceScaleFactor = 1): Promise<Page> {
+  const context = await browser.newContext({
+    viewport: NEST_HUB,
+    deviceScaleFactor,
+  });
+  const page = await context.newPage();
+  await stubReceiverSdk(page);
+  await page.goto("/cast/receiver");
+  return page;
+}
+
+test("the Nest Hub renders at its own pixel ratio, so a screenshot pixel is a panel pixel", async ({
+  browser,
+}) => {
+  const page = await nestHub(browser);
+  expect(await page.evaluate(() => ({
+    ratio: window.devicePixelRatio,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }))).toEqual({ ratio: 1, width: 1024, height: 600 });
+  await page.context().close();
+});
+
+test("a long recipe stays physically readable on the Nest Hub's panel", async ({
+  browser,
+}) => {
+  const page = await nestHub(browser);
+  await receive(page, longRecipe());
+  await expect(page.getByRole("heading", { name: "Makkarastroganoff" }))
+    .toBeVisible();
+
+  const ingredients = millimetres(await itemFontSize(page, ".ingredients"));
+  const instructions = millimetres(await itemFontSize(page, ".instructions"));
+  // 3.45 mm as this is written, against 2.53 mm before the change.
+  expect(ingredients).toBeGreaterThanOrEqual(COMFORTABLE_MM);
+  expect(instructions).toBeGreaterThanOrEqual(COMFORTABLE_MM);
+
+  // And still all of it, on one screen — the whole reason for casting.
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+  await page.context().close();
+});
+
+test("an instructions-heavy recipe stays physically readable too", async ({
+  browser,
+}) => {
+  const page = await nestHub(browser);
+  await receive(page, wordyRecipe());
+  await expect(page.getByRole("heading", { name: "Karjalanpaisti" }))
+    .toBeVisible();
+
+  // The worst case there is: 2.66 mm as this is written, against 2.13 mm
+  // before. Fourteen paragraphs of method is about as much as the panel holds.
+  const steps = millimetres(await itemFontSize(page, ".instructions"));
+  expect(steps).toBeGreaterThanOrEqual(READABLE_MM);
+  expect(await page.evaluate(() => ({
+    clientHeight: document.getElementById("recipe")!.clientHeight,
+    scrollHeight: document.getElementById("recipe")!.scrollHeight,
+  }))).toEqual({ clientHeight: 600, scrollHeight: 600 });
+  await page.context().close();
+});
+
+test("the Nest Hub review pictures are written at panel scale and at life size", async ({
+  browser,
+}) => {
+  // Panel scale: 1024×600 CSS pixels at ratio 1, so the PNG is exactly the
+  // pixels the Hub lights up.
+  const panel = await nestHub(browser);
+  await receive(panel, longRecipe());
+  await expect(panel.locator(".ingredients li")).toHaveCount(20);
+  await expect(panel.getByRole("heading", { name: "Makkarastroganoff" }))
+    .toBeVisible();
+  await capture(panel, { path: `${SHOTS}/110-cast-nest-hub.png` });
+  await panel.context().close();
+
+  // Life size: the same 1024×600 layout rasterised at the ratio that makes the
+  // PNG measure six inches across on a 96 dpi monitor — which is what the
+  // panel measures. Looked at 1:1, this picture is the kitchen's view.
+  const life = await nestHub(browser, REVIEW_PPI / NEST_HUB_PPI);
+  await receive(life, longRecipe());
+  await expect(life.locator(".ingredients li")).toHaveCount(20);
+  await expect(life.getByRole("heading", { name: "Makkarastroganoff" }))
+    .toBeVisible();
+  await capture(life, { path: `${SHOTS}/111-cast-nest-hub-life-size.png` });
+  await life.context().close();
+});
+
+const SHOTS = "docs/screenshots";
+const writeScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
+
+/** Review artifacts, written only when asked for — see docs/screenshots. */
+async function capture(
+  page: Page,
+  options: Parameters<Page["screenshot"]>[0],
+): Promise<void> {
+  if (writeScreenshots) await page.screenshot(options);
+}
+
 /**
  * The scale the other layout would have needed. Runs the receiver's own shrink
  * loop against a forced layout, so a test can say "what shipped is no smaller
@@ -321,7 +486,7 @@ async function scaleForLayout(page: Page, className: string): Promise<number> {
     let scale = 1;
     root.style.setProperty("--fit", String(scale));
     while (root.scrollHeight > root.clientHeight && scale > 0.58) {
-      scale = Math.round((scale - 0.04) * 100) / 100;
+      scale = Math.round((scale - 0.02) * 100) / 100;
       root.style.setProperty("--fit", String(scale));
     }
     return scale;
