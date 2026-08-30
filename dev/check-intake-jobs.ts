@@ -5,6 +5,7 @@ import {
   collectValidatedDraft,
   createIntakeJob,
   IntakeRefused,
+  MAX_IMPORT_GUIDANCE,
   maintainIntakeJobs,
   processIntakeJob,
   processIntakeQueue,
@@ -163,6 +164,28 @@ test("four ordinary photographed pages are not refused for their size", async ()
   assert.equal(enqueued.length, 1);
 });
 
+test("overlong linked guidance is refused before a job is written", async () => {
+  const env = {
+    DB: { prepare: () => { throw new Error("nothing may be written"); } },
+    RECIPE_IMAGES: {},
+    INTAKE_QUEUE: {},
+  } as unknown as import("../src/env.ts").Env;
+
+  await assert.rejects(
+    createIntakeJob(
+      env,
+      { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+      {
+        url: "https://kotikokki.example/uunikaali",
+        guidance: "x".repeat(MAX_IMPORT_GUIDANCE + 1),
+      },
+    ),
+    (error: Error) =>
+      error instanceof IntakeRefused &&
+      error.message === `Lisäohje voi olla enintään ${MAX_IMPORT_GUIDANCE} merkkiä.`,
+  );
+});
+
 test("maintenance recreates lost messages and deletes only real R2 orphans", async () => {
   const sent: string[] = [];
   const deleted: string[] = [];
@@ -245,14 +268,24 @@ test("a linked job reads its page in the consumer, not in the request", async ()
     source_route: "linked",
     source_text: null,
     source_url: "https://kotikokki.example/uunikaali",
+    import_guidance: "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
   });
   const server = pageServer(RECIPE_PAGE);
 
   let given: unknown = null;
   await processIntakeJob(db.env, "owned", {
     fetchPage: server.fetchPage,
-    structure: async (_env, job) => {
+    structure: async (_env, job, source) => {
       given = job;
+      assert.equal(source.route, "linked");
+      if (source.route === "linked") {
+        assert.equal(source.url, "https://kotikokki.example/uunikaali");
+        assert.match(source.text, /valkokaalia/);
+        assert.equal(
+          source.guidance,
+          "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+        );
+      }
       return JSON.stringify(SAMPLE_DRAFT);
     },
   });
@@ -467,6 +500,7 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
     source_route: "pasted",
     source_text: SAMPLE_DRAFT.source_text,
     source_url: null,
+    import_guidance: null,
     image_refs: null,
     page_image_key: null,
     page_image_type: null,

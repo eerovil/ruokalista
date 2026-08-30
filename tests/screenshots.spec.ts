@@ -726,6 +726,12 @@ test.describe("signed in", () => {
     await page
       .getByLabel("…tai hae resepti nettiosoitteesta")
       .fill("https://kotikokki.example/reseptit/uunikaali");
+    await page
+      .getByLabel("Lisäohje tuontiin (valinnainen)")
+      .fill("Tee jokaisesta makuvaihtoehdosta oma aliresepti.");
+    await expect(
+      page.getByLabel("Lisäohje tuontiin (valinnainen)"),
+    ).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/79-intake-from-link.png`,
       fullPage: true,

@@ -95,7 +95,7 @@ The same environment variable gates them.
 | `76-recipe-categories.png` | Proposed recipe screen carrying its categories under the title, beside the rest of the dish's own facts |
 | `77-recipes-category-filter.png` | Proposed recipe list standing in **Uuniruoka**: the scrolling chip row above, only the recipes in that category below |
 | `78-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |
-| `79-intake-from-link.png` | Proposed intake with a recipe's web address filled in: the third way in, alongside pasting and photographing (#192) |
+| `79-intake-from-link.png` | Proposed linked intake with its optional interpretation guidance visible and filled in (#219) |
 | `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
 | `81-recipes-bulk-category.png` | Proposed recipe list with two recipes ticked: the count saying how many the action will hit, and the category control above the publish buttons (#199) |
 | `82-recipes-bulk-category-done.png` | The same list after one press: both recipes carry **Keitto**, the chip row has gained it, and the notice counts what moved |

@@ -45,6 +45,7 @@ interface IntakeJobRow {
   source_route: IntakeJobRoute;
   source_text: string | null;
   source_url: string | null;
+  import_guidance: string | null;
   image_refs: string | null;
   page_image_key: string | null;
   page_image_type: string | null;
@@ -67,6 +68,8 @@ export interface IntakeJob {
   sourceText: string | null;
   /** The address a linked import reads, and null on every other route. */
   sourceUrl: string | null;
+  /** Optional member guidance for structuring a linked page (#219). */
+  importGuidance: string | null;
   imageRefs: StoredImageRef[];
   /** The picture found on a linked import's page (#205), or null. */
   pageImage: StoredImageRef | null;
@@ -87,11 +90,13 @@ interface IntakeBody {
   mediaType?: unknown;
   images?: unknown;
   url?: unknown;
+  guidance?: unknown;
   recipeId?: unknown;
   mode?: unknown;
 }
 
 const GENERIC_FAILURE = "Reseptin jäsennys ei onnistunut. Yritä uudelleen.";
+export const MAX_IMPORT_GUIDANCE = 2_000;
 const RUNNING_LEASE_MINUTES = 16;
 // Wrangler allows 20 retries. Reconcile one delivery before that limit so a
 // transient failure while writing the terminal state still gets one last try.
@@ -107,7 +112,7 @@ interface QueueDependencies {
 }
 
 interface IntakeProcessDependencies {
-  structure?: (env: Env, job: IntakeJob) => Promise<string>;
+  structure?: (env: Env, job: IntakeJob, source: IntakeSource) => Promise<string>;
   /**
    * Stands in for `fetch` when a linked job reads its page, so
    * `dev/check-intake-jobs.ts` can drive the whole lifecycle with no network.
@@ -206,6 +211,7 @@ export async function createIntakeJob(
 
   const route: IntakeJobRoute =
     images.length > 0 ? "photographed" : sourceUrl !== null ? "linked" : "pasted";
+  const importGuidance = route === "linked" ? readImportGuidance(body.guidance) : null;
 
   const id = crypto.randomUUID();
   const imageRefs: StoredImageRef[] = [];
@@ -223,9 +229,9 @@ export async function createIntakeJob(
     await env.DB.prepare(
       `INSERT INTO intake_job
          (id, household_id, created_by, status, source_route, source_text,
-          source_url, image_refs, target_recipe_id, target_revision, edit_mode,
-          target_recipe_json)
-       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          source_url, import_guidance, image_refs, target_recipe_id,
+          target_revision, edit_mode, target_recipe_json)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -236,6 +242,7 @@ export async function createIntakeJob(
         // yet, and it is the consumer that reads it.
         route === "pasted" ? sourceText : null,
         sourceUrl,
+        importGuidance,
         route === "photographed" ? JSON.stringify(imageRefs) : null,
         targetRecipe?.id ?? null,
         targetRecipe?.revision ?? null,
@@ -260,6 +267,17 @@ export async function createIntakeJob(
 }
 
 export class IntakeRefused extends Error {}
+
+function readImportGuidance(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const guidance = value.trim();
+  if (guidance.length > MAX_IMPORT_GUIDANCE) {
+    throw new IntakeRefused(
+      `Lisäohje voi olla enintään ${MAX_IMPORT_GUIDANCE} merkkiä.`,
+    );
+  }
+  return guidance;
+}
 
 /** The server-owned edit snapshot, only when every durable identity agrees. */
 export function editTargetFor(job: IntakeJob): Recipe | null {
@@ -479,7 +497,7 @@ export async function processIntakeJob(
       );
     }
     const draftJson = dependencies.structure
-      ? await dependencies.structure(env, job)
+      ? await dependencies.structure(env, job, source)
       : await collectValidatedDraft(
           target === null
             ? streamDraft(
@@ -547,7 +565,12 @@ async function sourceForJob(
   if (job.sourceRoute === "linked") {
     const address = job.sourceUrl ?? "";
     if (job.sourceText !== null && job.sourceText.trim() !== "") {
-      return { route: "linked", url: address, text: job.sourceText };
+      return {
+        route: "linked",
+        url: address,
+        text: job.sourceText,
+        guidance: job.importGuidance ?? undefined,
+      };
     }
 
     const page = fetchPage
@@ -571,7 +594,12 @@ async function sourceForJob(
 
     await keepPageImage(env, job, page.imageUrls, fetchPage);
 
-    return { route: "linked", url: page.url, text: page.sourceText };
+    return {
+      route: "linked",
+      url: page.url,
+      text: page.sourceText,
+      guidance: job.importGuidance ?? undefined,
+    };
   }
 
   const images: IntakeImage[] = [];
@@ -873,6 +901,7 @@ function toJob(row: IntakeJobRow): IntakeJob {
     sourceRoute: row.source_route,
     sourceText: row.source_text,
     sourceUrl: row.source_url,
+    importGuidance: row.import_guidance ?? null,
     imageRefs: parseImageRefs(row.image_refs),
     pageImage: row.page_image_key === null || row.page_image_type === null
       ? null

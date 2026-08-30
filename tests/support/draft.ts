@@ -79,6 +79,7 @@ export interface StubbedCall {
     mediaType?: string;
     images?: Array<{ image?: string; mediaType?: string }>;
     url?: string;
+    guidance?: string;
     recipeId?: string;
     mode?: "extend" | "replace";
   };
@@ -131,11 +132,12 @@ export async function stubStructuring(
       executeLocalSql(
         `INSERT INTO intake_job
           (id, household_id, created_by, status, source_route, source_text,
-           source_url, image_refs, page_image_key, page_image_type,
+           source_url, import_guidance, image_refs, page_image_key, page_image_type,
            error_message, created_at, updated_at)
          VALUES (${sql(id)}, 1, 1, 'failed', ${sql(route_)},
            ${linked ? "NULL" : sql(sourceText)},
            ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${linked && body.guidance ? sql(body.guidance) : "NULL"},
            ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
            ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
            ${pageImageKey === null ? "NULL" : "'image/png'"},
@@ -145,11 +147,12 @@ export async function stubStructuring(
       executeLocalSql(
         `INSERT INTO intake_job
           (id, household_id, created_by, status, source_route, source_text,
-           source_url, image_refs, page_image_key, page_image_type,
+           source_url, import_guidance, image_refs, page_image_key, page_image_type,
            draft_json, created_at, updated_at)
          VALUES (${sql(id)}, 1, 1, 'ready', ${sql(route_)},
            ${photographed ? "NULL" : sql(sourceText)},
            ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
+           ${linked && body.guidance ? sql(body.guidance) : "NULL"},
            ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
            ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
            ${pageImageKey === null ? "NULL" : "'image/png'"},

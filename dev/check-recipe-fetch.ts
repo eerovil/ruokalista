@@ -171,6 +171,91 @@ test("a page's structured recipe becomes the text the model is given", async () 
   );
 });
 
+test("a flat structured recipe keeps an explicit visible flavor outline", () => {
+  const markup = `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      name: "Välipalapatukat",
+      description: "Valittavanasi on viisi erilaista makuvaihtoehtoa.",
+      recipeIngredient: [
+        "100 g pähkinöitä", "100 g taateleita", "1 rkl vettä",
+        "15 g vadelmia", "1 tl lakritsijauhetta", "¾ tl kardemummaa",
+        "4 rkl maapähkinävoita", "1 appelsiinin kuoriraaste",
+      ],
+      recipeInstructions: "Sekoita massaan haluamasi mausteet.",
+    })}</script></head><body><main>
+      <h1>Välipalapatukat</h1>
+      <h2>Ainekset</h2>
+      <h4>Perusmassa</h4>
+      <p>100 g pähkinöitä</p><p>100 g taateleita</p><p>1 rkl vettä</p>
+      <h4>Seuraavat makuvaihtoehdot mitoitettu 1 annokseen perusmassaa!</h4>
+      <h4>Vadelma</h4><p>15 g vadelmia</p>
+      <h4>Lakritsi</h4><p>1 tl lakritsijauhetta</p>
+      <h4>Piparkakku</h4><p>¾ tl kardemummaa</p>
+      <h4>Maapähkinä</h4><p>4 rkl maapähkinävoita</p>
+      <h4>Appelsiini-kaakao</h4><p>1 appelsiinin kuoriraaste</p>
+      <h2>Tarvikkeet</h2><p>leivinpaperi</p>
+    </main></body></html>`;
+
+  const page = readRecipeFromPage(
+    markup,
+    "https://www.kinuskikissa.fi/valipalapatukat",
+  );
+
+  assert.equal(page.structured, true);
+  assert.match(page.sourceText, /Sivun näkyvä vaihtoehtorakenne:/);
+  assert.match(
+    page.sourceText,
+    /Perusmassa[\s\S]*Vadelma[\s\S]*Lakritsi[\s\S]*Piparkakku[\s\S]*Maapähkinä[\s\S]*Appelsiini-kaakao/,
+  );
+  assert.ok(!page.sourceText.includes("Tarvikkeet"), page.sourceText);
+});
+
+test("ordinary component headings do not create a variant outline", () => {
+  const markup = `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      name: "Täytekakku",
+      recipeIngredient: ["2 munaa", "2 dl kermaa", "100 g suklaata"],
+      recipeInstructions: "Täytä ja kuorruta kakku.",
+    })}</script></head><body><main>
+      <h2>Pohja</h2><p>2 munaa</p>
+      <h2>Täyte</h2><p>2 dl kermaa</p>
+      <h2>Kuorrute</h2><p>100 g suklaata</p>
+    </main></body></html>`;
+
+  const page = readRecipeFromPage(markup, "https://leivonta.example/taytekakku");
+
+  assert.equal(page.structured, true);
+  assert.ok(!page.sourceText.includes("Sivun näkyvä vaihtoehtorakenne"));
+});
+
+test("headings hidden in page machinery do not create a variant outline", () => {
+  const markup = `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      name: "Marjapiirakka",
+      recipeIngredient: ["2 dl jauhoja", "1 dl marjoja"],
+      recipeInstructions: "Paista piirakka.",
+    })}</script></head><body><main>
+      <h1>Marjapiirakka</h1><p>2 dl jauhoja</p><p>1 dl marjoja</p>
+      <template>
+        <h2>Seuraavat vaihtoehdot</h2>
+        <h2>Mustikka</h2><p>1 dl mustikoita</p>
+        <h2>Vadelma</h2><p>1 dl vadelmia</p>
+      </template>
+      <script>
+        var example = '<h2>Seuraavat makuvaihtoehdot</h2>' +
+          '<h2>Omena</h2><h2>Päärynä</h2>';
+      </script>
+    </main></body></html>`;
+
+  const page = readRecipeFromPage(markup, "https://leivonta.example/marjapiirakka");
+
+  assert.equal(page.structured, true);
+  assert.ok(!page.sourceText.includes("Sivun näkyvä vaihtoehtorakenne"));
+});
+
 test("a page with no structured recipe gives up its visible text instead", () => {
   const markup = `<!doctype html><html><head>
     <style>.x{color:red}</style><script>var a = 1;</script></head>

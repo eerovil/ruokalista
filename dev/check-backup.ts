@@ -185,6 +185,7 @@ function fakeDatabase(): {
       lease_id: null,
       source_route: "pasted",
       source_text: "Uunikaali",
+      import_guidance: null,
       image_refs: null,
       draft_json: null,
       error_message: "Jäsennys epäonnistui.",

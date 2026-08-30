@@ -36,6 +36,38 @@ test("pasted text is handed over as text, not as content blocks", () => {
   assert.equal(content, "Uunikaali\n½ dl öljyä");
 });
 
+test("a linked import without guidance keeps the existing one-block request", () => {
+  const content = contentOf({
+    route: "linked",
+    url: "https://example.test/resepti",
+    text: "Uunikaali\n½ dl öljyä",
+  });
+
+  assert.equal(content, "Uunikaali\n½ dl öljyä");
+});
+
+test("linked guidance is a separate instruction, not source text", () => {
+  const source: IntakeSource = {
+    route: "linked",
+    url: "https://example.test/resepti",
+    text: "Välipalapatukat\n100 g pähkinöitä",
+    guidance: "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+  };
+
+  assert.deepEqual(contentOf(source), [
+    { type: "text", text: "Välipalapatukat\n100 g pähkinöitä" },
+    {
+      type: "text",
+      text:
+        "Käyttäjän lisäohje tuontiin:\n" +
+        "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+    },
+  ]);
+  assert.match(systemOf(source), /noudata sitä ensisijaisena tulkintaohjeena/);
+  assert.match(systemOf(source), /yhteisen\s+pohjan rivien section null/);
+  assert.match(systemOf(source), /pohja, täyte, kuorrute ja kastike/);
+});
+
 test("one page is worded exactly as it was before pages were plural", () => {
   const content = contentOf({
     route: "photographed",

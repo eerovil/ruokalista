@@ -161,6 +161,37 @@ test("the quick save refuses a nameless recipe and keeps the screen", async ({
 
 const LINKED_URL = "https://kotikokki.example/reseptit/uunikaali";
 const LINKED_TEXT = "Uunikaali\n4 annosta\n½ dl öljyä\n500 g valkokaalia\n1 l vettä";
+const variantLine = (sourceLine: string, ingredientName: string, section: string | null) => ({
+  ...DRAFT_FIXTURE.lines[0]!,
+  quantity: 1,
+  unit: "rkl",
+  ingredient_id: null,
+  ingredient_name: ingredientName,
+  source_line: sourceLine,
+  section,
+  phase: section === null ? "before_parts" : null,
+  note: null,
+});
+const VARIANT_DRAFT = {
+  ...DRAFT_FIXTURE,
+  title: "Välipalapatukat",
+  source_text: "Välipalapatukat\nPerusmassa\nSeuraavat makuvaihtoehdot",
+  lines: [
+    variantLine("100 g pähkinöitä", "pähkinä", null),
+    variantLine("100 g taateleita", "taateli", null),
+    variantLine("15 g vadelmia", "vadelma", "Vadelma"),
+    variantLine("1 tl lakritsijauhetta", "lakritsijauhe", "Lakritsi"),
+    variantLine("¾ tl kardemummaa", "kardemumma", "Piparkakku"),
+    variantLine("4 rkl maapähkinävoita", "maapähkinävoi", "Maapähkinä"),
+    variantLine("2 rkl kaakaojauhetta", "kaakaojauhe", "Appelsiini-kaakao"),
+  ],
+  steps: DRAFT_FIXTURE.steps.map((step) => ({
+    ...step,
+    section: null,
+    phase: "after_parts",
+    ingredient_refs: [],
+  })),
+};
 
 test("a web address becomes a background import and is kept on the recipe", async ({
   page,
@@ -180,6 +211,7 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   // this request; the queue consumer is what reads the site.
   expect(calls).toHaveLength(1);
   expect(calls[0]?.body.url).toBe("kotikokki.example/reseptit/uunikaali");
+  expect(calls[0]?.body.guidance).toBeUndefined();
   expect(calls[0]?.body.sourceText).toBeUndefined();
 
   await expect(
@@ -198,6 +230,61 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   const link = page.locator(".source-link a");
   await expect(link).toHaveText("kotikokki.example");
   await expect(link).toHaveAttribute("href", LINKED_URL);
+});
+
+test("an explicit flavor outline reviews as five parts with one shared base", async ({
+  page,
+}) => {
+  await stubStructuring(page, VARIANT_DRAFT, {
+    linkedText: VARIANT_DRAFT.source_text,
+    linkedUrl: "https://www.kinuskikissa.fi/valipalapatukat",
+  });
+
+  await page.goto("/intake");
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://www.kinuskikissa.fi/valipalapatukat");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  for (const flavor of [
+    "Vadelma",
+    "Lakritsi",
+    "Piparkakku",
+    "Maapähkinä",
+    "Appelsiini-kaakao",
+  ]) {
+    await expect(page.getByRole("heading", { name: flavor, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("heading", { name: "Perusmassa", exact: true }))
+    .toHaveCount(0);
+  await expect(page.getByText("100 g pähkinöitä", { exact: true }).first())
+    .toBeVisible();
+});
+
+test("optional guidance follows a web address into its queued import", async ({
+  page,
+}) => {
+  const calls = await stubStructuring(page, VARIANT_DRAFT, {
+    linkedText: VARIANT_DRAFT.source_text,
+    linkedUrl: "https://www.kinuskikissa.fi/valipalapatukat",
+  });
+
+  await page.goto("/intake");
+  const guidance = page.getByLabel("Lisäohje tuontiin (valinnainen)");
+  await expect(guidance).toBeHidden();
+  await page
+    .getByLabel("…tai hae resepti nettiosoitteesta")
+    .fill("https://www.kinuskikissa.fi/valipalapatukat");
+  await expect(guidance).toBeVisible();
+  await guidance.fill("Tee jokaisesta makuvaihtoehdosta oma aliresepti.");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body.guidance).toBe(
+    "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+  );
+  await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Appelsiini-kaakao" })).toBeVisible();
 });
 
 /** The picture the consumer found on the page, on disk for the stub to store. */
