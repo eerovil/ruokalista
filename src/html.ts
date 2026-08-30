@@ -594,6 +594,30 @@ const STYLES = `
   }
   .save-bar.is-dirty .save-state { color: var(--warn); font-weight: 600; }
 
+  /* The dish's parts on its editor, and the way into each one (#231). A part
+     is a recipe of its own, so this is a list of destinations rather than more
+     of the form: name and what it holds on the left, the way in on the right,
+     and on a narrow screen the button drops under the name rather than
+     squeezing it. */
+  .recipe-parts { margin: 1.5rem 0; }
+  .recipe-parts > .meta { margin: .2rem 0 .7rem; }
+  .recipe-parts ul { list-style: none; padding: 0; margin: 0; }
+  .recipe-parts li {
+    display: flex; flex-wrap: wrap; gap: .5rem;
+    align-items: center; justify-content: space-between;
+    padding: .6rem .7rem; margin-bottom: .5rem;
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: var(--radius);
+  }
+  .part-of-dish { display: flex; flex-direction: column; gap: .15rem; min-width: 8rem; }
+  .part-of-dish .meta { margin: 0; }
+  .recipe-parts li .button { flex: 0 0 auto; }
+
+  /* Which dish a part's editor belongs to. Above everything, because on a part
+     opened from a dish with three of them this is what says which one. */
+  .part-parent { margin: -.5rem 0 1rem; font-size: .9rem; }
+  .part-parent a { color: var(--muted); text-decoration: none; }
+
   .line-conflicts {
     padding: .7rem .8rem; margin: 0 0 1rem;
     background: var(--surface); border: 1px solid var(--accent);

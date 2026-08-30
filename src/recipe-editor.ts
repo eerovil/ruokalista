@@ -301,9 +301,13 @@ export async function saveEditForm(
     );
   }
 
+  // A saved part goes back to its dish, not to its own standalone page (#231).
+  // A part is only ever opened from the dish's editor, and what the member was
+  // changing is a piece of that dish — the dish's page is where the change can
+  // be read in the place it belongs. A dish saves to its own page as before.
   return new Response(null, {
     status: 303,
-    headers: { Location: `/recipes/${recipe.id}` },
+    headers: { Location: `/recipes/${recipe.parentId ?? recipe.id}` },
   });
 }
 
@@ -631,7 +635,9 @@ export function editorForm(
     : recipe.categories;
 
   return html`<h1>Muokkaa reseptiä</h1>
+    ${belongsTo(recipe)}
     ${attempted?.withoutPicture === true ? "" : pictureBlock(recipe, hasPicture)}
+    ${withSections ? "" : partsBlock(recipe)}
 
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <!-- The browser submits a form through its *first* submit button when
@@ -745,6 +751,77 @@ export function editorForm(
       <a href="/recipes/${recipe.id}/delete">Poista resepti</a>
     </p>
     ${CATEGORY_STYLE}`;
+}
+
+/**
+ * The dish's parts, each with the way into its own editor (#231).
+ *
+ * A part has always been editable — it is a recipe row of its own with its own
+ * screen (ADR-0002) — but nothing linked to one. Parts are kept off the recipe
+ * list and out of the picker, so unless you already knew a part's id there was
+ * no way in, and a dish's own editor never mentioned that its parts existed.
+ *
+ * It sits above the form rather than inside it. A part opens on its own screen,
+ * so this is a way *out* of this form, and putting it before anything editable
+ * means it is read before there is anything typed here to lose. The counts are
+ * there so several parts can be told apart at a glance without opening each.
+ *
+ * Left out of a prompt edit's review (`withSections`), where the parts are
+ * being changed inside this very form and a link away from an unsaved proposal
+ * would throw it away.
+ */
+function partsBlock(recipe: Recipe): Raw | string {
+  if (recipe.parts.length === 0) return "";
+
+  return html`<section class="recipe-parts">
+      <h2>Osat</h2>
+      <p class="meta">
+        Jokainen osa on oma reseptinsä. Avaa osa, niin voit muokata sen nimeä,
+        aineksia ja ohjeita.
+      </p>
+      <ul>
+        ${recipe.parts.map(
+          (part) => html`<li>
+            <span class="part-of-dish">
+              <strong>${part.title}</strong>
+              <span class="meta">${partSummary(part)}</span>
+            </span>
+            <!-- Every row's link says the same word, so the accessible name
+                 says which part it opens. -->
+            <a
+              class="button"
+              href="/recipes/${part.id}/edit"
+              aria-label="Muokkaa osaa ${part.title}"
+              >Muokkaa</a
+            >
+          </li>`,
+        )}
+      </ul>
+    </section>`;
+}
+
+/** What a part holds, so two of them are not the same-looking row (#231). */
+function partSummary(part: Recipe): string {
+  const lines = part.lines.length === 1 ? "1 aines" : `${part.lines.length} ainesta`;
+  const steps = part.steps.length === 1 ? "1 vaihe" : `${part.steps.length} vaihetta`;
+  return `${lines} · ${steps}`;
+}
+
+/**
+ * Which dish this part belongs to, and the way back to it (#231).
+ *
+ * A part's editor is titled "Muokkaa reseptiä" like any other, so on a screen
+ * reached from a dish with three parts this line is what says where you are.
+ * The link goes to the dish's *editor*, because that is where the way in was.
+ */
+function belongsTo(recipe: Recipe): Raw | string {
+  if (recipe.parentId === null || recipe.parentTitle === null) return "";
+
+  return html`<p class="part-parent">
+    <a href="/recipes/${recipe.parentId}/edit"
+      >← Osa ruokalajia ${recipe.parentTitle}</a
+    >
+  </p>`;
 }
 
 /** The picture and its upload, which is the only upload control anywhere. */
