@@ -33,7 +33,7 @@ test("list uses bearer auth and reads the service item shape", async () => {
     json({ items: [{ id: "one", name: "Maito", ean: "6415712506032" }] }),
   ]);
   assert.deepEqual(await api.list(), [
-    { id: "one", name: "Maito", ean: "6415712506032" },
+    { id: "one", name: "Maito", ean: "6415712506032", collected: false },
   ]);
   assert.equal(calls[0]?.url, "https://private.example/api/items");
   assert.equal(new Headers(calls[0]?.init?.headers).get("authorization"), "Bearer secret-token");
@@ -61,13 +61,43 @@ test("search encodes the query and adds the stable EAN image", async () => {
 test("add supports a concrete EAN and a free-text note", async () => {
   const api = client([
     json({ id: "ean-item", name: "Maito", ean: "6415712506032" }, 201),
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: false }),
     json({ id: "note-item", name: "Suola — 1 tl", ean: null }, 201),
+    json({ id: "note-item", name: "Suola — 1 tl", ean: null, collected: false }),
   ]);
   await api.add({ ean: "6415712506032" });
   await api.add({ note: "Suola — 1 tl" });
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { ean: "6415712506032" });
-  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { note: "Suola — 1 tl" });
+  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), { note: "Suola — 1 tl" });
   assert.equal(calls[0]?.init?.method, "POST");
+  assert.equal(calls[2]?.init?.method, "POST");
+});
+
+test("every add leaves its row still to be bought (#236)", async () => {
+  const api = client([
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: true }, 200),
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: false }),
+  ]);
+  const added = await api.add({ ean: "6415712506032" });
+  assert.equal(added.collected, false);
+  assert.equal(calls[1]?.url, "https://private.example/api/items/ean-item");
+  assert.equal(calls[1]?.init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { collected: false });
+});
+
+test("a keyed row handed back without the flag is cleared too (#236)", async () => {
+  // The hole the review found: an existing row can come back with no
+  // `collected` field at all, which reads as not-collected here. The clear
+  // does not consult that reading, so it goes out regardless.
+  const api = client([
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032" }, 200),
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: false }),
+  ]);
+  const added = await api.add({ ean: "6415712506032" });
+  assert.equal(added.collected, false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]?.init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { collected: false });
 });
 
 test("sync posts once and accepts an answer with no body at all", async () => {
