@@ -1215,7 +1215,7 @@ test("a request that never leaves is reported, and says so", async ({
   );
 });
 
-test("a server refusal is reported with its status and its own wording", async ({
+test("a Worker that answered is not reported as the browser giving up", async ({
   page,
 }) => {
   const reports = await captureFailureReports(page);
@@ -1227,13 +1227,41 @@ test("a server refusal is reported with its status and its own wording", async (
   await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
+  // The server's own wording, distinct from the browser's, is still shown.
   await expect(page.locator("#status")).toHaveText(
     "Palvelin ei ottanut reseptiä vastaan. Yritä hetken kuluttua uudelleen.",
   );
 
-  await expect.poll(() => reports.length).toBe(1);
-  expect(reports[0]!["step"]).toBe("refused");
-  expect(reports[0]!["status"]).toBe(503);
+  // And nothing is reported at all. The request reached the Worker, so the
+  // Worker is what has a record of it — a line saying the browser gave up
+  // would be a false one, and `intake.client_failed` is exactly that claim.
+  await page.waitForTimeout(500);
+  expect(reports).toHaveLength(0);
+});
+
+test("a reply the browser cannot read is not reported either", async ({
+  page,
+}) => {
+  const reports = await captureFailureReports(page);
+  // A 202 whose body is not JSON: the request arrived and was accepted, and
+  // only the reading of the answer failed. Still not the browser giving up.
+  await page.route("**/api/intake/imports", (route) =>
+    route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: "not json at all",
+    }),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  await expect(page.locator("#status")).toHaveText(
+    "Palvelin ei ottanut reseptiä vastaan. Yritä hetken kuluttua uudelleen.",
+  );
+  await page.waitForTimeout(500);
+  expect(reports).toHaveLength(0);
 });
 
 test("a photographed import reports the pages it was carrying", async ({
@@ -1293,6 +1321,8 @@ test("the failure route takes anything and answers 204", async ({ page }) => {
   for (const body of [
     JSON.stringify({ step: "send", detail: "Failed to fetch" }),
     JSON.stringify({ step: "smuggled", bytes: "lots" }),
+    // A step the island never reports, from something that is not the island.
+    JSON.stringify({ step: "refused", status: 503 }),
     "not json at all",
     "",
   ]) {

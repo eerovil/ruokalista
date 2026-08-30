@@ -175,24 +175,29 @@ export function importFailureMessage(error: unknown): string {
 }
 
 /**
- * The hops of an import that happen in the browser, before the Worker has any
- * record of it (#222). A failure at any of them used to leave nothing behind
- * anywhere — no request, no log line, no row — so the only evidence a later
- * investigation had was the absence of evidence.
+ * The hops of an import that give way *before the Worker has answered* (#222).
+ * A failure at any of them used to leave nothing behind anywhere — no request,
+ * no log line, no row — so the only evidence a later investigation had was the
+ * absence of evidence.
  *
- * `oversize` and `shrink` happen while a page is being chosen; `encode` and
- * `send` while the request is being built and dispatched; `refused` and `reply`
- * once the Worker has answered. Anything else the browser sends is recorded as
- * `unknown` rather than trusted into the log.
+ * `shrink` and `oversize` happen while a page is being chosen; `encode` and
+ * `send` while the request is being built and dispatched. Nothing here has
+ * reached the Worker, which is the whole reason these need reporting at all.
  */
 export const CLIENT_FAILURE_STEPS = [
   "shrink",
   "oversize",
   "encode",
   "send",
-  "refused",
-  "reply",
 ] as const;
+
+/**
+ * Hops the island reaches only once the Worker has answered. It does not
+ * report them — the request arrived, so the Worker's own logging is what
+ * represents it — but the names stay recognised here, because a report that
+ * names one must not be mistaken for the browser having given up.
+ */
+export const SERVER_ANSWERED_STEPS = ["refused", "reply"] as const;
 
 /** The ways in, as the browser names them. */
 const CLIENT_ROUTES = ["photographed", "linked", "pasted"] as const;
@@ -204,9 +209,22 @@ const CLIENT_ROUTES = ["photographed", "linked", "pasted"] as const;
  */
 const MAX_CLIENT_DETAIL = 300;
 
-/** One log record for an import that gave way in the browser. */
+/**
+ * The name a browser's report is logged under.
+ *
+ * `intake.client_failed` is a promise about *where* the import died: nothing
+ * left the device, so no server-side record of it can exist. It is therefore
+ * given only to the steps that cannot have a response behind them. Anything
+ * else — a step this app does not know, or one the island only reaches after
+ * the Worker has answered — is logged under the neutral name, which claims
+ * nothing. Reading the event alone stays enough to tell the browser giving up
+ * from the server refusing, which is what #222 asked for.
+ */
+export type ClientReportEvent = "intake.client_failed" | "intake.client_report";
+
+/** One log record shaped from a browser's report. */
 export interface ClientFailureLog {
-  event: "intake.client_failed";
+  event: ClientReportEvent;
   step: string;
   route: string;
   status: number;
@@ -225,12 +243,21 @@ const whole = (value: unknown): number =>
     : 0;
 
 /**
- * Shape a browser's failure report into the line that goes to the log.
+ * Which name this step earns. Decided from the step here rather than taken
+ * from the body, so a report that claims `refused` — whether the island sent
+ * it or something else did — cannot borrow the browser-gave-up name.
+ */
+export function clientReportEvent(step: string): ClientReportEvent {
+  return CLIENT_FAILURE_STEPS.indexOf(step as never) !== -1
+    ? "intake.client_failed"
+    : "intake.client_report";
+}
+
+/**
+ * Shape a browser's report into the line that goes to the log.
  *
  * Every field is narrowed here rather than trusted: the report comes from a
- * page, so an unknown step stays `unknown` and a long detail is cut. The event
- * name is deliberately not `intake.failed` — reading the name alone has to be
- * enough to tell "the browser gave up" from "the server refused".
+ * page, so an unrecognised step stays `unknown` and a long detail is cut.
  */
 export function clientFailureLog(
   body: unknown,
@@ -238,10 +265,14 @@ export function clientFailureLog(
 ): ClientFailureLog {
   const report = (body ?? {}) as Record<string, unknown>;
   const detail = report["detail"];
+  const step = oneOf(report["step"], [
+    ...CLIENT_FAILURE_STEPS,
+    ...SERVER_ANSWERED_STEPS,
+  ]);
 
   return {
-    event: "intake.client_failed",
-    step: oneOf(report["step"], CLIENT_FAILURE_STEPS),
+    event: clientReportEvent(step),
+    step,
     route: oneOf(report["route"], CLIENT_ROUTES),
     status: whole(report["status"]),
     pages: whole(report["pages"]),

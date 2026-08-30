@@ -431,7 +431,12 @@ const STREAMING_ISLAND = `
       })
       .catch(function (error) {
         var step = (error && error.step) || 'unknown';
-        report(step, error && error.message, error && error.status);
+        var answered = step === 'refused' || step === 'reply';
+        // Nothing is reported once the Worker has answered. The request
+        // arrived, so the Worker already has a record of it, and a line
+        // saying the browser gave up would be a false one — that name is a
+        // promise that nothing left the device.
+        if (!answered) report(step, error && error.message, error && error.status);
         // Only wording this island wrote is shown. Anything else — a transport
         // error, a server body — is generic, so no English or raw response
         // text ever lands on a member's screen.
@@ -440,7 +445,6 @@ const STREAMING_ISLAND = `
         // recipe never left this device" and "the server would not take it"
         // are different things to do next, and until now they read the same —
         // which is what made #218 take two investigations to settle.
-        var answered = step === 'refused' || step === 'reply';
         status.textContent = error && error.member
           ? error.message
           : answered
@@ -872,9 +876,18 @@ export async function startIntakeJob(
     const job = await createIntakeJob(env, member, body);
     return Response.json({ id: job.id, status: job.status }, { status: 202 });
   } catch (error) {
-    return error instanceof IntakeRefused
-      ? problem(400, error.message)
-      : problem(503, "Reseptin jäsennystä ei voitu käynnistää.");
+    if (error instanceof IntakeRefused) return problem(400, error.message);
+
+    // A 503 here is the Worker refusing an import it did receive, and until
+    // now it left no line at all — which is why the browser was reporting it
+    // instead, under a name that claimed the opposite (#222). The request
+    // reached this app, so this app is what records it.
+    console.log(JSON.stringify({
+      event: "intake.start_failed",
+      detail: String((error as Error)?.message ?? error),
+      household_id: member.householdId,
+    }));
+    return problem(503, "Reseptin jäsennystä ei voitu käynnistää.");
   }
 }
 
@@ -886,6 +899,11 @@ export async function startIntakeJob(
  * one route whose whole purpose is to record that something already failed, so
  * it must not become a second thing that can fail: nothing waits for it, and
  * an unusable report is still worth a line naming the step.
+ *
+ * The event name comes from the step rather than from the body, so only a hop
+ * that cannot have a response behind it is logged as `intake.client_failed`.
+ * The island already declines to report anything the Worker answered; this is
+ * the second half of that, and the half a forged body cannot get past.
  */
 export async function reportIntakeFailure(
   { request }: RouteContext,

@@ -61,16 +61,31 @@ never on the path of a working import, and every way it can fail is swallowed
 in the island. A report route must not become a second thing that can fail an
 import.
 
-The island tags each hop it can give way at, and the log line names it:
-`shrink` and `oversize` while a page is being chosen, `encode` and `send` while
-the request is being built and dispatched, `refused` and `reply` once the
-Worker has answered. `intake.clientFailureLog` narrows every field rather than
-trusting it — the report comes from a page, so an unknown step is recorded as
-`unknown` and a long detail is cut at 300 characters.
+The island tags each hop it can give way at: `shrink` and `oversize` while a
+page is being chosen, `encode` and `send` while the request is being built and
+dispatched, `refused` and `reply` once the Worker has answered.
+`intake.ts::clientFailureLog` narrows every field rather than trusting it — the
+report comes from a page, so an unrecognised step is recorded as `unknown` and
+a long detail is cut at 300 characters.
 
-**The event name carries the distinction, and so does the wording.**
-`intake.failed` is a refusal that reached the Worker; `intake.client_failed` is
-the browser giving up. On screen the two generic sentences are now different
+**`intake.client_failed` is a promise about where the import died, so only the
+first four steps earn it.** Once the Worker has answered, the request
+demonstrably arrived and the Worker's own logging is what represents it — a
+line saying the browser gave up would be false. So the island reports nothing
+for `refused` and `reply`, and `intake.ts::clientReportEvent` decides the name
+from the step rather than from the body, which is what stops a report the
+island did not send from borrowing it; anything else is logged under the
+neutral `intake.client_report`, which claims nothing.
+
+`startIntakeJob`'s 503 branch gains a line of its own, `intake.start_failed`.
+It is what makes "a server refusal is represented server-side" true: before
+this the branch logged nothing at all, which is why the browser's report was
+covering for it under a name that said the opposite.
+
+**Three names, and reading one is enough.** `intake.failed` is a refusal that
+reached the model or the queue; `intake.start_failed` is the Worker declining
+an import it received; `intake.client_failed` is the browser giving up before
+anything left the device. On screen the two generic sentences are different
 too: *Reseptin lähetys ei onnistunut tällä laitteella…* when nothing left the
 device, *Palvelin ei ottanut reseptiä vastaan…* when the Worker answered badly.
 Before this they read almost identically — the island's own sentence was
