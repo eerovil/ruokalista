@@ -102,6 +102,34 @@ parse is guarded and `createIntakeJob` is wrapped in a `catch` that answers 400
 or 503, so nothing on the request side can throw uncaught. Every failure on the
 queue side goes through `importFailureMessage`.
 
+## A draft the save would refuse is repaired, not shown (#233)
+
+**This section describes what this pull request proposes; none of it is on
+`main` yet.** Until it lands, the model's amounts are copied into the draft as
+they arrive, so a line reading `0 kg pippuria` is drawn on the review screen as
+an ordinary accepted line and refused only by
+`recipe-save.ts::validateRecipe`, on a number the member never typed. That is
+the app arguing with itself, and the member has to fix it.
+
+The change puts `draft-amounts.ts::usableAmounts` at the end of
+`intake.ts::toDraftLine`, which is the one place every model-produced draft
+passes through — the single import, the queued job, an AgentDeck bundle and a
+prompt edit all parse through `draftFromJson`. An amount too small to read gets
+the smaller unit a kitchen would have used (`0,0005 kg` becomes `0,5 g`); a
+zero, a negative, a range with nothing under its upper end, or an amount no
+unit can rescue is dropped, so the line keeps its ingredient and states no
+amount — a shape both the screen and the save already handle — and earns a note
+saying so. `DRAFT_RULES` also tells the model not to write a zero in the first
+place; the repair is what makes that true rather than hoped for.
+
+A bundle upload is repaired the same way rather than refused. Before this a
+single zero anywhere bounced the whole bundle with the save's own Finnish
+sentence, which is a worse answer to the same mistake.
+
+Nothing about the save's own validation moves: it is still the rule that every
+stored amount is above zero, and `dev/check-draft-amounts.ts` is what checks
+that everything reaching it can satisfy it.
+
 **To walk the import flow by hand, use the sample draft and spend nothing.**
 A development server shows `Avaa esimerkkiluonnos` on `/intake`. It posts
 `src/sample-draft.ts` to the same `/intake/correct` the ready-job route uses,

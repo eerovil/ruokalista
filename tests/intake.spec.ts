@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   DRAFT_FIXTURE,
   stubStructuring,
+  UNSAVABLE_AMOUNT_DRAFT,
 } from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
 import { flatPng } from "./support/png";
@@ -613,6 +614,31 @@ test("blank rows are not the last thing on the screen", async ({ page }) => {
   await expect(
     page.locator(".add-lines .line").first().locator('input[name$=".quantity"]'),
   ).toBeHidden();
+});
+
+test("a model's unsavable amounts are repaired before the review (#233)", async ({
+  page,
+}) => {
+  await stubStructuring(page, UNSAVABLE_AMOUNT_DRAFT);
+  await pasteAndStructure(page);
+
+  const lines = page.locator(".lines li");
+
+  // The pinch the model wrote as 0,0005 kg reads as the half gram it is.
+  await expect(lines.nth(1)).toContainText("½ g");
+  // The flat zero states no amount at all rather than "0 kg", and says so.
+  await expect(lines.nth(0)).not.toContainText("0");
+  await expect(lines.nth(0).locator(".line-note")).toBeVisible();
+  // A zero upper end costs the range, not the line.
+  await expect(lines.nth(2)).toContainText("1 kpl");
+  await expect(lines.nth(2)).not.toContainText("–");
+
+  // And the whole point: the draft saves without the member touching anything.
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(page.locator(".refused")).toHaveCount(0);
+  await expect(page.locator(".lines li").nth(1)).toContainText("½ g");
 });
 
 test("the gate still refuses a line with no answer at all", async ({ page }) => {
