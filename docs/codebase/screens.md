@@ -442,6 +442,19 @@ label standing next to an invisible button — the shape a member first saw on a
 live TV-less page. An author `!important` in the island's own `<style>` outranks
 that inline style, so the button is visible whenever the row is.
 
+How long the recipe stays on the TV is the receiver's business, not the phone's.
+This change proposes starting it with `disableIdleTimeout: true` (#229). Started
+any other way, the framework closes the receiver once it goes idle — and a
+receiver that plays no media counts as idle the moment its last sender
+disconnects, so putting the phone down, locking the screen or swiping Ruokalista
+away took the recipe off the screen mid-cooking. With the timeout off, the
+session ends only on an explicit stop from a sender, which is what the Cast
+launcher already sends. Nothing keeps the phone artificially awake for this.
+Reopening Ruokalista does not start a second session: the sender's
+`ORIGIN_SCOPED` auto-join rejoins the running one, and the resumed-session
+handler pushes the current recipe to it, so the cook can still change what is on
+the TV or stop casting.
+
 `GET /cast/receiver` is deliberately public because a Chromecast has none of
 the member's session cookie. It is also deliberately data-free: it reads no D1
 row and accepts no recipe id. `src/cast.ts::castRecipe` removes household,
