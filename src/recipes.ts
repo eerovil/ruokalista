@@ -131,6 +131,14 @@ export interface Recipe extends RecipeSummary {
   lines: RecipeLine[];
   /** The dish this is a part of, or null when it is a dish in its own right. */
   parentId: number | null;
+  /**
+   * That dish's name, so a part's own screen can say what it belongs to (#231).
+   *
+   * Read in the same query as the rest of the row rather than by a second load:
+   * a part is opened to be edited, and "which dish is this?" is the first thing
+   * its editor has to answer.
+   */
+  parentTitle: string | null;
   /** The dish's named parts, each a recipe of its own. Empty for a plain one. */
   parts: Recipe[];
 }
@@ -315,6 +323,7 @@ function filterByTitle(
 
 interface RecipeRow extends SummaryRow {
   parent_id: number | null;
+  parent_title: string | null;
   source_text: string;
   source_route: "pasted" | "photographed" | "linked";
   source_url: string | null;
@@ -397,6 +406,8 @@ async function loadRecipe(
               (SELECT count(*) FROM recipe_share
                 WHERE recipe_share.recipe_id = recipe.id) AS share_count,
               recipe.parent_id,
+              (SELECT parent.title FROM recipe AS parent
+                WHERE parent.id = recipe.parent_id) AS parent_title,
               household.name AS household_name,
               member.display_name AS created_by
          FROM recipe
@@ -491,6 +502,7 @@ async function loadRecipe(
     shareCount: row.share_count,
     categories,
     parentId: row.parent_id,
+    parentTitle: row.parent_title,
     parts,
     steps: steps.map((step) => ({
       text: step.text,
@@ -619,6 +631,9 @@ function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
     shareCount: _shareCount,
     categories: _categories,
     parentId: _parentId,
+    // Screen furniture, not the recipe: a part's editor says which dish it
+    // belongs to (#231), and the API already says so by nesting the parts.
+    parentTitle: _parentTitle,
     ...wire
   } = recipe;
 
