@@ -139,13 +139,31 @@ test("refuses malformed drafts and supplied production ingredient ids", async ({
   supplied.recipes[0].lines[0].ingredient_id = 2;
   await review(page, supplied);
   await expect(page.locator(".refused")).toContainText("ingredient_id-arvojen pitää olla null");
+});
 
-  const invalidAmount = batchCopy();
-  invalidAmount.recipes[0].lines[0].quantity = 0;
-  await review(page, invalidAmount);
-  await expect(page.locator(".refused")).toContainText(
-    "Ainesmäärien pitää olla suurempia kuin nolla",
-  );
+/**
+ * A bundle is a model's work too, so an amount it could not have saved is
+ * repaired on the way in rather than bouncing the whole upload (#233). Before
+ * this, a single zero refused the bundle with the save's own sentence.
+ */
+test("repairs an amount no save would have accepted", async ({ page }) => {
+  const bundle = batchCopy();
+  bundle.recipes = [bundle.recipes[0]];
+  bundle.recipes[0].lines[0].quantity = 0;
+  bundle.recipes[0].lines[1].quantity = 0.0005;
+  bundle.recipes[0].lines[1].unit = "kg";
+
+  await review(page, bundle);
+  await expect(page.locator(".refused")).toHaveCount(0);
+
+  const preview = page.locator(".batch-preview").first();
+  await preview.evaluate((details) => ((details as HTMLDetailsElement).open = true));
+  await expect(preview).toContainText("½ g");
+  await expect(preview).not.toContainText("0 l");
+
+  await page.getByRole("button", { name: "Tuo 1 reseptiä" }).click();
+  await page.getByRole("link", { name: "AgentDeck-keitto" }).click();
+  await expect(page.locator(".lines")).toContainText("½ g");
 });
 
 test("refuses a generated source line that is not verbatim source text", async ({ page }) => {

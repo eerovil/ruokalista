@@ -8,6 +8,7 @@ import {
   DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
   stubStructuring,
+  UNSAVABLE_AMOUNT_DRAFT,
 } from "./support/draft";
 import { KAALILAATIKKO, LASAGNE } from "./support/edit-targets";
 import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
@@ -415,6 +416,40 @@ test.describe("signed in", () => {
       path: `${SHOTS}/48-step-mentions-all-open.png`,
       fullPage: true,
     });
+  });
+
+  test("amounts the model wrote unsavably are repaired for review", async ({
+    page,
+  }) => {
+    await stubStructuring(page, UNSAVABLE_AMOUNT_DRAFT);
+    await page.goto("/intake");
+    await page.getByLabel("Liitä reseptin teksti").fill("Pippurikaali");
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tarkista resepti" }),
+    ).toBeVisible();
+
+    // Half a gram where the model wrote 0,0005 kg, and no amount at all where
+    // it wrote a flat zero — the state the shot has to show (#233).
+    const lines = page.locator(".lines li");
+    await expect(lines.nth(1)).toContainText("½ g");
+    await expect(lines.nth(0)).not.toContainText("0");
+    await capture(page, {
+      path: `${SHOTS}/112-repaired-amounts-review.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole("button", { name: "Tallenna resepti" }).click();
+    await expect(page).toHaveURL(/\/recipes\/\d+$/);
+    const recipe = page.url();
+    await expect(page.locator(".lines li").nth(1)).toContainText("½ g");
+    await capture(page, {
+      path: `${SHOTS}/113-repaired-amounts-recipe.png`,
+      fullPage: true,
+    });
+
+    await page.goto(`${recipe}/delete`);
+    await page.getByRole("button", { name: "Poista lopullisesti" }).click();
   });
 
   test("a duplicated ingredient reveals all its amounts", async ({ page }) => {

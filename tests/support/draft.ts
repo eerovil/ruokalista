@@ -71,6 +71,43 @@ export const DUPLICATE_AMOUNT_DRAFT = {
   ],
 };
 
+/**
+ * A model that wrote amounts the save would refuse (#233): a flat zero, a
+ * pinch written in the wrong unit so that it rounds away, and a range whose
+ * upper end is a zero. Every line points at a seeded ingredient, so the review
+ * has nothing to ask about beyond the amounts themselves.
+ */
+export const UNSAVABLE_AMOUNT_DRAFT = {
+  title: "Pippurikaali",
+  yield_portions: 4,
+  source_text: "Pippurikaali\n4 annosta\nmustapippuria\nöljyä\nvalkokaalia",
+  steps: [
+    { text: "Paista kaali öljyssä ja mausta.", section: null, phase: null, ingredient_refs: [] },
+  ],
+  lines: [
+    {
+      quantity: 0, quantity_max: null, unit: "kg",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 4, ingredient_name: "sitruunaruoho",
+      source_line: "ripaus sitruunaruohoa",
+      section: null, phase: null, note: null,
+    },
+    {
+      quantity: 0.0005, quantity_max: null, unit: "kg",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 1, ingredient_name: "öljy", source_line: "tilkka öljyä",
+      section: null, phase: null, note: null,
+    },
+    {
+      quantity: 1, quantity_max: 0, unit: "kpl",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 3, ingredient_name: "valkokaali",
+      source_line: "1 valkokaali",
+      section: null, phase: null, note: null,
+    },
+  ],
+};
+
 /** What the queued intake endpoint was asked for, once a stub has answered it. */
 export interface StubbedCall {
   body: {
