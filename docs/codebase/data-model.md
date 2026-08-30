@@ -205,6 +205,12 @@ of them; they are not, and `ADD COLUMN` takes a column's own CHECK, which is
 where `page_image_type`'s media-type constraint lives. Which route may carry a
 picture is a rule in `intake-jobs.ts`, not a constraint.
 
+`migrations/0022_linked_intake_guidance.sql`, proposed by #219, adds nullable
+`intake_job.import_guidance`. The guidance is job-scoped input to one linked
+structuring call; it is not source text and does not belong on the saved recipe.
+This is another column-only migration: the existing table checks do not name the
+field, while its own length check travels with the column.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One

@@ -169,6 +169,27 @@ fetch refusal lands on the job as Finnish. `tests/intake.spec.ts` covers the
 screens, with the stub standing in for what the consumer would have written.
 `dev/check-intake-page-image.ts` covers the picture, below.
 
+### Guidance and visible flavor variants (#219)
+
+Issue #219 proposes two linked refinements to the web-address route. The URL
+field reveals an optional **Lisäohje tuontiin** field once an address is entered.
+The guidance is stored on the queued `intake_job`, not on the recipe, and reaches
+the existing structuring request as a separate user instruction. An empty field
+keeps the old request shape; a filled field does not add a second model call.
+
+Complete JSON-LD is still the preferred source, but it may flatten a visibly
+structured ingredient list. `readRecipeFromPage` therefore proposes preserving
+one bounded visible outline when, and only when, a heading explicitly announces
+flavor/version alternatives and at least two same-level headings follow it. The
+model gets that outline after the JSON-LD text. Ordinary component headings such
+as *pohja*, *täyte*, *kuorrute* and *kastike* do not trigger the outline.
+
+The structuring rules propose that a clearly named common base remains on the
+parent (`section: null`) while each sibling flavor becomes an ordinary named
+part. That is the representation requested for #219: all such parts remain part
+of the dish's cooking and shopping behavior, just like every existing child
+recipe. The common base is not copied into each part.
+
 ### The picture on the page (#205)
 
 #192 shipped without the page's photograph, and

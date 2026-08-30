@@ -320,7 +320,11 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
   const imageUrls = recipeImageUrls(recipe, markup, url);
 
   if (recipe !== null && recipeDataIsComplete(recipe)) {
-    const sourceText = recipeText(recipe);
+    const structure = visibleVariantStructure(markup);
+    const sourceText = [
+      recipeText(recipe),
+      structure === null ? "" : `Sivun näkyvä vaihtoehtorakenne:\n${structure}`,
+    ].filter((block) => block !== "").join("\n\n");
     if (sourceText.trim() !== "") {
       return {
         url,
@@ -347,6 +351,65 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
     structured: false,
     imageUrls,
   };
+}
+
+/**
+ * Preserve a bounded ingredient outline when complete JSON-LD flattened an
+ * explicitly labelled set of sibling variants (#219).
+ *
+ * A trigger must itself be a heading. The first heading after it chooses the
+ * variant level, and at least two headings at that level must appear before a
+ * higher-level boundary. This accepts both a peer intro and an intro above its
+ * options, while ordinary component headings still do not opt in by existing.
+ */
+function visibleVariantStructure(markup: string): string | null {
+  const visibleMarkup = stripNonVisibleMarkup(markup);
+  const headings = [...visibleMarkup.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi)]
+    .map((match) => ({
+      start: match.index ?? 0,
+      level: Number(match[1]),
+      text: plainText(match[2] ?? ""),
+    }));
+  const variantWords = /\b(?:seuraavat\s+)?makuvaihtoehd\w*|\bseuraavat\s+vaihtoehd\w*|\beri\s+ma(?:ut|kua)\b|\bmakuversio(?:t|ita)?\b/i;
+
+  for (let index = 0; index < headings.length; index += 1) {
+    const trigger = headings[index]!;
+    if (!variantWords.test(trigger.text)) continue;
+
+    let end = visibleMarkup.length;
+    let variantLevel: number | null = null;
+    let siblingCount = 0;
+    for (let next = index + 1; next < headings.length; next += 1) {
+      const heading = headings[next]!;
+      if (variantLevel === null) {
+        if (heading.level < trigger.level) {
+          end = heading.start;
+          break;
+        }
+        variantLevel = heading.level;
+      } else if (heading.level < variantLevel) {
+        end = heading.start;
+        break;
+      }
+      if (heading.level === variantLevel) siblingCount += 1;
+    }
+    if (siblingCount < 2) continue;
+
+    let start = trigger.start;
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      const heading = headings[previous]!;
+      if (heading.level < trigger.level) break;
+      if (heading.level === trigger.level) {
+        start = heading.start;
+        break;
+      }
+    }
+
+    const structure = visibleText(visibleMarkup.slice(start, end));
+    if (structure !== "") return structure.slice(0, 4_000);
+  }
+
+  return null;
 }
 
 /** The three fields without which structured data is not a usable recipe. */
@@ -768,16 +831,19 @@ function plainText(value: string, joiner = " "): string {
  * navigation menu read as a recipe is worse than a short one.
  */
 export function visibleText(markup: string): string {
-  const stripped = markup
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|template|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
-    .replace(/<(nav|header|footer|aside|form)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
-
-  return plainText(stripped, "\n")
+  return plainText(stripNonVisibleMarkup(markup), "\n")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "")
     .join("\n");
+}
+
+/** Remove content a person reading the page cannot see as recipe prose. */
+function stripNonVisibleMarkup(markup: string): string {
+  return markup
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|template|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<(nav|header|footer|aside|form)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
 }
 
 /**

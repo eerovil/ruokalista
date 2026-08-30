@@ -135,7 +135,7 @@ export const MAX_PAGES_BASE64_BYTES = 8 * 1024 * 1024;
 export type IntakeSource =
   | { route: "pasted"; text: string }
   | { route: "photographed"; images: IntakeImage[] }
-  | { route: "linked"; url: string; text: string };
+  | { route: "linked"; url: string; text: string; guidance?: string };
 
 /** The model asked for. Exposed so a streamed draft can be stamped with it. */
 export const STRUCTURED_BY = MODEL;
@@ -343,6 +343,12 @@ Nettisivulta luetun tekstin lisäsäännöt:
   se, minkä sivu itse kertoo.
 - Jos jokin tieto puuttuu tekstistä, jätä kenttä null. Älä täydennä sitä
   yleistiedolla ruokalajista.
+- Jos lähdetekstin lopussa on otsikko "Sivun näkyvä vaihtoehtorakenne", se on
+  sivun omasta HTML-rakenteesta säilytetty tarkennus litteälle JSON-LD-listalle.
+  Käytä sitä ainesrivien section-kenttien määrittämiseen.
+- Jos käyttäjän sisältöön kuuluu erillinen "Käyttäjän lisäohje tuontiin" -osa,
+  noudata sitä ensisijaisena tulkintaohjeena, kun se ei riko näitä sääntöjä.
+  Lisäohje ei ole reseptin lähdetekstiä eikä sitä kopioida source_text-kenttään.
 `;
 
 /**
@@ -395,6 +401,13 @@ export const DRAFT_RULES = `Säännöt, joista ei poiketa:
   section-kenttään sen osan nimi täsmälleen kuten se sivulla lukee. Jos rivi tai
   vaihe ei kuulu mihinkään osaan, jätä section null. Älä keksi osia: jos
   sivulla ei ole väliotsikoita, kaikki section-kentät ovat null.
+- Kun lähde nimeää yhteisen pohjan ja sen jälkeen useita rinnakkaisia maku- tai
+  versiovaihtoehtoja (esimerkiksi "Seuraavat makuvaihtoehdot"), jätä yhteisen
+  pohjan rivien section null ja anna jokaiselle vaihtoehdolle sen oman otsikon
+  mukainen section. Älä kopioi yhteistä pohjaa vaihtoehtoihin. Tee tämä vain,
+  kun vaihtoehtoisuus sanotaan selvästi ja vaihtoehdot ovat rinnakkaisia;
+  tavalliset osat kuten pohja, täyte, kuorrute ja kastike säilyvät tavallisina
+  nimettyinä osina.
 - Kun reseptissä on nimettyjä osia, luokittele jokainen section null -rivi ja
   -vaihe ruoanlaittojärjestyksen mukaan. phase on before_parts, kun työ tehdään
   ennen nimettyjä osia, ja after_parts, kun se on kokoamista, yhdistämistä,
@@ -458,8 +471,20 @@ ${extra}${ingredientDictionary(ingredients)}`;
  * one-photo import is not quietly a different prompt.
  */
 function userContent(source: IntakeSource) {
-  if (source.route === "pasted" || source.route === "linked") {
+  if (source.route === "pasted") {
     return source.text;
+  }
+
+  if (source.route === "linked") {
+    const guidance = source.guidance?.trim() ?? "";
+    if (guidance === "") return source.text;
+    return [
+      { type: "text" as const, text: source.text },
+      {
+        type: "text" as const,
+        text: `Käyttäjän lisäohje tuontiin:\n${guidance}`,
+      },
+    ];
   }
 
   const pages = source.images;

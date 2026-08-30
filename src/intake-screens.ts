@@ -10,6 +10,7 @@ import {
   intakeJobImageRef,
   IntakeRefused,
   listIntakeJobs,
+  MAX_IMPORT_GUIDANCE,
   readIntakeJobImage,
   retryIntakeJob,
   type IntakeJob,
@@ -103,11 +104,19 @@ const STREAMING_ISLAND = `
   var status = document.getElementById('status');
   var photoHelp = document.getElementById('photo-help');
   var chosenList = document.getElementById('chosen');
+  var guidanceFields = document.getElementById('guidance-fields');
   if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise) return;
 
   var button = form.querySelector('button[type="submit"]');
   if (!button) return;
   var linkField = form.sourceUrl;
+  function showGuidance() {
+    if (guidanceFields) guidanceFields.hidden = !linkField || !linkField.value.trim();
+  }
+  if (linkField && linkField.addEventListener) {
+    linkField.addEventListener('input', showGuidance);
+  }
+  showGuidance();
   button.disabled = false;
   status.textContent = '';
   var photosWork = !!(window.createImageBitmap && window.URL && window.URL.createObjectURL);
@@ -311,6 +320,9 @@ const STREAMING_ISLAND = `
       }) };
     } else if (linked) {
       body = { url: link };
+      if (form.importGuidance && form.importGuidance.value.trim()) {
+        body.guidance = form.importGuidance.value.trim();
+      }
     } else {
       body = { sourceText: text };
     }
@@ -484,6 +496,21 @@ function intakeForm(
           ? "Sivu haetaan taustalla ja siitä luetaan resepti. Osoite jää talteen reseptin lähteeksi."
           : "Sivu haetaan taustalla ja sen sisältöä käytetään muutosehdotuksessa."}
       </p>
+
+      <div id="guidance-fields" hidden>
+        <label for="importGuidance">Lisäohje tuontiin (valinnainen)</label>
+        <textarea
+          id="importGuidance"
+          name="importGuidance"
+          rows="3"
+          maxlength="${MAX_IMPORT_GUIDANCE}"
+          aria-describedby="guidance-help"
+          placeholder="Esim. Tee jokaisesta makuvaihtoehdosta oma aliresepti."
+        ></textarea>
+        <p class="empty" id="guidance-help">
+          Käytetään vain nettiosoitteen tulkintaan. Tyhjä kenttä ei muuta tuontia.
+        </p>
+      </div>
 
       <label for="camera">…tai ota kuva painetusta sivusta</label>
       <input
@@ -752,6 +779,10 @@ export async function startIntakeJob(
     image?: unknown;
     mediaType?: unknown;
     images?: unknown;
+    url?: unknown;
+    guidance?: unknown;
+    recipeId?: unknown;
+    mode?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
