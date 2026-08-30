@@ -983,10 +983,16 @@ test("a send puts an already-ticked row back to still-to-buy (#236)", async ({
   );
 
   const calls = await externalRequests(page);
+  const added = calls.filter(
+    (call) => call.method === "POST" && call.path === "/items",
+  );
   const cleared = calls.filter(
     (call) => call.method === "PATCH" && call.body?.["collected"] === false,
   );
-  expect(cleared).toHaveLength(2);
+  // Every row the send put on the list, not only the two that were ticked:
+  // whether a row was collected before is not something this has to know.
+  expect(added.length).toBeGreaterThan(2);
+  expect(cleared).toHaveLength(added.length);
 
   const list = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
     headers: { authorization: "Bearer test-s-ostoslista-token" },

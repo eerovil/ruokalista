@@ -109,9 +109,14 @@ export class SOstoslistaClient {
    * "make sure this is there", so it hands back the row it already had —
    * ticked and all, if the household bought that product on the last trip.
    * That is what #236 saw: a freshly sent list where some of it already looked
-   * collected. A row that comes back collected is therefore cleared, which is
-   * one extra call only in that case; a genuinely new row is created unticked
-   * by the service itself.
+   * collected.
+   *
+   * The clear that follows is unconditional rather than a reaction to the
+   * response's `collected` flag. Deciding on the flag would mean trusting the
+   * service to send it: an answer that simply omits the field reads as
+   * not-collected here, and a keyed row that was ticked would then quietly
+   * stay ticked. #236 asks for every sent row to be buyable whatever it was
+   * before, so this says it outright and costs a second call per item.
    */
   async add(key: SOstoslistaKey): Promise<SOstoslistaItem> {
     const payload = await this.#request("items", {
@@ -119,7 +124,6 @@ export class SOstoslistaClient {
       body: JSON.stringify(cleanKey(key)),
     });
     const item = readItem(payload, "add response");
-    if (!item.collected) return item;
     return this.setCollected(item.id, false);
   }
 
@@ -280,10 +284,11 @@ function readItem(value: unknown, at: string): SOstoslistaItem {
   if (item["ean"] !== null && typeof item["ean"] !== "string") {
     throw malformed(`${at}.ean is invalid`);
   }
-  // A row the service does not say anything about is one nobody has ticked.
-  // Missing is not malformed here: the flag is detail on top of the identity
-  // this client was written around, and refusing a whole send over it would be
-  // a worse answer than treating the row as still to be bought.
+  // A row the service does not say anything about is read as one nobody has
+  // ticked. Missing is not malformed here: the flag is detail on top of the
+  // identity this client was written around, and refusing a whole send over it
+  // would be a worse answer. Nothing decides on this reading — `add` clears the
+  // row either way — so the guess cannot cost a member anything.
   const collected = nullableBoolean(item["collected"], `${at}.collected`);
   return {
     id: item["id"],
