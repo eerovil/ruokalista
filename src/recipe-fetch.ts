@@ -184,12 +184,39 @@ export async function fetchRecipePage(
   address: string,
   fetcher: PageFetcher = fetch,
 ): Promise<FetchedPage> {
-  const { url, response } = await follow(
-    normaliseRecipeUrl(address),
-    "text/html,application/xhtml+xml",
-    fetcher,
-    AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  );
+  const requested = normaliseRecipeUrl(address);
+  const deadline = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+
+  let followed: Followed;
+  try {
+    followed = await follow(
+      requested,
+      "text/html,application/xhtml+xml",
+      fetcher,
+      deadline,
+    );
+  } catch (error) {
+    const slug = kRuokaRecipeSlug(requested);
+    if (!(error instanceof PageRefused) || error.reason !== "unreachable" || slug === null) {
+      throw error;
+    }
+
+    // K-Ruoka's recipe pages are intermittently replaced by a Cloudflare
+    // browser challenge before their perfectly usable JSON-LD reaches us
+    // (#237). Its own frontend reads the same recipe from a JSON endpoint.
+    // Keep that private, site-specific dependency behind this fallback: the
+    // ordinary fetch and extractor remain the one path for every other site.
+    try {
+      return await fetchKRuokaRecipe(requested, slug, fetcher, deadline);
+    } catch {
+      // The public page's refusal is still the stable contract. If K-Ruoka
+      // changes its undocumented frontend API, members get the existing
+      // paste/photo guidance rather than a new implementation detail.
+      throw error;
+    }
+  }
+
+  const { url, response } = followed;
 
   const contentType = (response.headers.get("Content-Type") ?? "").toLowerCase();
   if (
@@ -210,6 +237,13 @@ interface Followed {
   response: Response;
 }
 
+/** Honest request context for K-Ruoka's cross-site JSON reads. */
+const K_RUOKA_API_HEADERS = {
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "cross-site",
+} as const;
+
 /**
  * One GET, with its redirects walked by hand.
  *
@@ -223,6 +257,7 @@ async function follow(
   accept: string,
   fetcher: PageFetcher,
   deadline: AbortSignal,
+  extraHeaders: Readonly<Record<string, string>> = {},
 ): Promise<Followed> {
   let url = start;
 
@@ -233,13 +268,7 @@ async function follow(
         method: "GET",
         redirect: "manual",
         signal: deadline,
-        headers: {
-          // Named honestly. A site that would rather not be read this way can
-          // see who is reading, which is the least a fetcher owes it.
-          "User-Agent": "Ruokalista/1.0 (recipe import; +https://ruokalista.vilpponen.fi)",
-          Accept: accept,
-          "Accept-Language": "fi,en;q=0.8",
-        },
+        headers: requestHeaders(accept, extraHeaders),
       });
     } catch (cause) {
       throw new PageRefused("unreachable", `Fetch failed: ${String(cause)}`);
@@ -268,6 +297,248 @@ async function follow(
   }
 
   throw new PageRefused("unreachable", "Too many redirects.");
+}
+
+function requestHeaders(
+  accept: string,
+  extra: Readonly<Record<string, string>>,
+): Record<string, string> {
+  return {
+    // Named honestly. A site that would rather not be read this way can see
+    // who is reading, which is the least a fetcher owes it.
+    "User-Agent": "Ruokalista/1.0 (recipe import; +https://ruokalista.vilpponen.fi)",
+    Accept: accept,
+    "Accept-Language": "fi,en;q=0.8",
+    ...extra,
+  };
+}
+
+// ------------------------------------------------------- K-Ruoka fallback
+
+/** A K-Ruoka recipe slug, and nothing broader on that host. */
+function kRuokaRecipeSlug(url: URL): string | null {
+  const host = url.hostname.toLowerCase();
+  if (host !== "www.k-ruoka.fi" && host !== "k-ruoka.fi") return null;
+
+  const match = /^\/reseptit\/([^/]+)\/?$/.exec(url.pathname);
+  if (match === null) return null;
+  try {
+    const slug = decodeURIComponent(match[1] ?? "");
+    return /^[a-z0-9-]+$/.test(slug) ? slug : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read one recipe through the same read-only endpoint K-Ruoka's page uses.
+ *
+ * The endpoint requires the frontend's current build and a store. A request
+ * without the build returns 409 plus `K-Ruoka-Build`, which is how the frontend
+ * knows it must reload; the store list is another read-only frontend endpoint.
+ * Discover both on every fallback rather than baking either into this app.
+ */
+async function fetchKRuokaRecipe(
+  requested: URL,
+  slug: string,
+  fetcher: PageFetcher,
+  deadline: AbortSignal,
+): Promise<FetchedPage> {
+  const apiUrl = new URL(`/kr-api/v1/recipe/${encodeURIComponent(slug)}`, requested.origin);
+  const build = await kRuokaBuild(apiUrl, fetcher, deadline);
+  const store = await kRuokaStore(requested.origin, build, fetcher, deadline);
+  apiUrl.searchParams.set("storeId", store);
+  const api = await follow(
+    apiUrl,
+    "application/json",
+    fetcher,
+    deadline,
+    {
+      ...K_RUOKA_API_HEADERS,
+      "X-K-Build-Number": build,
+    },
+  );
+  const contentType = (api.response.headers.get("Content-Type") ?? "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    throw new PageRefused("unreachable", `K-Ruoka API was not JSON: ${contentType}`);
+  }
+
+  let wire: unknown;
+  try {
+    wire = JSON.parse(await readCapped(api.response));
+  } catch (cause) {
+    if (cause instanceof PageRefused) throw cause;
+    throw new PageRefused("unreachable", `K-Ruoka API was unreadable: ${String(cause)}`);
+  }
+
+  const recipe = kRuokaRecipeData(wire);
+  if (recipe === null || !recipeDataIsComplete(recipe)) {
+    throw new PageRefused("unreachable", "K-Ruoka API had no complete recipe.");
+  }
+
+  return {
+    url: requested.toString(),
+    sourceText: capped(recipeText(recipe)),
+    title: stringField(recipe["name"]),
+    structured: true,
+    imageUrls: recipeImageUrls(recipe, "", requested.toString()),
+  };
+}
+
+async function kRuokaBuild(
+  apiUrl: URL,
+  fetcher: PageFetcher,
+  deadline: AbortSignal,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetcher(apiUrl.toString(), {
+      method: "GET",
+      redirect: "manual",
+      signal: deadline,
+      headers: requestHeaders("application/json", {
+        ...K_RUOKA_API_HEADERS,
+      }),
+    });
+  } catch (cause) {
+    throw new PageRefused("unreachable", `K-Ruoka build check failed: ${String(cause)}`);
+  }
+
+  const build = response.headers.get("K-Ruoka-Build");
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The header is the whole negotiation; closing its tiny error body is
+    // best-effort and cannot turn a usable build into a failed import.
+  }
+  if (response.status !== 409 || build === null || !/^\d+$/.test(build)) {
+    throw new PageRefused("unreachable", "K-Ruoka did not identify its frontend build.");
+  }
+  return build;
+}
+
+async function kRuokaStore(
+  origin: string,
+  build: string,
+  fetcher: PageFetcher,
+  deadline: AbortSignal,
+): Promise<string> {
+  const stores = await follow(
+    new URL("/kr-api/stores/", origin),
+    "application/json",
+    fetcher,
+    deadline,
+    {
+      ...K_RUOKA_API_HEADERS,
+      "X-K-Build-Number": build,
+    },
+  );
+  const contentType = (stores.response.headers.get("Content-Type") ?? "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    throw new PageRefused("unreachable", "K-Ruoka store list was not JSON.");
+  }
+
+  let wire: unknown;
+  try {
+    wire = JSON.parse(await readCapped(stores.response));
+  } catch (cause) {
+    if (cause instanceof PageRefused) throw cause;
+    throw new PageRefused("unreachable", `K-Ruoka store list was unreadable: ${String(cause)}`);
+  }
+  if (!isJsonObject(wire) || !Array.isArray(wire["results"])) {
+    throw new PageRefused("unreachable", "K-Ruoka store list had an unknown shape.");
+  }
+  for (const entry of wire["results"]) {
+    if (!isJsonObject(entry) || typeof entry["id"] !== "string") continue;
+    if (/^[A-Za-z0-9_-]+$/.test(entry["id"])) return entry["id"];
+  }
+  throw new PageRefused("unreachable", "K-Ruoka store list was empty.");
+}
+
+/** Turn the narrow, validated Finnish API fields into ordinary Recipe data. */
+function kRuokaRecipeData(wire: unknown): JsonObject | null {
+  if (!isJsonObject(wire) || !isJsonObject(wire["recipe"])) return null;
+  const source = wire["recipe"];
+  const name = finnishField(source["name"]);
+  const ingredients = kRuokaIngredients(source["ingredients"]);
+  const instructions = kRuokaInstructions(source["instructions"]);
+  if (
+    name === null ||
+    ingredients === null ||
+    ingredients.length === 0 ||
+    instructions === null ||
+    instructions.length === 0
+  ) return null;
+
+  const recipe: JsonObject = {
+    "@type": "Recipe",
+    name,
+    recipeIngredient: ingredients,
+    recipeInstructions: instructions,
+  };
+
+  const description = finnishField(source["description"]);
+  if (description !== null) recipe["description"] = description;
+  const yields = kRuokaYield(source);
+  if (yields !== null) recipe["recipeYield"] = yields;
+  const images = kRuokaPictures(source["pictures"]);
+  if (images.length > 0) recipe["image"] = images;
+  return recipe;
+}
+
+function kRuokaIngredients(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const lines: string[] = [];
+  for (const entry of value) {
+    if (!isJsonObject(entry)) return null;
+    const name = finnishField(entry["productSpelling"]);
+    if (name === null) return null;
+    const amount = finnishField(entry["amount"]);
+    const unit = finnishField(entry["unit"]);
+    const detail = finnishField(entry["additionalInfo"]);
+    lines.push([amount, unit, detail, name].filter((part) => part !== null).join(" "));
+  }
+  return lines;
+}
+
+function kRuokaInstructions(value: unknown): JsonObject[] | null {
+  if (!Array.isArray(value)) return null;
+  const steps: JsonObject[] = [];
+  for (const entry of value) {
+    if (!isJsonObject(entry)) return null;
+    const text = finnishField(entry["instruction"]);
+    if (text === null) return null;
+    steps.push({ "@type": "HowToStep", text });
+  }
+  return steps;
+}
+
+function kRuokaPictures(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isJsonObject(entry) || typeof entry["url"] !== "string") return [];
+    const url = entry["url"].trim();
+    return url === "" ? [] : [url];
+  });
+}
+
+function kRuokaYield(recipe: JsonObject): string | null {
+  const count = typeof recipe["servingCountLabel"] === "string"
+    ? plainText(recipe["servingCountLabel"])
+    : "";
+  const unit = finnishField(recipe["servingCountUnit"]);
+  if (count === "") return null;
+  return unit === null ? count : `${count} ${unit}`;
+}
+
+function finnishField(value: unknown): string | null {
+  if (!isJsonObject(value) || typeof value["fi"] !== "string") return null;
+  const text = plainText(value["fi"]);
+  return text === "" ? null : text;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
