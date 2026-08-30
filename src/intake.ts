@@ -5,6 +5,7 @@ import type { DraftIngredientRef } from "./ingredient-refs.ts";
 import { MAX_REFS_PER_STEP, mentionResolves } from "./ingredient-refs.ts";
 import type { IngredientSummary } from "./ingredients.ts";
 import { alternativeGroup, type AlternativeGroup } from "./alternatives.ts";
+import { usableAmounts } from "./draft-amounts.ts";
 import { recipePhase, type RecipePhase } from "./recipe-phase.ts";
 
 /**
@@ -485,6 +486,9 @@ export const DRAFT_RULES = `Säännöt, joista ei poiketa:
 
 - Älä koskaan keksi määrää tai yksikköä. Jos teksti ei sano, jätä null.
 - Säilytä yksikkö täsmälleen sellaisena kuin resepti sen kirjoitti (dl, rkl, tl, kpl, g).
+- Määrä on aina suurempi kuin nolla. Älä koskaan kirjoita nollaa tai negatiivista
+  lukua: jos määrää ei ole, quantity on null. Jos määrä olisi niin pieni että se
+  pyöristyisi nollaan, kirjoita se pienemmässä yksikössä (kg → g, l → dl tai ml).
 - Kopioi jokainen source_line sanatarkasti sellaisena kuin se rivillä lukee.
 - Aseta quantity_max vain kun rivi todella ilmaisee välin, myös sanoin
   kirjoitettuna ("1–1 ja ½ l"). Muuten null.
@@ -1152,7 +1156,9 @@ function toDraftLine(raw: unknown): DraftLine {
   // halves or neither, and never stands alone.
   const altPairIsWhole = altQuantity !== null && altUnit !== null;
 
-  return {
+  // Amounts are repaired here rather than refused, so that a draft the app
+  // produced is always one the save accepts (#233).
+  return usableAmounts({
     quantity,
     quantityMax: numberOrNull(line["quantity_max"]),
     unit: textOrNull(line["unit"]),
@@ -1167,7 +1173,7 @@ function toDraftLine(raw: unknown): DraftLine {
     section: textOrNull(line["section"]),
     phase: recipePhase(line["phase"]),
     alternativeGroup: alternativeGroup(line["alternative_group"]),
-  };
+  });
 }
 
 function numberOrNull(value: unknown): number | null {

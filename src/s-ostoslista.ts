@@ -11,6 +11,8 @@ export interface SOstoslistaItem {
   id: string;
   name: string;
   ean: string | null;
+  /** Whether the phone's list shows this row as already picked up. */
+  collected: boolean;
 }
 
 export interface SOstoslistaProduct {
@@ -99,13 +101,41 @@ export class SOstoslistaClient {
     );
   }
 
-  /** Add either one concrete EAN product or one free-text reminder. */
+  /**
+   * Add either one concrete EAN product or one free-text reminder, and leave it
+   * on the list as still to be bought.
+   *
+   * The service's add is keyed: adding something already on the list means
+   * "make sure this is there", so it hands back the row it already had —
+   * ticked and all, if the household bought that product on the last trip.
+   * That is what #236 saw: a freshly sent list where some of it already looked
+   * collected.
+   *
+   * The clear that follows is unconditional rather than a reaction to the
+   * response's `collected` flag. Deciding on the flag would mean trusting the
+   * service to send it: an answer that simply omits the field reads as
+   * not-collected here, and a keyed row that was ticked would then quietly
+   * stay ticked. #236 asks for every sent row to be buyable whatever it was
+   * before, so this says it outright and costs a second call per item.
+   */
   async add(key: SOstoslistaKey): Promise<SOstoslistaItem> {
     const payload = await this.#request("items", {
       method: "POST",
       body: JSON.stringify(cleanKey(key)),
     });
-    return readItem(payload, "add response");
+    const item = readItem(payload, "add response");
+    return this.setCollected(item.id, false);
+  }
+
+  /** Say whether one row on the list has been picked up. */
+  async setCollected(id: string, collected: boolean): Promise<SOstoslistaItem> {
+    const item = id.trim();
+    if (item === "") throw new SOstoslistaError("Item id is empty.");
+    const payload = await this.#request(`items/${encodeURIComponent(item)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ collected }),
+    });
+    return readItem(payload, "collected response");
   }
 
   /**
@@ -254,7 +284,18 @@ function readItem(value: unknown, at: string): SOstoslistaItem {
   if (item["ean"] !== null && typeof item["ean"] !== "string") {
     throw malformed(`${at}.ean is invalid`);
   }
-  return { id: item["id"], name: item["name"], ean: item["ean"] };
+  // A row the service does not say anything about is read as one nobody has
+  // ticked. Missing is not malformed here: the flag is detail on top of the
+  // identity this client was written around, and refusing a whole send over it
+  // would be a worse answer. Nothing decides on this reading — `add` clears the
+  // row either way — so the guess cannot cost a member anything.
+  const collected = nullableBoolean(item["collected"], `${at}.collected`);
+  return {
+    id: item["id"],
+    name: item["name"],
+    ean: item["ean"],
+    collected: collected === true,
+  };
 }
 
 function readProduct(value: unknown, at: string): SOstoslistaProduct {

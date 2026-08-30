@@ -42,7 +42,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts`, `src/ingredient-refs.ts`, `src/alternatives.ts`, `src/categories.ts`, `src/category-bulk.ts`, `src/category-admin.ts` |
 | Changing a recipe with a prompt | `src/recipe-prompt-edit.ts`, `src/recipe-prompt-screens.ts` |
 | Publishing a recipe, and a household's own default for one | `src/recipe-publish.ts`, `src/recipe-preference.ts`, `src/publish-screens.ts` |
-| Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/intake-jobs.ts`, `src/recipe-fetch.ts`, `src/batch-intake.ts`, `src/line-form.ts` |
+| Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/intake-jobs.ts`, `src/recipe-fetch.ts`, `src/batch-intake.ts`, `src/line-form.ts`, `src/draft-amounts.ts` |
 | Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |

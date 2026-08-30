@@ -10,7 +10,14 @@ interface LoggedRequest {
 }
 
 const requests: LoggedRequest[] = [];
-const items: Array<{ id: string; name: string; ean: string | null }> = [];
+interface Item {
+  id: string;
+  name: string;
+  ean: string | null;
+  collected: boolean;
+}
+
+const items: Item[] = [];
 let failNext = false;
 let failSync = false;
 let nextId = 1;
@@ -123,6 +130,26 @@ createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/_test/requests") {
     return send(response, 200, { requests });
   }
+  // The state #236 is about: a product the household already bought last week
+  // is still on the list, ticked. Set up here rather than through the API so a
+  // test can arrange it without pretending to be the phone.
+  if (request.method === "POST" && url.pathname === "/_test/collected") {
+    const ean = url.searchParams.get("ean");
+    const note = url.searchParams.get("note");
+    const found = items.find((item) => ean !== null ? item.ean === ean : item.name === note);
+    if (!found) {
+      const created: Item = {
+        id: `item-${nextId++}`,
+        name: note ?? Object.values(products).flat().find((one) => one.ean === ean)?.name ?? ean!,
+        ean,
+        collected: true,
+      };
+      items.push(created);
+      return send(response, 200, created);
+    }
+    found.collected = true;
+    return send(response, 200, found);
+  }
 
   if (request.headers.authorization !== `Bearer ${token}`) {
     return send(response, 401, { error: "unauthorized" });
@@ -158,13 +185,22 @@ createServer(async (request, response) => {
     const existing = items.find((item) => ean !== null ? item.ean === ean : item.name === note);
     if (existing) return send(response, 200, existing);
     const product = Object.values(products).flat().find((one) => one.ean === ean);
-    const created = {
+    const created: Item = {
       id: `item-${nextId++}`,
       name: note ?? product?.name ?? ean!,
       ean,
+      collected: false,
     };
     items.push(created);
     return send(response, 201, created);
+  }
+  if (request.method === "PATCH" && url.pathname.startsWith("/items/")) {
+    const id = decodeURIComponent(url.pathname.slice("/items/".length));
+    const found = items.find((item) => item.id === id);
+    if (!found) return send(response, 404, { error: "item not found" });
+    const record = isRecord(body) ? body : {};
+    if (typeof record["collected"] === "boolean") found.collected = record["collected"];
+    return send(response, 200, found);
   }
   if (request.method === "DELETE" && url.pathname === "/items") {
     const ean = url.searchParams.get("ean");
