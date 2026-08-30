@@ -33,7 +33,7 @@ test("list uses bearer auth and reads the service item shape", async () => {
     json({ items: [{ id: "one", name: "Maito", ean: "6415712506032" }] }),
   ]);
   assert.deepEqual(await api.list(), [
-    { id: "one", name: "Maito", ean: "6415712506032" },
+    { id: "one", name: "Maito", ean: "6415712506032", collected: false },
   ]);
   assert.equal(calls[0]?.url, "https://private.example/api/items");
   assert.equal(new Headers(calls[0]?.init?.headers).get("authorization"), "Bearer secret-token");
@@ -68,6 +68,19 @@ test("add supports a concrete EAN and a free-text note", async () => {
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { ean: "6415712506032" });
   assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { note: "Suola — 1 tl" });
   assert.equal(calls[0]?.init?.method, "POST");
+  assert.equal(calls.length, 2, "a new row is already unticked, so nothing follows the add");
+});
+
+test("adding something already ticked puts it back to still-to-buy (#236)", async () => {
+  const api = client([
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: true }, 200),
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: false }),
+  ]);
+  const added = await api.add({ ean: "6415712506032" });
+  assert.equal(added.collected, false);
+  assert.equal(calls[1]?.url, "https://private.example/api/items/ean-item");
+  assert.equal(calls[1]?.init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { collected: false });
 });
 
 test("sync posts once and accepts an answer with no body at all", async () => {

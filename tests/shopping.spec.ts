@@ -958,6 +958,44 @@ test("sending uses stored EANs, note fallbacks, and excludes the pantry", async 
   expect(added.every((call) => !("quantity" in (call.body ?? {})))).toBe(true);
 });
 
+test("a send puts an already-ticked row back to still-to-buy (#236)", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  // Last week's trip: both of these are on the phone's list already, and both
+  // were picked up. Sending them again has to mean "buy these", not leave the
+  // member hunting for which of the twenty rows are new.
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?ean=6415712506032`,
+  );
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?note=${encodeURIComponent("vesi — 2–3 l")}`,
+  );
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const calls = await externalRequests(page);
+  const cleared = calls.filter(
+    (call) => call.method === "PATCH" && call.body?.["collected"] === false,
+  );
+  expect(cleared).toHaveLength(2);
+
+  const list = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
+    headers: { authorization: "Bearer test-s-ostoslista-token" },
+  });
+  const items = ((await list.json()) as { items: Array<{ collected: boolean }> }).items;
+  expect(items.length).toBeGreaterThan(0);
+  expect(items.every((item) => item.collected === false)).toBe(true);
+});
+
 test("a finished send pushes the phone's list once, after the last item", async ({
   page,
   request,
