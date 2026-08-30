@@ -276,12 +276,12 @@ test("optional guidance follows a web address into its queued import", async ({
     .getByLabel("…tai hae resepti nettiosoitteesta")
     .fill("https://www.kinuskikissa.fi/valipalapatukat");
   await expect(guidance).toBeVisible();
-  await guidance.fill("Tee jokaisesta makuvaihtoehdosta oma aliresepti.");
+  await guidance.fill("Sivulla on kaksi reseptiä; lue vain alempi.");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   expect(calls).toHaveLength(1);
   expect(calls[0]?.body.guidance).toBe(
-    "Tee jokaisesta makuvaihtoehdosta oma aliresepti.",
+    "Sivulla on kaksi reseptiä; lue vain alempi.",
   );
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Appelsiini-kaakao" })).toBeVisible();
