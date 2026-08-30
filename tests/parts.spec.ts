@@ -83,6 +83,77 @@ test("a part can still be opened and edited on its own", async ({ page }) => {
   await expect(page.locator(".line input[name$=section]")).toHaveCount(0);
 });
 
+test("the dish's editor names each part and links into it (#231)", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3/edit");
+
+  const parts = page.locator(".recipe-parts li");
+  await expect(parts).toHaveCount(2);
+  await expect(parts.nth(0)).toContainText("Jauhelihakastike");
+  await expect(parts.nth(1)).toContainText("Juustokastike");
+  // What each part holds, so two of them are told apart without opening both.
+  await expect(parts.nth(0)).toContainText("1 aines · 2 vaihetta");
+  await expect(parts.nth(1)).toContainText("2 ainesta · 1 vaihe");
+
+  await expect(
+    page.getByRole("link", { name: "Muokkaa osaa Jauhelihakastike" }),
+  ).toHaveAttribute("href", "/recipes/4/edit");
+  await expect(
+    page.getByRole("link", { name: "Muokkaa osaa Juustokastike" }),
+  ).toHaveAttribute("href", "/recipes/5/edit");
+});
+
+test("a recipe with no parts says nothing about parts (#231)", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+  await expect(page.locator(".recipe-parts")).toHaveCount(0);
+  await expect(page.locator(".part-parent")).toHaveCount(0);
+});
+
+test("editing a part changes that part and leaves the other alone (#231)", async ({
+  page,
+}) => {
+  await page.goto("/recipes/3/edit");
+  await page.getByRole("link", { name: "Muokkaa osaa Juustokastike" }).click();
+
+  await expect(page).toHaveURL("/recipes/5/edit");
+  await expect(page.locator("#title")).toHaveValue("Juustokastike");
+  // Which of the lasagne's two parts is open, and the way back to the dish.
+  await expect(
+    page.getByRole("link", { name: "← Osa ruokalajia Lasagne" }),
+  ).toHaveAttribute("href", "/recipes/3/edit");
+
+  // The three things the card asks to be editable: name, amounts, method.
+  await page.locator("#title").fill("Valkokastike");
+  await page
+    .locator(".line")
+    .first()
+    .locator("input[name$=quantity]")
+    .first()
+    .fill("6");
+  await page
+    .locator('textarea[name="step.0"]')
+    .fill("Kuumenna maito ja vispaa juusto joukkoon.");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  // A saved part lands back on its dish, where the change reads in context.
+  await expect(page).toHaveURL("/recipes/3");
+  const sections = page.locator(".part");
+  await expect(sections.nth(1).locator("h2")).toHaveText("Valkokastike");
+  await expect(sections.nth(1)).toContainText("6 dl");
+  await expect(sections.nth(1)).toContainText("vispaa juusto");
+
+  // The sibling part is untouched, which is the whole point of opening one.
+  await expect(sections.nth(0).locator("h2")).toHaveText("Jauhelihakastike");
+  await expect(sections.nth(0)).toContainText("400 g");
+  await expect(sections.nth(0)).toContainText("Ruskista jauheliha.");
+
+  // Put the lasagne back for the cases after this one.
+  reseed();
+});
+
 test("a plain recipe renders exactly as before", async ({ page }) => {
   await page.goto("/recipes/1");
   await expect(page.locator(".part")).toHaveCount(0);

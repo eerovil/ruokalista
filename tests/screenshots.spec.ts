@@ -2424,7 +2424,8 @@ test.describe("an assisted edit whose part moved underneath it (#215)", () => {
     await other.goto("/recipes/5/edit");
     await other.locator(".line").first().locator("input[name$=quantity]").fill("7");
     await other.locator(".save-bar button").click();
-    await other.waitForURL(/\/recipes\/5$/);
+    // A saved part lands on its dish since #231, not on its own page.
+    await other.waitForURL(/\/recipes\/3$/);
     await other.close();
 
     await save(page);
@@ -2495,5 +2496,48 @@ test.describe("saving a recipe from its name alone (#211)", () => {
     });
 
     await context.close();
+  });
+});
+
+test.describe("editing a part from the dish's editor (#231)", () => {
+  test.beforeAll(reseed);
+
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(1)]);
+  });
+
+  test("the dish's parts, one of them open, and the dish after it is saved", async ({
+    page,
+  }) => {
+    await page.goto("/recipes/3/edit");
+    await expect(page.locator(".recipe-parts li")).toHaveCount(2);
+    await expect(page.locator(".recipe-parts")).toContainText("Juustokastike");
+    await capture(page, { path: `${SHOTS}/101-editor-parts.png`, fullPage: true });
+
+    await page.getByRole("link", { name: "Muokkaa osaa Juustokastike" }).click();
+    await expect(page.locator("#title")).toHaveValue("Juustokastike");
+    await expect(
+      page.getByRole("link", { name: "← Osa ruokalajia Lasagne" }),
+    ).toBeVisible();
+    await page.locator("#title").fill("Valkokastike");
+    await page
+      .locator('textarea[name="step.0"]')
+      .fill("Kuumenna maito ja vispaa juusto joukkoon.");
+    await capture(page, { path: `${SHOTS}/102-part-editor.png`, fullPage: true });
+
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+    await expect(page).toHaveURL("/recipes/3");
+    await expect(page.locator(".part").nth(1).locator("h2")).toHaveText(
+      "Valkokastike",
+    );
+    await expect(page.locator(".part").nth(1)).toContainText("vispaa juusto");
+    await capture(page, {
+      path: `${SHOTS}/103-part-saved-on-dish.png`,
+      fullPage: true,
+    });
+
+    // The lasagne goes back as it was, so a later regeneration of the shots
+    // above starts from the seeded dish rather than from this one's edit.
+    reseed();
   });
 });

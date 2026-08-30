@@ -32,6 +32,22 @@ field; `saveRecipe` turns distinct names into child recipes. Nothing carries a
 section once saved, which is why the editor has no part field: a saved part is a
 recipe you edit on its own screen.
 
+That screen had no way in. Parts are off the recipe list and out of the picker,
+and the dish's own editor never mentioned that it had any, so reaching a part's
+editor meant knowing its id (issue #231). This change proposes the missing link
+and nothing more: `editorForm` (`src/recipe-editor.ts`) grows an **Osat** block —
+each part named, with how many ingredients and steps it holds, and a *Muokkaa*
+link to its own editor. It sits above the form, because a part opens on a screen
+of its own and that is a way out of this one; putting it before anything
+editable means it is read before there is anything typed here to lose. It is
+left out of a prompt edit's review, where the parts are being changed inside
+this very form. A part's editor gains the line back the other way — *← Osa
+ruokalajia Lasagne*, linking to the dish's editor — which is also what says
+which of three parts is open, and saving a part now lands on the dish's page
+rather than the part's own, because a part is only ever opened from the dish and
+the change is a piece of it. `Recipe.parentTitle` (`src/recipes.ts`) is read in
+the same query as the rest of the row so that line costs no second load.
+
 Issue #208 proposes the one exception, and it is narrow: a prompt edit is shown
 the whole dish, parts and all, so its review does carry the field and
 `replaceRecipe` does write the parts a submitted recipe names. The editor still
