@@ -211,6 +211,29 @@ test("a flat structured recipe keeps an explicit visible flavor outline", () => 
   assert.ok(!page.sourceText.includes("Tarvikkeet"), page.sourceText);
 });
 
+test("a flavor intro may sit above its sibling flavor headings", () => {
+  const markup = `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      "@type": "Recipe",
+      name: "Välipalapatukat",
+      recipeIngredient: ["100 g pähkinöitä", "15 g vadelmia", "1 tl lakritsijauhetta"],
+      recipeInstructions: "Sekoita massaan haluamasi maku.",
+    })}</script></head><body><main>
+      <h2>Ainekset</h2>
+      <h3>Perusmassa</h3><p>100 g pähkinöitä</p>
+      <h3>Makuvaihtoehdot</h3>
+      <h4>Vadelma</h4><p>15 g vadelmia</p>
+      <h4>Lakritsi</h4><p>1 tl lakritsijauhetta</p>
+      <h3>Tarvikkeet</h3><p>leivinpaperi</p>
+    </main></body></html>`;
+
+  const page = readRecipeFromPage(markup, "https://leivonta.example/valipalapatukat");
+
+  assert.match(page.sourceText, /Sivun näkyvä vaihtoehtorakenne:/);
+  assert.match(page.sourceText, /Perusmassa[\s\S]*Vadelma[\s\S]*Lakritsi/);
+  assert.ok(!page.sourceText.includes("Tarvikkeet"), page.sourceText);
+});
+
 test("ordinary component headings do not create a variant outline", () => {
   const markup = `<!doctype html><html><head>
     <script type="application/ld+json">${JSON.stringify({

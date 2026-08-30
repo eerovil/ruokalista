@@ -357,9 +357,10 @@ export function readRecipeFromPage(markup: string, url: string): FetchedPage {
  * Preserve a bounded ingredient outline when complete JSON-LD flattened an
  * explicitly labelled set of sibling variants (#219).
  *
- * A trigger must itself be a heading, and at least two same-level headings
- * must follow it before the surrounding section ends. Ordinary component
- * headings therefore do not opt into this path merely by existing.
+ * A trigger must itself be a heading. The first heading after it chooses the
+ * variant level, and at least two headings at that level must appear before a
+ * higher-level boundary. This accepts both a peer intro and an intro above its
+ * options, while ordinary component headings still do not opt in by existing.
  */
 function visibleVariantStructure(markup: string): string | null {
   const visibleMarkup = stripNonVisibleMarkup(markup);
@@ -376,14 +377,21 @@ function visibleVariantStructure(markup: string): string | null {
     if (!variantWords.test(trigger.text)) continue;
 
     let end = visibleMarkup.length;
+    let variantLevel: number | null = null;
     let siblingCount = 0;
     for (let next = index + 1; next < headings.length; next += 1) {
       const heading = headings[next]!;
-      if (heading.level < trigger.level) {
+      if (variantLevel === null) {
+        if (heading.level < trigger.level) {
+          end = heading.start;
+          break;
+        }
+        variantLevel = heading.level;
+      } else if (heading.level < variantLevel) {
         end = heading.start;
         break;
       }
-      if (heading.level === trigger.level) siblingCount += 1;
+      if (heading.level === variantLevel) siblingCount += 1;
     }
     if (siblingCount < 2) continue;
 
