@@ -1156,7 +1156,7 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   await expect(page.locator("#status")).toHaveText(
-    "Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.",
+    "Palvelin ei ottanut reseptiä vastaan. Yritä hetken kuluttua uudelleen.",
   );
   await expect(page.locator("#status")).not.toContainText("Kokeile myöhemmin");
   await expect(page.getByLabel("Liitä reseptin teksti")).toHaveValue(
@@ -1164,6 +1164,156 @@ test("a failed structuring keeps what was typed", async ({ page }) => {
   );
   // And it lets you try again rather than stranding you.
   await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
+});
+
+/**
+ * Issue #222: a photographed import that dies in the browser used to leave no
+ * trace anywhere — not a request, not a log line, not a row — so the only
+ * evidence a later investigation had was the absence of evidence.
+ */
+
+/** Every failure report the island sends, in the order it sends them. */
+async function captureFailureReports(
+  page: Page,
+): Promise<Array<Record<string, unknown>>> {
+  const reports: Array<Record<string, unknown>> = [];
+  await page.route("**/api/intake/failures", async (route) => {
+    reports.push(
+      JSON.parse(route.request().postData() ?? "{}") as Record<string, unknown>,
+    );
+    await route.continue();
+  });
+  return reports;
+}
+
+test("a request that never leaves is reported, and says so", async ({
+  page,
+}) => {
+  const reports = await captureFailureReports(page);
+  // An aborted request is what a dropped connection looks like to the island:
+  // the fetch rejects and nothing about it ever reaches the Worker.
+  await page.route("**/api/intake/imports", (route) => route.abort());
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  // The wording is the browser's own, not the server's, so a household is not
+  // told the server refused something it never saw.
+  await expect(page.locator("#status")).toHaveText(
+    "Reseptin lähetys ei onnistunut tällä laitteella. Tarkista verkkoyhteys ja yritä uudelleen.",
+  );
+
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]!["step"]).toBe("send");
+  expect(reports[0]!["route"]).toBe("pasted");
+  expect(reports[0]!["status"]).toBe(0);
+  // The real reason, in English, on its way to the log rather than the screen.
+  expect(String(reports[0]!["detail"])).not.toBe("");
+  await expect(page.locator("#status")).not.toContainText(
+    String(reports[0]!["detail"]),
+  );
+});
+
+test("a server refusal is reported with its status and its own wording", async ({
+  page,
+}) => {
+  const reports = await captureFailureReports(page);
+  await page.route("**/api/intake/imports", (route) =>
+    route.fulfill({ status: 503, body: '{"error":"Kokeile myöhemmin."}' }),
+  );
+
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  await expect(page.locator("#status")).toHaveText(
+    "Palvelin ei ottanut reseptiä vastaan. Yritä hetken kuluttua uudelleen.",
+  );
+
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]!["step"]).toBe("refused");
+  expect(reports[0]!["status"]).toBe(503);
+});
+
+test("a photographed import reports the pages it was carrying", async ({
+  page,
+}) => {
+  const reports = await captureFailureReports(page);
+  await page.route("**/api/intake/imports", (route) => route.abort());
+
+  await page.goto("/intake");
+  await choosePages(page, "photo", [
+    { text: "Sivu yksi" },
+    { text: "Sivu kaksi" },
+  ]);
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]!["step"]).toBe("send");
+  expect(reports[0]!["route"]).toBe("photographed");
+  expect(reports[0]!["pages"]).toBe(2);
+  // The size of the import is the number #218 turned on, so a report that
+  // names the step should carry it too.
+  expect(Number(reports[0]!["bytes"])).toBeGreaterThan(0);
+});
+
+test("a page that cannot be read is reported before anything is sent", async ({
+  page,
+}) => {
+  const reports = await captureFailureReports(page);
+
+  await page.goto("/intake");
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File([new Uint8Array([1, 2, 3, 4])], "sivu.png", {
+        type: "image/png",
+      }),
+    );
+    const input = document.getElementById("photo") as HTMLInputElement;
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  await expect(page.locator("#status")).toContainText(
+    "Yhtä kuvista ei voitu lukea",
+  );
+
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]!["step"]).toBe("shrink");
+  expect(reports[0]!["pages"]).toBe(0);
+});
+
+test("the failure route takes anything and answers 204", async ({ page }) => {
+  await page.goto("/intake");
+
+  // Best-effort by construction: a report that is nonsense, or not JSON at
+  // all, must not become a second thing that can fail an import.
+  for (const body of [
+    JSON.stringify({ step: "send", detail: "Failed to fetch" }),
+    JSON.stringify({ step: "smuggled", bytes: "lots" }),
+    "not json at all",
+    "",
+  ]) {
+    const response = await page.request.post("/api/intake/failures", {
+      headers: { "Content-Type": "application/json" },
+      data: body,
+    });
+    expect(response.status()).toBe(204);
+  }
+});
+
+test("reporting a failure is closed to a signed-out browser", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const response = await context.request.post("/api/intake/failures", {
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ step: "send" }),
+  });
+  expect(response.status()).toBe(401);
+  await context.close();
 });
 
 async function pasteAndStructure(page: import("@playwright/test").Page) {

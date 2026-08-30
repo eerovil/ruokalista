@@ -119,3 +119,4 @@ The same environment variable gates them.
 | `106-sharing-shortcut.png` | Proposed recipe screen saying who can see the dish under its title, with the way to change it — so nobody opens the editor for a control it does not have (#217) |
 | `107-sharing-save-bar.png` | The sharing control one tap later: the visibility choice and **Tallenna jako** on screen together, in the same bar the editor and the import review use |
 | `108-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |
+| `109-intake-send-failed.png` | Proposed wording for a photographed import whose request never left the phone: it names the device and the connection rather than reading like the server's refusal, and the pages stay chosen so the same import can be sent again (#222) |

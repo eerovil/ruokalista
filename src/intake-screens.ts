@@ -16,6 +16,7 @@ import {
   type IntakeJob,
 } from "./intake-jobs.ts";
 import {
+  clientFailureLog,
   draftFromJson,
   importFailureMessage,
   MAX_IMAGES,
@@ -193,6 +194,54 @@ const STREAMING_ISLAND = `
     return total;
   }
 
+  // Which way in the member is using, worked out the same way the submit
+  // handler works it out, so a report says which import gave way.
+  function currentRoute() {
+    if (pages.length > 0) return 'photographed';
+    return linkField && linkField.value.trim() ? 'linked' : 'pasted';
+  }
+
+  // Tell the Worker that this import gave way here, so the log line names the
+  // step rather than only the fact (#222). Best-effort by construction:
+  // nothing waits for it, it is never on the path of a working import, and
+  // every way it can fail is swallowed — a report must not become another
+  // thing that can fail an import. keepalive so a tab that is going away
+  // still gets the line out.
+  function report(step, detail, status) {
+    try {
+      var body = JSON.stringify({
+        step: step,
+        detail: String(detail === undefined || detail === null ? '' : detail).slice(0, 300),
+        status: status || 0,
+        route: currentRoute(),
+        pages: pages.length,
+        bytes: totalBytes()
+      });
+      if (window.fetch) {
+        window.fetch('/api/intake/failures', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body,
+          keepalive: true
+        }).then(null, function () {});
+      } else if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/intake/failures', body);
+      }
+    } catch (ignored) {
+      // Nothing to do: the import has already failed, and no member is
+      // waiting on the report of it.
+    }
+  }
+
+  // A failure carries the hop it happened at, so the report and the wording
+  // both know whether the browser gave up or the server refused.
+  function tagged(error, step, status) {
+    var carried = new Error(String((error && error.message) || error || step));
+    carried.step = step;
+    carried.status = status || 0;
+    return carried;
+  }
+
   // Rebuilt whole every time, so the numbering and the remove buttons always
   // agree with the list rather than with the order things were added.
   function renderPages() {
@@ -250,13 +299,16 @@ const STREAMING_ISLAND = `
       return shrink(file).then(function (page) {
         if (page.bytes > MAX_PAGE_BYTES) {
           notice = 'Yksi kuvista on liian suuri lähetettäväksi. Ota se uudelleen.';
+          report('oversize', 'one page is ' + page.bytes + ' base64 bytes');
         } else if (totalBytes() + page.bytes > MAX_PAGES_BYTES) {
           notice = 'Kuvat ovat yhteensä liian suuria. Poista jokin sivu ja yritä uudelleen.';
+          report('oversize', 'pages total ' + (totalBytes() + page.bytes) + ' base64 bytes');
         } else {
           pages.push(page);
         }
-      }, function () {
+      }, function (error) {
         notice = 'Yhtä kuvista ei voitu lukea. Kokeile ottaa se uudelleen.';
+        report('shrink', (error && error.message) || 'the page could not be decoded');
       }).then(function () {
         reading--;
         refresh();
@@ -331,24 +383,40 @@ const STREAMING_ISLAND = `
       .then(function (body) {
         if (form.recipeId) body.recipeId = form.recipeId.value;
         if (form.mode) body.mode = form.mode.value;
+        var payload;
+        try {
+          payload = JSON.stringify(body);
+        } catch (error) {
+          throw tagged(error, 'encode');
+        }
         return fetch('/api/intake/imports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: payload,
+        }).then(null, function (error) {
+          // The request never left. This is the hop that used to look
+          // identical to a server refusal, on the screen and in the log.
+          throw tagged(error, 'send');
         }).then(function (response) {
           if (!response.ok) {
             // A 400 is this app refusing in Finnish it wrote itself — an
             // address that is not one, or too many pages. That wording is
             // worth showing; anything else stays generic.
             return response.json().then(function (body) {
-              var refusal = new Error((body && body.error) || '');
+              var refusal = tagged(
+                (body && body.error) || 'no error body',
+                'refused',
+                response.status
+              );
               refusal.member = response.status === 400 && !!(body && body.error);
               throw refusal;
             }, function () {
-              throw new Error(String(response.status));
+              throw tagged('unreadable error body', 'refused', response.status);
             });
           }
-          return response.json();
+          return response.json().then(null, function (error) {
+            throw tagged(error, 'reply', response.status);
+          });
         });
       })
       .then(function (job) {
@@ -362,12 +430,22 @@ const STREAMING_ISLAND = `
         }
       })
       .catch(function (error) {
+        var step = (error && error.step) || 'unknown';
+        report(step, error && error.message, error && error.status);
         // Only wording this island wrote is shown. Anything else — a transport
         // error, a server body — is generic, so no English or raw response
         // text ever lands on a member's screen.
+        //
+        // The two generic sentences are deliberately different (#222). "The
+        // recipe never left this device" and "the server would not take it"
+        // are different things to do next, and until now they read the same —
+        // which is what made #218 take two investigations to settle.
+        var answered = step === 'refused' || step === 'reply';
         status.textContent = error && error.member
           ? error.message
-          : 'Jäsennys epäonnistui. Yritä hetken kuluttua uudelleen.';
+          : answered
+            ? 'Palvelin ei ottanut reseptiä vastaan. Yritä hetken kuluttua uudelleen.'
+            : 'Reseptin lähetys ei onnistunut tällä laitteella. Tarkista verkkoyhteys ja yritä uudelleen.';
         // The counts belonged to an attempt that came to nothing. Leaving them
         // up would read as a half-finished import that is still going.
         progress.hidden = true;
@@ -798,6 +876,30 @@ export async function startIntakeJob(
       ? problem(400, error.message)
       : problem(503, "Reseptin jäsennystä ei voitu käynnistää.");
   }
+}
+
+/**
+ * `POST /api/intake/failures` — one log line for an import that gave way in
+ * the browser, before the Worker ever heard of it (#222).
+ *
+ * It answers 204 to anything, including a body it could not read. This is the
+ * one route whose whole purpose is to record that something already failed, so
+ * it must not become a second thing that can fail: nothing waits for it, and
+ * an unusable report is still worth a line naming the step.
+ */
+export async function reportIntakeFailure(
+  { request }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  let body: unknown = null;
+  try {
+    body = await request.json();
+  } catch {
+    body = null;
+  }
+
+  console.log(JSON.stringify(clientFailureLog(body, member.householdId)));
+  return new Response(null, { status: 204 });
 }
 
 /** `GET /api/intake/imports/:id` — household-scoped polling state. */

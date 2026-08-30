@@ -174,6 +174,84 @@ export function importFailureMessage(error: unknown): string {
     : GENERIC_REFUSAL;
 }
 
+/**
+ * The hops of an import that happen in the browser, before the Worker has any
+ * record of it (#222). A failure at any of them used to leave nothing behind
+ * anywhere — no request, no log line, no row — so the only evidence a later
+ * investigation had was the absence of evidence.
+ *
+ * `oversize` and `shrink` happen while a page is being chosen; `encode` and
+ * `send` while the request is being built and dispatched; `refused` and `reply`
+ * once the Worker has answered. Anything else the browser sends is recorded as
+ * `unknown` rather than trusted into the log.
+ */
+export const CLIENT_FAILURE_STEPS = [
+  "shrink",
+  "oversize",
+  "encode",
+  "send",
+  "refused",
+  "reply",
+] as const;
+
+/** The ways in, as the browser names them. */
+const CLIENT_ROUTES = ["photographed", "linked", "pasted"] as const;
+
+/**
+ * How much of the browser's English detail is kept. A log line is for naming
+ * the step that gave way, not for carrying a stack trace, and the body arrives
+ * from a page so its length is not this app's to trust.
+ */
+const MAX_CLIENT_DETAIL = 300;
+
+/** One log record for an import that gave way in the browser. */
+export interface ClientFailureLog {
+  event: "intake.client_failed";
+  step: string;
+  route: string;
+  status: number;
+  pages: number;
+  bytes: number;
+  detail: string;
+  household_id: number;
+}
+
+const oneOf = (value: unknown, allowed: readonly string[]): string =>
+  typeof value === "string" && allowed.indexOf(value) !== -1 ? value : "unknown";
+
+const whole = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0;
+
+/**
+ * Shape a browser's failure report into the line that goes to the log.
+ *
+ * Every field is narrowed here rather than trusted: the report comes from a
+ * page, so an unknown step stays `unknown` and a long detail is cut. The event
+ * name is deliberately not `intake.failed` — reading the name alone has to be
+ * enough to tell "the browser gave up" from "the server refused".
+ */
+export function clientFailureLog(
+  body: unknown,
+  householdId: number,
+): ClientFailureLog {
+  const report = (body ?? {}) as Record<string, unknown>;
+  const detail = report["detail"];
+
+  return {
+    event: "intake.client_failed",
+    step: oneOf(report["step"], CLIENT_FAILURE_STEPS),
+    route: oneOf(report["route"], CLIENT_ROUTES),
+    status: whole(report["status"]),
+    pages: whole(report["pages"]),
+    bytes: whole(report["bytes"]),
+    detail:
+      typeof detail === "string" ? detail.slice(0, MAX_CLIENT_DETAIL) : "",
+    household_id: householdId,
+  };
+}
+
 /** How many times one import calls the model before it gives up. */
 const ATTEMPTS = 2;
 
