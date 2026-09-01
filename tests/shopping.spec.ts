@@ -184,6 +184,23 @@ async function currentListLoaded(page: Page): Promise<void> {
   await expect(page.locator(".s-current .spinner")).toHaveCount(0);
 }
 
+/**
+ * Send the list, then wait for the panel's own refresh to have landed, and say
+ * how many still-to-buy rows it drew. Waiting for a row the send must have put
+ * there is what makes the count safe: the refresh follows the send's answer, so
+ * the panel is briefly still the empty one.
+ */
+async function sendAndReadPanel(page: Page): Promise<number> {
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  const items = page.locator(".s-current-items li");
+  await expect(items.filter({ hasText: "vesi — 2–3 l" })).toHaveCount(1);
+  await currentListLoaded(page);
+  return items.count();
+}
+
 async function externalRequests(page: Page): Promise<
   Array<{ method: string; path: string; body: Record<string, unknown> | null }>
 > {
@@ -850,7 +867,9 @@ test("the shopping screen shows what the S list already holds, and refreshes it"
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   await currentListLoaded(page);
-  await expect(page.locator(".s-current-state")).toContainText("vielä tyhjä");
+  await expect(page.locator(".s-current-state")).toContainText(
+    "ei ole keräämättömiä rivejä",
+  );
 
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toContainText(
@@ -867,6 +886,147 @@ test("the shopping screen shows what the S list already holds, and refreshes it"
   await expect(items.filter({ hasText: "vesi — 2–3 l" })).toContainText(
     "Teksti",
   );
+});
+
+test("the panel leaves out the rows the S list has already collected", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  const before = await sendAndReadPanel(page);
+  const items = page.locator(".s-current-items li");
+  expect(before).toBeGreaterThan(2);
+
+  // The shopping trip: the milk and the water are in the trolley, and both are
+  // ticked on the phone. The panel is about what is left.
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/collected?ean=6415712506032`);
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?note=${encodeURIComponent("vesi — 2–3 l")}`,
+  );
+
+  await page.reload();
+  await currentListLoaded(page);
+  await expect(items).toHaveCount(before - 2);
+  await expect(items.filter({ hasText: "Kotimaista rasvaton maito" })).toHaveCount(0);
+  await expect(items.filter({ hasText: "vesi — 2–3 l" })).toHaveCount(0);
+});
+
+test("a product and a text row can each be taken off the S list from the panel", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  const before = await sendAndReadPanel(page);
+  const items = page.locator(".s-current-items li");
+  const milk = items.filter({ hasText: "Kotimaista rasvaton maito" });
+  await milk
+    .getByRole("button", { name: /Poista S-ostoslistalta/ })
+    .click();
+  // The row goes without the screen being loaded again.
+  await expect(milk).toHaveCount(0);
+
+  const water = items.filter({ hasText: "vesi — 2–3 l" });
+  await water.getByRole("button", { name: /Poista S-ostoslistalta/ }).click();
+  await expect(water).toHaveCount(0);
+  await expect(items).toHaveCount(before - 2);
+
+  // Really off the S list, by the service's own keys, and the phone was pushed.
+  const calls = await externalRequests(page);
+  expect(
+    calls.filter(
+      (call) =>
+        call.method === "DELETE" && call.path === "/items?ean=6415712506032",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter(
+      (call) =>
+        call.method === "DELETE" &&
+        call.path ===
+          `/items?note=${encodeURIComponent("vesi — 2–3 l").replace(/%20/g, "+")}`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((call) => call.method === "POST" && call.path === "/sync")
+      .length,
+  ).toBeGreaterThan(1);
+
+  const list = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
+    headers: { authorization: "Bearer test-s-ostoslista-token" },
+  });
+  const left = ((await list.json()) as {
+    items: Array<{ name: string; ean: string | null }>;
+  }).items;
+  expect(left.some((item) => item.ean === "6415712506032")).toBe(false);
+  expect(left.some((item) => item.name === "vesi — 2–3 l")).toBe(false);
+  expect(left.length).toBe(before - 2);
+
+  // And it stays gone on a fresh read.
+  await page.reload();
+  await currentListLoaded(page);
+  await expect(items).toHaveCount(before - 2);
+});
+
+test("a delete the service refuses puts the row back where it was", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  const before = await sendAndReadPanel(page);
+  const items = page.locator(".s-current-items li");
+  const names = await items.locator(".s-current-name").allInnerTexts();
+  const milk = items.filter({ hasText: "Kotimaista rasvaton maito" });
+
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  await milk.getByRole("button", { name: /Poista S-ostoslistalta/ }).click();
+
+  await expect(page.locator(".s-current-state")).toContainText(
+    "poisto S-ostoslistalta ei onnistunut",
+  );
+  // Back in the panel, in the same place, and still on the S list.
+  await expect(items).toHaveCount(before);
+  expect(await items.locator(".s-current-name").allInnerTexts()).toEqual(names);
+  const list = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
+    headers: { authorization: "Bearer test-s-ostoslista-token" },
+  });
+  const left = ((await list.json()) as { items: Array<{ ean: string | null }> })
+    .items;
+  expect(left.some((item) => item.ean === "6415712506032")).toBe(true);
+
+  // The retry beside the message is the same delete again, and this time it
+  // works.
+  await page.getByRole("button", { name: "Yritä uudelleen" }).click();
+  await expect(milk).toHaveCount(0);
+  await expect(items).toHaveCount(before - 1);
+});
+
+test("a row the S list has already lost still leaves the panel", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await sendAndReadPanel(page);
+  const items = page.locator(".s-current-items li");
+  const milk = items.filter({ hasText: "Kotimaista rasvaton maito" });
+  // Somebody cleared it on the phone between the panel being drawn and the
+  // member pressing the button. That is the state they asked for.
+  const dropped = await request.delete(
+    `${S_OSTOSLISTA_FIXTURE}/items?ean=6415712506032`,
+    { headers: { authorization: "Bearer test-s-ostoslista-token" } },
+  );
+  expect(dropped.ok()).toBe(true);
+
+  await milk.getByRole("button", { name: /Poista S-ostoslistalta/ }).click();
+  await expect(milk).toHaveCount(0);
+  await expect(page.locator(".s-current-state")).toBeHidden();
 });
 
 test("an unreadable S list is a line in its own panel, not a broken screen", async ({
@@ -894,7 +1054,9 @@ test("an unreadable S list is a line in its own panel, not a broken screen", asy
 
   failing = false;
   await page.getByRole("button", { name: "Yritä uudelleen" }).click();
-  await expect(page.locator(".s-current-state")).toContainText("vielä tyhjä");
+  await expect(page.locator(".s-current-state")).toContainText(
+    "ei ole keräämättömiä rivejä",
+  );
   await page.unroute("**/ostoslista/s-lista");
 });
 

@@ -200,6 +200,38 @@ expressions, feature-detected (it does nothing at all without `XMLHttpRequest`,
 `JSON` or `addEventListener`), and it builds every node with `createElement`
 and `createTextNode` so a product name from the shop can never become markup.
 
+### What is left to buy, and taking a row off it (issue #248)
+
+This pull request proposes narrowing that panel to what it is for, and giving
+it one action.
+
+- **Only the still-to-buy rows are drawn.** `currentListJson` filters on the
+  service's own `collected` flag and hands back what is left. The filter is
+  server-side deliberately: the browser has no business deciding from a name
+  which rows were picked up, and the flag is the only thing that knows. A row
+  ticked on the phone leaves the panel at its next refresh — a send, a retry,
+  or a reload. The empty line therefore says *S-ostoslistalla ei ole
+  keräämättömiä rivejä* rather than that the list is empty, because with
+  everything collected it is not.
+- **Each row carries its own delete.** `POST /ostoslista/s-lista/poista`
+  (`removeCurrentItemForm`) names the row by the key the service deletes by —
+  the EAN for a product, the text itself for a free-text row — because
+  `DELETE /items?ean=|?note=` is the only removal the service offers and the id
+  in a listing is not a key it accepts. So a product's removal takes every copy
+  of that product off the list, which is what "we are not buying this" means.
+  A 404 counts as already gone, for the same reason it does in `dropNote`, and
+  the phone is pushed afterwards best-effort: the removal is already made on the
+  service's copy, so a failed push is a phone that catches up at the next sweep.
+- **The row goes at once and comes back if the service refuses.** One delete at
+  a time, like every other asynchronous thing here; a refusal puts the row back
+  at the same position and puts the message and a `Yritä uudelleen` in the
+  panel's own state line. A delete whose answer arrives after the panel has
+  been redrawn from the service is dropped rather than restored — that answer is
+  newer than the row.
+- **The button is the row's height, not more.** `.s-current-remove` is a
+  `--tap-compact` square with no background, so the panel stays the compact
+  thing it was on a phone.
+
 ### Stopping the screen moving under the member (issue #200)
 
 The shape above worked and read badly on a phone. Every part of choosing a

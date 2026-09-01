@@ -1411,6 +1411,98 @@ test.describe("signed in", () => {
   });
 
   /**
+   * #248: the panel showing only what is still to buy, with a delete on every
+   * row. Photographed after a real trip has been ticked off on the phone, so
+   * the picture shows the state the card is about rather than a fresh send.
+   */
+  test("what is left on the S list, and taking a row off it", async ({
+    page,
+  }) => {
+    const planned = [
+      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
+      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
+    ];
+    expect(
+      (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
+    ).toBe(true);
+
+    await page.goto("/ostoslista");
+    const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
+    await milk.locator("summary").click();
+    await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+    const carton = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista rasvaton maito" });
+    await expect(carton).toBeVisible();
+    const picked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/ostoslista/tuote"),
+    );
+    await carton.getByRole("button", { name: "Valitse" }).click();
+    await picked;
+
+    await page.locator(".s-send-form button").click();
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    const rows = page.locator(".s-current-items li");
+    await expect(
+      rows.filter({ hasText: "Kotimaista rasvaton maito" }),
+    ).toHaveCount(1);
+
+    // The trip: the milk and the water are in the trolley and ticked on the
+    // phone. Neither should be in the picture below.
+    for (const query of [
+      "ean=6415712506032",
+      `note=${encodeURIComponent("vesi — 2–3 l")}`,
+    ]) {
+      expect(
+        (
+          await page.request.post(
+            `${S_OSTOSLISTA_FIXTURE}/_test/collected?${query}`,
+          )
+        ).ok(),
+      ).toBe(true);
+    }
+
+    await page.reload();
+    await expect(page.locator(".s-current")).toBeVisible();
+    await expect(page.locator(".s-current .spinner")).toHaveCount(0);
+    await expect(
+      rows.filter({ hasText: "Kotimaista rasvaton maito" }),
+    ).toHaveCount(0);
+    await expect(rows.filter({ hasText: "vesi — 2–3 l" })).toHaveCount(0);
+    // What is photographed: rows that are still to buy, each with its delete.
+    const left = await rows.count();
+    expect(left).toBeGreaterThan(0);
+    await expect(page.locator(".s-current-remove")).toHaveCount(left);
+    // The bottom tabs are fixed, so a full-page shot paints them wherever the
+    // viewport left them — scroll the panel into view or they land on top of it.
+    await rows.last().scrollIntoViewIfNeeded();
+    await capture(page, {
+      path: `${SHOTS}/116-s-ostoslista-still-to-buy.png`,
+      fullPage: true,
+    });
+
+    // And one of them taken off the list, without the screen reloading.
+    const first = rows.first();
+    const name = await first.locator(".s-current-name").innerText();
+    await first.getByRole("button", { name: /Poista S-ostoslistalta/ }).click();
+    await expect(rows.filter({ hasText: name })).toHaveCount(0);
+    await expect(rows).toHaveCount(left - 1);
+    await rows.last().scrollIntoViewIfNeeded();
+    await capture(page, {
+      path: `${SHOTS}/117-s-ostoslista-row-removed.png`,
+      fullPage: true,
+    });
+
+    for (const id of planned) {
+      await page.request.delete(`/api/batches/${id}`);
+    }
+  });
+
+  /**
    * The cupboard, used rather than empty: two staples put in from the list,
    * the list split into its two sections, and the cupboard's own page.
    */

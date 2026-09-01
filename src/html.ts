@@ -963,6 +963,12 @@ const STYLES = `
     border-top: 1px solid var(--edge);
   }
   .s-current-name { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  /* Square and no taller than the row's own text, so the delete costs the
+     panel no height on a phone. */
+  .s-current-remove { flex: 0 0 auto; align-self: center;
+    width: var(--tap-compact); min-height: var(--tap-compact); padding: 0;
+    background: transparent; color: var(--muted); font-size: 1rem;
+    line-height: 1; }
   .product-search-form { margin-bottom: 1rem; }
   .s-product-results { display: grid; gap: .7rem; }
   .s-product-results > li {
