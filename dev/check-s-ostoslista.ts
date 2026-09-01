@@ -100,6 +100,37 @@ test("a keyed row handed back without the flag is cleared too (#236)", async () 
   assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { collected: false });
 });
 
+test("a packet count goes out as the row's quantity, twice (#240)", async () => {
+  // The keyed add hands back the row last week's trip left behind, count and
+  // all, so the POST's quantity is the one the service may ignore. The patch
+  // states it again — that is the call that has to carry it.
+  const api = client([
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", quantity: 1 }, 200),
+    json({ id: "ean-item", name: "Maito", ean: "6415712506032", collected: false, quantity: 2 }),
+  ]);
+  await api.add({ ean: "6415712506032" }, 2);
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    ean: "6415712506032",
+    quantity: 2,
+  });
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), {
+    collected: false,
+    quantity: 2,
+  });
+});
+
+test("a count this app could not have worked out is refused, not rounded (#240)", async () => {
+  for (const bad of [0, -1, 1.5]) {
+    const api = client([]);
+    await assert.rejects(
+      () => api.add({ ean: "6415712506032" }, bad),
+      (error: unknown) =>
+        error instanceof SOstoslistaError && /whole number of at least 1/.test(error.message),
+    );
+    assert.equal(calls.length, 0, "nothing is sent for a count that makes no sense");
+  }
+});
+
 test("sync posts once and accepts an answer with no body at all", async () => {
   const api = client([new Response(null, { status: 204 })]);
   await api.sync();

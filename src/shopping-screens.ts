@@ -179,22 +179,30 @@ export async function sendShoppingListForm(
       : shoppingScreen(stateCtx, member, empty);
   }
 
+  // How many packets of each product the whole trip needs, worked out before
+  // anything is sent (#240). The service's add is keyed by EAN, so a product
+  // two rows both reach — a dish's pinned row beside the generic pile, or two
+  // ingredients that are bought as the same packet — is one row on the phone's
+  // list, and sending each row's own count would leave it holding whichever
+  // went last instead of the total.
+  const packets = packetCounts(buy);
+  const done = new Set<string>();
+
   let sent = 0;
   try {
     for (const item of buy) {
       if (item.chosen.length === 0) {
         await client.add({ note: `${item.name} — ${item.total}` });
       } else {
-        for (const { product, count } of item.chosen) {
-          await client.add({ ean: product.ean });
-          // The service's own add is keyed by EAN: sending the same one twice
-          // does not put two of it on the phone's list, and #161 says to use
-          // the integration's real semantics rather than assume a quantity
-          // field exists. So a second packet is said in the one way the API
-          // does carry — a written line beside the product.
-          if (count > 1) {
-            await client.add({ note: `${product.name} × ${count}` });
-          }
+        for (const { product } of item.chosen) {
+          if (done.has(product.ean)) continue;
+          done.add(product.ean);
+          // The count goes out as the quantity the service and the S-list both
+          // hold on a product row. Until #240 a second packet was a written
+          // line beside the product, on #161's reading that the integration
+          // carried no quantity at all — it does, and the note lost the
+          // mapping the household had chosen.
+          await client.add({ ean: product.ean }, packets.get(product.ean) ?? 1);
         }
       }
       sent += 1;
@@ -241,6 +249,26 @@ export async function sendShoppingListForm(
     `${sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
   );
+}
+
+/**
+ * Every product this list is buying and how many packets of it, added up across
+ * the whole list rather than per row.
+ *
+ * The rows themselves are already right: `shopping.ts::shoppingList` puts one
+ * ingredient's amounts in one total whatever recipes they came from, and
+ * `packaging.ts::planPackages` turns that total into packets. What this covers
+ * is the case above a row — the same product reached twice, which the packet
+ * planner never sees because it only ever looks at one row's need.
+ */
+function packetCounts(buy: ShoppingItem[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of buy) {
+    for (const { product, count } of item.chosen) {
+      counts.set(product.ean, (counts.get(product.ean) ?? 0) + count);
+    }
+  }
+  return counts;
 }
 
 /**

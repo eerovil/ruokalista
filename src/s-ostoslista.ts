@@ -117,23 +117,46 @@ export class SOstoslistaClient {
    * not-collected here, and a keyed row that was ticked would then quietly
    * stay ticked. #236 asks for every sent row to be buyable whatever it was
    * before, so this says it outright and costs a second call per item.
+   *
+   * `quantity` is how many of the product the row is for, and it is sent twice
+   * for the same reason the clear is unconditional: the keyed add hands back an
+   * existing row carrying whatever quantity the last trip left on it, so the
+   * POST's own value would be ignored exactly when it matters. The patch that
+   * follows states it again (#240).
    */
-  async add(key: SOstoslistaKey): Promise<SOstoslistaItem> {
+  async add(
+    key: SOstoslistaKey,
+    quantity: number | null = null,
+  ): Promise<SOstoslistaItem> {
+    const count = cleanQuantity(quantity);
     const payload = await this.#request("items", {
       method: "POST",
-      body: JSON.stringify(cleanKey(key)),
+      body: JSON.stringify({
+        ...cleanKey(key),
+        ...(count === null ? {} : { quantity: count }),
+      }),
     });
     const item = readItem(payload, "add response");
-    return this.setCollected(item.id, false);
+    return this.#patch(item.id, {
+      collected: false,
+      ...(count === null ? {} : { quantity: count }),
+    });
   }
 
   /** Say whether one row on the list has been picked up. */
   async setCollected(id: string, collected: boolean): Promise<SOstoslistaItem> {
+    return this.#patch(id, { collected });
+  }
+
+  async #patch(
+    id: string,
+    fields: { collected: boolean; quantity?: number },
+  ): Promise<SOstoslistaItem> {
     const item = id.trim();
     if (item === "") throw new SOstoslistaError("Item id is empty.");
     const payload = await this.#request(`items/${encodeURIComponent(item)}`, {
       method: "PATCH",
-      body: JSON.stringify({ collected }),
+      body: JSON.stringify(fields),
     });
     return readItem(payload, "collected response");
   }
@@ -274,6 +297,22 @@ function cleanKey(key: SOstoslistaKey): Record<string, string> {
   const value = ("ean" in key ? key.ean : key.note).trim();
   if (value === "") throw new SOstoslistaError(`${name} is empty.`);
   return { [name]: value };
+}
+
+/**
+ * A packet count the service will accept: a whole number, at least one. Null
+ * means "say nothing about it", which is what a note goes out as.
+ *
+ * Refusing rather than clamping is deliberate. A count of nought or a half is
+ * this app having got its arithmetic wrong, and quietly rounding it to one
+ * would send the shop a number nobody worked out.
+ */
+function cleanQuantity(quantity: number | null): number | null {
+  if (quantity === null) return null;
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    throw new SOstoslistaError(`quantity must be a whole number of at least 1, not ${quantity}.`);
+  }
+  return quantity;
 }
 
 function readItem(value: unknown, at: string): SOstoslistaItem {

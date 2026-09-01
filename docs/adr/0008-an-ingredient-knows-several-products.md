@@ -63,3 +63,8 @@ fillet or lose the pasta the one it asked for.
   private service's `POST /items` is keyed by EAN and holds one copy per key, so
   a second packet is sent as the written line beside the product rather than
   through a quantity field that may not exist.
+
+  *Superseded by [ADR-0014](0014-a-packet-count-is-the-s-list-rows-quantity.md)
+  (#240).* The keyed add is described correctly here, but the quantity field
+  does exist, and the written line lost the product mapping the household had
+  chosen. The count is now the row's own quantity.

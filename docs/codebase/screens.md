@@ -117,6 +117,16 @@ server, then sends only `Ostettavat`: a mapped ingredient goes by EAN, while an
 unmapped one becomes a note carrying the ingredient name and Ruokalista amount.
 No recipe amount becomes a package count.
 
+Issue #161 gave that last sentence up: an ingredient knows its packet sizes, so
+a row's total becomes a number of packets. #240 proposes carrying that number to
+the phone as the S-list row's own `quantity`, replacing the `× n` note #161 sent
+beside the product — see
+[ADR-0014](../adr/0014-a-packet-count-is-the-s-list-rows-quantity.md). The
+proposal also totals the counts per product before sending, because a dish
+pinned to its own product is a separate row from the generic pile and the
+service's add is keyed by EAN. A note is still what an ingredient with no
+product chosen goes as.
+
 An opened buy row shows either the cached S-group product or that it will be a
 note. Product choice is a server-rendered search at `/ostoslista/tuote`.
 Selecting a result repeats the search before writing, so the browser cannot

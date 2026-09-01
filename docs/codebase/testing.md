@@ -84,7 +84,10 @@ Playwright starts `tests/support/s-ostoslista-server.ts` on the port immediately
 after `PLAYWRIGHT_PORT`, and local Wrangler receives that fixture URL plus a
 harmless token through `--var`. The fixture records writes and can fail the next
 request, which proves EAN/note payloads, pantry exclusion, and recoverable
-outages without putting test rows on the phone's list.
+outages without putting test rows on the phone's list. #240 proposes teaching it
+`quantity` as well, and giving a row it invents for an already-bought product a
+count too — a keyed add handing back last week's number is the state the send
+has to overwrite rather than inherit.
 
 The suite runs two Playwright projects (`playwright.config.ts`): `chromium`
 (Pixel 7, a phone, because a week gets planned at the kitchen table) for
