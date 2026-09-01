@@ -316,8 +316,18 @@ function readTargetRecipeId(value: unknown): number | null {
 function readIntakeUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.trim() === "") return null;
   try {
-    return normaliseRecipeUrl(value).toString();
-  } catch {
+    const url = normaliseRecipeUrl(value);
+    const host = url.hostname.toLowerCase();
+    // K-Ruoka challenge-blocks server fetches. Do not work around that browser
+    // challenge or depend on its undocumented frontend API (#246).
+    if (host === "k-ruoka.fi" || host === "www.k-ruoka.fi") {
+      throw new IntakeRefused(
+        "K-Ruoka-linkkejä ei tueta. Liitä reseptin teksti tai tuo resepti kuvasta.",
+      );
+    }
+    return url.toString();
+  } catch (error) {
+    if (error instanceof IntakeRefused) throw error;
     throw new IntakeRefused(LINK_REFUSALS.invalid_url);
   }
 }
