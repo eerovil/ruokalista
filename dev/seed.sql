@@ -3,6 +3,9 @@
 -- Two households on purpose: household 2 exists so that anything leaking across
 -- the household_id filter shows up immediately in what household 1 can see.
 
+-- #244: what a previous send left on the S-list as text. Points at household
+-- only, so it goes before that.
+DELETE FROM s_ostoslista_sent_note;
 -- #161: the two product tables go first, they point at everything below.
 DELETE FROM recipe_ingredient_product;
 DELETE FROM ingredient_product;

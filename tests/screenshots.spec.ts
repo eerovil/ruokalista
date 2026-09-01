@@ -1365,6 +1365,46 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
+    // #244: juusto had no product a moment ago, so that send put it on the
+    // phone's list as the words `juusto — 300 g`. Find it a product and send
+    // again — the panel below is the one that used to show both, the old text
+    // and the new product, as two things to buy.
+    await expect(
+      page.locator(".s-current-items .s-current-note").filter({ hasText: /juusto/i }),
+    ).toHaveCount(1);
+    const cheese = page.locator(".shopping-item", { hasText: "juusto" }).first();
+    await cheese.locator("summary").click();
+    await cheese.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+    const grated = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista juustoraaste" });
+    await expect(grated).toBeVisible();
+    const cheesePicked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/ostoslista/tuote"),
+    );
+    await grated.getByRole("button", { name: "Valitse" }).click();
+    await cheesePicked;
+
+    await page.locator(".s-send-form button").click();
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    await expect(
+      page
+        .locator(".s-current-items .s-current-product")
+        .filter({ hasText: "Kotimaista juustoraaste" }),
+    ).toHaveCount(1);
+    // The whole point: the words this app sent last time are gone.
+    await expect(
+      page.locator(".s-current-items .s-current-note").filter({ hasText: /juusto/i }),
+    ).toHaveCount(0);
+    await capture(page, {
+      path: `${SHOTS}/114-s-ostoslista-note-replaced.png`,
+      fullPage: true,
+    });
+
     for (const id of planned) {
       await page.request.delete(`/api/batches/${id}`);
     }

@@ -264,6 +264,15 @@ function fakeDatabase(): {
         name: "Keiton oma öljy 250 ml",
       },
     ],
+    s_ostoslista_sent_note: [
+      {
+        id: 1,
+        household_id: 1,
+        row_key: "1",
+        note: "öljy — 5 dl",
+        sent_at: "2026-08-25 00:00:00",
+      },
+    ],
   };
 
   const db = {

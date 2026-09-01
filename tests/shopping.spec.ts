@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -1491,6 +1491,134 @@ test("a product two rows both reach is sent once, at the total (#240)", async ({
   // 400 g for the lasagne and 400 g for the meatloaf, one packet each.
   expect(quantityFor(sent, "6408430000159")).toBe(2);
 });
+
+test("choosing a product after a text send replaces the text row (#244)", async ({
+  page,
+  request,
+}) => {
+  // The report, step by step: milk goes as `maito — 5 dl` because nothing is
+  // mapped to it, the household then finds the product, and the next send used
+  // to leave both on the phone's list.
+  await createBatch(page, today(), LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await expect(row(page, "maito").locator(".shopping-total")).toHaveText("5 dl");
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  expect(await listNames(request)).toContain("maito — 5 dl");
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const items = await listItems(request);
+  const milk = items.filter((item) => /maito/i.test(item.name));
+  expect(milk.map((item) => item.name)).toEqual([
+    "Kotimaista rasvaton maito 1 l",
+  ]);
+  expect(milk[0]?.ean).toBe("6415712506032");
+});
+
+test("a note whose amount has changed since the last send is still replaced", async ({
+  page,
+  request,
+}) => {
+  // The reason the note is written down rather than recomputed: the key
+  // contains the amount, and next week's list cannot spell last week's key.
+  await createBatch(page, today(), LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+  expect(await listNames(request)).toContain("maito — 5 dl");
+
+  // A second, doubled cooking: the same ingredient, a different note.
+  await createBatch(page, inDays(1), LASAGNE, 2);
+  await page.goto("/ostoslista");
+  await expect(row(page, "maito").locator(".shopping-total")).toHaveText("15 dl");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+
+  const names = await listNames(request);
+  expect(names).not.toContain("maito — 5 dl");
+  expect(names).not.toContain("maito — 15 dl");
+  expect(names).toContain("Kotimaista rasvaton maito 1 l");
+});
+
+test("a send never removes a row the household added itself", async ({
+  page,
+  request,
+}) => {
+  await createBatch(page, today(), LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+
+  // Typed on the phone, and deliberately about milk too: nothing about the
+  // word is what makes a row this app's to delete — only having sent it is.
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?note=${encodeURIComponent("maito rasvaton")}`,
+  );
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+
+  const names = await listNames(request);
+  expect(names).toContain("maito rasvaton");
+  expect(names).not.toContain("maito — 5 dl");
+});
+
+test("a send that fails partway still replaces the note on the retry (#244)", async ({
+  page,
+  request,
+}) => {
+  await createBatch(page, today(), LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+  expect(await listNames(request)).toContain("maito — 5 dl");
+
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".refused")).toContainText(
+    "S-ostoslistaan ei saatu lähetettyä kaikkea",
+  );
+
+  // The note is still recorded, so the retry finishes what the outage stopped
+  // rather than stranding the text row on the phone for good.
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const names = await listNames(request);
+  expect(names).not.toContain("maito — 5 dl");
+  expect(names).toContain("Kotimaista rasvaton maito 1 l");
+});
+
+/** The fixture service's list, as the phone would see it. */
+async function listItems(
+  request: APIRequestContext,
+): Promise<Array<{ name: string; ean: string | null }>> {
+  const response = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
+    headers: { authorization: "Bearer test-s-ostoslista-token" },
+  });
+  expect(response.ok()).toBe(true);
+  return ((await response.json()) as {
+    items: Array<{ name: string; ean: string | null }>;
+  }).items;
+}
+
+async function listNames(request: APIRequestContext): Promise<string[]> {
+  return (await listItems(request)).map((item) => item.name);
+}
 
 type SentCall = Awaited<ReturnType<typeof externalRequests>>[number];
 
