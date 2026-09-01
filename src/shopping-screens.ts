@@ -24,6 +24,7 @@ import {
   SOstoslistaClient,
   SOstoslistaError,
   sProductImageAtWidth,
+  type SOstoslistaKey,
   type SOstoslistaProduct,
 } from "./s-ostoslista.ts";
 import {
@@ -365,6 +366,13 @@ export async function productSearchJson(
  * the household's own list is the thing somebody came here for, and a slow or
  * broken external read must not hold it up or take it down. A failure is one
  * line and a retry in the browser, not a refusal of the screen.
+ *
+ * What comes back is only what is still to be bought (#248). The panel's job is
+ * to say what is left, and a list that also repeats last week's ticked-off
+ * shopping is long enough to stop answering that question. The filter is the
+ * service's own `collected` flag and it is applied here rather than in the
+ * browser, so nothing on the screen is left guessing from a name which rows
+ * were already picked up.
  */
 export async function currentListJson(
   ctx: RouteContext,
@@ -374,11 +382,71 @@ export async function currentListJson(
   if (client === null) return new Response("Not found", { status: 404 });
 
   try {
-    return Response.json({ items: await client.list() });
+    const items = (await client.list()).filter((item) => !item.collected);
+    return Response.json({ items });
   } catch (error) {
     console.error(`S-ostoslista list read failed: ${reason(error)}`);
     return problem(502, "S-ostoslistan sisältöä ei saatu luettua.");
   }
+}
+
+/**
+ * `POST /ostoslista/s-lista/poista` — take one row off the S-ostoslista.
+ *
+ * The panel this serves is drawn by the island and exists only where there is
+ * a browser to fill it, so there is no screen to re-render on a refusal: the
+ * answer is JSON on both paths.
+ *
+ * The row is named by its own key — the EAN for a product, the text itself for
+ * a free-text row — because that is what the service deletes by
+ * (`DELETE /items?ean=` / `?note=`); the id it hands out in a listing is not a
+ * key it accepts. That also means removing a product removes every copy of it
+ * on the list, which is the wanted answer for a panel whose whole point is
+ * "this is no longer something we are buying".
+ *
+ * A row that is not there any more is the wanted state and not a failure, for
+ * the same reason it is in `dropNote`: the household may have cleared it on the
+ * phone since the panel was drawn, and the member asked for it to be gone.
+ */
+export async function removeCurrentItemForm(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const client = externalClient(ctx.env, member);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  const form = await ctx.request.formData();
+  const ean = String(form.get("ean") ?? "").trim();
+  const note = String(form.get("teksti") ?? "").trim();
+  if ((ean === "") === (note === "")) {
+    return problem(400, "Poistettavaa riviä ei tunnistettu.");
+  }
+  const key: SOstoslistaKey = ean === "" ? { note } : { ean };
+
+  let deleted: string[] = [];
+  try {
+    deleted = await client.remove(key);
+  } catch (error) {
+    if (!(error instanceof SOstoslistaError && error.status === 404)) {
+      console.error(`S-ostoslista removal failed: ${reason(error)}`);
+      return problem(502, "Rivin poisto S-ostoslistalta ei onnistunut. Yritä uudelleen.");
+    }
+  }
+
+  /**
+   * The phone is pushed for the reason a finished send pushes it, and at the
+   * same price: the removal is already made on the service's own copy, so a
+   * push that fails means a phone that catches up at the next sweep, not a
+   * delete that did not happen. Refusing here would put the panel back in a
+   * state the service has already left.
+   */
+  try {
+    await client.sync();
+  } catch (error) {
+    console.error(`S-ostoslista sync after removal failed: ${reason(error)}`);
+  }
+
+  return Response.json({ deleted });
 }
 
 /** The island asks for JSON with a field, so one route serves both callers. */
@@ -2271,6 +2339,13 @@ const SHOPPING_ISLAND = `
 
   // --------------------------------------------- what the S list already has
 
+  var NOTHING_LEFT = 'S-ostoslistalla ei ole keräämättömiä rivejä.';
+  var removing = false;
+  /* Which drawing of the panel a pending delete belongs to. A send refreshes
+     the panel from the service, and that answer is newer than anything a
+     failed delete could put back. */
+  var drawing = 0;
+
   function loadCurrent() {
     var panel = document.querySelector('.s-current');
     if (!panel) return;
@@ -2279,6 +2354,7 @@ const SHOPPING_ISLAND = `
     panel.hidden = false;
     clear(list);
     state.hidden = false;
+    drawing += 1;
     busy(state, 'Luetaan S-ostoslistaa…');
 
     request('GET', '/ostoslista/s-lista', null, function (ok, payload) {
@@ -2298,19 +2374,77 @@ const SHOPPING_ISLAND = `
       }
       var items = payload.items;
       if (items.length === 0) {
-        state.appendChild(document.createTextNode('S-ostoslista on vielä tyhjä.'));
+        state.appendChild(document.createTextNode(NOTHING_LEFT));
         return;
       }
       state.hidden = true;
       for (var index = 0; index < items.length; index += 1) {
-        var entry = document.createElement('li');
-        entry.className = items[index].ean ? 's-current-product' : 's-current-note';
-        entry.appendChild(el('span', 's-current-name', items[index].name));
-        entry.appendChild(
-          el('span', 'meta', items[index].ean ? 'Tuote' : 'Teksti')
-        );
-        list.appendChild(entry);
+        list.appendChild(currentRow(items[index], list, state));
       }
+    });
+  }
+
+  /* One still-to-buy row, and the button that takes it off the S list. */
+  function currentRow(item, list, state) {
+    var entry = document.createElement('li');
+    entry.className = item.ean ? 's-current-product' : 's-current-note';
+    entry.appendChild(el('span', 's-current-name', item.name));
+    entry.appendChild(el('span', 'meta', item.ean ? 'Tuote' : 'Teksti'));
+
+    var drop = el('button', 's-current-remove', '✕');
+    drop.type = 'button';
+    // The mark alone is the whole button, so the name it removes has to be in
+    // the label rather than only beside it.
+    drop.setAttribute('aria-label', 'Poista S-ostoslistalta: ' + item.name);
+    entry.appendChild(drop);
+    drop.addEventListener('click', function () {
+      removeCurrent(item, entry, list, state);
+    });
+    return entry;
+  }
+
+  /**
+   * The row goes at once and comes back if the service refuses it. One at a
+   * time, like everything else here: a second delete while one is in flight
+   * would be two optimistic removals racing one restore.
+   */
+  function removeCurrent(item, entry, list, state) {
+    if (removing || !entry.parentNode) return;
+    removing = true;
+    var drawn = drawing;
+    var after = entry.nextSibling;
+    list.removeChild(entry);
+    clear(state);
+    state.hidden = list.firstChild !== null;
+    if (!state.hidden) state.appendChild(document.createTextNode(NOTHING_LEFT));
+
+    var body = item.ean
+      ? 'ean=' + encodeURIComponent(item.ean)
+      : 'teksti=' + encodeURIComponent(item.name);
+    request('POST', '/ostoslista/s-lista/poista', body, function (ok, payload) {
+      removing = false;
+      if (ok) return;
+      // The panel has been redrawn from the service since; that answer is
+      // newer than this row, so it is left alone.
+      if (drawn !== drawing) return;
+      // Nothing was removed, so the row goes back exactly where it stood.
+      list.insertBefore(entry, after && after.parentNode === list ? after : null);
+      clear(state);
+      state.hidden = false;
+      state.appendChild(
+        document.createTextNode(
+          ((payload && payload.error) ||
+            'Rivin poisto S-ostoslistalta ei onnistunut. Yritä uudelleen.') + ' '
+        )
+      );
+      var again = el('button', '', 'Yritä uudelleen');
+      again.type = 'button';
+      again.addEventListener('click', function () {
+        clear(state);
+        state.hidden = true;
+        removeCurrent(item, entry, list, state);
+      });
+      state.appendChild(again);
     });
   }
 
