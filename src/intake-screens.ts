@@ -372,6 +372,10 @@ const STREAMING_ISLAND = `
       }) };
     } else if (linked) {
       body = { url: link };
+      // Keep pasted text in the request even while an address is present. The
+      // server still gives ordinary links precedence, but can use this text
+      // immediately when the preserved address is an unsupported K-Ruoka link.
+      if (text) body.sourceText = text;
       if (form.importGuidance && form.importGuidance.value.trim()) {
         body.guidance = form.importGuidance.value.trim();
       }

@@ -186,6 +186,37 @@ test("overlong linked guidance is refused before a job is written", async () => 
   );
 });
 
+test("pasted text replaces a preserved unsupported K-Ruoka address", async () => {
+  const database = intakeDatabase({
+    status: "queued",
+    source_route: "pasted",
+    source_text: "Uunikaali\n½ dl öljyä",
+    source_url: null,
+  });
+  const queued: string[] = [];
+
+  await createIntakeJob(
+    {
+      ...database.env,
+      INTAKE_QUEUE: {
+        send: async ({ jobId }: { jobId: string }) => { queued.push(jobId); },
+      },
+    } as unknown as import("../src/env.ts").Env,
+    { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+    {
+      url: "https://www.k-ruoka.fi/reseptit/helppo-texmex-broilerilasagne",
+      sourceText: "Uunikaali\n½ dl öljyä",
+    },
+  );
+
+  const inserted = database.insertedValues();
+  assert.ok(inserted);
+  assert.equal(inserted[3], "pasted");
+  assert.equal(inserted[4], "Uunikaali\n½ dl öljyä");
+  assert.equal(inserted[5], null);
+  assert.equal(queued.length, 1);
+});
+
 test("maintenance recreates lost messages and deletes only real R2 orphans", async () => {
   const sent: string[] = [];
   const deleted: string[] = [];
@@ -483,6 +514,7 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
   storedText(): string | null;
   storedPageImage(): { key: string; type: string } | null;
   storedObjects(): Map<string, { bytes: number; contentType: string }>;
+  insertedValues(): unknown[] | null;
 } {
   let claimLease: string | null = null;
   let readyLease: string | null = null;
@@ -490,6 +522,7 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
   let failureMessage: string | null = null;
   let storedText: string | null = null;
   let storedPageImage: { key: string; type: string } | null = null;
+  let insertedValues: unknown[] | null = null;
   const storedObjects = new Map<string, { bytes: number; contentType: string }>();
   const row = {
     id: "owned",
@@ -519,7 +552,9 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
           return statement;
         },
         run: async () => {
-          if (sql.includes("SET status = 'running', lease_id = ?")) {
+          if (sql.includes("INSERT INTO intake_job")) {
+            insertedValues = values;
+          } else if (sql.includes("SET status = 'running', lease_id = ?")) {
             claimLease = String(values[0]);
             row.lease_id = claimLease;
           } else if (sql.includes("SET status = 'ready'")) {
@@ -568,6 +603,7 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
     storedText: () => storedText,
     storedPageImage: () => storedPageImage,
     storedObjects: () => storedObjects,
+    insertedValues: () => insertedValues,
   };
 }
 

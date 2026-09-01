@@ -10,6 +10,7 @@ import {
 } from "./support/draft";
 import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
 import { flatPng } from "./support/png";
+import { captureReview } from "./support/review-capture";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -231,6 +232,54 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   const link = page.locator(".source-link a");
   await expect(link).toHaveText("kotikokki.example");
   await expect(link).toHaveAttribute("href", LINKED_URL);
+});
+
+for (const host of ["k-ruoka.fi", "www.k-ruoka.fi"]) {
+  test(`a ${host} link is refused before a job starts`, async ({ page }) => {
+    const address = `https://${host}/reseptit/helppo-texmex-broilerilasagne`;
+    await page.goto("/intake");
+    const before = await page.locator("[data-intake-job]").count();
+    const sourceUrl = page.getByLabel("…tai hae resepti nettiosoitteesta");
+
+    await sourceUrl.fill(address);
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+    await expect(page.locator("#status")).toHaveText(
+      "K-Ruoka-linkkejä ei tueta. Liitä reseptin teksti tai tuo resepti kuvasta.",
+    );
+    await expect(sourceUrl).toHaveValue(address);
+    await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeEnabled();
+    await expect(page.locator("[data-intake-job]")).toHaveCount(before);
+    if (host === "www.k-ruoka.fi") {
+      await captureReview(page, "docs/screenshots/115-intake-k-ruoka-unsupported.png");
+    }
+    // The list is server-rendered, so reload before using it as persistence
+    // evidence: the rejected request must not have left a job behind.
+    await page.reload();
+    await expect(page.locator("[data-intake-job]")).toHaveCount(before);
+  });
+}
+
+test("pasted text can replace a refused K-Ruoka link without clearing it", async ({
+  page,
+}) => {
+  await page.goto("/intake");
+  const sourceUrl = page.getByLabel("…tai hae resepti nettiosoitteesta");
+  const address = "https://www.k-ruoka.fi/reseptit/helppo-texmex-broilerilasagne";
+
+  await sourceUrl.fill(address);
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await expect(page.locator("#status")).toContainText("K-Ruoka-linkkejä ei tueta");
+
+  // The first request must reach the real server boundary above. Install the
+  // no-model queue stand-in only for the pasted retry.
+  const calls = await stubStructuring(page);
+  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali\n½ dl öljyä");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body.url).toBe(address);
+  expect(calls[0]?.body.sourceText).toBe("Uunikaali\n½ dl öljyä");
 });
 
 test("an explicit flavor outline reviews as five parts with one shared base", async ({
