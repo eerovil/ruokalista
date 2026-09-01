@@ -132,4 +132,5 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `109-intake-send-failed.png` | Proposed wording for a photographed import whose request never left the phone: it names the device and the connection rather than reading like the server's refusal, and the pages stay chosen so the same import can be sent again (#222) |
 | `110-cast-nest-hub.png` | Proposed 20-line recipe on a Nest Hub's own 1024×600 pixels: the ingredients in two sub-columns and the body text raised from 2.5 mm to 3.5 mm on the panel (#227) |
 | `111-cast-nest-hub-life-size.png` | The same screen at life size — six inches wide at 96 dpi, so looking at it 1:1 shows what the kitchen sees rather than a magnified copy (#227) |
+| `114-s-ostoslista-note-replaced.png` | Proposed juusto sent as text and then given a product: the S-ostoslista panel holds one product row, and the words the earlier send left there are gone (#244) |
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |

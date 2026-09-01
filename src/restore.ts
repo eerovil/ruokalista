@@ -45,6 +45,9 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   "ingredient_product",
   // After household, recipe and ingredient: an override points at all three.
   "recipe_ingredient_product",
+  // After household: a sent note is one household's memory of what it put on
+  // the S-list, and points at nothing else (#244).
+  "s_ostoslista_sent_note",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -289,6 +292,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     "id",
     "recipe_ingredient_product",
   );
+  uniqueIntegerKey(
+    snapshot.tables.s_ostoslista_sent_note,
+    "id",
+    "s_ostoslista_sent_note",
+  );
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
@@ -321,6 +329,12 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     snapshot.tables.recipe_ingredient_product,
     ["household_id", "recipe_id", "ingredient_id"],
     "recipe ingredient product",
+  );
+  // One outstanding note per shopping row, as the schema says (#244).
+  uniqueComposite(
+    snapshot.tables.s_ostoslista_sent_note,
+    ["household_id", "row_key"],
+    "s-ostoslista sent note",
   );
 
   for (const row of snapshot.tables.member) {
@@ -418,6 +432,14 @@ function validateRelationships(snapshot: BackupSnapshot): void {
       "ingredient_id",
       ingredientIds,
       "recipe_ingredient_product.ingredient_id",
+    );
+  }
+  for (const row of snapshot.tables.s_ostoslista_sent_note) {
+    requireReference(
+      row,
+      "household_id",
+      householdIds,
+      "s_ostoslista_sent_note.household_id",
     );
   }
 }
