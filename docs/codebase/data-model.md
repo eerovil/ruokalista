@@ -406,6 +406,26 @@ with no package size, and `ingredient-products.ts::backfillPackageSizes` fills
 one in the first time the app reads a name it can parse. A product whose name
 cannot be parsed simply stays unsized and never contributes a package count.
 
+### What this app has already said to the S-list
+
+Issue #244 proposes a third table on this path, `s_ostoslista_sent_note`
+(`migrations/0023_s_ostoslista_sent_note.sql`): one row per household per
+shopping row, holding the **exact words** this app last sent that row to the
+S-ostoslista as, when it went as free text rather than as a product.
+
+It exists so a send can take its own old text row back off the list when the
+ingredient gains a product. The S-list deletes a text row by its exact note and
+a note carries the amount, so `juusto — 6 dl` and last week's `juusto — 4 dl`
+are two different keys and today's list cannot spell yesterday's.
+[ADR-0015](../adr/0015-a-sent-note-is-remembered-word-for-word.md) holds the
+reasoning, including why matching live rows by ingredient name was rejected: it
+cannot tell a row this app sent from one the household typed on its phone.
+
+`UNIQUE (household_id, row_key)`, where `row_key` is
+`shopping.ts::ShoppingItem.key` — the ingredient id, or `12:r7` for a row
+pinned to one recipe. It points at `household` and nothing else. Another table
+addition, so it goes through the lockstep below too.
+
 Both product values are still written only after a fresh S-ostoslista search
 confirms the submitted EAN, and the image is still the stable public CDN URL
 derived from that EAN. Unlike #147, this **is** a table addition, so it goes
@@ -561,8 +581,9 @@ capture, row ordering, schema comparison, and post-restore comparison — it is
 currently `household`, `member`, `intake_job`, `member_invitation`, `ingredient`,
 `recipe`, `recipe_share`, `recipe_step`, `ingredient_line`, `planned_batch`,
 `batch_occurrence`, `pantry_entry`, `recipe_preference`, `ingredient_product`,
-`recipe_ingredient_product`, — proposed by #196 — `recipe_category`, and —
-proposed by #199 — `category`.
+`recipe_ingredient_product`, — proposed by #196 — `recipe_category`, —
+proposed by #199 — `category`, and — proposed by #244 —
+`s_ostoslista_sent_note`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.

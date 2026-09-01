@@ -32,6 +32,7 @@ const TABLES: readonly BackupTableName[] = [
   "recipe_preference",
   "ingredient_product",
   "recipe_ingredient_product",
+  "s_ostoslista_sent_note",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -431,6 +432,15 @@ async function validSnapshot() {
         image_url: null,
         package_quantity: 250,
         package_unit: "ml",
+      },
+    ],
+    s_ostoslista_sent_note: [
+      {
+        id: 1,
+        household_id: 1,
+        row_key: "1",
+        note: "öljy — 5 dl",
+        sent_at: "2026-08-25 00:00:00",
       },
     ],
   } satisfies BackupSnapshotUnsigned["tables"];

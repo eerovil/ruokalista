@@ -22,9 +22,15 @@ import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
 import {
   SOstoslistaClient,
+  SOstoslistaError,
   sProductImageAtWidth,
   type SOstoslistaProduct,
 } from "./s-ostoslista.ts";
+import {
+  forgetSentNote,
+  rememberSentNote,
+  sentNotes,
+} from "./s-ostoslista-notes.ts";
 import {
   AMOUNT_IN_RECIPE,
   shoppingLinesFor,
@@ -188,11 +194,26 @@ export async function sendShoppingListForm(
   const packets = packetCounts(buy);
   const done = new Set<string>();
 
+  // What this app's last send left on the list as free text, row by row, in
+  // the exact words it used (#244). A note carries its amount, so this is the
+  // only way to name the row again once the week's cooking has changed.
+  const db = ctx.env.DB;
+  const outstanding = await sentNotes(db, member.householdId);
+
   let sent = 0;
   try {
     for (const item of buy) {
+      const previous = outstanding.get(item.key) ?? null;
       if (item.chosen.length === 0) {
-        await client.add({ note: `${item.name} — ${item.total}` });
+        const note = `${item.name} — ${item.total}`;
+        await client.add({ note });
+        // Resending the same words is the same row keyed again, so there is
+        // nothing to replace — and deleting `previous` here would take the row
+        // that was just added straight back off the list.
+        if (previous !== note) {
+          if (previous !== null) await dropNote(client, previous);
+          await rememberSentNote(db, member.householdId, item.key, note);
+        }
       } else {
         for (const { product } of item.chosen) {
           if (done.has(product.ean)) continue;
@@ -203,6 +224,14 @@ export async function sendShoppingListForm(
           // carried no quantity at all — it does, and the note lost the
           // mapping the household had chosen.
           await client.add({ ean: product.ean }, packets.get(product.ean) ?? 1);
+        }
+        // The row this issue is about: it went as text before, and now has a
+        // product. Add first, delete second, forget third — a send that dies
+        // in the middle leaves the note still recorded, so the retry finishes
+        // the job instead of stranding the old text on the list forever.
+        if (previous !== null) {
+          await dropNote(client, previous);
+          await forgetSentNote(db, member.householdId, item.key);
         }
       }
       sent += 1;
@@ -249,6 +278,25 @@ export async function sendShoppingListForm(
     `${sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
   );
+}
+
+/**
+ * Take one note this app previously sent back off the list.
+ *
+ * A note that is not there any more is the wanted state, not a failure: the
+ * household may well have ticked it off and cleared it on the phone between
+ * the two sends. The service says so with a 404, and treating that as an
+ * outage would refuse a send that has nothing wrong with it. Anything else is
+ * a real problem and is left to the caller, which stops the send and keeps the
+ * note on record for the retry.
+ */
+async function dropNote(client: SOstoslistaClient, note: string): Promise<void> {
+  try {
+    await client.remove({ note });
+  } catch (error) {
+    if (error instanceof SOstoslistaError && error.status === 404) return;
+    throw error;
+  }
 }
 
 /**

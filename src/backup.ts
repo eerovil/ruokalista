@@ -24,6 +24,9 @@ export const BACKUP_TABLES = [
   { name: "recipe_preference", orderBy: "id" },
   { name: "ingredient_product", orderBy: "id" },
   { name: "recipe_ingredient_product", orderBy: "id" },
+  // What this app last sent the S-list as free text (#244). Small, but it is
+  // the only record of which rows out there are this app's to delete.
+  { name: "s_ostoslista_sent_note", orderBy: "id" },
 ] as const;
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number]["name"];
