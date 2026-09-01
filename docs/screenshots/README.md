@@ -91,6 +91,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `60-product-scope-choice.png` | Proposed product panel with #161's one extra question: whether this choice is always this ingredient's, or only this recipe's — and each result showing the packet size read off its name |
 | `61-package-count.png` | Proposed shopping row buying two litres of milk because the week needs fifteen decilitres, with what the packets hold said underneath |
 | `62-package-sizes.png` | Proposed same ingredient after a second package size was added from the row itself, each with its stored size and a way to drop it |
+| `63-s-ostoslista-packet-count.png` | Proposed three-packet jauheliha after a send: the S-ostoslista panel holds it as one product row, not a product plus a `× 3` text line (#240) |
 | `63-cast-receiver.png` | Proposed 16:9 Cast receiver with the recipe title and multiplier above ingredients and preparation shown together |
 | `64-cast-receiver-long.png` | Proposed 20-line recipe on a 1024×600 receiver: the ingredients flow into two sub-columns instead of shrinking to the scale floor (#180), at the larger small-panel type this pull request proposes (#227) |
 | `65-editor-save-bar.png` | Proposed editor on a phone, scrolled to the ingredient rows: **Tallenna muutokset** rides the scroll just above the tab strip instead of waiting at the end of the form (#184) |

@@ -15,6 +15,8 @@ interface Item {
   name: string;
   ean: string | null;
   collected: boolean;
+  /** How many of the product the row is for, as the real service holds it. */
+  quantity: number | null;
 }
 
 const items: Item[] = [];
@@ -143,6 +145,9 @@ createServer(async (request, response) => {
         name: note ?? Object.values(products).flat().find((one) => one.ean === ean)?.name ?? ean!,
         ean,
         collected: true,
+        // Last week's trip left a count on the row too, which is the state a
+        // keyed add has to overwrite rather than inherit (#240).
+        quantity: ean === null ? null : 1,
       };
       items.push(created);
       return send(response, 200, created);
@@ -182,6 +187,10 @@ createServer(async (request, response) => {
     if ((ean === null) === (note === null)) {
       return send(response, 400, { error: "ean or note is required" });
     }
+    const quantity = typeof record["quantity"] === "number" ? record["quantity"] : null;
+    // Keyed like the real service: adding the same product again means "make
+    // sure it is on the list", so the row it already had comes back untouched —
+    // old count included. Only the patch that follows changes it (#240).
     const existing = items.find((item) => ean !== null ? item.ean === ean : item.name === note);
     if (existing) return send(response, 200, existing);
     const product = Object.values(products).flat().find((one) => one.ean === ean);
@@ -190,6 +199,7 @@ createServer(async (request, response) => {
       name: note ?? product?.name ?? ean!,
       ean,
       collected: false,
+      quantity,
     };
     items.push(created);
     return send(response, 201, created);
@@ -200,6 +210,7 @@ createServer(async (request, response) => {
     if (!found) return send(response, 404, { error: "item not found" });
     const record = isRecord(body) ? body : {};
     if (typeof record["collected"] === "boolean") found.collected = record["collected"];
+    if (typeof record["quantity"] === "number") found.quantity = record["quantity"];
     return send(response, 200, found);
   }
   if (request.method === "DELETE" && url.pathname === "/items") {

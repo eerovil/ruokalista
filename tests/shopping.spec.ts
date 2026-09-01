@@ -955,7 +955,15 @@ test("sending uses stored EANs, note fallbacks, and excludes the pantry", async 
   expect(added.some((call) => String(call.body?.["note"] ?? "").startsWith("öljy"))).toBe(
     false,
   );
-  expect(added.every((call) => !("quantity" in (call.body ?? {})))).toBe(true);
+  // A product row says how many packets it is for, even at one (#240): the
+  // service's add is keyed, so a row left over from last week would otherwise
+  // keep that trip's count. A written reminder has nothing to count.
+  expect(quantityFor(calls, "6415712506032")).toBe(1);
+  expect(
+    added
+      .filter((call) => typeof call.body?.["note"] === "string")
+      .every((call) => !("quantity" in (call.body ?? {}))),
+  ).toBe(true);
 });
 
 test("a send puts an already-ticked row back to still-to-buy (#236)", async ({
@@ -1385,9 +1393,8 @@ test("the packet count follows what the week actually needs", async ({ page }) =
   await expect(milk.locator(".s-package-total")).toContainText("2 l");
 });
 
-test("a second packet is said to the S list in the one way its API carries", async ({
+test("a second packet is said to the S list as the row's quantity", async ({
   page,
-  request,
 }) => {
   await createBatch(page, today(), LASAGNE, 1);
   await createBatch(page, inDays(1), LASAGNE, 2);
@@ -1399,18 +1406,154 @@ test("a second packet is said to the S list in the one way its API carries", asy
     "lähetettiin S-ostoslistaan",
   );
 
-  const calls = (await (
-    await request.get(`${S_OSTOSLISTA_FIXTURE}/_test/requests`)
-  ).json()) as { requests: Array<{ path: string; body: Record<string, string> }> };
-  const added = calls.requests.filter((call) => call.path === "/items");
-  // The service's add is keyed by EAN and will not hold two of one product, so
-  // the second packet goes as the written line beside it rather than as an
-  // invented quantity field.
-  expect(added.some((call) => call.body?.["ean"] === "6415712506032")).toBe(true);
+  const sent = await externalRequests(page);
+  // #240: the service and the S-list both hold a count on a product row, so the
+  // second packet is that number. It is not a written line beside the product,
+  // which is what #161 reached for and what lost the mapping.
   expect(
-    added.some((call) => call.body?.["note"] === "Kotimaista rasvaton maito 1 l × 2"),
-  ).toBe(true);
+    addCalls(sent).filter((call) => call.body?.["ean"] === "6415712506032"),
+  ).toHaveLength(1);
+  expect(quantityFor(sent, "6415712506032")).toBe(2);
+  expect(addCalls(sent).some((call) => /×/.test(String(call.body?.["note"] ?? "")))).toBe(
+    false,
+  );
 });
+
+test("two recipes needing the same product keep it a product, at two packets", async ({
+  page,
+}) => {
+  // #240 as reported: a jauheliha at 400 g in each of two different dishes, one
+  // 400 g product chosen for it, and a send that used to leave the phone
+  // holding "jauheliha × 2" as text instead of two packets of the product.
+  const meatloaf = await createMeatloaf(page);
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), meatloaf, 1);
+  await page.goto("/ostoslista");
+
+  await expect(row(page, "jauheliha").locator(".shopping-total")).toHaveText("800 g");
+  await chooseProduct(page, "jauheliha", "Kotimaista nauta-sikajauheliha");
+  await page.reload();
+  await expect(
+    row(page, "jauheliha").locator(".s-shopping-product-summary"),
+  ).toContainText("2 × Kotimaista nauta-sikajauheliha 400 g");
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const sent = await externalRequests(page);
+  expect(
+    addCalls(sent).filter((call) => call.body?.["ean"] === "6408430000159"),
+  ).toHaveLength(1);
+  expect(quantityFor(sent, "6408430000159")).toBe(2);
+  expect(
+    addCalls(sent).some((call) => /jauheliha/i.test(String(call.body?.["note"] ?? ""))),
+  ).toBe(false);
+});
+
+test("a product two rows both reach is sent once, at the total (#240)", async ({
+  page,
+}) => {
+  // A dish pinned to its own jauheliha and the generic pile are two rows on
+  // this screen, and the packet planner only ever sees one row at a time. Give
+  // both rows the same product and the phone must still end up with the trip's
+  // total rather than whichever row went last.
+  const meatloaf = await createMeatloaf(page);
+  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, inDays(1), meatloaf, 1);
+  await page.goto("/ostoslista");
+
+  await chooseProduct(page, "jauheliha", "Kotimaista nauta-sikajauheliha");
+  await page.reload();
+
+  // Pin the lasagne to the same product, which splits the row in two (#161).
+  const mince = row(page, "jauheliha");
+  await reopen(mince);
+  await openPanelWith(page, mince, "Vaihda tuote");
+  await page
+    .locator(".s-sheet .s-product-scope-choice select")
+    .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+  await chooseAndReload(page, "Kotimaista nauta-sikajauheliha");
+
+  const minceRows = page.locator(".shopping-list > li", { hasText: "jauheliha" });
+  await expect(minceRows).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const sent = await externalRequests(page);
+  expect(
+    addCalls(sent).filter((call) => call.body?.["ean"] === "6408430000159"),
+  ).toHaveLength(1);
+  // 400 g for the lasagne and 400 g for the meatloaf, one packet each.
+  expect(quantityFor(sent, "6408430000159")).toBe(2);
+});
+
+type SentCall = Awaited<ReturnType<typeof externalRequests>>[number];
+
+/** Just the adds, in the order they went out. */
+function addCalls(calls: SentCall[]): SentCall[] {
+  return calls.filter((call) => call.method === "POST" && call.path === "/items");
+}
+
+/**
+ * The count that actually reached one product's row on the phone's list.
+ *
+ * Both the add and the edit that follows it carry the count, and it is the edit
+ * that decides: the service's add is keyed, so a product already on the list
+ * comes back holding whatever last week's trip left on it and only the edit
+ * overwrites that. So this reads the pair, and answers null unless they agree.
+ */
+function quantityFor(calls: SentCall[], ean: string): number | null {
+  const at = calls.findIndex(
+    (call) => call.method === "POST" && call.path === "/items" && call.body?.["ean"] === ean,
+  );
+  if (at === -1) return null;
+  const patch = calls
+    .slice(at + 1)
+    .find((call) => call.method === "PATCH" && call.path.startsWith("/items/"));
+  const onAdd = calls[at]?.body?.["quantity"];
+  const onPatch = patch?.body?.["quantity"];
+  if (typeof onAdd !== "number" || onAdd !== onPatch) return null;
+  return onAdd;
+}
+
+/**
+ * A second dish calling for the same 400 g of jauhelihaa as the lasagne's
+ * jauhelihakastike part. The seed has only the one, and adding another there
+ * would change what every other spec counts.
+ */
+async function createMeatloaf(page: Page): Promise<number> {
+  const response = await page.request.post("/recipes", {
+    maxRedirects: 0,
+    form: {
+      title: "Lihamureke",
+      yield: "4",
+      sourceText: "Lihamureke\n400 g jauhelihaa",
+      sourceRoute: "pasted",
+      structuredBy: "test",
+      lineCount: "1",
+      "line.0.quantity": "400",
+      "line.0.quantityMax": "",
+      "line.0.unit": "g",
+      "line.0.altQuantity": "",
+      "line.0.altUnit": "",
+      "line.0.section": "",
+      "line.0.position": "1",
+      "line.0.ingredient": "7",
+      "line.0.sourceLine": "400 g jauhelihaa",
+    },
+  });
+  expect(response.status()).toBe(302);
+
+  const location = response.headers()["location"] ?? "";
+  const id = Number(location.split("/").pop());
+  expect(Number.isSafeInteger(id)).toBe(true);
+  return id;
+}
 
 test("an unreadable package size is asked for rather than guessed", async ({
   page,

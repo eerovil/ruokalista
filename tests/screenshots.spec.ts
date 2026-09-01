@@ -35,6 +35,10 @@ import { sessionCookie } from "./support/session";
  */
 
 const SHOTS = "docs/screenshots";
+/** The stand-in S-ostoslista service, on the port after the app's own. */
+const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${
+  Number(process.env["PLAYWRIGHT_PORT"] ?? "8787") + 1
+}`;
 const writeScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
 
 async function capture(
@@ -1306,6 +1310,58 @@ test.describe("signed in", () => {
     await expect(sized.locator(".s-product-sizes > li")).toHaveCount(2);
     await capture(page, {
       path: `${SHOTS}/62-package-sizes.png`,
+      fullPage: true,
+    });
+
+    // #240: the same fortnight needs 1200 g of jauhelihaa, which is three of
+    // the 400 g packet. Sending it used to leave the phone holding one packet
+    // of the product and a written line saying "× 3" — so the shot below is of
+    // the panel that says what the S-list actually holds afterwards.
+    await sized.locator("summary").click();
+    const mince = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
+    await mince.locator("summary").click();
+    await expect(mince.locator(".shopping-total")).toHaveText("1200 g");
+    await mince.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
+    const packet = page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista nauta-sikajauheliha" });
+    await expect(packet).toBeVisible();
+    const mincePicked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/ostoslista/tuote"),
+    );
+    await packet.getByRole("button", { name: "Valitse" }).click();
+    await mincePicked;
+    await page.reload();
+
+    const counting = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
+    await counting.locator("summary").click();
+    await expect(counting.locator(".s-shopping-product-summary")).toContainText(
+      "3 × Kotimaista nauta-sikajauheliha 400 g",
+    );
+
+    // Clear the fixture list first: an earlier shot in this file already sent
+    // one, and its leftover rows would put text in the panel this send did not
+    // produce. What is photographed has to be this trip.
+    expect(
+      (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
+    ).toBe(true);
+    await page.locator(".s-send-form button").click();
+    await expect(page.locator(".shopping-sent")).toContainText(
+      "lähetettiin S-ostoslistaan",
+    );
+    // One product line for it, and nothing about jauheliha as text.
+    await expect(
+      page
+        .locator(".s-current-items .s-current-product")
+        .filter({ hasText: "Kotimaista nauta-sikajauheliha" }),
+    ).toHaveCount(1);
+    await expect(
+      page.locator(".s-current-items .s-current-note").filter({ hasText: /jauheliha/i }),
+    ).toHaveCount(0);
+    await capture(page, {
+      path: `${SHOTS}/63-s-ostoslista-packet-count.png`,
       fullPage: true,
     });
 

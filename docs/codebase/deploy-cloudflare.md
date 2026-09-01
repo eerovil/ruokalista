@@ -124,7 +124,8 @@ Setting `SOSTOSLISTA_SERVICE_URL` switches the app back to plain HTTP at that
 URL. There is deliberately no such var in `wrangler.jsonc`, so production always
 uses the binding; the browser tests set it to reach their fixture. The service's
 API is `GET /products?q=` to search the shop's catalogue, `POST /items {"ean"}`
-or `{"note"}` to add, and `DELETE /items?ean=`/`?note=` to remove; product images
+or `{"note"}` to add, `PATCH /items/:id` to edit one, and
+`DELETE /items?ean=`/`?note=` to remove; product images
 come from `https://cdn.s-cloud.fi/v1/w256_q75/product/ean/{EAN}_kuva1.jpg`, which
 needs no auth. Its README documents the rest.
 
