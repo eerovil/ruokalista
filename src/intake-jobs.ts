@@ -198,12 +198,16 @@ export async function createIntakeJob(
       ? body.sourceText
       : null;
 
-  // A photograph wins over an address and an address over an already-pasted
-  // box, so the recipe that gets imported is the newest thing the member
-  // reached for. The address is checked here rather than in the consumer: an
-  // address that could never be fetched should be refused while the member is
-  // still looking at the field they typed it into.
-  const sourceUrl = images.length === 0 ? readIntakeUrl(body.url) : null;
+  // A photograph wins over an address and an ordinary address over an
+  // already-pasted box, so the recipe that gets imported is the newest thing
+  // the member reached for. The one exception is a preserved, unsupported
+  // K-Ruoka address once the member follows its refusal by pasting the recipe.
+  // The address is checked here rather than in the consumer: an address that
+  // could never be fetched should be refused while the member is still looking
+  // at the field they typed it into.
+  const sourceUrl = images.length === 0
+    ? readIntakeUrl(body.url, sourceText !== null)
+    : null;
 
   if (images.length === 0 && sourceUrl === null && sourceText === null) {
     throw new IntakeRefused("Anna reseptin osoite, tekstiä tai kuva.");
@@ -313,7 +317,7 @@ function readTargetRecipeId(value: unknown): number | null {
  * that is certain to fail. It also fills in a missing scheme, which is what
  * lets a member paste `kotikokki.fi/resepti` the way people actually do.
  */
-function readIntakeUrl(value: unknown): string | null {
+function readIntakeUrl(value: unknown, hasPastedText = false): string | null {
   if (typeof value !== "string" || value.trim() === "") return null;
   try {
     const url = normaliseRecipeUrl(value);
@@ -321,6 +325,10 @@ function readIntakeUrl(value: unknown): string | null {
     // K-Ruoka challenge-blocks server fetches. Do not work around that browser
     // challenge or depend on its undocumented frontend API (#246).
     if (host === "k-ruoka.fi" || host === "www.k-ruoka.fi") {
+      // The screen preserves a refused address. If the member follows the
+      // guidance by pasting the recipe, that text must win without making them
+      // notice and clear the address first.
+      if (hasPastedText) return null;
       throw new IntakeRefused(
         "K-Ruoka-linkkejä ei tueta. Liitä reseptin teksti tai tuo resepti kuvasta.",
       );
