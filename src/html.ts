@@ -260,10 +260,23 @@ const STYLES = `
     margin-bottom: 1.5rem; font-size: .85rem; }
   nav.weeks a { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); text-decoration: none; color: var(--muted); }
+  /* Two weeks in one column, never side by side: the shell is 40rem wide and
+     a batch card needs all of it, so a narrow screen and a wide one read the
+     same way and only the heading says where one week ends (#250). */
+  .week-pair { display: flex; flex-direction: column; gap: 1.25rem; }
+  .week-block { min-width: 0; }
+  .week-block + .week-block { padding-top: 1.25rem;
+    border-top: 1px solid var(--edge); }
+  .week-heading { display: flex; align-items: center; gap: .5rem;
+    margin: 0 0 .75rem; font-size: .8rem; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .week-now { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
+    letter-spacing: 0; text-transform: none;
+    color: var(--accent-fg); background: var(--accent); border-radius: .25rem; }
   .day { margin-bottom: 1.25rem; scroll-margin-top: .75rem; }
-  .day h2 { display: flex; align-items: center; gap: .5rem;
+  .day h3 { display: flex; align-items: center; gap: .5rem;
     margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
-  .day.is-today h2 { font-weight: 700; }
+  .day.is-today h3 { font-weight: 700; }
   .day.is-today { padding: .6rem .7rem .1rem; border: 1px solid var(--accent);
     border-radius: var(--radius); background: var(--surface); }
   .today-badge { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;

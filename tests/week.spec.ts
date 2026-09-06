@@ -17,28 +17,40 @@ test.beforeEach(async ({ context }) => {
 /** The Monday of a fixed week, well away from today's data. */
 const MONDAY = "2026-10-05";
 
-test("the week shows seven days, each with both slots", async ({ page }) => {
+test("the screen shows two weeks, each day with both slots", async ({
+  page,
+}) => {
   await page.goto(`/?week=${MONDAY}`);
 
-  await expect(page.locator(".day")).toHaveCount(7);
-  await expect(page.locator(".day h2").first()).toContainText("maanantai");
-  await expect(page.locator(".day h2").last()).toContainText("sunnuntai");
-  await expect(page.locator(".slot-actions a")).toHaveCount(14);
+  await expect(page.locator(".week-block")).toHaveCount(2);
+  await expect(page.locator(".week-range")).toHaveText([
+    "5.10.–11.10.",
+    "12.10.–18.10.",
+  ]);
+  await expect(page.locator(".day")).toHaveCount(14);
+  await expect(page.locator(".day h3").first()).toContainText("maanantai");
+  await expect(page.locator(".day h3").nth(6)).toContainText("sunnuntai");
+  await expect(page.locator(".day h3").nth(7)).toContainText("maanantai");
+  await expect(page.locator(".day h3").last()).toContainText("sunnuntai");
+  await expect(page.locator(".slot-actions a")).toHaveCount(28);
   await expect(page.locator(".slot-actions a").first()).toContainText("Lounas");
 });
 
 test("empty slots are the invitation", async ({ page }) => {
   await page.goto(`/?week=${MONDAY}`);
-  await expect(page.locator(".empty-slot")).toHaveCount(14);
+  await expect(page.locator(".empty-slot")).toHaveCount(28);
 });
 
-test("the arrows move a week at a time", async ({ page }) => {
+test("the arrows move two weeks at a time, so the pair does not shear", async ({
+  page,
+}) => {
   await page.goto(`/?week=${MONDAY}`);
 
-  await page.getByRole("link", { name: /Seuraava/ }).click();
-  await expect(page).toHaveURL(/week=2026-10-12$/);
+  await page.getByRole("link", { name: /Seuraavat/ }).click();
+  await expect(page).toHaveURL(/week=2026-10-19$/);
+  await expect(page.locator(".day h3").first()).toContainText("19.10.");
 
-  await page.getByRole("link", { name: /Edellinen/ }).click();
+  await page.getByRole("link", { name: /Edelliset/ }).click();
   await expect(page).toHaveURL(/week=2026-10-05$/);
 });
 
@@ -47,8 +59,8 @@ test("a day in the middle of a week still lands on its Monday", async ({
 }) => {
   // Thursday.
   await page.goto("/?week=2026-10-08");
-  await expect(page.locator(".day h2").first()).toContainText("maanantai");
-  await expect(page.locator(".day h2").first()).toContainText("5.10.");
+  await expect(page.locator(".day h3").first()).toContainText("maanantai");
+  await expect(page.locator(".day h3").first()).toContainText("5.10.");
 });
 
 test("putting a recipe on a day, changing it, and taking it off", async ({
@@ -140,7 +152,8 @@ test("a multiplier that makes no sense keeps you on the meal, with the reason", 
   page,
 }) => {
   await addEntry(page, "2026-10-11", "lunch", "Kaalilaatikko");
-  await page.locator(".day").last().locator(".entry a").click();
+  // The Sunday that closes the first week, not the last day on screen.
+  await page.locator(".day").nth(6).locator(".entry a").click();
 
   await page.locator(".multiplier-choice input").fill("0");
   await page
@@ -321,7 +334,7 @@ test("a card holding both meals of one day lists them on one row", async ({
   );
 });
 
-test("mixed coverage crosses a week boundary and projects into both weeks", async ({
+test("a batch crossing a Sunday is one card in the fortnight, and carried when the range starts after it", async ({
   page,
 }) => {
   const id = await createBatch(page, "2026-11-15", "dinner", 1);
@@ -332,15 +345,28 @@ test("mixed coverage crosses a week boundary and projects into both weeks", asyn
     ["2026-11-17", "lunch"],
   ]);
 
-  // The week it is cooked in shows the cooking, and says it runs on.
+  // Since #250 the Sunday it is cooked on and the Tuesday it ends on are both
+  // on screen, so the one card carries the whole cooking and ends where it
+  // ends — no second week to switch to.
   await page.goto("/?week=2026-11-09");
-  const sunday = page.locator(".day").last();
+  const sunday = page.locator(".day").nth(6);
   await expect(sunday.locator(".batch-start")).toHaveText("Kokataan · 1×");
-  await expect(sunday.locator(".batch-onward")).toHaveText("jatkuu ensi viikolle");
-  await expect(sunday.locator(".batch-end")).toHaveCount(0);
+  await expect(sunday.locator(".batch-onward")).toHaveCount(0);
+  await expect(sunday.locator(".batch-end")).toHaveText("viimeinen annos");
+  const card = sunday.locator(`.batch-card[data-batch-id="${id}"]`);
+  await expect(card.locator(".batch-when-date")).toHaveText([
+    "15.11.",
+    "16.11.",
+    "17.11.",
+  ]);
+  // And the days it feeds, in the second week, summarize it rather than
+  // repeating the card.
+  await expect(
+    page.locator(".day").nth(7).locator(".continuing-title"),
+  ).toHaveText("Kaalilaatikko");
 
-  // The following week anchors it on Monday, remembers when it was cooked,
-  // and ends it where it actually ends.
+  // A range that starts after the cooking still anchors it on its first
+  // visible day, remembers when it was cooked, and ends it where it ends.
   await page.goto("/?week=2026-11-16");
   const monday = page.locator(".day").first();
   await expect(monday.locator(".batch-card")).toHaveCount(1);
