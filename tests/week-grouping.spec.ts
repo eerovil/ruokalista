@@ -31,8 +31,8 @@ test("an empty current week still opens on today", async ({ page }) => {
   const today = page.locator(".day.is-today");
   await expect(today).toHaveAttribute("id", "tanaan");
 
-  // Seven day headings and fourteen add links are taller than a phone, so
-  // there is something to scroll past — and it was scrolled past.
+  // Fourteen day headings and twenty-eight add links are taller than a phone,
+  // so there is something to scroll past — and it was scrolled past.
   const viewport = page.viewportSize()!;
   expect(await page.evaluate(() => document.body.scrollHeight)).toBeGreaterThan(
     viewport.height,
@@ -179,12 +179,13 @@ test("a batch open at either visible edge says so instead of ending", async ({
     ["2027-03-01", "lunch"],
     ["2027-03-02", "dinner"],
   ]);
-  const intoNextWeek = await createBatch(page, "2027-03-05", "lunch", 2);
-  await setCoverage(page, intoNextWeek, [
-    ["2027-03-05", "lunch"],
-    ["2027-03-06", "lunch"],
-    ["2027-03-07", "dinner"],
-    ["2027-03-08", "lunch"],
+  // Past the end of the fortnight, which since #250 is the far edge — a batch
+  // merely crossing the first Sunday is now wholly in view.
+  const pastTheRange = await createBatch(page, "2027-03-13", "lunch", 2);
+  await setCoverage(page, pastTheRange, [
+    ["2027-03-13", "lunch"],
+    ["2027-03-14", "lunch"],
+    ["2027-03-15", "dinner"],
   ]);
 
   await page.goto(`/?week=${edgeMonday}`);
@@ -204,9 +205,9 @@ test("a batch open at either visible edge says so instead of ending", async ({
     "Päivällinen",
   );
 
-  const onward = page.locator(`.batch-card[data-batch-id="${intoNextWeek}"]`);
+  const onward = page.locator(`.batch-card[data-batch-id="${pastTheRange}"]`);
   await expect(onward.locator(".batch-start")).toHaveText("Kokataan · 1×");
-  await expect(onward.locator(".batch-onward")).toHaveText("jatkuu ensi viikolle");
+  await expect(onward.locator(".batch-onward")).toHaveText("jatkuu eteenpäin");
   await expect(onward.locator(".batch-end")).toHaveCount(0);
 });
 
@@ -220,7 +221,7 @@ test("every day keeps its own add action, with no duplicated wording", async ({
   ]);
 
   await page.goto(`/?week=${MONDAY}`);
-  await expect(page.locator(".slot-actions a")).toHaveCount(14);
+  await expect(page.locator(".slot-actions a")).toHaveCount(28);
   await expect(page.getByRole("link", { name: "+ Lisää toinen" })).toHaveCount(0);
   const monday = page.locator(".day").first();
   await expect(monday.locator(".slot-actions a")).toHaveText([
@@ -248,6 +249,11 @@ test("the current week marks today and opens on it", async ({ page }) => {
   await expect(today).toHaveCount(1);
   await expect(today).toHaveAttribute("id", "tanaan");
   await expect(today.locator(".today-badge")).toHaveText("Tänään");
+  // The week holding today says so; the one beside it does not.
+  await expect(page.locator(".week-now")).toHaveCount(1);
+  await expect(
+    page.locator(".week-block").first().locator(".week-now"),
+  ).toHaveText("Tämä viikko");
   await expect(today.locator(`.batch-card[data-batch-id="${id}"]`)).toHaveCount(1);
 
   // Today's section is in view when the week opens, wherever in the week it is.
@@ -274,10 +280,11 @@ test("browsing another week neither marks nor jumps to a day", async ({
   await expect(page.locator(".day.is-today")).toHaveCount(0);
   await expect(page.locator("#tanaan")).toHaveCount(0);
   await expect(page.locator(".to-today")).toHaveCount(0);
+  await expect(page.locator(".week-now")).toHaveCount(0);
   expect(await page.evaluate(() => window.pageYOffset)).toBe(0);
 });
 
-test("a week of grouped cards keeps usable phone-width cards", async ({
+test("a fortnight of grouped cards keeps usable phone-width cards", async ({
   page,
 }) => {
   for (let index = 0; index < 10; index += 1) {

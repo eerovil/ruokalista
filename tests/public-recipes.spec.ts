@@ -80,9 +80,10 @@ test("a published recipe reaches the other household, and can be planned", async
   const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
   await expect(row.locator(".meta")).toContainText("Koti");
   await row.getByRole("button", { name: "Lisää" }).click();
-  await expect(page.locator(".day", { hasText: "tiistai" })).toContainText(
-    "Kaalilaatikko",
-  );
+  // Two Tuesdays are on screen since #250; the planned one is the first.
+  await expect(
+    page.locator(".day", { hasText: "tiistai" }).first(),
+  ).toContainText("Kaalilaatikko");
 });
 
 test("selected households can be found, added and safely removed", async ({
@@ -519,9 +520,9 @@ test("a cooking that already happened does not block unpublishing", async ({
   // record of a cooking, and taking the recipe private does not rewrite it.
   await signIn(page, 2);
   await page.goto("/?week=2020-01-06");
-  await expect(page.locator(".day", { hasText: "maanantai" })).toContainText(
-    "Kaalilaatikko",
-  );
+  await expect(
+    page.locator(".day", { hasText: "maanantai" }).first(),
+  ).toContainText("Kaalilaatikko");
 });
 
 /** Put a recipe on a household's week, without going through the picker. */

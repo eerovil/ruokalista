@@ -26,7 +26,9 @@ test("/ is the week, which is the point of the app", async ({ context, page }) =
   await context.addCookies([sessionCookie(1)]);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Viikko", exact: true })).toBeVisible();
-  await expect(page.locator(".day")).toHaveCount(7);
+  // Two weeks at a time since #250, so fourteen days under two week blocks.
+  await expect(page.locator(".week-block")).toHaveCount(2);
+  await expect(page.locator(".day")).toHaveCount(14);
 });
 
 test("a cookie that has expired is not entry", async ({ context, page }) => {

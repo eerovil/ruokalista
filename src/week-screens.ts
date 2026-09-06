@@ -44,13 +44,21 @@ const SLOT_NAMES: Record<Slot, string> = {
   dinner: "Päivällinen",
 };
 
+/** How many weeks the planning screen shows at once (#250). */
+const VISIBLE_WEEKS = 2;
+
 /**
- * `GET /` — seven days, each holding the batches that *begin* in it.
+ * `GET /` — two weeks of days, each holding the batches that *begin* in it.
  *
- * A batch is one cooking, however many meals it feeds, so the week draws it
+ * A batch is one cooking, however many meals it feeds, so the screen draws it
  * once: one card, anchored at the batch's first occurrence inside the visible
- * week, listing every day and meal that cooking covers. Grouping is by batch
+ * range, listing every day and meal that cooking covers. Grouping is by batch
  * id — two separate cookings of the same recipe stay two cards.
+ *
+ * Two weeks rather than one (#250), because a household plans the shopping and
+ * the cooking for a fortnight in one sitting and a cooking that runs over a
+ * Sunday is no longer split across two screens. `?week=` still names the first
+ * Monday; the arrows move a whole fortnight, so the pair does not shear.
  */
 export async function weekScreen(
   { env, url }: RouteContext,
@@ -58,34 +66,66 @@ export async function weekScreen(
 ): Promise<Response> {
   const asked = url.searchParams.get("week") ?? "";
   const monday = mondayOf(isDate(asked) ? asked : today());
-  const days = weekFrom(monday);
+  const weeks = Array.from({ length: VISIBLE_WEEKS }, (_, index) =>
+    weekFrom(addDays(monday, index * 7)),
+  );
+  const lastDay = weeks[VISIBLE_WEEKS - 1]![6]!;
   const batches = await menuBetween(
     env.DB,
     member.householdId,
     monday,
-    days[6]!,
+    lastDay,
   );
   const now = today();
-  const isCurrentWeek = monday === mondayOf(now);
+  // The whole visible range, not just its first week: today is in view
+  // wherever inside the fortnight it falls.
+  const showsToday = now >= monday && now <= lastDay;
 
   return page(
     "Viikko",
     html`<h1>Viikko</h1>
       <nav class="weeks">
-        <a href="/?week=${addDays(monday, -7)}" rel="prev">← Edellinen</a>
+        <a href="/?week=${addDays(monday, -7 * VISIBLE_WEEKS)}" rel="prev">← Edelliset</a>
         <a href="/">Tämä viikko</a>
-        <a href="/?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
+        <a href="/?week=${addDays(monday, 7 * VISIBLE_WEEKS)}" rel="next">Seuraavat →</a>
       </nav>
-      <div class="week-days">
-        ${days.map((date) => daySection(date, batches, date === now, monday, days[6]!))}
+      <div class="week-pair">
+        ${weeks.map((days) => weekBlock(days, batches, now, monday, lastDay))}
       </div>
-      ${isCurrentWeek
+      ${showsToday
         ? html`<a class="to-today" href="#tanaan">Tänään</a>`
         : ""}
-      ${isCurrentWeek ? SCROLL_TO_TODAY : ""}`,
+      ${showsToday ? SCROLL_TO_TODAY : ""}`,
     "week",
     member,
   );
+}
+
+/**
+ * One of the two weeks, under a heading naming its dates.
+ *
+ * Fourteen day headings are a long scroll on a phone, and the heading is what
+ * keeps the second week from reading as more of the first.
+ */
+function weekBlock(
+  days: string[],
+  batches: PlannedBatch[],
+  now: string,
+  rangeStart: string,
+  rangeEnd: string,
+): Raw {
+  const holdsToday = now >= days[0]! && now <= days[6]!;
+  return html`<section class="week-block">
+    <h2 class="week-heading">
+      <span class="week-range">${shortDate(days[0]!)}–${shortDate(days[6]!)}</span>
+      ${holdsToday ? html`<span class="week-now">Tämä viikko</span>` : ""}
+    </h2>
+    <div class="week-days">
+      ${days.map((date) =>
+        daySection(date, batches, date === now, rangeStart, rangeEnd),
+      )}
+    </div>
+  </section>`;
 }
 
 /**
@@ -93,9 +133,9 @@ export async function weekScreen(
  * at Monday. It runs once, at parse time, before anyone can have scrolled, so
  * there is nothing to fight; a past or future week never renders it at all.
  *
- * An empty week gets it too: seven day headings and fourteen add links are
- * already taller than a phone, and a week with nothing on it is exactly the
- * one somebody opens in order to plan today.
+ * An empty fortnight gets it too: fourteen day headings and twenty-eight add
+ * links are already taller than a phone, and a fortnight with nothing on it is
+ * exactly the one somebody opens in order to plan today.
  *
  * ES5 on purpose — inline scripts ship untranspiled.
  */
@@ -118,8 +158,8 @@ function daySection(
   date: string,
   batches: PlannedBatch[],
   isToday: boolean,
-  monday: string,
-  sunday: string,
+  rangeStart: string,
+  rangeEnd: string,
 ): Raw {
   const starting = batches
     .filter((batch) => anchorDate(batch) === date)
@@ -137,13 +177,13 @@ function daySection(
     class="${isToday ? "day is-today" : "day"}"
     ${isToday ? rawTodayId : ""}
   >
-    <h2>
+    <h3>
       ${dayName(date)} <span class="meta">${shortDate(date)}</span>
       ${isToday ? html`<span class="today-badge">Tänään</span>` : ""}
       ${isCovered
         ? html`<span class="covered-status">✓ katettu</span>`
         : ""}
-    </h2>
+    </h3>
     ${continuing.length === 0
       ? ""
       : html`<ul class="continuing-card">
@@ -162,7 +202,7 @@ function daySection(
     ${starting.length === 0
       ? ""
       : html`<div class="batch-cards">
-          ${starting.map((batch) => batchCard(batch, monday, sunday))}
+          ${starting.map((batch) => batchCard(batch, rangeStart, rangeEnd))}
         </div>`}
     <div class="slot-actions">
       ${SLOTS.map((slot) => slotAction(date, slot, batches))}
@@ -239,10 +279,14 @@ function slotOrder(occurrence: BatchOccurrence | null): number {
  * way into every batch action; the rows below it are the meals this same pot
  * covers, in order, across days.
  */
-function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
+function batchCard(
+  batch: PlannedBatch,
+  rangeStart: string,
+  rangeEnd: string,
+): Raw {
   const days = occurrenceDays(batch);
-  const cookedInView = batch.startDate >= monday;
-  const finishesInView = batch.endDate <= sunday;
+  const cookedInView = batch.startDate >= rangeStart;
+  const finishesInView = batch.endDate <= rangeEnd;
 
   return html`<article class="batch-card" data-batch-id="${batch.id}">
     <div class="entry"><a href="/batches/${batch.id}">
@@ -275,7 +319,9 @@ function batchCard(batch: PlannedBatch, monday: string, sunday: string): Raw {
     </ul>
     ${finishesInView
       ? html`<p class="batch-end">viimeinen annos</p>`
-      : html`<p class="batch-onward">jatkuu ensi viikolle</p>`}
+      : // Past the last day on screen, which since #250 is the end of the
+        // fortnight rather than the end of a single week.
+        html`<p class="batch-onward">jatkuu eteenpäin</p>`}
   </article>`;
 }
 

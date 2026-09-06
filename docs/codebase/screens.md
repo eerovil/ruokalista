@@ -25,12 +25,34 @@ Issue #119 proposes replacing the week's occurrence-per-row layout with one card
 per cooked batch. `src/week-screens.ts::weekScreen` groups by `PlannedBatch.id`
 — never by recipe title, so two cookings of the same dish stay two cards — and
 draws each batch once, in the day of its first occurrence inside the visible
-week (`anchorDate`). The card carries the recipe, `Kokataan · N annosta`, one
+range (`anchorDate`). The card carries the recipe, `Kokataan · N annosta`, one
 row per covered day (`ma 7.12. · Lounas · Päivällinen`), and the batch's edge
-state: `Kokattu 6.12.` when the cooking happened before the visible week,
-`viimeinen annos` when it ends inside it, `jatkuu ensi viikolle` when it does
+state: `Kokattu 6.12.` when the cooking happened before the visible range,
+`viimeinen annos` when it ends inside it, `jatkuu eteenpäin` when it does
 not. The proposal deletes the left-hand rail #90 added, because a card that
 lists its own days no longer needs a line drawn beside it.
+
+Issue #250 proposes showing two weeks at once rather than one. `VISIBLE_WEEKS`
+is how many; `weekScreen` builds that many `weekFrom` weeks starting at the
+Monday `?week=` names, queries `menuBetween` across the whole range, and renders
+each week as a `.week-block` under a `.week-heading` giving its dates, with a
+`.week-now` badge on the one holding today. The arrows move a whole fortnight
+(`7 * VISIBLE_WEEKS`), so the pair never shears into a half-week either side,
+and `?week=` still means the first Monday. Everything below the block is
+unchanged: the same day sections, the same cards, the same picker and batch
+actions serve both weeks, because they were already written against the visible
+range rather than against a week.
+
+The two blocks are stacked, never side by side, because `main` is 40rem wide and
+a batch card wants all of it — a phone and a desktop read the same layout, and
+the heading is the only thing that says where one week ends. That is also why
+the day heading is an `h3` under the week's `h2`: with two weeks on screen the
+days are no longer the top level of the page.
+
+Two consequences of the wider range are worth knowing. A cooking that runs over
+a Sunday is now one card on the day it is cooked, listing every meal it feeds,
+instead of being drawn once in each week; and `jatkuu eteenpäin` now means "past
+the end of the fortnight", which is why it no longer says `ensi viikolle`.
 
 The card's shape follows the mockup the issue's author attached to #119: a
 bordered `.batch-card` with the recipe, a round thumbnail and the portions pill
@@ -75,7 +97,7 @@ island scrolls to today — see below.
 
 Two places where that mockup and the issue's own text disagree, resolved in
 favour of the text because it states both as acceptance criteria: the mockup
-draws only days that start something, while every one of the seven days keeps
+draws only days that start something, while every one of the visible days keeps
 its heading; and the mockup replaces the per-day add links with a single
 `+ Lisää ateria` button, which has no day or meal to hand `/picker`, so
 `+ Lounas` / `+ Päivällinen` stay per day.
@@ -560,9 +582,9 @@ transpilation:
 - `src/shopping-screens.ts::SHOPPING_ISLAND` — proposed for issue #159, see
   the shopping list above.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
-  whenever the week on screen is the current one, empty or not — seven day
-  headings and fourteen add links already outrun a phone, and an empty week is
-  exactly the one somebody opens in order to plan today. It runs once at parse
+  whenever today falls inside the range on screen, empty or not — fourteen day
+  headings and twenty-eight add links already outrun a phone, and an empty
+  fortnight is exactly the one somebody opens in order to plan today. It runs once at parse
   time, before anyone can have scrolled, so it cannot fight a member who is
   already moving. It bails out on an explicit `#` anchor and on a scroll
   position the browser restored, and a browser without `scrollIntoView` simply
