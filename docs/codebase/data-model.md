@@ -123,14 +123,19 @@ stale a single existing picture.
 
 ## Pending image cleanup
 
-`migrations/0025_recipe_image_cleanup.sql` adds one durable receipt per image key
-removed with a recipe tree (#259). It references the owning household, never the
-deleted recipe. `queued_at` and nullable `last_attempt_at` order bounded retries.
-The delete batch records these keys before removing the recipe rows; rollback
-removes the receipts too. R2 cleanup only starts after commit and refuses live
-references. The backup manifest, restore relationships and round-trip include
-this table so a restore cannot silently lose pending cleanup. See
-[recipe-images](recipe-images.md) for lifecycle and recovery boundaries.
+`migrations/0025_recipe_image_cleanup.sql` adds one durable retirement receipt per
+image key (`recipe_image_cleanup`). `queued_at` means the last successful
+retirement, not the upload time. Recipe deletion and image replacement/removal
+record it in the same transaction as detaching the live reference; a later
+retirement after restore resets both `queued_at` and `last_attempt_at`.
+
+The existing cron cleans only unreferenced receipts at least 31 days old,
+protecting a 30-day schema-compatible snapshot window plus one restore day.
+Retries remain capped at ten objects per invocation. Invalid timestamps are
+retained, not treated as expired. No new table or column is needed for this policy;
+backup/restore already preserve the receipt and its timestamps. A restore must
+quiesce writes/cleanup, and same-bucket retention cannot recover a lost bucket.
+See [ADR-0016](../adr/0016-retired-images-cover-the-snapshot-window.md).
 
 ## Ingredients a step names
 

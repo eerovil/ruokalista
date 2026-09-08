@@ -1,4 +1,5 @@
 import { problem } from "./auth.ts";
+import { retainUncertainRecipeImage, retireExpectedRecipeImage } from "./recipe-deletion.ts";
 import {
   extensionFor,
   MAX_IMAGE_BYTES,
@@ -409,8 +410,8 @@ export async function storeRecipeImage(
     `recipes/${householdId}/${recipeId}/${crypto.randomUUID()}.${extensionFor(facts.contentType)}`;
 
   // The bytes go first, so a failure here leaves the recipe pointing at the
-  // picture it already had. The compensating delete below covers the other
-  // order: an object stored for a row that turned out not to be there.
+  // picture it already had. Only a confirmed CAS loser is cleaned immediately;
+  // an uncertain database response retains the potentially published bytes.
   await env.RECIPE_IMAGES.put(key, bytes, {
     httpMetadata: { contentType: facts.contentType },
   });
@@ -426,7 +427,7 @@ export async function storeRecipeImage(
     // has NULL there, and `= NULL` is never true in SQL, so `=` would refuse
     // every first upload. `IS` compares NULL to NULL as equal, which is exactly
     // the claim being made — "there was nothing here when I looked".
-    const result = await env.DB
+    const update = env.DB
       .prepare(
         `UPDATE recipe
             SET image_key = ?,
@@ -448,13 +449,16 @@ export async function storeRecipeImage(
         recipeId,
         householdId,
         oldKey,
-      )
-      .run();
-
-    changed = result.meta.changes;
+      );
+    const results = await env.DB.batch([
+      retireExpectedRecipeImage(env.DB, householdId, recipeId, oldKey),
+      update,
+    ]);
+    changed = results[1]!.meta.changes;
   } catch (error) {
-    // The row was not written, so the object nothing points at goes now.
-    await env.RECIPE_IMAGES.delete(key);
+    // The commit may have succeeded but lost its response. Immediate
+    // compensation could delete the winner, or bytes already in a snapshot.
+    await retainUncertainRecipeImage(env, householdId, key);
     throw error;
   }
 
@@ -467,12 +471,13 @@ export async function storeRecipeImage(
     return staleImage();
   }
 
-  if (oldKey !== null && oldKey !== key) await env.RECIPE_IMAGES.delete(oldKey);
+  // The old key's retirement committed with the update. The existing cron
+  // removes its bytes only after the historical recovery window expires.
   return null;
 }
 
 /**
- * Forget the recipe's image, then drop the bytes.
+ * Forget the recipe's image and atomically retire its bytes for delayed cleanup.
  *
  * Conditional on the same key, for the same reason as `storeRecipeImage`: a
  * remove that raced a replacement would otherwise clear the row of a picture it
@@ -487,7 +492,7 @@ export async function removeRecipeImage(
   recipeId: number,
   oldKey: string | null,
 ): Promise<void> {
-  const result = await env.DB
+  const update = env.DB
     .prepare(
       `UPDATE recipe
           SET image_key = NULL,
@@ -497,14 +502,11 @@ export async function removeRecipeImage(
               image_generated_by = NULL
         WHERE id = ? AND household_id = ? AND image_key IS ?`,
     )
-    .bind(recipeId, householdId, oldKey)
-    .run();
-
-  // Only drop the bytes if this is the row we cleared. If somebody replaced the
-  // picture first, the object we were holding is already theirs to tidy up.
-  if (result.meta.changes === 1 && oldKey !== null) {
-    await env.RECIPE_IMAGES.delete(oldKey);
-  }
+    .bind(recipeId, householdId, oldKey);
+  await env.DB.batch([
+    retireExpectedRecipeImage(env.DB, householdId, recipeId, oldKey),
+    update,
+  ]);
 }
 
 /** The one row this module reads, so a caller can pass the old key along. */

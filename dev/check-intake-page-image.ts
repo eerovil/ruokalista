@@ -54,6 +54,17 @@ function fakes(job: Record<string, unknown> | null): Fakes {
   let recipeImage: string | null = null;
 
   const db = {
+    async batch(statements: Array<{ run: () => Promise<unknown> }>) {
+      const before = recipeImage;
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        return results;
+      } catch (error) {
+        recipeImage = before;
+        throw error;
+      }
+    },
     prepare(sql: string) {
       let values: unknown[] = [];
       const statement = {

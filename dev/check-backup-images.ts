@@ -13,7 +13,7 @@ import { BACKUP_TABLES, canonicalJson, type BackupSnapshotUnsigned } from "../sr
 import type { Env } from "../src/env.ts";
 import { MAX_IMAGE_BYTES } from "../src/image-bytes.ts";
 import { encodePng } from "../src/png.ts";
-import { deleteRecipeWithImages } from "../src/recipe-deletion.ts";
+import { cleanupDeletedRecipeImages, deleteRecipeWithImages } from "../src/recipe-deletion.ts";
 import { storeRecipeImage } from "../src/recipe-images.ts";
 import { assertRestoredRows, finalizeSnapshot, generateRestoreSql, parseAndValidateSnapshot } from "../src/restore.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
@@ -72,7 +72,7 @@ test("parent and part image bytes are read once per distinct key, without alteri
 });
 
 for (const action of ["replace", "delete"] as const) {
-  test(`${action}: matching restored D1 rows do not conceal missing historical images`, async () => {
+  test(`${action}: a restore outside retention does not conceal missing historical images`, async () => {
     const f = await fixture();
     const target = migratedDatabase();
     try {
@@ -82,6 +82,10 @@ for (const action of ["replace", "delete"] as const) {
         const old = f.snapshot.tables.recipe[0]!.image_key as string;
         assert.equal(await storeRecipeImage(f.env, 1, 1, old, f.bytes.slice().buffer), null);
       } else assert.equal(await deleteRecipeWithImages(f.env, 1, 1), true);
+      // Deliberately exceed the supported window. The audit must still report
+      // missing bytes, rather than overpromise recovery for older snapshots.
+      f.sql.exec("UPDATE recipe_image_cleanup SET queued_at = '2020-01-01 00:00:00.000'");
+      await cleanupDeletedRecipeImages(f.env);
       target.sql.exec(generateRestoreSql(f.snapshot));
       const restored = await snapshotOf(target);
       assertRestoredRows(f.snapshot, restored.tables);

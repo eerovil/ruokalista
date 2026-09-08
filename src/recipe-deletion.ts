@@ -3,6 +3,55 @@ import type { Env } from "./env.ts";
 /** At most twenty cleanup writes and ten R2 deletes per invocation. */
 export const IMAGE_CLEANUP_LIMIT = 10;
 
+/** Supported snapshot age; one extra day allows a restore to finish safely. */
+export const IMAGE_RECOVERY_DAYS = 30;
+export const IMAGE_RESTORE_MARGIN_DAYS = 1;
+const RETENTION_AGE = `-${IMAGE_RECOVERY_DAYS + IMAGE_RESTORE_MARGIN_DAYS} days`;
+
+// A restored key can be detached again. Its old receipt must not shorten the
+// new recovery window. Both single-image edits and whole-tree deletes use this.
+const RENEW_RETIREMENT = `ON CONFLICT(image_key) DO UPDATE SET
+  household_id = excluded.household_id,
+  queued_at = excluded.queued_at,
+  last_attempt_at = NULL`;
+
+/** Run immediately BEFORE the matching CAS update, inside the SAME D1 batch. */
+export function retireExpectedRecipeImage(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+  expectedKey: string | null,
+): D1PreparedStatement {
+  return db.prepare(
+    `INSERT INTO recipe_image_cleanup (image_key, household_id)
+     SELECT image_key, household_id FROM recipe
+      WHERE id = ? AND household_id = ? AND image_key IS ?
+        AND image_key IS NOT NULL
+     ${RENEW_RETIREMENT}`,
+  ).bind(recipeId, householdId, expectedKey);
+}
+
+/**
+ * A failed response does not prove the image update rolled back. Keep those
+ * bytes too: they may already appear in a snapshot or in the live recipe.
+ * Best-effort bookkeeping must never mask the original database error. If D1
+ * is unavailable, leave a logged stray object rather than destroy a winner.
+ */
+export async function retainUncertainRecipeImage(
+  env: Env,
+  householdId: number,
+  key: string,
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO recipe_image_cleanup (image_key, household_id) VALUES (?, ?)
+       ON CONFLICT(image_key) DO NOTHING`,
+    ).bind(key, householdId).run();
+  } catch {
+    console.error(JSON.stringify({ event: "recipe.image_retention_unrecorded" }));
+  }
+}
+
 /**
  * Delete a private, unplanned recipe tree and durably remember its image keys.
  *
@@ -42,7 +91,7 @@ export async function deleteRecipeWithImages(
        SELECT image_key, household_id FROM recipe
         WHERE household_id = ? AND (id = ? OR parent_id = ?)
           AND image_key IS NOT NULL AND ${guard}
-       ON CONFLICT(image_key) DO NOTHING`,
+       ${RENEW_RETIREMENT}`,
     ).bind(householdId, recipeId, recipeId, ...bindings),
     env.DB.prepare(
       `DELETE FROM recipe
@@ -64,7 +113,7 @@ export async function deleteRecipeWithImages(
 }
 
 /**
- * Retry a small slice of committed deletions, here and from the existing cron.
+ * Retry a small slice of EXPIRED retirements, here and from the existing cron.
  *
  * Failed attempts move behind older work, so one missing/unavailable object
  * cannot starve the rest. An R2 success followed by a D1 acknowledgement failure
@@ -81,31 +130,33 @@ export async function cleanupDeletedRecipeImages(
 ): Promise<void> {
   try {
     const { results } = await env.DB.prepare(
-      `SELECT pending.image_key, pending.household_id
+      `SELECT pending.image_key, pending.household_id, pending.queued_at
          FROM recipe_image_cleanup AS pending
         WHERE (? IS NULL OR pending.household_id = ?)
+          AND julianday(pending.queued_at) <= julianday('now', ?)
           AND NOT EXISTS (
             SELECT 1 FROM recipe WHERE image_key = pending.image_key
           )
         ORDER BY coalesce(last_attempt_at, queued_at), pending.image_key
         LIMIT ?`,
-    ).bind(householdId ?? null, householdId ?? null, IMAGE_CLEANUP_LIMIT)
-      .all<{ image_key: string; household_id: number }>();
+    ).bind(householdId ?? null, householdId ?? null, RETENTION_AGE, IMAGE_CLEANUP_LIMIT)
+      .all<{ image_key: string; household_id: number; queued_at: string }>();
 
     for (const row of results) {
       try {
         const attempted = await env.DB.prepare(
           `UPDATE recipe_image_cleanup
               SET last_attempt_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
-            WHERE image_key = ? AND household_id = ?
+            WHERE image_key = ? AND household_id = ? AND queued_at = ?
+              AND julianday(queued_at) <= julianday('now', ?)
               AND NOT EXISTS (SELECT 1 FROM recipe WHERE image_key = ?)`,
-        ).bind(row.image_key, row.household_id, row.image_key).run();
+        ).bind(row.image_key, row.household_id, row.queued_at, RETENTION_AGE, row.image_key).run();
         if (attempted.meta.changes !== 1) continue;
 
         await env.RECIPE_IMAGES.delete(row.image_key);
         await env.DB.prepare(
-          "DELETE FROM recipe_image_cleanup WHERE image_key = ? AND household_id = ?",
-        ).bind(row.image_key, row.household_id).run();
+          "DELETE FROM recipe_image_cleanup WHERE image_key = ? AND household_id = ? AND queued_at = ?",
+        ).bind(row.image_key, row.household_id, row.queued_at).run();
       } catch (error) {
         console.error(JSON.stringify({
           event: "recipe.image_cleanup_pending",

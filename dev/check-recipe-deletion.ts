@@ -53,15 +53,24 @@ function fixture() {
     return (sql.prepare("SELECT image_key FROM recipe_image_cleanup ORDER BY image_key")
       .all() as { image_key: string }[]).map((row) => row.image_key);
   }
-  return { database, sql, objects, deletes, failures, env, count, pending };
+  function expire() {
+    // Advance retirement age, not wall-clock time. New retirements are tested
+    // separately; fault-injection checks below must actually reach R2.
+    sql.exec("UPDATE recipe_image_cleanup SET queued_at = '2020-01-01 00:00:00.000'");
+  }
+  return { database, sql, objects, deletes, failures, env, count, pending, expire };
 }
 
 for (const target of [10, 11]) {
-  test(`deleting recipe ${target} commits before deleting exactly its image objects`, async () => {
+  test(`deleting recipe ${target} retains its images until expiry, then cleans exactly those objects`, async () => {
     const f = fixture();
     try {
       assert.equal(await deleteRecipeWithImages(f.env, 1, target), true);
       assert.equal(f.count("SELECT count(*) AS n FROM recipe WHERE id = ?", target), 0);
+      assert.deepEqual(f.deletes, []);
+      assert.equal(f.pending().length, target === 10 ? 2 : 1);
+      f.expire();
+      await cleanupDeletedRecipeImages(f.env);
       assert.deepEqual(f.deletes.sort(), target === 10
         ? ['recipes/1/10/dish.png', 'recipes/1/11/part.png']
         : ['recipes/1/11/part.png']);
@@ -165,6 +174,9 @@ test("R2 failure does not fail a committed deletion; durable replay is idempoten
     f.failures.add('recipes/1/11/part.png');
     assert.equal(await deleteRecipeWithImages(f.env, 1, 10), true);
     assert.equal(f.count("SELECT count(*) AS n FROM recipe WHERE household_id = 1"), 0);
+    assert.deepEqual(f.deletes, []);
+    f.expire();
+    await cleanupDeletedRecipeImages(f.env);
     assert.deepEqual(f.pending(), ['recipes/1/11/part.png']);
     assert.ok(f.objects.has('recipes/1/11/part.png'));
     f.failures.clear();
@@ -183,6 +195,8 @@ test("an R2 success with a failed D1 acknowledgement safely retries an absent ob
     f.sql.exec(`CREATE TRIGGER fail_ack BEFORE DELETE ON recipe_image_cleanup
       BEGIN SELECT RAISE(ABORT, 'injected acknowledgement failure'); END;`);
     assert.equal(await deleteRecipeWithImages(f.env, 1, 10), true);
+    f.expire();
+    await cleanupDeletedRecipeImages(f.env);
     assert.equal(f.pending().length, 2);
     assert.equal(f.objects.size, 1);
     f.sql.exec("DROP TRIGGER fail_ack");
@@ -198,10 +212,15 @@ test("a concurrent image replacement queues the key at deletion time, not a stal
     f.database.beforeBatch(() => {
       f.objects.add('recipes/1/10/new.png');
       f.sql.exec("UPDATE recipe SET image_key = 'recipes/1/10/new.png' WHERE id = 10");
-      f.objects.delete('recipes/1/10/dish.png'); // The successful upload's own cleanup.
+      f.sql.exec(`INSERT INTO recipe_image_cleanup (image_key, household_id)
+        VALUES ('recipes/1/10/dish.png', 1)`); // The concurrent upload's retirement.
     });
     assert.equal(await deleteRecipeWithImages(f.env, 1, 10), true);
-    assert.deepEqual(f.deletes.sort(), ['recipes/1/10/new.png', 'recipes/1/11/part.png']);
+    assert.deepEqual(f.deletes, []);
+    assert.deepEqual(f.pending(), ['recipes/1/10/dish.png', 'recipes/1/10/new.png', 'recipes/1/11/part.png']);
+    f.expire();
+    await cleanupDeletedRecipeImages(f.env);
+    assert.deepEqual(f.deletes.sort(), ['recipes/1/10/dish.png', 'recipes/1/10/new.png', 'recipes/1/11/part.png']);
     assert.equal(f.objects.size, 1);
   } finally { f.sql.close(); }
 });
@@ -212,6 +231,7 @@ test("cleanup preserves live references in any household and freshly uploaded im
     f.sql.exec(`INSERT INTO recipe_image_cleanup (image_key, household_id)
       VALUES ('recipes/2/20/other.png', 1);`);
     f.objects.add('recipes/1/10/fresh-upload.png');
+    f.expire();
     await cleanupDeletedRecipeImages(f.env, 1);
     assert.deepEqual(f.deletes, []);
     assert.ok(f.objects.has('recipes/2/20/other.png'));
@@ -267,6 +287,7 @@ test("losing the database response after commit leaves durable cleanup receipts"
     assert.equal(f.count("SELECT count(*) AS n FROM recipe WHERE household_id = 1"), 0);
     assert.equal(f.pending().length, 2);
     assert.deepEqual(f.deletes, []);
+    f.expire();
     await cleanupDeletedRecipeImages(f.env);
     assert.deepEqual(f.pending(), []);
     assert.equal(f.objects.size, 1);
@@ -322,6 +343,9 @@ for (const api of [false, true]) {
       assert.equal(response.status, api ? 204 : 303);
       if (!api) assert.equal(response.headers.get("location"), "/recipes");
       assert.equal(f.count("SELECT count(*) AS n FROM recipe WHERE household_id = 1"), 0);
+      assert.deepEqual(f.deletes, []);
+      f.expire();
+      await cleanupDeletedRecipeImages(f.env);
       assert.deepEqual(f.pending(), ["recipes/1/11/part.png"]);
       assert.ok(f.objects.has("recipes/1/11/part.png"));
       assert.ok(f.objects.has("recipes/2/20/other.png"));
@@ -335,6 +359,8 @@ test("pending cleanup survives a real migrated-SQLite backup/restore and seed re
   try {
     f.failures.add("recipes/1/11/part.png");
     assert.equal(await deleteRecipeWithImages(f.env, 1, 10), true);
+    f.expire();
+    await cleanupDeletedRecipeImages(f.env);
     const tables = Object.fromEntries(BACKUP_TABLES.map(({ name, orderBy }) => [
       name, f.sql.prepare(`SELECT * FROM ${name} ORDER BY ${orderBy}`).all(),
     ])) as BackupSnapshotUnsigned["tables"];
@@ -369,6 +395,7 @@ test("a restored live reference appearing after queue selection prevents cleanup
     const key = "recipes/1/99/restored.png";
     f.objects.add(key);
     f.sql.prepare("INSERT INTO recipe_image_cleanup (image_key, household_id) VALUES (?, 1)").run(key);
+    f.expire();
     const db = f.env.DB;
     f.env.DB = { ...db, prepare: (text: string) => {
       if (text.includes("UPDATE recipe_image_cleanup")) {
