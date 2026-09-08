@@ -89,8 +89,9 @@ async function main(): Promise<void> {
     }
 
     console.log(
-      `restore verified: sha256=${snapshot.sha256} counts=${canonicalJson(snapshot.row_counts)}`,
+      `D1 restore verified: sha256=${snapshot.sha256} counts=${canonicalJson(snapshot.row_counts)}`,
     );
+    console.log("Image bytes were NOT checked. Run scripts/backup-images.ts against the intended image bucket separately.");
   } finally {
     if (targetOptions.wranglerConfig) removePrivateTempFile(targetOptions.wranglerConfig);
   }

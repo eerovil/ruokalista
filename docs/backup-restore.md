@@ -56,8 +56,10 @@ npm run restore:backup -- \
 
 The command applies the repository migrations, verifies compatibility/emptiness,
 restores original ids in foreign-key-safe order, runs `PRAGMA foreign_key_check`, and
-reads every table back in deterministic order. Success means the restored rows exactly
-match the snapshot, not merely that the counts look plausible.
+reads every table back in deterministic order. The `D1 restore verified` result means the restored rows exactly
+match the snapshot, not merely that the counts look plausible. It explicitly says
+that image bytes were not checked: matching `recipe.image_key` strings do not
+prove that the objects still exist.
 
 CI exercises the same path from a seeded local D1 snapshot into a second empty local
 D1 database with:
@@ -100,3 +102,66 @@ missing/unexpected app table, duplicate key, orphan relationship, recipe-parent 
 schema mismatch, non-empty target, failed insert, foreign-key violation, or any
 post-restore row mismatch. Do not edit a snapshot by hand to get around a refusal: pick
 a different historical backup or add an explicit, reviewed compatibility rule.
+
+
+## Read-only image availability audit (#271, first slice of #262)
+
+Run this independently before or after a database restore. It does not restore,
+create, replace or delete any database row or bucket object. Select the intended
+bucket and local/remote mode explicitly; no production bucket is selected by default.
+For example, after a drill with a disposable bucket:
+
+```sh
+npm run check:backup-images -- \
+  --snapshot /tmp/ruokalista-snapshot.json \
+  --bucket <temporary-image-bucket-name> \
+  --remote \
+  --report /tmp/ruokalista-image-audit.json
+```
+
+For local storage use `--local --persist-to <isolated-state-directory>` instead
+of `--remote`. Remote reads use the existing Wrangler credentials; only object-read
+access is needed. No new secret or application endpoint is introduced. The command
+uses Wrangler's `r2 object get --pipe` contract, documented at
+https://developers.cloudflare.com/r2/reference/wrangler-commands/.
+
+The complete snapshot is validated before any object request. Each distinct key is
+read once, sequentially, including the images of recipe parts. Each download has a
+60-second command timeout and the existing five-MiB image limit. Missing objects,
+permission/transport failures, empty responses, over-limit bytes and unrecognized
+image headers make the audit fail non-zero. `unavailable` deliberately does not
+claim to distinguish absence from a permission or network failure. Without images,
+the audit performs no storage request.
+
+Console output contains only aggregate success information or a sanitized failure;
+provider errors, keys, recipe IDs and private snapshot data are not printed. The
+optional JSON report contains keys, recipe IDs, sizes, observed SHA-256 digests and
+per-object results, including failures. It is **private**, created with mode 0600,
+and refuses to overwrite an existing file or symlink. Never commit, publish or
+upload this report to public CI artifacts. Remove it after the drill. A failed
+snapshot validation has no image report because no objects have been audited.
+
+**Availability is not historical identity or retention.** These snapshots do not
+store the original image-byte SHA-256 values. The report's digests describe the bytes
+read now; they are not compared to an original snapshot-time image manifest. Header
+recognition is not a full image decode. Even a successful audit does not prove that
+the file is the original photograph, will remain available tomorrow, or survives
+loss of the whole bucket. Compare retained audit digests/bytes as additional drill
+evidence where independent originals are available.
+
+### Remaining recovery decision (#262 stays open)
+
+The inspected repository writes D1 snapshots, and its documented image replacement
+and cleanup paths remove old objects. The backup repository's inspected file layout
+contains the database snapshot and a freshness watchdog, not image archives. This
+inspection did **not** establish the live bucket lifecycle configuration or rule out
+an independent external backup. Verify those through authorized read-only access
+before adding another protection system.
+
+The next decision is the supported recovery window and whether complete bucket-loss
+recovery is required. Same-bucket retention of detached images and an independent
+versioned byte archive solve different failures; neither a database key nor an audit
+creates a recoverable copy. Coordinate replacement, removal and #259 cleanup with
+the chosen policy. Do not start an expiry policy or claim a guaranteed recovery
+window until the protection, storage impact and recovery drill are established.
+This audit changes none of those policies and does not complete #262.
