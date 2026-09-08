@@ -1,4 +1,5 @@
 import type { Member } from "./members.ts";
+import { boundedInChunks } from "./d1-query.ts";
 import { readableRecipeCondition } from "./recipe-publish.ts";
 import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
@@ -30,25 +31,26 @@ export async function preferredMultipliers(
   householdId: number,
   recipeIds: readonly number[],
 ): Promise<Map<number, number>> {
-  const wanted = [...new Set(recipeIds)];
-  if (wanted.length === 0) return new Map();
+  const found = new Map<number, number>();
+  for (const recipeChunk of boundedInChunks(recipeIds, 1)) {
+    const placeholders = recipeChunk.map(() => "?").join(", ");
+    const { results } = await db
+      .prepare(
+        `SELECT recipe_id, default_multiplier
+           FROM recipe_preference
+          WHERE household_id = ?
+            AND recipe_id IN (${placeholders})`,
+      )
+      .bind(householdId, ...recipeChunk)
+      .all<{ recipe_id: number; default_multiplier: number }>();
 
-  const placeholders = wanted.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      `SELECT recipe_id, default_multiplier
-         FROM recipe_preference
-        WHERE household_id = ?
-          AND recipe_id IN (${placeholders})`,
-    )
-    .bind(householdId, ...wanted)
-    .all<{ recipe_id: number; default_multiplier: number }>();
-
-  return new Map(
-    results
-      .filter((row) => isMultiplier(row.default_multiplier))
-      .map((row) => [row.recipe_id, row.default_multiplier]),
-  );
+    for (const row of results) {
+      if (isMultiplier(row.default_multiplier)) {
+        found.set(row.recipe_id, row.default_multiplier);
+      }
+    }
+  }
+  return found;
 }
 
 export async function preferredMultiplierFor(
