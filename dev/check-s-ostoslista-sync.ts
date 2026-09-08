@@ -4,11 +4,11 @@ import test from "node:test";
 import type { ProductChoice } from "../src/ingredient-products.ts";
 import {
   sendToSOstoslista,
+  type SOstoslistaSendItem,
   type SOstoslistaSyncClient,
 } from "../src/s-ostoslista-sync.ts";
 import { rememberSentNote, sentNotes } from "../src/s-ostoslista-notes.ts";
 import { SOstoslistaError, type SOstoslistaKey } from "../src/s-ostoslista.ts";
-import type { ShoppingItem } from "../src/shopping.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
 type Call =
@@ -64,22 +64,9 @@ function item(
   key: string,
   name: string,
   total: string,
-  chosen: ShoppingItem["chosen"] = [],
-): ShoppingItem {
-  return {
-    key,
-    ingredientId: Number(key.split(":")[0]) || 1,
-    recipeId: null,
-    recipeTitle: null,
-    name,
-    total,
-    hasUnstated: false,
-    products: chosen.map((choice) => choice.product),
-    chosen,
-    packageTotal: null,
-    recipes: [],
-    contributions: [],
-  };
+  chosen: SOstoslistaSendItem["chosen"] = [],
+): SOstoslistaSendItem {
+  return { key, name, total, chosen };
 }
 
 test("an unchanged text row is reasserted without deleting itself", async () => {
