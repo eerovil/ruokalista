@@ -29,9 +29,14 @@ export type SOstoslistaSendOutcome =
       status: "sent";
       sent: number;
       total: number;
-      synced: boolean;
-      /** Present only when the send itself finished but the phone push failed. */
-      syncError: unknown | null;
+      synced: true;
+    }
+  | {
+      status: "sent";
+      sent: number;
+      total: number;
+      synced: false;
+      syncError: unknown;
     }
   | {
       status: "partial";
@@ -106,13 +111,7 @@ export async function sendToSOstoslista(
 
   try {
     await client.sync();
-    return {
-      status: "sent",
-      sent,
-      total: items.length,
-      synced: true,
-      syncError: null,
-    };
+    return { status: "sent", sent, total: items.length, synced: true };
   } catch (syncError) {
     return {
       status: "sent",

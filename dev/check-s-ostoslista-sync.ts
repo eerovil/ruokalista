@@ -86,7 +86,6 @@ test("an unchanged text row is reasserted without deleting itself", async () => 
     sent: 1,
     total: 1,
     synced: true,
-    syncError: null,
   });
   assert.deepEqual(client.calls, [
     { kind: "add", key: { note: "maito — 1 l" }, quantity: null },
@@ -131,7 +130,6 @@ test("one EAN is sent once with the aggregate packet count across rows", async (
     sent: 2,
     total: 2,
     synced: true,
-    syncError: null,
   });
   assert.deepEqual(client.calls, [
     { kind: "add", key: { ean: "6415712506032" }, quantity: 5 },
@@ -276,7 +274,7 @@ test("a failed final phone push is a warning after a complete send", async () =>
   if (outcome.status === "sent") {
     assert.equal(outcome.sent, 1);
     assert.equal(outcome.synced, false);
-    assert.equal(outcome.syncError, failure);
+    if (!outcome.synced) assert.equal(outcome.syncError, failure);
   }
   assert.equal((await sentNotes(fake.db, 1)).get("1"), "suola — 1 tl");
 });
