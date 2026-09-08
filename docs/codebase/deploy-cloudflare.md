@@ -12,6 +12,13 @@ Credentials live in `~/.local/share/ruokalista/cloudflare.env` (mode 600), which
 `.dev.vars`: that file is loaded into the Worker's own environment during local
 development, which is no place for an account-wide API token.
 
+Issue #252 proposes making production verification the completion boundary for
+implementation issues. A merged PR means its code is on `main`, but its one
+`Issue: #N` marker remains open until a production run completes migrations,
+deploy and live health/auth checks. The run then covers every PR since the last
+successful `production` deployment, which lets a later successful run close work
+that was present in an earlier failed one without guessing from commit messages.
+
 `scripts/cloudflare-setup.sh` does the whole setup in one command and is safe to
 re-run. `push-google-secrets.sh` pushes the Google credentials and deploys;
 `add-member.sh` inserts a member, which is the only way anybody gets in.
