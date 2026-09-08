@@ -203,6 +203,7 @@ export async function sendShoppingListForm(
   if (!outcome.synced) {
     console.error(`S-ostoslista sync failed: ${reason(outcome.syncError)}`);
   }
+
   const notSynced =
     "Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä. Ainekset ovat listalla ja päivittyvät viimeistään seuraavassa synkronoinnissa.";
 
@@ -789,10 +790,18 @@ function sections(
   selectedIds: Set<number>,
   external: boolean,
 ): Raw {
+  // The anchor names are handed out once across both lists, so a row that moves
+  // between them keeps the same `#aines-…` and every redirect below still lands
+  // on it (#200).
   const anchored = new Set<number>();
+
+  // With nothing in the cupboard there is only one list, and a lone
+  // "Ostettavat" heading under a heading that already says Ostoslista is a
+  // word for its own sake.
   if (atHome.length === 0) {
     return itemList(buy, selectedIds, false, external, anchored);
   }
+
   return html`<h2 class="shopping-section">Ostettavat</h2>
     ${buy.length === 0
       ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
@@ -805,6 +814,14 @@ function sections(
     ${itemList(atHome, selectedIds, true, external, anchored)}`;
 }
 
+/**
+ * One row per ingredient, each one openable to say where its total came from
+ * and to move it in or out of the cupboard.
+ *
+ * A `<details>` rather than a script: the breakdown is the answer to "why does
+ * it say five", and that answer should not depend on the browser being able to
+ * run anything.
+ */
 function itemList(
   items: ShoppingItem[],
   selectedIds: Set<number>,
@@ -815,6 +832,7 @@ function itemList(
   if (items.length === 0) {
     return html`<p class="empty">Valituissa aterioissa ei ole aineksia.</p>`;
   }
+
   return html`<ul class="shopping-list">
     ${items.map(
       (item) => html`<li ${rowAnchor(item, anchored)}>
@@ -860,6 +878,23 @@ function itemList(
   </ul>`;
 }
 
+/**
+ * Where a form that has to leave the page sends the member back to (#200).
+ *
+ * Every server round-trip on this screen — the cupboard buttons, dropping a
+ * package size, and the whole no-JavaScript product flow — used to redirect to
+ * `/ostoslista` with nothing but the meal selection, which drops somebody who
+ * was twenty rows down back at the top of a list they then have to find their
+ * place in again. An id per ingredient is enough to land them back on the row
+ * they acted on.
+ *
+ * It is the *ingredient* rather than the row key because those two round-trips
+ * are exactly the ones that can change a row's key: a product pinned to one
+ * dish splits `12` into `12` and `12:r7`, and moving a row to the cupboard
+ * moves it to the other list entirely. The ingredient survives both. Where an
+ * ingredient does have two rows the first one gets the name, because a
+ * duplicate id is not an anchor at all.
+ */
 function rowAnchor(item: ShoppingItem, anchored: Set<number>): Raw {
   if (anchored.has(item.ingredientId)) return html``;
   anchored.add(item.ingredientId);
@@ -870,6 +905,10 @@ function anchorName(ingredientId: number): string {
   return `aines-${ingredientId}`;
 }
 
+/**
+ * The list URL a form redirects to: the selection it was carrying, and the row
+ * it was about.
+ */
 function listLocation(
   selectedIds: Set<number>,
   ingredientId: number | null,
@@ -881,6 +920,22 @@ function listLocation(
   return `/ostoslista?${selectionQueryFromIds(selectedIds)}${anchor}`;
 }
 
+/**
+ * Every slot a product picture is drawn in, with the width the CDN should
+ * render it at. Three of them, and the widths are roughly three times the slot
+ * — enough for a phone's own pixel density and no more (#204). Left to itself
+ * the CDN sends one 256 px picture for all three, which on a portrait carton is
+ * 44 kB apiece: nearly a megabyte to fill twenty 26 px squares.
+ *
+ * The CSS crops each of these to its box rather than fitting the whole picture
+ * inside it, which is the other half of the same complaint. A product photo is
+ * shot however the package stands, so a milk carton arrives at 256 × 705; fitted
+ * into a square it drew as a 9 px sliver of white, and the picture that was
+ * supposed to say which product this row is said nothing.
+ *
+ * These numbers pair with the sizes in `html.ts` and are handed to the island
+ * below, so a slot's size lives in one place.
+ */
 const PRODUCT_PICTURE = {
   row: { size: 26, width: 96 },
   summary: { size: 40, width: 128 },
@@ -900,6 +955,12 @@ function productPicture(url: string, slot: PictureSlot): Raw {
   />`;
 }
 
+/**
+ * The chosen product's picture on the row itself (#159), small enough that the
+ * row it sits in is the height it always was. Without a picture the slot stays
+ * empty and collapses, so an unmapped ingredient — or one whose CDN image is
+ * missing — reads exactly as it did before rather than as a broken box.
+ */
 function thumbnail(item: ShoppingItem): Raw {
   const image = item.chosen[0]?.product.imageUrl ?? null;
   if (image === null) return html``;
@@ -930,6 +991,21 @@ function externalSendPanel(
   </section>`;
 }
 
+/**
+ * What the S-ostoslista already holds, filled in by the island.
+ *
+ * It ships hidden and empty on purpose. The contents are an external read, and
+ * #159 asks for them without letting them delay — or break — the household's
+ * own list, so they arrive after the screen does. A browser that runs nothing
+ * simply never sees this block, which is the same bargain every other
+ * enhancement on this screen makes.
+ *
+ * This change moves it *below* the list rather than inside the send panel above
+ * it (#200). Its contents are an unknown number of lines that arrive after the
+ * screen is already on the phone, and every one of them used to push the whole
+ * shopping list further down while somebody was reading it. Below the list it
+ * grows into empty space and moves nothing.
+ */
 function currentListPanel(): Raw {
   return html`<div class="s-current" hidden>
     <h3>S-ostoslistalla nyt</h3>
@@ -938,6 +1014,15 @@ function currentListPanel(): Raw {
   </div>`;
 }
 
+/**
+ * What this row is buying, and the two buttons that change it.
+ *
+ * The intelligence stays behind the row (#161): a member reads the product,
+ * how many of it, and — where a recipe has its own — which dish this row
+ * belongs to. There is no rule editor and no settings page; the two things
+ * anybody needs to say are said by opening the product panel from here, either
+ * to change the product or to teach the ingredient another package size.
+ */
 function externalProductBlock(
   item: ShoppingItem,
   selectedIds: Set<number>,
@@ -945,8 +1030,10 @@ function externalProductBlock(
   external: boolean,
 ): Raw {
   if (!external) return html``;
+
   const mapped = item.chosen.length > 0;
   if (inPantry) return mapped ? productSummary(item) : html``;
+
   return html`<div class="s-shopping-product ${mapped ? "is-mapped" : "is-note"}">
     <div class="s-shopping-product-body">
       ${mapped
@@ -966,11 +1053,37 @@ function externalProductBlock(
   </div>`;
 }
 
+/**
+ * The scope choice, drawn by the server and hidden, for the island to lift into
+ * its panel.
+ *
+ * It sits outside every form on the row on purpose — a hidden `<select>` inside
+ * the cupboard or open-panel form would be posted along with them — and it is
+ * rendered here rather than built in JavaScript so a dish's title is escaped by
+ * the same `html` tag as everything else.
+ */
 function scopeSource(item: ShoppingItem): Raw {
   if (item.recipeId !== null || item.recipes.length === 0) return html``;
   return html`<div class="s-scope-source" hidden>${scopeChoice(item, "replace")}</div>`;
 }
 
+/**
+ * One button that opens the product panel — in the browser, or as a plain
+ * navigation to `/ostoslista/tuote` where it cannot.
+ *
+ * `tapa` is the difference between the two: `korvaa` means this ingredient is
+ * something else than we thought, `lisaa` means it is the same thing in a
+ * second packet. Both end up in the same panel; only what the save does with
+ * the answer differs.
+ *
+ * There is nothing to add a second size *to* until something is chosen, so on an
+ * unmapped row that button is **disabled rather than hidden** (#200). Hidden, it
+ * appeared the instant a product was drawn — and a whole tap target arriving
+ * mid-row shoved every row under it down the screen at exactly the moment the
+ * member had just tapped something. Disabled it holds its own space, says
+ * plainly that there is nothing to add a size to yet, and the island only has to
+ * enable it.
+ */
 function openForm(
   item: ShoppingItem,
   selectedIds: Set<number>,
@@ -992,9 +1105,18 @@ function openForm(
   </form>`;
 }
 
+/**
+ * The package sizes this row knows beyond the one it is buying, each with the
+ * one thing that can go wrong made fixable: a size nobody could read, and a
+ * choice somebody made by mistake.
+ *
+ * It is only drawn when there is more than one product or a recipe's own — the
+ * ordinary row, one ingredient with one packet, shows nothing extra at all.
+ */
 function knownProducts(item: ShoppingItem, selectedIds: Set<number>): Raw {
   const pinned = item.recipeId !== null;
   if (!pinned && item.products.length < 2) return html``;
+
   return html`<ul class="s-product-sizes">
     ${item.products.map(
       (product) => html`<li>
@@ -1015,6 +1137,18 @@ function knownProducts(item: ShoppingItem, selectedIds: Set<number>): Raw {
   </ul>`;
 }
 
+/**
+ * The row's answer to "what do I put in the trolley": every chosen packet, and
+ * how many of it. A single packet reads exactly as it did before #161 — the
+ * count only appears where there is one to say.
+ *
+ * #200 shrinks it. It used to be a card with a 64 px picture, and swapping the
+ * two-line "Teksti" placeholder for it changed the row's height at the exact
+ * moment somebody had just tapped something — so the rest of the list moved
+ * under their thumb. At 40 px with the name and EAN each held to one line, the
+ * mapped and unmapped states are the same two lines tall and the swap moves
+ * nothing.
+ */
 function productSummary(item: ShoppingItem): Raw {
   return html`<div class="s-shopping-product-summary">
     ${item.recipeTitle === null
@@ -1082,10 +1216,20 @@ function productPage(
   );
 }
 
+/**
+ * How wide a choice reaches, asked in one line above the results.
+ *
+ * A dropdown rather than a pair of buttons on every result: the answer is
+ * almost always the default, the results are already busy, and a row that draws
+ * two batches' worth of dishes needs to be able to say *which* dish anyway.
+ * Adding a second package size is not a scope question at all — it is by
+ * definition about the ingredient — so the choice is not offered there.
+ */
 function scopeChoice(item: ShoppingItem, mode: "replace" | "add"): Raw {
   if (mode === "add" || item.recipeId !== null || item.recipes.length === 0) {
     return html``;
   }
+
   return html`<label class="s-product-scope-choice">
     Valinnan laajuus
     <select name="laajuus">
@@ -1152,6 +1296,14 @@ function productResult(product: SOstoslistaProduct): Raw {
   </li>`;
 }
 
+/**
+ * The one field this screen ever asks for, and only where the shop's own name
+ * does not answer it: `Kanan rintafilee marinoitu` says nothing about grams.
+ *
+ * Left empty, the product is still perfectly choosable — it just never gets a
+ * package count, which is the safe half of #161's bargain. Filled in, it is
+ * stored once as data like every other size.
+ */
 function packageSizeFields(product: SOstoslistaProduct): Raw {
   return html`<span class="s-product-size-entry">
     <label
@@ -1185,6 +1337,13 @@ function selectedBuyItem(
   return buy.find((item) => item.key === key) ?? null;
 }
 
+/**
+ * A URL means "call the service over HTTP", which is how the browser tests
+ * reach their fixture. Otherwise the bound Worker is the transport, and the
+ * base URL only has to be a valid absolute URL for the client to resolve paths
+ * against — the binding decides where the request actually goes, so the
+ * hostname below is never resolved.
+ */
 const BOUND_SERVICE_BASE = "https://s-ostoslista-worker.invalid/";
 
 function externalClient(env: RouteContext["env"], member: Member): SOstoslistaClient | null {
@@ -1210,10 +1369,52 @@ function externalClient(env: RouteContext["env"], member: Member): SOstoslistaCl
   }
 }
 
+/**
+ * Workers Logs keeps a thrown Error's stack but not its message, so passing the
+ * error as a second argument to console.error loses the one line that says what
+ * went wrong. Interpolating it is what makes a failure diagnosable from the log.
+ */
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Everything #159 asks the browser to do, in one island.
+ *
+ * Written in ES5 with no regular expressions, like the other three islands —
+ * it is a template literal shipped untranspiled, see
+ * `docs/codebase/screens.md`. It builds every node with `createElement` and
+ * `createTextNode` rather than by pasting strings together, so a product name
+ * from the shop cannot become markup.
+ *
+ * Six things it is careful about:
+ *
+ *   - **A search answer is bound to its question.** The cache is keyed by the
+ *     search term and the server echoes the term it ran, so a prefetched answer
+ *     for the next ingredient can never be drawn into the row a member is
+ *     looking at.
+ *   - **Nothing it draws is inside the list.** The picker is one fixed sheet
+ *     and a refusal is one fixed strip; both sit over the list rather than in
+ *     it, so opening, closing, searching, choosing and failing all move the
+ *     list by zero pixels (#200). The one thing the island writes into a row is
+ *     the chosen product, into slots the server already sized.
+ *   - **The sheet says what it is for.** A picker that is no longer inside the
+ *     row it belongs to has to name the ingredient and its amount itself.
+ *   - **A save is optimistic but never silent.** The row shows the choice and
+ *     the sheet closes at once; a spinner in the row's own reserved status line
+ *     says the save is still going, and a failure puts the row back the way it
+ *     was with the refusal and a retry.
+ *   - **A row that is done closes itself.** The open row is the tallest thing
+ *     on the screen at exactly the moment there is nothing left to do in it,
+ *     and #204 is somebody finishing an ingredient and having to hunt for where
+ *     they were. Collapsing on a successful save leaves the chosen product's
+ *     picture on the row and the next ingredient on the next line. Only on
+ *     success: a refusal's error and retry live inside the row.
+ *   - **One at a time.** A row that is saving ignores a second choice, and the
+ *     send button refuses a second press until the first has answered.
+ *   - **A failure is not cached.** An error clears its cache entry, so the next
+ *     attempt really asks again.
+ */
 const SHOPPING_ISLAND = `
 (function () {
   if (
@@ -1292,6 +1493,8 @@ const SHOPPING_ISLAND = `
     return parts.join('&');
   }
 
+  // ------------------------------------------------ searches, kept by term
+
   var searches = {};
 
   function search(query, callback) {
@@ -1326,6 +1529,8 @@ const SHOPPING_ISLAND = `
     );
   }
 
+  // ------------------------------------------------------------- the rows
+
   function collect() {
     var items = document.querySelectorAll('.shopping-item[data-rivi]');
     for (var index = 0; index < items.length; index += 1) {
@@ -1340,6 +1545,8 @@ const SHOPPING_ISLAND = `
         body: block.querySelector('.s-shopping-product-body'),
         thumb: details.querySelector('.shopping-thumb'),
         openers: openers,
+        // The first opener is the one that replaces; its hidden fields carry
+        // the row key and the week's selection, which every request needs.
         opener: openers[0],
         scopeSource: block.querySelector('.s-scope-source'),
         scope: null,
@@ -1348,6 +1555,8 @@ const SHOPPING_ISLAND = `
         aines: details.getAttribute('data-aines') || '',
         total: total ? total.textContent || '' : '',
         query: details.getAttribute('data-haku') || '',
+        // The one place a row ever says it is busy, drawn by the server and
+        // never added or removed, so a save cannot change the row's height.
         status: block.querySelector('.s-status'),
         saving: false
       };
@@ -1358,6 +1567,9 @@ const SHOPPING_ISLAND = `
     }
   }
 
+  // The same three slots the server draws, handed over rather than written
+  // twice, and the same width swap on the CDN's path — done here with indexOf
+  // and slice because a regular expression cannot survive this file (#204).
   var PICTURE = ${JSON.stringify(PRODUCT_PICTURE)};
 
   function pictureAtWidth(url, width) {
@@ -1388,19 +1600,36 @@ const SHOPPING_ISLAND = `
     return text;
   }
 
+  // ------------------------------------------------------------- the sheet
+  //
+  // One picker for the whole screen, fixed to the bottom of the viewport rather
+  // than grown inside the row (#200). The old panel put a search box and a
+  // screenful of 80 px product pictures *into* the list, so opening it pushed
+  // every row below it down and closing it snapped them back — which is what
+  // made walking a list of twenty ingredients feel like the page was fighting
+  // back. A fixed element is outside the list's flow: opening and closing the
+  // picker moves the list by nothing at all.
+  //
+  // It also names the ingredient it is for, which the in-row panel never had to
+  // because it was sitting in the row. On a phone that heading is now the only
+  // thing saying which of twenty ingredients this search belongs to.
+
   var sheet = null;
   var openRow = null;
 
   function buildSheet() {
     var node = el('div', 's-sheet');
     node.hidden = true;
+
     var backdrop = el('div', 's-sheet-backdrop');
     backdrop.addEventListener('click', closeSheet);
     node.appendChild(backdrop);
+
     var panel = el('div', 's-sheet-panel');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-labelledby', 's-sheet-title');
+
     var head = el('div', 's-sheet-head');
     var titles = el('div', 's-sheet-titles');
     var title = el('h2', 's-sheet-name', '');
@@ -1414,6 +1643,7 @@ const SHOPPING_ISLAND = `
     close.addEventListener('click', closeSheet);
     head.appendChild(close);
     panel.appendChild(head);
+
     var form = el('form', 's-product-search');
     var label = el('label', '', 'Haku ');
     var input = document.createElement('input');
@@ -1433,12 +1663,14 @@ const SHOPPING_ISLAND = `
       runSearch(openRow);
     });
     panel.appendChild(form);
+
     var scopeSlot = el('div', 's-sheet-scope');
     panel.appendChild(scopeSlot);
     var state = el('p', 's-product-panel-state', '');
     panel.appendChild(state);
     var results = el('div', 's-product-panel-results');
     panel.appendChild(results);
+
     node.appendChild(panel);
     document.body.appendChild(node);
     sheet = {
@@ -1453,6 +1685,7 @@ const SHOPPING_ISLAND = `
     return sheet;
   }
 
+  /* What the sheet is for, in one line: the amount, and what is chosen now. */
   function subtitle(row) {
     if (row.mode === 'lisaa') return row.total + ' · Lisää pakkauskoko';
     var chosen = row.block.querySelector('.s-shopping-product-copy strong');
@@ -1461,6 +1694,8 @@ const SHOPPING_ISLAND = `
     return row.total + ' · Ei valittua tuotetta';
   }
 
+  /* The scope choice lives in its row and visits the sheet, never the reverse:
+     a dish's title is escaped by the server once and never rebuilt here. */
   function returnScope(row) {
     if (row.scope && row.scopeSource && row.scope.parentNode !== row.scopeSource) {
       row.scopeSource.appendChild(row.scope);
@@ -1472,17 +1707,22 @@ const SHOPPING_ISLAND = `
     if (openRow && openRow !== row) returnScope(openRow);
     openRow = row;
     row.mode = mode;
+
     clear(it.title);
     it.title.appendChild(document.createTextNode(row.name));
     clear(it.sub);
     it.sub.appendChild(document.createTextNode(subtitle(row)));
     it.input.value = row.query;
+
+    // Adding a second package size is a fact about the ingredient, so there is
+    // no scope to choose there; changing the product is where the question is.
     if (row.scope && mode !== 'lisaa') {
       it.scopeSlot.appendChild(row.scope);
       it.scopeSlot.hidden = false;
     } else {
       it.scopeSlot.hidden = true;
     }
+
     it.node.hidden = false;
     runSearch(row);
     prefetchNext(row);
@@ -1514,6 +1754,9 @@ const SHOPPING_ISLAND = `
     if (sheetIsOpenFor(row)) clear(sheet.results);
     say(row, 'Haetaan tuotteita…', true);
     search(query, function (ok, payload) {
+      // Three guards, and all three matter: the row may have moved on to
+      // another term, the sheet may have moved on to another row, and an
+      // answer only counts for the term the server says it ran.
       if (row.query !== query) return;
       if (!sheetIsOpenFor(row)) return;
       if (!ok || !payload || !payload.results) {
@@ -1548,6 +1791,10 @@ const SHOPPING_ISLAND = `
 
   var SIZE_UNITS = ['g', 'kg', 'ml', 'dl', 'l', 'kpl'];
 
+  /**
+   * Where a name says nothing about the packet, ask. Left empty it stays
+   * unknown, and an unknown size simply never produces a package count.
+   */
   function sizeFields(item) {
     var wrap = el('span', 's-product-size-entry');
     var amountLabel = el('label', '', 'Pakkauskoko ');
@@ -1557,6 +1804,7 @@ const SHOPPING_ISLAND = `
     amount.size = 5;
     amountLabel.appendChild(amount);
     wrap.appendChild(amountLabel);
+
     var unitLabel = el('label', '', 'Yksikkö ');
     var unit = document.createElement('select');
     unit.appendChild(new Option('–', ''));
@@ -1565,6 +1813,7 @@ const SHOPPING_ISLAND = `
     }
     unitLabel.appendChild(unit);
     wrap.appendChild(unitLabel);
+
     item.appendChild(wrap);
     return { amount: amount, unit: unit };
   }
@@ -1613,6 +1862,8 @@ const SHOPPING_ISLAND = `
     }
   }
 
+  // ------------------------------------------------- choosing, optimistically
+
   function chooseProduct(row, query, product, fields) {
     if (row.saving) return;
     var extra = {
@@ -1627,6 +1878,12 @@ const SHOPPING_ISLAND = `
       }
     }
     closeSheet();
+
+    // A second package size, or a product pinned to one recipe, changes what
+    // this row and its neighbours add up to — that arithmetic is the server's,
+    // so the browser waits for the answer rather than drawing a guess. This is
+    // the one path on the screen that still reloads, and it comes back to the
+    // ingredient it was about rather than to the top of the list (#200).
     if (extra.tapa === 'lisaa' || extra.laajuus !== 'aines') {
       row.saving = true;
       status(row, 'Tallennetaan…');
@@ -1646,6 +1903,9 @@ const SHOPPING_ISLAND = `
       });
       return;
     }
+
+    // Everything the optimistic draw touches, kept so a refusal can put the row
+    // back exactly as the server still has it.
     var before = {
       body: row.body.innerHTML,
       thumb: row.thumb ? row.thumb.innerHTML : null,
@@ -1657,6 +1917,8 @@ const SHOPPING_ISLAND = `
     persist(row, query, product, extra, before);
   }
 
+  /* Reload, but land on the row this was about — the server draws every row
+     with id="aines-<id>", so naming it is the whole of the restoration. */
   function reloadOnto(row) {
     if (row.aines !== '') {
       window.location.hash = 'aines-' + row.aines;
@@ -1728,7 +1990,12 @@ const SHOPPING_ISLAND = `
       status(row, null);
       if (ok && payload && payload.product) {
         showProduct(row, payload.product);
+        // An ingredient that was going as a note is going as a product now, and
+        // the line above the send button says how many of each there are.
         if (before.blockClass.indexOf('is-note') !== -1) countProduct();
+        // This ingredient is done, so it stops taking up half the screen. Only
+        // the part below the summary line goes away, so nothing the member is
+        // looking at moves — the rest of the list just comes closer (#204).
         row.details.open = false;
         saveSettled(true);
         return;
@@ -1746,6 +2013,7 @@ const SHOPPING_ISLAND = `
     });
   }
 
+  /* A queued send starts only when every optimistic row agrees with D1. */
   function saveSettled(ok) {
     if (!sendAfterSaves) return;
     if (!ok) sendAfterSaves.failed = true;
@@ -1762,9 +2030,24 @@ const SHOPPING_ISLAND = `
     return false;
   }
 
+  /**
+   * Draw a chosen product into the row, in exactly the shape the server draws
+   * in productSummary — same wrapper, same 40 px.
+   *
+   * "Exactly" is load-bearing rather than tidiness. This runs the instant a
+   * member taps Valitse, and a shape of its own is a shape the row's own CSS
+   * was not sized for: the 64 px picture this used to build grew the row back
+   * to the layout #200 exists to get rid of, at the one moment the member's
+   * thumb was on the screen.
+   */
   function showProduct(row, product) {
     row.block.className = 's-shopping-product is-mapped';
+
+    // Which dish this row is pinned to is a fact about the row, not about the
+    // product, so it survives a change of product — and keeping it is also
+    // what keeps a pinned row the height it was.
     var scope = row.body.querySelector('.s-product-scope');
+
     clear(row.body);
     var summary = el('div', 's-shopping-product-summary');
     if (scope) summary.appendChild(scope);
@@ -1776,17 +2059,25 @@ const SHOPPING_ISLAND = `
     one.appendChild(copy);
     summary.appendChild(one);
     row.body.appendChild(summary);
+
     if (row.thumb) {
       clear(row.thumb);
       row.thumb.appendChild(productImage(product.imageUrl, PICTURE.row));
     }
+
     setOpenerLabel(row, 'Vaihda tuote');
+    // The row has something to add a second size to now. Enabling rather than
+    // unhiding, so the button was already taking up its own space and the rows
+    // below do not move (#200).
     for (var which = 0; which < row.openers.length; which += 1) {
       var opener = openerButton(row.openers[which]);
       if (opener) opener.disabled = false;
     }
   }
 
+  /* The row's busy line, filled and emptied — never added and removed. The
+     server ships the element on every row, so it holds its own height whether
+     a save is running or not and the list does not move when one starts. */
   function status(row, text) {
     if (!row.status) return;
     if (text === null) {
@@ -1795,6 +2086,14 @@ const SHOPPING_ISLAND = `
     }
     busy(row.status, text);
   }
+
+  // --------------------------------------------------------------- refusals
+  //
+  // A failed save used to insert a paragraph next to the row, which moved every
+  // row under it at the worst possible moment — the member had just been told
+  // something went wrong and the thing they were reading slid away (#200). One
+  // fixed strip above the tab bar says it instead, and it is over the list
+  // rather than in it.
 
   var toast = null;
 
@@ -1845,11 +2144,14 @@ const SHOPPING_ISLAND = `
     line.appendChild(document.createTextNode(text));
   }
 
+  // ------------------------------------------------------------- the sending
+
   function wireSend() {
     var form = document.querySelector('.s-shopping-send form.s-send-form');
     if (!form) return;
     var button = form.querySelector('button');
     if (!button) return;
+
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       if (sending) return;
@@ -1857,11 +2159,13 @@ const SHOPPING_ISLAND = `
       var label = button.innerHTML;
       button.disabled = true;
       note(null, null);
+
       function releaseSend() {
         sending = false;
         button.disabled = false;
         button.innerHTML = label;
       }
+
       function sendNow() {
         busy(button, 'Lähetetään…');
         request(
@@ -1875,6 +2179,8 @@ const SHOPPING_ISLAND = `
                 'shopping-sent',
                 payload.sent + ' ainesta lähetettiin S-ostoslistaan.'
               );
+              // The items are on the list either way; this only says whether the
+              // phone was told about them now or will be at the next sweep.
               if (payload.synced === false) {
                 note(
                   'refused',
@@ -1893,6 +2199,7 @@ const SHOPPING_ISLAND = `
           }
         );
       }
+
       if (savesPending()) {
         busy(button, 'Tallennetaan valintoja…');
         sendAfterSaves = {
@@ -1911,12 +2218,14 @@ const SHOPPING_ISLAND = `
         };
         return;
       }
+
       sendNow();
     });
   }
 
   var sendNotes = [];
 
+  /* note(null, null) clears what the last send said; anything else adds a line. */
   function note(className, text) {
     if (className === null) {
       for (var index = 0; index < sendNotes.length; index += 1) {
@@ -1933,8 +2242,13 @@ const SHOPPING_ISLAND = `
     sendNotes.push(line);
   }
 
+  // --------------------------------------------- what the S list already has
+
   var NOTHING_LEFT = 'S-ostoslistalla ei ole keräämättömiä rivejä.';
   var removing = false;
+  /* Which drawing of the panel a pending delete belongs to. A send refreshes
+     the panel from the service, and that answer is newer than anything a
+     failed delete could put back. */
   var drawing = 0;
 
   function loadCurrent() {
@@ -1947,6 +2261,7 @@ const SHOPPING_ISLAND = `
     state.hidden = false;
     drawing += 1;
     busy(state, 'Luetaan S-ostoslistaa…');
+
     request('GET', '/ostoslista/s-lista', null, function (ok, payload) {
       clear(state);
       if (!ok || !payload || !payload.items) {
@@ -1974,13 +2289,17 @@ const SHOPPING_ISLAND = `
     });
   }
 
+  /* One still-to-buy row, and the button that takes it off the S list. */
   function currentRow(item, list, state) {
     var entry = document.createElement('li');
     entry.className = item.ean ? 's-current-product' : 's-current-note';
     entry.appendChild(el('span', 's-current-name', item.name));
     entry.appendChild(el('span', 'meta', item.ean ? 'Tuote' : 'Teksti'));
+
     var drop = el('button', 's-current-remove', '✕');
     drop.type = 'button';
+    // The mark alone is the whole button, so the name it removes has to be in
+    // the label rather than only beside it.
     drop.setAttribute('aria-label', 'Poista S-ostoslistalta: ' + item.name);
     entry.appendChild(drop);
     drop.addEventListener('click', function () {
@@ -1989,6 +2308,11 @@ const SHOPPING_ISLAND = `
     return entry;
   }
 
+  /**
+   * The row goes at once and comes back if the service refuses it. One at a
+   * time, like everything else here: a second delete while one is in flight
+   * would be two optimistic removals racing one restore.
+   */
   function removeCurrent(item, entry, list, state) {
     if (removing || !entry.parentNode) return;
     removing = true;
@@ -1998,13 +2322,17 @@ const SHOPPING_ISLAND = `
     clear(state);
     state.hidden = list.firstChild !== null;
     if (!state.hidden) state.appendChild(document.createTextNode(NOTHING_LEFT));
+
     var body = item.ean
       ? 'ean=' + encodeURIComponent(item.ean)
       : 'teksti=' + encodeURIComponent(item.name);
     request('POST', '/ostoslista/s-lista/poista', body, function (ok, payload) {
       removing = false;
       if (ok) return;
+      // The panel has been redrawn from the service since; that answer is
+      // newer than this row, so it is left alone.
       if (drawn !== drawing) return;
+      // Nothing was removed, so the row goes back exactly where it stood.
       list.insertBefore(entry, after && after.parentNode === list ? after : null);
       clear(state);
       state.hidden = false;
@@ -2025,6 +2353,8 @@ const SHOPPING_ISLAND = `
     });
   }
 
+  // ------------------------------------------------------------------ wiring
+
   collect();
   for (var index = 0; index < rows.length; index += 1) {
     (function (row) {
@@ -2033,6 +2363,8 @@ const SHOPPING_ISLAND = `
           form.addEventListener('submit', function (event) {
             event.preventDefault();
             var mode = form.getAttribute('data-tapa') || 'korvaa';
+            // The same button again closes the sheet; the other one switches
+            // what the open sheet is for rather than opening a second.
             if (sheetIsOpenFor(row) && row.mode === mode) {
               closeSheet();
               return;
@@ -2052,6 +2384,12 @@ const SHOPPING_ISLAND = `
 })();
 `;
 
+/**
+ * The one thing a shopping-list row can be told: we always have this, or we
+ * have run out of it. It sits inside the opened row rather than on the summary
+ * line, because the summary is what somebody reads while shopping and a button
+ * per line would compete with the amounts.
+ */
 function pantryButton(
   item: ShoppingItem,
   selectedIds: Set<number>,
