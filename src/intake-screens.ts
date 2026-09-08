@@ -51,7 +51,11 @@ import {
 import type { Member } from "./members.ts";
 import { formatMeasurement } from "./quantities.ts";
 import {
-  replaceRecipe,
+  editRecipe,
+  recipeEditSnapshot,
+  StaleRecipeCategories,
+} from "./recipe-edit.ts";
+import {
   saveRecipe,
   SaveRefused,
   StaleRecipe,
@@ -732,49 +736,30 @@ export async function saveScreen(
     ) {
       throw new SaveRefused("Muokattava resepti ei vastaa tarkistettua tuontia.");
     }
-    const targetId = jobTarget?.id ?? null;
-    const target = targetId === null
-      ? null
-      : await findRecipe(env.DB, member.householdId, targetId);
+
     let recipeId: number;
-    if (target === null) {
+    if (jobTarget === null) {
       if (handedTarget !== "") {
         throw new SaveRefused("Muokattavaa reseptiä ei enää ole.");
       }
       recipeId = await saveRecipe(env.DB, member, recipeToSave);
     } else {
-      if (JSON.stringify(target.categories) !== JSON.stringify(jobTarget?.categories)) {
-        throw new StaleRecipe(
-          "Reseptin kategoriat ovat muuttuneet. Aloita AI-muokkaus uudelleen.",
-        );
-      }
-      await replaceRecipe(
+      // The durable job snapshot is the proposal's concurrency boundary. The
+      // edit seam loads current source/parts/categories itself and atomically
+      // decides whether this reviewed snapshot may still be applied.
+      await editRecipe(
         env.DB,
         member,
-        target.id,
-        nonNegativeNumberOrNull(form.get("targetRevision")) ?? -1,
+        recipeEditSnapshot(jobTarget),
         {
-          ...recipeToSave,
-          sourceText: target.sourceText,
-          sourceRoute: target.sourceRoute,
-          sourceUrl: target.sourceUrl,
-          structuredBy: null,
-        },
-        {
-          hasParts:
-            target.parts.length > 0 ||
-            readLines(form, lineCount).some((line) => line.section !== null) ||
-            readSteps(form).some((step) => step.section !== null),
-          parts: target.parts.map((part) => ({ id: part.id, title: part.title })),
-          expectedParts: jobTarget?.parts.map((part) => ({
-            id: part.id,
-            title: part.title,
-            revision: part.revision,
-          })),
-          expectedCategories: jobTarget?.categories,
+          title: recipeToSave.title,
+          yieldPortions: recipeToSave.yieldPortions,
+          steps: recipeToSave.steps,
+          lines: recipeToSave.lines,
+          categories: recipeToSave.categories,
         },
       );
-      recipeId = target.id;
+      recipeId = jobTarget.id;
     }
 
     if (intakeJobId !== "" && form.get("keepImage") === "1") {
@@ -826,11 +811,15 @@ export async function saveScreen(
       }
     }
 
+    const refusal = error instanceof StaleRecipeCategories
+      ? "Reseptin kategoriat ovat muuttuneet. Aloita AI-muokkaus uudelleen."
+      : error.message;
+
     // Re-render the raw submitted values, not parsed approximations. An invalid
     // number is precisely the value the member needs to see and correct.
     return page(
       "Tarkista resepti",
-      html`<p class="refused">${error.message}</p>
+      html`<p class="refused">${refusal}</p>
         ${correctionFormFromSubmission(form, ingredients, vocabulary)}`,
       "intake",
       member,
