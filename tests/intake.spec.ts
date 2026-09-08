@@ -50,6 +50,28 @@ test("intake requires JavaScript instead of posting a plain fallback", async ({
   await context.close();
 });
 
+for (const missing of ["fetch", "Promise"] as const) {
+  test(`intake without ${missing} retains its disabled-button fallback`, async ({ page }) => {
+    await page.addInitScript((name) => {
+      Object.defineProperty(window, name, { value: undefined, configurable: true });
+    }, missing);
+    await page.goto("/intake");
+    await expect(page.locator("#status")).toHaveText("Reseptin tuonti tarvitsee JavaScriptin.");
+    await expect(page.locator('#intake button[type="submit"]')).toBeDisabled();
+  });
+}
+
+test("the generated intake client refuses missing configuration without enabling submission", async ({ page }) => {
+  await page.route("**/intake", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.text()).replace(/data-max-pages="[^"]*"/, 'data-max-pages=""');
+    await route.fulfill({ response, body });
+  });
+  await page.goto("/intake");
+  await expect(page.locator("#status")).toHaveText("Reseptin tuonti tarvitsee JavaScriptin.");
+  await expect(page.locator('#intake button[type="submit"]')).toBeDisabled();
+});
+
 test("pasted text works without the photo resize API", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "createImageBitmap", {

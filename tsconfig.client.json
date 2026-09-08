@@ -1,5 +1,5 @@
 {
-  // The browser half of the app, which is one screen: the recipe-image splitter
+  // The browser half of the app: the intake form and recipe-image splitter
   // in src/client/. It gets its own tsconfig for the same reason dev/ is outside
   // the main one — DOM globals and Workers globals disagree about `Response`,
   // `fetch` and friends, and a single `types` list cannot hold both.
