@@ -149,19 +149,84 @@ the file is the original photograph, will remain available tomorrow, or survives
 loss of the whole bucket. Compare retained audit digests/bytes as additional drill
 evidence where independent originals are available.
 
-### Remaining recovery decision (#262 stays open)
+## Historical-image retention (#262)
 
-The inspected repository writes D1 snapshots, and its documented image replacement
-and cleanup paths remove old objects. The backup repository's inspected file layout
-contains the database snapshot and a freshness watchdog, not image archives. This
-inspection did **not** establish the live bucket lifecycle configuration or rule out
-an independent external backup. Verify those through authorized read-only access
-before adding another protection system.
+[ADR-0016](adr/0016-retired-images-cover-the-snapshot-window.md) defines the proposed
+application policy. It becomes effective only when the implementing release has
+passed deployment and public-release verification; record that commit/time as the
+rollout boundary. Finish any pre-upgrade cleanup invocation before declaring the
+boundary, and audit the first supported post-rollout snapshot. Running old code or
+rolling back to immediate deletion ends this protection. **It does not recover
+bytes deleted before that boundary.**
 
-The next decision is the supported recovery window and whether complete bucket-loss
-recovery is required. Same-bucket retention of detached images and an independent
-versioned byte archive solve different failures; neither a database key nor an audit
-creates a recoverable copy. Coordinate replacement, removal and #259 cleanup with
-the chosen policy. Do not start an expiry policy or claim a guaranteed recovery
-window until the protection, storage impact and recovery drill are established.
-This audit changes none of those policies and does not complete #262.
+For a schema-compatible snapshot captured after that release and no more than
+**30 days old**, application cleanup retains its recipe-image bytes in the source
+bucket. Each replaced/removed image stays for **31 days after its last successful
+detachment**, irrespective of how old its upload is. This includes dish and part
+images, manually uploaded/URL-imported photos and supplied generated pictures.
+A one-day margin is not permission to run a live restore concurrently with cleanup.
+The same queue is used by replacement, removal and whole-recipe deletion; a later
+detachment after restore starts a fresh period. Current live references never
+expire. No bucket-wide age-based deletion rule is introduced.
+
+The database snapshot format and exact-schema compatibility checks are unchanged.
+This is an image-availability contract for otherwise-restorable snapshots, not a
+promise that arbitrary older schemas can be loaded. Keep the corresponding source
+release/migrations with the backup evidence. Pre-rollout or older-than-window
+snapshots require the read-only image audit and any independently preserved bytes;
+do not present them as guaranteed by this policy.
+
+### Recover without racing expiry
+
+1. Choose a schema-compatible snapshot in the supported window. For a real recovery,
+   quiesce **all application writes, queue consumers and scheduled cleanup** before
+   restoring references. Keep them stopped through byte verification and cutover.
+   There is no automatic production-maintenance switch in this change. The existing
+   CLI still refuses known production targets; use a disposable database for drills.
+   A drill that takes an extra day or approaches expiry needs a separately secured
+   copy or paused cleanup, not reliance on the safety margin alone.
+2. Run `check:backup-images` against the intended bucket before restoring. A missing
+   or unreadable image is a refusal, not permission to continue with a broken photo.
+   Preserve private digest evidence only in an authorized private location.
+3. Restore into the empty compatible target using the existing procedure, verify
+   exact rows, then run the image audit again. Compare original digest/byte evidence
+   where available. The existing D1-only success message is still not whole-system
+   recovery evidence. Never repair a missing photo by silently substituting a new one.
+4. Resume writes and cleanup only after a verified cutover. Restored current image
+   references are excluded from cleanup; replacing/removing them later renews their
+   retirement timestamps. Record the snapshot digest, source release, target, image
+   audit outcome and cutover evidence privately before resuming.
+
+Restoring an older database can lose cleanup receipts for images created after its
+snapshot. Their bytes are left in place (safe but possibly untracked); this change
+adds no orphan scanner. Reconcile only with all supported snapshots accounted for,
+never with an indiscriminate upload-age deletion rule. Persistent R2/D1 failures
+also extend retention and storage growth; they must remain visible through
+`recipe.image_cleanup_pending`, `recipe.image_cleanup_failed` and
+`recipe.image_retention_unrecorded`. A database error after an upload is an uncertain
+commit, so conservative retention may leave extra bytes pending reconciliation.
+
+### Evidence, storage and exclusions
+
+The read-only production configuration probe on **2026-09-08 13:43:07 UTC** found
+zero bucket-lock rules and no enabled object-expiration rules; the enabled lifecycle
+rule includes aborting unfinished multipart uploads. Evidence is in
+[issue #262](https://github.com/eerovil/ruokalista/issues/262#issuecomment-5586125336).
+The probe read no object data and changed no bucket settings. Configuration can
+change: recheck it before relying on a recovery promise. An administrator or external
+retention policy can still remove bytes outside this application's controls.
+
+The repository-backed archive stores database snapshots, not image bytes. Independent
+image copies outside the inspected system remain unverified. **Complete bucket loss
+is not covered.** It requires a verified independent image archive, paired snapshot
+and original-byte manifests, and a separate recovery drill. Same-bucket retention
+and a successful availability audit cannot supply that protection.
+
+Expected storage is current images plus retired versions awaiting their 31-day
+expiry (at most five MiB per accepted image); retry backlogs and restore orphans can
+exceed that estimate. No new service, archive destination, lifecycle configuration
+or scheduler is introduced. Local original-byte drills in
+`dev/check-image-retention.ts` exercise replacement/removal/deletion, both picture
+provenances, both recipe levels, renewal, rollback, lost commit responses and expiry.
+Full production recovery/independent-copy evidence remains a separate acceptance
+step; keep #262 open until its agreed scope and release evidence are satisfied.

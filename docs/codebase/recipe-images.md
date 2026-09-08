@@ -76,38 +76,37 @@ without another Cloudflare product, so the server's half is a bound rather
 than a transform — 5 MiB and a 2,000 px longest edge, refused with the
 measurement in the message. Bulk callers get the bound, not the shrink.
 
-Replacing writes the new object, points the row at it, then deletes the old
-one, so a failure leaves a stray object rather than a recipe pointing at
-nothing. Recipe deletion uses `recipe-deletion.ts::deleteRecipeWithImages`:
-its D1 batch rechecks ownership, sharing and menu references, records the actual
-image keys in `recipe_image_cleanup`, then removes children and their parent.
-A refusal or database failure leaves both the tree and its images untouched.
-Only after commit may `cleanupDeletedRecipeImages` remove the obsolete bytes.
+Replacing writes the new immutable object first, then atomically retires the old
+key and changes the recipe reference in one D1 batch. Removing an image likewise
+retires and detaches it in the same transaction. `recipe-deletion.ts` owns the
+shared retirement statement and the existing bounded cleanup queue; deleting a
+recipe tree records both parent and part keys before its guarded deletion commits.
+The recipe disappears from the application immediately; its bytes do not.
 
-The cleanup table is a durable retry list, not a second recipe store. The same
-cleanup function runs after deletion and in the existing scheduled handler,
-processing at most ten keys per invocation. Storage or acknowledgement failures
-are logged and stay queued; they do not turn a committed deletion into a failed
-user operation. Failed attempts rotate behind older work. A live image reference
-in any household prevents cleanup; uploads always mint fresh immutable keys, so
-an in-progress new upload is never swept merely because it is not yet referenced.
-Backups retain the queue and its last-attempt times.
-
-This handles failed deletion and cleanup, not historical image retention (#262).
-Restoring an old snapshot and its image data requires maintenance/application
-writes to be stopped during the restore. After restoring, queued keys referenced
-by restored live recipes are preserved. Historical image availability is a
-separate recovery contract, not something this queue promises.
+Retired bytes stay for **31 days from the last successful detachment**: a 30-day
+historical-image recovery window plus one restore day. A restored image that is
+later replaced/removed resets that clock, including its failed-attempt timestamp.
+Cleanup checks both expiry and current references across all households. It also
+matches the selected receipt's timestamp before attempting deletion and before
+acknowledging it. See [ADR-0016](../adr/0016-retired-images-cover-the-snapshot-window.md)
+and [the recovery procedure](../backup-restore.md) for the rollout boundary,
+restore quiescence, missing-byte audit and explicit bucket-loss exclusion.
 
 `src/recipe-images.ts::storeRecipeImage` and `::removeRecipeImage` take the
-`oldKey` the caller believes is current and write with
-`UPDATE … WHERE image_key IS ?` — `IS` not `=`, because a recipe with no
-picture holds NULL and `= NULL` is never true; losing that comparison would
-refuse every first upload. Losing the race is a 409 and the loser deletes the
-object it just wrote, so a lost race never orphans in R2. `removeRecipeImage`
-stays silent on a lost race instead (removing an already-gone picture isn't an
-error) and only deletes the R2 object if the row it cleared was the one it
-expected.
+`oldKey` the caller believes is current. Retirement and the reference update use
+the same owner-scoped `image_key IS ?` comparison in one transaction. `IS` rather
+than `=` also matches NULL, which is necessary for a first upload. Losing a store
+race is a 409; that upload's never-published object is deleted immediately. Losing
+a remove race remains a silent no-op. Neither loss can renew the old receipt or
+retire somebody else's newer picture.
+
+A failed database response is different from a confirmed loss: the commit may
+have succeeded. The attempted new key is retained with best-effort cleanup
+bookkeeping, not immediately deleted. When even bookkeeping fails, a sanitized
+`recipe.image_retention_unrecorded` event records the need to reconcile stray
+bytes; the original database error is preserved. Safety takes precedence over
+promptly removing an orphan. No reconciler may delete these objects by upload age
+without respecting the supported snapshot window and live references.
 
 This matters across any long generation gap. A caller must carry the image key
 it saw before that gap into the later PUT; reading the key only when the PUT

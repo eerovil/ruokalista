@@ -16,9 +16,9 @@ import { removeRecipeImage, storeRecipeImage } from "../src/recipe-images.ts";
  *
  * The two properties being defended:
  *
- *   - **No orphans.** Every object written must end up either pointed at by its
- *     recipe or deleted. An object in R2 with nothing pointing at it is a bill
- *     nobody can explain and a file nobody can find.
+ *   - **Accounted-for bytes.** Published images are live or retained for the
+ *     recovery window. A known losing upload can be deleted immediately, but
+ *     an uncertain database response is not proof it was never published.
  *   - **No lost updates.** A write that was planned against a picture somebody
  *     has since replaced must decline, not overwrite. The image screen reads a
  *     recipe, the admin goes away to draw a sheet, and the crops come back to
@@ -69,6 +69,21 @@ class FakeDatabase {
   rows = new Map<number, string | null>();
   failUpdates = false;
   lastSql = "";
+  retired = new Set<string>();
+
+  async batch(statements: Array<{ run: () => Promise<unknown> }>) {
+    const rows = new Map(this.rows);
+    const retired = new Set(this.retired);
+    try {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    } catch (error) {
+      this.rows = rows;
+      this.retired = retired;
+      throw error;
+    }
+  }
 
   prepare(sql: string) {
     this.lastSql = sql;
@@ -77,6 +92,13 @@ class FakeDatabase {
       bind(...args: unknown[]) {
         return {
           async run() {
+            if (sql.includes("INSERT INTO recipe_image_cleanup")) {
+              const key = sql.includes("SELECT image_key") ? args[2] : args[0];
+              const matches = !sql.includes("SELECT image_key") ||
+                (db.rows.has(args[0] as number) && db.rows.get(args[0] as number) === key);
+              if (key !== null && matches) db.retired.add(key as string);
+              return { meta: { changes: 0 } };
+            }
             if (db.failUpdates) throw new Error("D1 is unavailable");
 
             // The store statement binds seven values —
@@ -140,15 +162,16 @@ test("a first upload succeeds against a row with no picture", async () => {
   assert.equal(db.rows.get(1), [...bucket.objects.keys()][0]);
 });
 
-test("a replacement drops the picture it replaced, and only that", async () => {
+test("a replacement retires the picture it replaced without deleting its bytes", async () => {
   const { env, bucket, db } = fakeEnv();
   bucket.objects.set("old-key", 10);
   db.rows.set(1, "old-key");
 
   assert.equal(await storeRecipeImage(env, 1, 1, "old-key", await png()), null);
-  assert.deepEqual(bucket.deletes, ["old-key"]);
-  assert.equal(bucket.objects.has("old-key"), false);
-  assert.equal(bucket.objects.size, 1);
+  assert.deepEqual(bucket.deletes, []);
+  assert.equal(bucket.objects.has("old-key"), true);
+  assert.equal(bucket.objects.size, 2);
+  assert.deepEqual([...db.retired], ["old-key"]);
 });
 
 test("a write planned against a picture somebody replaced is declined", async () => {
@@ -216,7 +239,7 @@ test("a bucket that will not take the bytes leaves the row alone", async () => {
   assert.equal(bucket.objects.has("old-key"), true);
 });
 
-test("a database that will not take the update deletes the bytes it wrote", async () => {
+test("a database error retains uncertain bytes rather than risking a committed image", async () => {
   const { env, bucket, db } = fakeEnv();
   bucket.objects.set("old-key", 10);
   db.rows.set(1, "old-key");
@@ -228,16 +251,18 @@ test("a database that will not take the update deletes the bytes it wrote", asyn
     /D1 is unavailable/,
   );
 
-  // The object written a moment ago is gone: no orphan, and the old picture is
-  // still there and still pointed at.
+  // A failed response might follow a successful commit. Retain the attempted
+  // key for delayed cleanup; never compensate by blindly deleting its bytes.
   assert.equal(db.rows.get(1), "old-key");
-  assert.equal(bucket.objects.size, 1);
+  assert.equal(bucket.objects.size, 2);
   assert.equal(bucket.objects.has("old-key"), true);
+  assert.equal(db.retired.size, 1);
+  assert.ok(!db.retired.has("old-key"));
 });
 
 // ----------------------------------------------------------- removeRecipeImage
 
-test("removing a picture clears the row and drops the bytes", async () => {
+test("removing a picture clears the row and retains the bytes", async () => {
   const { env, bucket, db } = fakeEnv();
   bucket.objects.set("mine", 10);
   db.rows.set(1, "mine");
@@ -245,7 +270,8 @@ test("removing a picture clears the row and drops the bytes", async () => {
   await removeRecipeImage(env, 1, 1, "mine");
 
   assert.equal(db.rows.get(1), null);
-  assert.equal(bucket.objects.size, 0);
+  assert.equal(bucket.objects.size, 1);
+  assert.deepEqual([...db.retired], ["mine"]);
 });
 
 test("a removal that raced a replacement leaves the newer picture alone", async () => {
@@ -360,10 +386,12 @@ test("a batch where every write fails changes nothing at all", async () => {
   assert.equal(result.stored, 0);
   assert.deepEqual(result.outcomes, ["failed", "failed"]);
 
-  // Both recipes keep the picture they had, and nothing was added.
+  // Both recipes keep their pictures. Uncertain uploads remain accounted for
+  // until expiry instead of being blindly deleted after a database error.
   assert.equal(db.rows.get(1), "one");
   assert.equal(db.rows.get(2), "two");
-  assert.equal(bucket.objects.size, 2);
+  assert.equal(bucket.objects.size, 4);
+  assert.equal(db.retired.size, 2);
 });
 
 test("a batch that loses every race reports the conflict, not a crash", async () => {
