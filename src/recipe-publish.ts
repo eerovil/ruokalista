@@ -1,5 +1,6 @@
 import { today } from "./dates.ts";
 import type { Member } from "./members.ts";
+import { boundedInChunks } from "./d1-query.ts";
 
 /**
  * Publishing a recipe, and taking it back.
@@ -110,25 +111,28 @@ export async function ownedDishes(
   householdId: number,
   ids: number[],
 ): Promise<DishRow[]> {
-  const wanted = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))];
-  if (wanted.length === 0) return [];
+  const found: DishRow[] = [];
+  const wanted = ids.filter((id) => Number.isSafeInteger(id) && id > 0);
+  for (const recipeChunk of boundedInChunks(wanted, 1)) {
+    const placeholders = recipeChunk.map(() => "?").join(", ");
+    const { results } = await db
+      .prepare(
+        `SELECT id, title, published_at,
+                (SELECT count(*) FROM recipe_share
+                  WHERE recipe_share.recipe_id = recipe.id) AS share_count
+           FROM recipe
+          WHERE household_id = ?
+            AND parent_id IS NULL
+            AND id IN (${placeholders})`,
+      )
+      .bind(householdId, ...recipeChunk)
+      .all<DishRow>();
+    found.push(...results);
+  }
 
-  const placeholders = wanted.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      `SELECT id, title, published_at,
-              (SELECT count(*) FROM recipe_share
-                WHERE recipe_share.recipe_id = recipe.id) AS share_count
-         FROM recipe
-        WHERE household_id = ?
-          AND parent_id IS NULL
-          AND id IN (${placeholders})
-        ORDER BY title`,
-    )
-    .bind(householdId, ...wanted)
-    .all<DishRow>();
-
-  return results;
+  return found.sort((left, right) =>
+    left.title < right.title ? -1 : left.title > right.title ? 1 : 0
+  );
 }
 
 export async function publishRecipes(

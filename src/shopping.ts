@@ -11,6 +11,7 @@ import {
   productsForIngredients,
   type ProductChoice,
 } from "./ingredient-products.ts";
+import { boundedInChunks } from "./d1-query.ts";
 import {
   baseAmount,
   formatBaseAmount,
@@ -419,11 +420,12 @@ export async function shoppingLinesFor(
   householdId: number,
   batchIds: number[],
 ): Promise<ShoppingLine[]> {
-  if (batchIds.length === 0) return [];
-
-  const placeholders = batchIds.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
+  const results: LineRow[] = [];
+  const orderedBatchIds = [...new Set(batchIds)].sort((left, right) => left - right);
+  for (const batchChunk of boundedInChunks(orderedBatchIds, 1)) {
+    const placeholders = batchChunk.map(() => "?").join(", ");
+    const loaded = await db
+      .prepare(
       `SELECT planned_batch.id AS batch_id,
               dish.title AS batch_title,
               planned_batch.multiplier,
@@ -456,9 +458,11 @@ export async function shoppingLinesFor(
                  source.part_position,
                  source.id,
                  ingredient_line.position`,
-    )
-    .bind(householdId, ...batchIds)
-    .all<LineRow>();
+      )
+      .bind(householdId, ...batchChunk)
+      .all<LineRow>();
+    results.push(...loaded.results);
+  }
 
   // The products are a second and a third query rather than two more joins: an
   // ingredient with three package sizes would otherwise multiply every one of

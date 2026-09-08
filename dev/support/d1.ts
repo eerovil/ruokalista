@@ -22,6 +22,8 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { MAX_D1_BOUND_PARAMETERS } from "../../src/d1-query.ts";
+
 const MIGRATIONS = join(import.meta.dirname, "..", "..", "migrations");
 
 type Value = string | number | null;
@@ -33,6 +35,8 @@ export interface FakeD1 {
   beforeBatch: (hook: () => void) => void;
   /** Straight SQL, for a check's own fixtures and assertions. */
   sql: DatabaseSync;
+  /** Binding counts observed through the D1-shaped API. */
+  bindingCounts: number[];
 }
 
 export function migratedDatabase(): FakeD1 {
@@ -44,10 +48,17 @@ export function migratedDatabase(): FakeD1 {
   }
 
   let hook: (() => void) | null = null;
+  const bindingCounts: number[] = [];
 
   function bound(text: string, values: Value[]): D1PreparedStatement {
     const statement = {
-      bind: (...next: unknown[]) => bound(text, next as Value[]),
+      bind: (...next: unknown[]) => {
+        bindingCounts.push(next.length);
+        if (next.length > MAX_D1_BOUND_PARAMETERS) {
+          throw new Error(`too many SQL variables: ${next.length}`);
+        }
+        return bound(text, next as Value[]);
+      },
 
       first: async (column?: string) => {
         const row = sql.prepare(text).get(...values) as
@@ -120,5 +131,6 @@ export function migratedDatabase(): FakeD1 {
       hook = next;
     },
     sql,
+    bindingCounts,
   };
 }

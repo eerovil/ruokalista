@@ -1,4 +1,5 @@
 import { html, raw, type Raw } from "./html.ts";
+import { boundedInChunks } from "./d1-query.ts";
 
 /**
  * What kind of food a recipe is (issues #196 and #199).
@@ -108,29 +109,29 @@ export async function categoriesForRecipes(
   recipeIds: readonly number[],
 ): Promise<Map<number, string[]>> {
   const byRecipe = new Map<number, string[]>();
-  if (recipeIds.length === 0) return byRecipe;
+  for (const recipeChunk of boundedInChunks(recipeIds)) {
+    const placeholders = recipeChunk.map(() => "?").join(", ");
+    const { results } = await db
+      .prepare(
+        // Ordered by the vocabulary's own order, in SQL, so that loading a
+        // recipe does not have to carry a `Vocabulary` down with it. A slug the
+        // vocabulary no longer has sorts last and still renders as itself.
+        `SELECT recipe_category.recipe_id, recipe_category.category
+           FROM recipe_category
+           LEFT JOIN category ON category.slug = recipe_category.category
+          WHERE recipe_category.recipe_id IN (${placeholders})
+          ORDER BY category.position IS NULL, category.position,
+                   recipe_category.category`,
+      )
+      .bind(...recipeChunk)
+      .all<{ recipe_id: number; category: string }>();
 
-  const placeholders = recipeIds.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      // Ordered by the vocabulary's own order, in SQL, so that loading a
-      // recipe does not have to carry a `Vocabulary` down with it. A slug the
-      // vocabulary no longer has sorts last and still renders as itself.
-      `SELECT recipe_category.recipe_id, recipe_category.category
-         FROM recipe_category
-         LEFT JOIN category ON category.slug = recipe_category.category
-        WHERE recipe_category.recipe_id IN (${placeholders})
-        ORDER BY category.position IS NULL, category.position,
-                 recipe_category.category`,
-    )
-    .bind(...recipeIds)
-    .all<{ recipe_id: number; category: string }>();
-
-  for (const row of results) {
-    byRecipe.set(row.recipe_id, [
-      ...(byRecipe.get(row.recipe_id) ?? []),
-      row.category,
-    ]);
+    for (const row of results) {
+      byRecipe.set(row.recipe_id, [
+        ...(byRecipe.get(row.recipe_id) ?? []),
+        row.category,
+      ]);
+    }
   }
 
   return byRecipe;
