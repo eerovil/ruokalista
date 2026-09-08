@@ -284,6 +284,7 @@ function validateRelationships(snapshot: BackupSnapshot): void {
   uniqueComposite(snapshot.tables.category, ["label"], "category label");
   uniqueIntegerKey(snapshot.tables.ingredient_line, "id", "ingredient_line");
   const batchIds = uniqueIntegerKey(snapshot.tables.planned_batch, "id", "planned_batch");
+  uniqueTextKey(snapshot.tables.planned_batch, "instance_key", "planned_batch");
   uniqueIntegerKey(snapshot.tables.pantry_entry, "id", "pantry_entry");
   uniqueIntegerKey(snapshot.tables.recipe_preference, "id", "recipe_preference");
   uniqueIntegerKey(snapshot.tables.ingredient_product, "id", "ingredient_product");

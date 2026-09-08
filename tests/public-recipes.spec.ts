@@ -233,12 +233,18 @@ test("a revoked historical batch cannot be moved back into the future", async ({
     data: { date: "2020-01-06", slot: "dinner", recipeId: 1, multiplier: 1 },
   });
   expect(planned.status()).toBe(201);
-  const { id } = (await planned.json()) as { id: number };
+  const { id, instanceKey } = (await planned.json()) as {
+    id: number;
+    instanceKey: string;
+  };
 
   await makePrivate(page, 1);
   await signIn(page, 2);
   const moved = await page.request.patch(`/api/batches/${id}`, {
-    data: { occurrences: [{ date: "2099-04-02", slot: "dinner" }] },
+    data: {
+      instanceKey,
+      occurrences: [{ date: "2099-04-02", slot: "dinner" }],
+    },
   });
   expect(moved.status()).toBe(400);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(404);

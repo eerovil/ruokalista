@@ -21,6 +21,8 @@ export interface BatchOccurrence {
 
 export interface PlannedBatch {
   id: number;
+  /** Immutable identity for update/delete preconditions; unlike `id`, never reused. */
+  instanceKey: string;
   recipeId: number;
   title: string;
   /** The recipe's picture, so a planned meal can show what it will be. */
@@ -39,6 +41,7 @@ export interface PlannedBatch {
 
 interface BatchRow {
   id: number;
+  instance_key: string;
   recipe_id: number;
   title: string;
   image_key: string | null;
@@ -61,6 +64,7 @@ const BATCH_SELECT = `WITH spans AS (
                          GROUP BY batch_id
                       )
                       SELECT planned_batch.id,
+                             planned_batch.instance_key,
                              planned_batch.recipe_id,
                              planned_batch.multiplier,
                              planned_batch.legacy_portions,
@@ -129,6 +133,7 @@ function groupBatches(rows: BatchRow[]): PlannedBatch[] {
     if (batch === undefined) {
       batch = {
         id: row.id,
+        instanceKey: row.instance_key,
         recipeId: row.recipe_id,
         title: row.title,
         imageKey: row.image_key,
@@ -148,20 +153,26 @@ function groupBatches(rows: BatchRow[]): PlannedBatch[] {
 
 export class MenuRefused extends Error {}
 
+export interface PlannedBatchIdentity {
+  id: number;
+  instanceKey: string;
+}
+
 export async function addPlannedBatch(
   db: D1Database,
   member: Member,
   entry: { date: string; slot: string; recipeId: number; multiplier: number },
-): Promise<number> {
+): Promise<PlannedBatchIdentity> {
   const occurrence = validateOccurrence(entry.date, entry.slot);
   const multiplier = validateMultiplier(entry.multiplier);
   validateRecipeId(entry.recipeId);
+  const instanceKey = crypto.randomUUID();
 
   const [inserted] = await db.batch([
     db.prepare(
       `INSERT INTO planned_batch
-         (household_id, recipe_id, multiplier, created_by)
-       SELECT ?, ?, ?, ?
+         (household_id, recipe_id, multiplier, created_by, instance_key)
+       SELECT ?, ?, ?, ?, ?
          FROM recipe
         WHERE recipe.id = ?
           AND recipe.parent_id IS NULL
@@ -172,6 +183,7 @@ export async function addPlannedBatch(
         entry.recipeId,
         multiplier,
         member.id,
+        instanceKey,
         entry.recipeId,
         member.householdId,
         member.householdId,
@@ -187,40 +199,46 @@ export async function addPlannedBatch(
     throw new MenuRefused("Tuntematon resepti.");
   }
   const id = Number(inserted.meta.last_row_id);
-  return id;
+  return { id, instanceKey };
 }
 
 export async function replaceOccurrences(
   db: D1Database,
   member: Member,
   id: number,
+  instanceKey: string,
   proposed: BatchOccurrence[],
 ): Promise<boolean> {
   const occurrences = validateCoverage(proposed);
   const owned = await db
     .prepare(
-      "SELECT id, recipe_id FROM planned_batch WHERE id = ? AND household_id = ?",
+      `SELECT id, recipe_id FROM planned_batch
+        WHERE id = ? AND household_id = ? AND instance_key = ?`,
     )
-    .bind(id, member.householdId)
+    .bind(id, member.householdId, instanceKey)
     .first<{ id: number; recipe_id: number }>();
   if (owned === null) return false;
 
   const needsAccess = occurrences.some((occurrence) => occurrence.date >= today());
   if (needsAccess) await requireDish(db, member.householdId, owned.recipe_id);
-  const access = needsAccess
-    ? `EXISTS (
+  const access = `EXISTS (
          SELECT 1
            FROM planned_batch AS access_batch
-           JOIN recipe ON recipe.id = access_batch.recipe_id
+           ${needsAccess ? "JOIN recipe ON recipe.id = access_batch.recipe_id" : ""}
           WHERE access_batch.id = ?
             AND access_batch.household_id = ?
-            AND recipe.parent_id IS NULL
-            AND ${readableRecipeCondition("recipe")}
-       )`
-    : "1 = 1";
-  const accessBindings = needsAccess
-    ? [id, member.householdId, member.householdId, member.householdId]
-    : [];
+            AND access_batch.instance_key = ?
+            ${needsAccess
+              ? `AND recipe.parent_id IS NULL
+                 AND ${readableRecipeCondition("recipe")}`
+              : ""}
+       )`;
+  const accessBindings = [
+    id,
+    member.householdId,
+    instanceKey,
+    ...(needsAccess ? [member.householdId, member.householdId] : []),
+  ];
 
   const [removed] = await db.batch([
     db.prepare(
@@ -236,7 +254,19 @@ export async function replaceOccurrences(
     ),
   ]);
   if ((removed?.meta.changes ?? 0) === 0) {
-    throw new MenuRefused("Resepti ei ole enää tämän talouden käytettävissä.");
+    if (needsAccess) {
+      const stillOwned = await db
+        .prepare(
+          `SELECT id FROM planned_batch
+            WHERE id = ? AND household_id = ? AND instance_key = ?`,
+        )
+        .bind(id, member.householdId, instanceKey)
+        .first<{ id: number }>();
+      if (stillOwned !== null) {
+        throw new MenuRefused("Resepti ei ole enää tämän talouden käytettävissä.");
+      }
+    }
+    return false;
   }
   return true;
 }
@@ -252,6 +282,7 @@ export async function changeMultiplier(
   db: D1Database,
   member: Member,
   id: number,
+  instanceKey: string,
   multiplier: number,
 ): Promise<boolean> {
   const value = validateMultiplier(multiplier);
@@ -259,9 +290,9 @@ export async function changeMultiplier(
     .prepare(
       `UPDATE planned_batch
           SET multiplier = ?, legacy_portions = NULL
-        WHERE id = ? AND household_id = ?`,
+        WHERE id = ? AND household_id = ? AND instance_key = ?`,
     )
-    .bind(value, id, member.householdId)
+    .bind(value, id, member.householdId, instanceKey)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -270,13 +301,14 @@ export async function changeRecipe(
   db: D1Database,
   member: Member,
   id: number,
+  instanceKey: string,
   recipeId: number,
 ): Promise<boolean> {
   await requireDish(db, member.householdId, recipeId);
   const result = await db
     .prepare(
       `UPDATE planned_batch SET recipe_id = ?
-        WHERE id = ? AND household_id = ?
+        WHERE id = ? AND household_id = ? AND instance_key = ?
           AND EXISTS (
                 SELECT 1 FROM recipe
                  WHERE recipe.id = ?
@@ -288,6 +320,7 @@ export async function changeRecipe(
       recipeId,
       id,
       member.householdId,
+      instanceKey,
       recipeId,
       member.householdId,
       member.householdId,
@@ -300,10 +333,14 @@ export async function removePlannedBatch(
   db: D1Database,
   member: Member,
   id: number,
+  instanceKey: string,
 ): Promise<boolean> {
   const result = await db
-    .prepare("DELETE FROM planned_batch WHERE id = ? AND household_id = ?")
-    .bind(id, member.householdId)
+    .prepare(
+      `DELETE FROM planned_batch
+        WHERE id = ? AND household_id = ? AND instance_key = ?`,
+    )
+    .bind(id, member.householdId, instanceKey)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -426,13 +463,13 @@ export async function apiAddPlannedBatch(
     return problem(400, "Expected a JSON body.");
   }
   try {
-    const id = await addPlannedBatch(env.DB, member, {
+    const batch = await addPlannedBatch(env.DB, member, {
       date: String(body["date"] ?? ""),
       slot: String(body["slot"] ?? ""),
       recipeId: Number(body["recipeId"]),
       multiplier: Number(body["multiplier"]),
     });
-    return Response.json({ id }, { status: 201 });
+    return Response.json(batch, { status: 201 });
   } catch (error) {
     if (error instanceof MenuRefused) return problem(400, error.message);
     throw error;
@@ -458,11 +495,13 @@ export async function apiUpdatePlannedBatch(
       return problem(400, "Change exactly one batch field at a time.");
     }
     let changed = false;
+    const instanceKey = String(body["instanceKey"] ?? "");
     if (body["multiplier"] !== undefined) {
       changed = await changeMultiplier(
         env.DB,
         member,
         Number(params["id"]),
+        instanceKey,
         Number(body["multiplier"]),
       );
     }
@@ -472,6 +511,7 @@ export async function apiUpdatePlannedBatch(
           env.DB,
           member,
           Number(params["id"]),
+          instanceKey,
           Number(body["recipeId"]),
         )) || changed;
     }
@@ -484,6 +524,7 @@ export async function apiUpdatePlannedBatch(
           env.DB,
           member,
           Number(params["id"]),
+          instanceKey,
           body["occurrences"].map((item) => {
             const value = item as Record<string, unknown>;
             return {
@@ -502,13 +543,14 @@ export async function apiUpdatePlannedBatch(
 }
 
 export async function apiRemovePlannedBatch(
-  { env, params }: RouteContext,
+  { env, params, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const removed = await removePlannedBatch(
     env.DB,
     member,
     Number(params["id"]),
+    url.searchParams.get("instanceKey") ?? "",
   );
   if (!removed) return problem(404, "No such planned batch.");
   return new Response(null, { status: 204 });

@@ -58,6 +58,15 @@ goes through `/batches/:id`, `/batches/:id/coverage`, `/batches/:id/portions`,
 `/batches/:id/recipe`, `/batches/:id/delete`, plus the matching
 `/api/batches...` JSON routes in `src/index.ts`.
 
+Issue #255 proposes adding `planned_batch.instance_key` in
+`migrations/0024_planned_batch_instance_key.sql`. The integer id remains the
+occurrence foreign key, but it is a reusable SQLite rowid and therefore cannot
+by itself identify one lifetime of a batch. Every update and delete proposed
+by #255 also matches the immutable key and `household_id`; stale forms and API
+requests cannot follow a reused id onto another batch. The column is added and
+backfilled without rebuilding this referenced parent table. See
+[ADR-0010](../adr/0010-a-batch-instance-outlives-its-rowid.md).
+
 ## Parts of a dish
 
 `migrations/0002_parts.sql` adds `recipe.parent_id` and `recipe.part_position`.

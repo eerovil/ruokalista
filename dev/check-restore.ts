@@ -151,11 +151,31 @@ test("an intake edit snapshot stays bound to its recipe and revision", async () 
   );
 });
 
-test("orphan and duplicate batch occurrences are rejected", async () => {
+test("invalid batch identities and occurrences are rejected", async () => {
   const snapshot = await validSnapshot();
   let unsigned = unsignedOf(snapshot);
-  unsigned.tables.batch_occurrence[0]!.batch_id = 999;
+  unsigned.tables.planned_batch[0]!.instance_key = "";
   let invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /planned_batch\.instance_key must be a non-empty string/,
+  );
+
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.planned_batch.push({
+    ...unsigned.tables.planned_batch[0]!,
+    id: 2,
+  });
+  unsigned.row_counts.planned_batch += 1;
+  invalid = await finalizeSnapshot(unsigned);
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(invalid)),
+    /duplicate planned_batch instance_key/,
+  );
+
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.batch_occurrence[0]!.batch_id = 999;
+  invalid = await finalizeSnapshot(unsigned);
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(invalid)),
     /orphan batch_occurrence\.batch_id=999/,
@@ -376,6 +396,7 @@ async function validSnapshot() {
     planned_batch: [
       {
         id: 1,
+        instance_key: "batch-instance-1",
         household_id: 1,
         recipe_id: 1,
         multiplier: 1.5,
