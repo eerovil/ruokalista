@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 
-import { BACKUP_TABLES } from "../src/backup.ts";
+import {
+  assertBackupTableDefinitions,
+  BACKUP_TABLES,
+} from "../src/backup.ts";
 
 const query = `
   SELECT name
@@ -37,12 +40,9 @@ const actual = (parsed[0]?.results ?? [])
     return name;
   })
   .sort();
-const expected = BACKUP_TABLES.map(({ name }) => name).sort();
 
-assert.deepEqual(
-  actual,
-  expected,
-  "migrated app tables and BACKUP_TABLES differ; deliberately update backup coverage before merging the schema change",
+assertBackupTableDefinitions(actual);
+
+console.log(
+  `backup/restore definition coverage ok: ${BACKUP_TABLES.map(({ name }) => name).join(", ")}`,
 );
-
-console.log(`backup schema coverage ok: ${actual.join(", ")}`);
