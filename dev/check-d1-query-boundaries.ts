@@ -130,8 +130,9 @@ function insertFixtures(database: FakeD1): {
     VALUES (1, ?, ?, ?, ?, 200, 'g')
   `);
   const batch = sql.prepare(`
-    INSERT INTO planned_batch (id, household_id, recipe_id, multiplier, created_by)
-    VALUES (?, ?, ?, 1, ?)
+    INSERT INTO planned_batch
+      (id, household_id, recipe_id, multiplier, created_by, instance_key)
+    VALUES (?, ?, ?, 1, ?, lower(hex(randomblob(16))))
   `);
 
   const ingredientIds: number[] = [];
