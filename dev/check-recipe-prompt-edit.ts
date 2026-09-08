@@ -341,7 +341,8 @@ for (const [route, source] of [
     // What replace still keeps: the same dish, saveable, in one document.
     assert.match(system, /Älä keksi kokonaan toista ruokaa/);
     assert.match(system, /Palauta täydellinen, tallennuskelpoinen resepti/);
-    assert.match(system, /Kirjoita olemassa olevan osan nimi täsmälleen/);
+    assert.match(system, /Käytä olemassa olevan osan annettua nimeä/);
+    assert.match(system, /välilyöntien ero tarkoittaa samaa osaa/);
   });
 
   test(`a ${route} extend still protects what the new material omits`, () => {
