@@ -230,6 +230,7 @@ test("large category and publication mutations keep their existing batch contrac
     isAdmin: false,
   };
 
+  const queriesBeforeCategory = database.bindingCounts.length;
   const categorised = await addCategoryToRecipes(
     database.db,
     vocabulary,
@@ -238,6 +239,10 @@ test("large category and publication mutations keep their existing batch contrac
     "keitto",
   );
   assert.equal(categorised.changed.length, OWN_RECIPES);
+  assert.equal(
+    database.bindingCounts.length - queriesBeforeCategory,
+    OWN_RECIPES + 8,
+  );
   assert.equal(
     (database.sql.prepare(
       "SELECT count(*) AS n FROM recipe_category WHERE category = 'keitto'",
@@ -262,8 +267,13 @@ test("large category and publication mutations keep their existing batch contrac
     0,
   );
 
+  const queriesBeforePublish = database.bindingCounts.length;
   const published = await publishRecipes(database.db, member, ownIds);
   assert.equal(published.changed.length, OWN_RECIPES);
+  assert.equal(
+    database.bindingCounts.length - queriesBeforePublish,
+    OWN_RECIPES * 2 + 4,
+  );
   assert.equal(
     (database.sql.prepare(
       "SELECT count(*) AS n FROM recipe WHERE household_id = 1 AND published_at IS NOT NULL",
