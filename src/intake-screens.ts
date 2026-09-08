@@ -64,6 +64,7 @@ import {
 import { isLocalOrigin } from "./public-origin.ts";
 import { normaliseRecipeUrl } from "./recipe-fetch.ts";
 import { storeRecipeImage } from "./recipe-images.ts";
+import { recipeSectionKey, recipeSections } from "./recipe-section.ts";
 import type { RouteContext } from "./router.ts";
 import { SAMPLE_DRAFT } from "./sample-draft.ts";
 import {
@@ -1426,19 +1427,21 @@ function draftReview(
 
   const kept = rows.filter((row) => !row.remove && !isBlank(row));
   const parentBefore = kept.filter(
-    (row) => row.section.trim() === "" && row.phase !== "after_parts",
+    (row) => recipeSectionKey(row.section) === null && row.phase !== "after_parts",
   );
   const parentAfter = kept.filter(
-    (row) => row.section.trim() === "" && row.phase === "after_parts",
+    (row) => recipeSectionKey(row.section) === null && row.phase === "after_parts",
   );
-  const sections = [
-    ...new Set(kept.map((row) => row.section.trim()).filter((name) => name !== "")),
-  ];
+  const sections = recipeSections([...kept, ...view.steps]);
 
-  const reviewSection = (section: string, lines: LineFormValues[], phase?: string) => {
+  const reviewSection = (
+    section: { key: string; title: string } | null,
+    lines: LineFormValues[],
+    phase?: string,
+  ) => {
     const steps = view.steps.filter(
       (step) =>
-        step.section.trim() === section &&
+        recipeSectionKey(step.section) === (section?.key ?? null) &&
         step.text.trim() !== "" &&
         (phase === undefined
           ? true
@@ -1448,8 +1451,8 @@ function draftReview(
     );
 
     if (lines.length === 0 && steps.length === 0) return html``;
-    return html`<section class="${section === "" ? "" : "part"}">
-      ${section === "" ? "" : html`<h2>${section}</h2>`}
+    return html`<section class="${section === null ? "" : "part"}">
+      ${section === null ? "" : html`<h2>${section.title}</h2>`}
       ${lines.length === 0
         ? ""
         : html`<h3>Ainekset</h3><ul class="lines">${lines.map(reviewLine(ingredients))}</ul>`}
@@ -1468,14 +1471,14 @@ function draftReview(
 
     ${newIngredientsNotice(kept)} ${notesNotice(kept)}
 
-    ${reviewSection("", parentBefore, "before_parts")}
+    ${reviewSection(null, parentBefore, "before_parts")}
     ${sections.map((section) =>
       reviewSection(
         section,
-        kept.filter((row) => row.section.trim() === section),
+        kept.filter((row) => recipeSectionKey(row.section) === section.key),
       ),
     )}
-    ${reviewSection("", parentAfter, "after_parts")}`;
+    ${reviewSection(null, parentAfter, "after_parts")}`;
 }
 
 /**

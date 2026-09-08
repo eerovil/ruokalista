@@ -261,6 +261,70 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
   await expect(page.locator(".recipes")).toContainText("Lasagne");
 });
 
+test("case and whitespace variants save as one complete part", async ({ page }) => {
+  const draft = {
+    title: "Täytetty kaali",
+    yield_portions: 4,
+    source_text: "Täytetty kaali\nTäyte\n2 dl maitoa\n1 dl juustoa",
+    steps: [
+      {
+        text: "Sekoita maito ja juusto.",
+        section: " täyte ",
+        phase: null,
+        ingredient_refs: [
+          { line: 0, matched_text: "maito", approx_position: 8 },
+          { line: 1, matched_text: "juusto", approx_position: 17 },
+        ],
+      },
+      {
+        text: "Täytä kaali.",
+        section: "TÄYTE",
+        phase: null,
+        ingredient_refs: [],
+      },
+    ],
+    lines: [
+      {
+        quantity: 2, quantity_max: null, unit: "dl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 9, ingredient_name: "maito",
+        source_line: "2 dl maitoa", section: "Täyte",
+        phase: null, alternative_group: 7, note: null,
+      },
+      {
+        quantity: 1, quantity_max: null, unit: "dl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 8, ingredient_name: "juusto",
+        source_line: "1 dl juustoa", section: " täyte ",
+        phase: null, alternative_group: 7, note: null,
+      },
+    ],
+  };
+
+  await stubStructuring(page, draft);
+  await page.goto("/intake");
+  await page.getByLabel("Liitä reseptin teksti").fill("Täytetty kaali");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  const reviewedPart = page.locator("section.part");
+  await expect(reviewedPart).toHaveCount(1);
+  await expect(reviewedPart.locator("h2")).toHaveText("Täyte");
+  await expect(reviewedPart).toContainText("Sekoita maito ja juusto.");
+  await expect(reviewedPart).toContainText("Täytä kaali.");
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  const part = page.locator(".part");
+  await expect(part).toHaveCount(1);
+  await expect(part.locator("h2")).toHaveText("Täyte");
+  await expect(part.locator(".lines li")).toHaveCount(1);
+  await expect(part.locator(".lines")).toContainText("2 dl maito tai 1 dl juusto");
+  await expect(part.locator(".steps li")).toHaveCount(2);
+  await expect(part.locator(".steps li").first())
+    .toContainText("Sekoita");
+  await expect(part).toContainText("Täytä kaali.");
+  await expect(part.locator(".mention")).toHaveCount(2);
+});
+
 test("correcting a part name before saving moves the lines", async ({ page }) => {
   await stubStructuring(page, {
     ...DRAFT_FIXTURE,

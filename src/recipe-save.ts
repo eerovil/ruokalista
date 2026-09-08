@@ -9,6 +9,11 @@ import {
 } from "./alternatives.ts";
 import { loadVocabulary } from "./categories.ts";
 import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
+import {
+  recipeSectionKey,
+  recipeSections,
+  type RecipeSection,
+} from "./recipe-section.ts";
 
 /**
  * Saving a corrected draft, and editing a saved recipe. One D1 batch either
@@ -129,7 +134,7 @@ export async function saveRecipe(
   await assertKnownCategories(db, recipe.categories);
   const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
 
-  const parts = partNames(recipe);
+  const parts = partSections(recipe);
   const reserved = new Set<number>();
   const recipeId = await unusedId(db, "recipe", reserved);
   const statements: D1PreparedStatement[] = [
@@ -145,17 +150,17 @@ export async function saveRecipe(
   ];
 
   // Each named part becomes a recipe of its own, hanging off the dish.
-  for (const [index, name] of parts.entries()) {
+  for (const [index, part] of parts.entries()) {
     const partId = await unusedId(db, "recipe", reserved);
     statements.push(
       recipeRow(db, member, partId, recipe, {
-        title: name,
+        title: part.title,
         // A page almost never states a yield per part.
         yieldPortions: null,
         parentId: recipeId,
         position: index + 1,
       }),
-      ...childrenOf(db, partId, lines, recipe.steps, name),
+      ...childrenOf(db, partId, lines, recipe.steps, part.key),
     );
   }
 
@@ -415,6 +420,30 @@ function fold(title: string): string {
   return title.trim().toLocaleLowerCase("fi");
 }
 
+function uniquePartsByTitle<T extends ExistingPart>(
+  parts: readonly T[],
+): Map<string, T> {
+  const byTitle = new Map<string, T>();
+  const titleById = new Map<number, string>();
+  for (const part of parts) {
+    const key = fold(part.title);
+    const earlier = byTitle.get(key);
+    const earlierTitle = titleById.get(part.id);
+    if (
+      (earlier !== undefined && earlier.id !== part.id) ||
+      (earlierTitle !== undefined && earlierTitle !== key)
+    ) {
+      throw new SaveRefused(
+        "Reseptin osia ei voi tunnistaa yksiselitteisesti. Nimeä osat eri tavoin ennen tallennusta.",
+      );
+    }
+
+    byTitle.set(key, part);
+    titleById.set(part.id, key);
+  }
+  return byTitle;
+}
+
 /**
  * The statements that write the parts a submitted edit names, and nothing else.
  *
@@ -448,28 +477,26 @@ async function partStatements(
   options: ReplaceOptions,
   guard: RecipeGuard,
 ): Promise<PartPlan> {
-  const names = partNames(recipe);
-  if (names.length === 0) return { statements: [], locked: [] };
+  const sections = partSections(recipe);
+  if (sections.length === 0) return { statements: [], locked: [] };
 
-  const expected = new Map(
-    (options.expectedParts ?? []).map((part) => [fold(part.title), part]),
-  );
+  const expected = uniquePartsByTitle(options.expectedParts ?? []);
   const present = options.parts ?? [];
-  const byTitle = new Map(present.map((part) => [fold(part.title), part]));
+  const byTitle = uniquePartsByTitle(present);
   const byId = new Map(present.map((part) => [part.id, part]));
 
   const reserved = new Set<number>();
   const statements: D1PreparedStatement[] = [];
   const locked: ExpectedPart[] = [];
 
-  for (const [index, name] of names.entries()) {
-    const want = expected.get(fold(name));
+  for (const [index, section] of sections.entries()) {
+    const want = expected.get(section.key);
 
     if (want === undefined) {
       // Nothing was expected here, so this is a new part — unless the dish has
       // grown one under that name in the meantime, which is somebody else's
       // work and not ours to write over.
-      if (byTitle.has(fold(name))) throw new StaleRecipe(PART_MOVED);
+      if (byTitle.has(section.key)) throw new StaleRecipe(PART_MOVED);
 
       const partId = await unusedId(db, "recipe", reserved);
       statements.push(
@@ -478,10 +505,15 @@ async function partStatements(
           member,
           partId,
           recipe,
-          { title: name, yieldPortions: null, parentId: recipeId, position: index + 1 },
+          {
+            title: section.title,
+            yieldPortions: null,
+            parentId: recipeId,
+            position: index + 1,
+          },
           guard,
         ),
-        ...childrenOf(db, partId, lines, recipe.steps, name, guard),
+        ...childrenOf(db, partId, lines, recipe.steps, section.key, guard),
       );
       continue;
     }
@@ -492,15 +524,15 @@ async function partStatements(
     const part = byId.get(want.id);
     if (part === undefined) throw new StaleRecipe(PART_MOVED);
 
-    // Two sections differing only in case fold to the same part, so the same
-    // row can be named twice. It is one lock either way — counting it twice
-    // would refuse a save that is perfectly current.
+    // A malformed repeated snapshot still cannot count one row twice in the
+    // lock, even though the section plan and maps above already reject every
+    // way for two distinct identities to reach that row.
     if (!locked.some((already) => already.id === want.id)) locked.push(want);
 
     statements.push(
-      // The title is rewritten from the section as submitted, so a part whose
-      // name only differs in case settles on what is on the screen. `parent_id`
-      // in the WHERE is what stops an id from another dish being touched at all.
+      // Case and surrounding whitespace are identity, not a rename. Keep the
+      // existing title; a genuinely different submitted name takes the new-part
+      // branch above. `parent_id` stops an id from another dish being touched.
       db
         .prepare(
           `UPDATE recipe
@@ -513,7 +545,7 @@ async function partStatements(
               )`,
         )
         .bind(
-          name,
+          part.title,
           index + 1,
           member.id,
           part.id,
@@ -525,24 +557,21 @@ async function partStatements(
         ),
       guardedDelete(db, "recipe_step", part.id, guard),
       guardedDelete(db, "ingredient_line", part.id, guard),
-      ...childrenOf(db, part.id, lines, recipe.steps, name, guard),
+      ...childrenOf(db, part.id, lines, recipe.steps, section.key, guard),
     );
   }
 
   return { statements, locked };
 }
 
-/** The dish's parts, in the order they first appear on the page. */
+/** The dish's logical parts, in the order their first spelling appears. */
+function partSections(recipe: RecipeToSave): RecipeSection[] {
+  return recipeSections([...recipe.lines, ...recipe.steps]);
+}
+
+/** Kept for callers that only need to know whether a recipe names any parts. */
 function partNames(recipe: RecipeToSave): string[] {
-  const names: string[] = [];
-
-  for (const item of [...recipe.lines, ...recipe.steps]) {
-    const name = item.section?.trim();
-    if (!name) continue;
-    if (!names.includes(name)) names.push(name);
-  }
-
-  return names;
+  return partSections(recipe).map((part) => part.title);
 }
 
 function recipeRow(
@@ -610,7 +639,7 @@ function childrenOf(
   guard?: RecipeGuard,
 ): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
-  const belongs = (name: string | null) => (name?.trim() || null) === section;
+  const belongs = (name: string | null) => recipeSectionKey(name) === section;
   const phaseFor = (phase: RecipePhase) => section === null ? phase : null;
 
   // Keep references inside this recipe row. A step names an ingredient, so
@@ -1065,8 +1094,8 @@ export interface ReplaceOptions extends ValidateOptions {
  * lines — exactly what `childrenOf`'s `phaseFor` does when it writes them.
  */
 function savedScope(line: LineToSave): string {
-  const section = line.section?.trim() ?? "";
-  return section === ""
+  const section = recipeSectionKey(line.section);
+  return section === null
     ? `dish ${phaseBucket(line.phase)}`
     : `part ${section}`;
 }
