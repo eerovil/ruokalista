@@ -29,6 +29,7 @@ import {
 } from "./line-form.ts";
 import { removalConflicts, type RemovalConflict } from "./line-removal.ts";
 import type { Member } from "./members.ts";
+import { editRecipe, recipeEditSnapshot } from "./recipe-edit.ts";
 import {
   imageRow,
   removeRecipeImage,
@@ -36,7 +37,6 @@ import {
 } from "./recipe-images.ts";
 import { findRecipe, recipeImage, type Recipe } from "./recipes.ts";
 import {
-  replaceRecipe,
   SaveRefused,
   StaleRecipe,
   type ExpectedPart,
@@ -73,8 +73,8 @@ export interface EditorAttempt {
    *
    * Off for an ordinary edit, and that is load-bearing rather than cosmetic: a
    * saved part is a recipe of its own with its own screen (ADR-0002), and a
-   * form with no part field submits no section, so `replaceRecipe` leaves the
-   * dish's parts alone. A prompt edit's review turns it on because the model
+   * form with no part field submits no section, so the recipe edit seam leaves
+   * the dish's parts alone. A prompt edit's review turns it on because the model
    * was shown the whole dish and may have changed a part, and the member has to
    * be able to see — and correct — which part a row landed in.
    *
@@ -84,15 +84,10 @@ export interface EditorAttempt {
    * the next submit.
    */
   withSections?: boolean;
-  /**
-   * The dish's parts as this form saw them, at their own revisions (#208).
-   *
-   * Rendered as hidden fields and checked by `replaceRecipe`, so a part edited
-   * or deleted on its own screen while a proposal was being reviewed refuses
-   * the save instead of being overwritten by it. Defaults to whatever the
-   * submitted form already carried.
-   */
+  /** The dish's parts as this form saw them, at their own revisions (#208). */
   expectedParts?: readonly ExpectedPart[];
+  /** The category set this form saw; category changes do not bump recipe revision. */
+  expectedCategories?: readonly string[];
 }
 
 /**
@@ -233,37 +228,33 @@ export async function saveEditForm(
     const expectedRevision = readRevision(form.get("revision"));
     const lineCount = readLineCount(form.get("lineCount"));
     await guardRemovals(env, member, form, lineCount);
+    const vocabulary = await loadVocabulary(env.DB);
 
-    await replaceRecipe(env.DB, member, recipe.id, expectedRevision, {
-      title: String(form.get("title") ?? ""),
-      yieldPortions: readWhole(form.get("yield")),
-      // Never taken from the form: it is the record of what arrived.
-      sourceText: recipe.sourceText,
-      sourceRoute: recipe.sourceRoute,
-      structuredBy: null,
-      steps: readSteps(form),
-      lines: readLines(form, lineCount),
-      // A part shows no category picker, so it submits none and keeps none —
-      // the dish is what gets browsed for (#196).
-      categories: (await loadVocabulary(env.DB)).read(form),
-    },
-    {
-      // A dish written entirely in named parts has no ingredient lines of its
-      // own, and it is still a whole recipe (issue #184).
-      hasParts: recipe.parts.length > 0,
-      // A recipe saved from `/intake` with nothing but its name (#211) is
-      // opened here to be filled in, and the first save of it may still add
-      // only a method step or a portion count. Refusing that would make the
-      // quick save a dead end, so the editor lets a recipe stay empty.
-      allowEmpty: true,
-      // The parts a submitted section may land on (#208). This form renders no
-      // part field, so an ordinary edit names none and they are left alone; a
-      // prompt edit's review posts here too, and it does.
-      parts: recipe.parts.map((part) => ({ id: part.id, title: part.title })),
-      // And which of them the form was written against, so a part edited on its
-      // own screen since then refuses this save rather than losing that edit.
-      expectedParts: readExpectedParts(form),
-    });
+    await editRecipe(
+      env.DB,
+      member,
+      {
+        recipeId: recipe.id,
+        revision: expectedRevision,
+        parts: readExpectedParts(form),
+        categories: readExpectedCategories(form),
+      },
+      {
+        title: String(form.get("title") ?? ""),
+        yieldPortions: readWhole(form.get("yield")),
+        steps: readSteps(form),
+        lines: readLines(form, lineCount),
+        // A part shows no category picker, so it submits none and keeps none —
+        // the dish is what gets browsed for (#196).
+        categories: vocabulary.read(form),
+      },
+      {
+        // A recipe saved from `/intake` with nothing but its name (#211) is
+        // opened here to be filled in, and the first save may still leave it
+        // empty. This is the editor's policy; current source/parts are not.
+        allowEmpty: true,
+      },
+    );
   } catch (error) {
     if (!(error instanceof SaveRefused) && !(error instanceof FormRefused)) {
       throw error;
@@ -274,6 +265,7 @@ export async function saveEditForm(
 
     const stale = error instanceof StaleRecipe;
     const submittedParts = readExpectedParts(form);
+    const submittedCategories = readExpectedCategories(form);
     const [ingredients, vocabulary] = await Promise.all([
       ingredientsFor(env.DB, member.householdId),
       loadVocabulary(env.DB),
@@ -290,11 +282,12 @@ export async function saveEditForm(
           revision: stale
             ? latest.revision
             : revisionForRendering(form, recipe.revision),
-          // The parts move with it, and for the same reason: the member has
-          // been told what changed, so a second, deliberate submit is theirs to
-          // make. A part that has gone is simply not offered again.
+          // Snapshot facts move together after a stale refusal. The member has
+          // now been told the stored recipe moved, so a second submit is a
+          // deliberate write against what the screen currently represents.
           expectedParts:
             stale && submittedParts.length > 0 ? currentParts(latest) : submittedParts,
+          expectedCategories: stale ? latest.categories : submittedCategories,
           conflicts:
             error instanceof MentionedRemoval ? error.conflicts : undefined,
         })}`,
@@ -360,11 +353,22 @@ async function addedLine(
 
 /** A dish's parts as they stand right now, for a form to be written against. */
 export function currentParts(recipe: Recipe): ExpectedPart[] {
-  return recipe.parts.map((part) => ({
-    id: part.id,
-    title: part.title,
-    revision: part.revision,
-  }));
+  return recipeEditSnapshot(recipe).parts;
+}
+
+/** The category set this form was rendered against, separate from editable ticks. */
+function expectedCategoryFields(categories: readonly string[]): Raw {
+  return html`${categories.map(
+    (category) => html`<input type="hidden" name="expectedCategory" value="${category}" />`,
+  )}`;
+}
+
+function readExpectedCategories(form: FormData): string[] {
+  return [...new Set(
+    form.getAll("expectedCategory")
+      .map((value) => String(value).trim())
+      .filter((value) => value !== ""),
+  )];
 }
 
 /**
@@ -643,6 +647,9 @@ export function editorForm(
   const expectedParts =
     attempted?.expectedParts ??
     (attempted === undefined ? [] : readExpectedParts(attempted.form));
+  const expectedCategories =
+    attempted?.expectedCategories ??
+    (attempted === undefined ? recipe.categories : readExpectedCategories(attempted.form));
   // A refused save re-renders what was ticked, not what is stored: the point of
   // the refusal is that the member's own edit is still in front of them.
   const categories = attempted
@@ -672,9 +679,10 @@ export function editorForm(
       <input type="hidden" name="lineCount" value="${rows.length}" />
       <input type="hidden" name="revision" value="${revision}" />
       ${withSections ? raw(`<input type="hidden" name="withSections" value="1" />`) : ""}
-      <!-- The dish's parts as this form saw them. The revision above locks the
-           dish; a part is a recipe row of its own and needs its own (#208). -->
+      <!-- The dish's parts and category set as this form saw them. Recipe
+           revision alone does not cover either child table. -->
       ${expectedPartFields(expectedParts)}
+      ${expectedCategoryFields(expectedCategories)}
 
       <label for="title">Nimi</label>
       <input id="title" name="title" value="${title}" required />
