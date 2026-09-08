@@ -8,8 +8,9 @@ import * as esbuild from "esbuild";
  * are committed so deployment ships the reviewed bytes; --check rejects stale
  * or missing output. No runtime Worker imports belong in these browser entries.
  *
- * Intake keeps its ES5 syntax floor and feature detection. The splitter keeps
- * its existing ES2019 target and DecompressionStream requirement unchanged.
+ * Intake and shopping keep their ES5 syntax floor and feature detection. The
+ * splitter keeps its existing ES2019 target and DecompressionStream requirement
+ * unchanged.
  */
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -19,6 +20,7 @@ const checking = process.argv.includes("--check");
 const entries = [
   { name: "recipe-image-split", target: "es2019", description: "The bundled splitter, served to the admin image screen as a script." },
   { name: "intake", target: "es5", description: "The bundled intake client, embedded on the server-rendered intake form." },
+  { name: "shopping", target: "es5", description: "The bundled shopping client, embedded on the server-rendered shopping list." },
 ];
 
 for (const entry of entries) {
