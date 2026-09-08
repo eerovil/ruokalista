@@ -131,8 +131,8 @@ const SHARED_EDIT_RULES = `Muokkaustehtävän säännöt:
   ruokalajia itseään. Kun muutospyyntö koskee jotakin osaa — esimerkiksi
   "lisää kastikkeeseen puuttuvat ainekset" — muuta sen osan rivejä ja vaiheita
   ja jätä muiden osien section-arvot ennalleen.
-- Kirjoita olemassa olevan osan nimi täsmälleen samalla tavalla kuin se on
-  annettu. Eri kirjoitusasu tarkoittaa uutta osaa, ei samaa osaa.
+- Käytä olemassa olevan osan annettua nimeä. Pelkkä kirjainkoon tai ympäröivien
+  välilyöntien ero tarkoittaa samaa osaa; muu nimi tarkoittaa uutta osaa.
 - Säilytä olemassa olevan rivin ingredient_id sellaisenaan. Uudella rivillä
   yhdistä olemassa olevaan ainekseen id:llä kun jokin selvästi sopii, muuten
   ingredient_id on null ja ingredient_name on ehdottamasi nimi.

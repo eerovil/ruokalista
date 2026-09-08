@@ -7,6 +7,7 @@ import type { IngredientSummary } from "./ingredients.ts";
 import { alternativeGroup, type AlternativeGroup } from "./alternatives.ts";
 import { usableAmounts } from "./draft-amounts.ts";
 import { recipePhase, type RecipePhase } from "./recipe-phase.ts";
+import { recipeSectionKey } from "./recipe-section.ts";
 
 /**
  * Structuring: turning source text into a recipe's title, ingredients and
@@ -1129,7 +1130,9 @@ function toDraftRefs(
     if (lineIndex === null || lineIndex < 0 || lineIndex >= lines.length) {
       continue;
     }
-    if ((lines[lineIndex]?.section ?? null) !== section) continue;
+    if (
+      recipeSectionKey(lines[lineIndex]?.section) !== recipeSectionKey(section)
+    ) continue;
     if (!mentionResolves(text, matchedText)) continue;
 
     refs.push({
