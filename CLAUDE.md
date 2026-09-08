@@ -94,12 +94,14 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   that these scripts are template literals, so a backslash is eaten before the
   browser ever sees it — no regular expressions. See
   [screens](docs/codebase/screens.md).
-- **Adding or removing a table means six files, in lockstep.** `BACKUP_TABLES`
-  in `src/backup.ts`, `RESTORE_ORDER` and `validateRelationships` in
-  `src/restore.ts`, the fixtures in `dev/check-restore.ts` and
-  `dev/check-backup.ts`, `dev/seed.sql`, and
-  `scripts/check-restore-roundtrip.ts`. `scripts/check-backup-schema.ts` catches
-  only the first one being forgotten. See
+- **A durable table starts in one backup/restore manifest.** After writing the
+  migration, add one complete `BACKUP_TABLES` entry in `src/backup.ts`: capture
+  ordering, restore dependencies, and whether a freshly migrated target must be
+  empty or has seeded rows the snapshot replaces. There is no separate restore
+  table list. `scripts/check-backup-schema.ts` rejects missing, incomplete or
+  cyclic definitions. Then add explicit relationship validation and realistic
+  fixture/round-trip rows where that table's semantics need them; those remain
+  application checks rather than generic schema reflection. See
   [data-model](docs/codebase/data-model.md).
 - **`npm run check` runs the dev checks under Node's strip-only TypeScript.**
   So a construct that needs real compilation — a constructor parameter property
