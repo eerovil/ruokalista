@@ -48,6 +48,8 @@ const RESTORE_ORDER: readonly BackupTableName[] = [
   // After household: a sent note is one household's memory of what it put on
   // the S-list, and points at nothing else (#244).
   "s_ostoslista_sent_note",
+  // After household. Deliberately no recipe reference: the recipe is gone.
+  "recipe_image_cleanup",
 ];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
@@ -266,6 +268,10 @@ function validateRowCounts(
 function validateRelationships(snapshot: BackupSnapshot): void {
   const householdIds = uniqueIntegerKey(snapshot.tables.household, "id", "household");
   const memberIds = uniqueIntegerKey(snapshot.tables.member, "id", "member");
+  uniqueTextKey(snapshot.tables.recipe_image_cleanup, "image_key", "recipe_image_cleanup");
+  for (const row of snapshot.tables.recipe_image_cleanup) {
+    requireReference(row, "household_id", householdIds, "recipe_image_cleanup.household_id");
+  }
   uniqueComposite(snapshot.tables.intake_job, ["id"], "intake job");
   uniqueIntegerKey(snapshot.tables.member_invitation, "id", "member_invitation");
   const ingredientIds = uniqueIntegerKey(snapshot.tables.ingredient, "id", "ingredient");

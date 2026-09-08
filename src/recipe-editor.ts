@@ -30,7 +30,6 @@ import {
 import { removalConflicts, type RemovalConflict } from "./line-removal.ts";
 import type { Member } from "./members.ts";
 import {
-  deleteImagesForRecipeTree,
   imageRow,
   removeRecipeImage,
   storeRecipeImage,
@@ -42,6 +41,7 @@ import {
   StaleRecipe,
   type ExpectedPart,
 } from "./recipe-save.ts";
+import { deleteRecipeWithImages } from "./recipe-deletion.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -100,12 +100,15 @@ export interface EditorAttempt {
  * what to show, because the answer is not a sentence — it is the sentences.
  */
 class MentionedRemoval extends FormRefused {
-  constructor(readonly conflicts: RemovalConflict[]) {
+  readonly conflicts: RemovalConflict[];
+
+  constructor(conflicts: RemovalConflict[]) {
     super(
       conflicts.length === 1
         ? `${conflicts[0]?.name} esiintyy vielä valmistusohjeessa, joten sitä ei poistettu.`
         : "Osa poistettavista aineksista esiintyy vielä valmistusohjeessa, joten niitä ei poistettu.",
     );
+    this.conflicts = conflicts;
   }
 }
 
@@ -408,8 +411,17 @@ export async function deleteRecipeForm(
   const onMenu = await countOnMenu(env.DB, recipe.id);
   if (onMenu > 0) return stillPlanned(member, recipe, onMenu);
 
-  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
-  await deleteRecipeTree(env.DB, member.householdId, recipe.id);
+  if (!await deleteRecipeWithImages(env, member.householdId, recipe.id)) {
+    return page(
+      "Ei voi poistaa",
+      html`<h1>Ei voi poistaa</h1>
+        <p class="refused">Reseptin tilanne muuttui, joten sitä ei poistettu. Tarkista resepti ja yritä uudelleen.</p>
+        <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
+      "recipes",
+      member,
+      409,
+    );
+  }
   return new Response(null, { status: 303, headers: { Location: "/recipes" } });
 }
 
@@ -430,8 +442,9 @@ export async function apiDeleteRecipe(
     return problem(409, "That recipe or one of its parts is on the menu.");
   }
 
-  await deleteImagesForRecipeTree(env, member.householdId, recipe.id);
-  await deleteRecipeTree(env.DB, member.householdId, recipe.id);
+  if (!await deleteRecipeWithImages(env, member.householdId, recipe.id)) {
+    return problem(409, "The recipe changed and could not be deleted. Reload and try again.");
+  }
   return new Response(null, { status: 204 });
 }
 
@@ -1036,21 +1049,6 @@ async function countOnMenu(db: D1Database, recipeId: number): Promise<number> {
     .first<{ n: number }>();
 
   return row?.n ?? 0;
-}
-
-async function deleteRecipeTree(
-  db: D1Database,
-  householdId: number,
-  recipeId: number,
-): Promise<void> {
-  await db.batch([
-    db
-      .prepare("DELETE FROM recipe WHERE parent_id = ? AND household_id = ?")
-      .bind(recipeId, householdId),
-    db
-      .prepare("DELETE FROM recipe WHERE id = ? AND household_id = ?")
-      .bind(recipeId, householdId),
-  ]);
 }
 
 /** The stored line carries the ingredient's name; the picker needs its id. */

@@ -6,6 +6,7 @@ import {
   requireMemberScreen,
 } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
+import { cleanupDeletedRecipeImages } from "./recipe-deletion.ts";
 import { categoryBulkForm } from "./category-bulk.ts";
 import {
   categoryAdminForm,
@@ -264,6 +265,7 @@ export default {
         detail: String((error as Error)?.message ?? error),
       }));
     }
+    await cleanupDeletedRecipeImages(env);
     if (controller.cron === "17 2 * * *") await scheduledBackup(controller, env);
   },
 

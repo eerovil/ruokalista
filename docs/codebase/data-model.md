@@ -121,6 +121,17 @@ origin reads as `manual` too, since every row #89 ever wrote was a hand
 upload, and the migration is written so landing it does not retroactively
 stale a single existing picture.
 
+## Pending image cleanup
+
+`migrations/0025_recipe_image_cleanup.sql` adds one durable receipt per image key
+removed with a recipe tree (#259). It references the owning household, never the
+deleted recipe. `queued_at` and nullable `last_attempt_at` order bounded retries.
+The delete batch records these keys before removing the recipe rows; rollback
+removes the receipts too. R2 cleanup only starts after commit and refuses live
+references. The backup manifest, restore relationships and round-trip include
+this table so a restore cannot silently lose pending cleanup. See
+[recipe-images](recipe-images.md) for lifecycle and recovery boundaries.
+
 ## Ingredients a step names
 
 `migrations/0008_step_ingredient_refs.sql` (issue #120, proposed here) adds one
