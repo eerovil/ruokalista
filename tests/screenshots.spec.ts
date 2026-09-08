@@ -1236,7 +1236,7 @@ test.describe("signed in", () => {
     // Only what this shot planned goes away again; the week screenshot above
     // has a cooking on today too, and it is not this test's to delete.
     for (const id of planned) {
-      await page.request.delete(`/api/batches/${id}`);
+      await deleteBatch(page, id);
     }
   });
 
@@ -1406,7 +1406,7 @@ test.describe("signed in", () => {
     });
 
     for (const id of planned) {
-      await page.request.delete(`/api/batches/${id}`);
+      await deleteBatch(page, id);
     }
   });
 
@@ -1498,7 +1498,7 @@ test.describe("signed in", () => {
     });
 
     for (const id of planned) {
-      await page.request.delete(`/api/batches/${id}`);
+      await deleteBatch(page, id);
     }
   });
 
@@ -1543,7 +1543,7 @@ test.describe("signed in", () => {
       await page.request.post(`/kaappi/${id}/poista`);
     }
     for (const id of planned) {
-      await page.request.delete(`/api/batches/${id}`);
+      await deleteBatch(page, id);
     }
   });
 
@@ -1854,7 +1854,19 @@ async function createBatch(
     data: { date, slot, recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
-  return ((await response.json()) as { id: number }).id;
+  const created = (await response.json()) as { id: number; instanceKey: string };
+  batchKeys.set(created.id, created.instanceKey);
+  return created.id;
+}
+
+const batchKeys = new Map<number, string>();
+
+async function deleteBatch(page: Page, id: number): Promise<void> {
+  const instanceKey = batchKeys.get(id) ?? "";
+  const response = await page.request.delete(
+    `/api/batches/${id}?instanceKey=${encodeURIComponent(instanceKey)}`,
+  );
+  expect(response.status()).toBe(204);
 }
 
 async function setCoverage(
@@ -1864,6 +1876,7 @@ async function setCoverage(
 ): Promise<void> {
   const response = await page.request.patch(`/api/batches/${id}`, {
     data: {
+      instanceKey: batchKeys.get(id),
       occurrences: occurrences.map(([date, slot]) => ({ date, slot })),
     },
   });

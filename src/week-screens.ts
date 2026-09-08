@@ -409,6 +409,7 @@ function batchActions(
     </p>
 
     <form method="post" action="/batches/${batch.id}/recipe" class="stacked">
+      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <label for="recipeId">Resepti koko erälle</label>
       <div class="control-row">
         <select id="recipeId" name="recipeId">
@@ -421,6 +422,7 @@ function batchActions(
     </form>
 
     <form method="post" action="/batches/${batch.id}/multiplier" class="stacked">
+      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <p class="preference-label" id="batchMultiplierLabel">Koko erän kerroin</p>
       ${multiplierField({
         current: refusal === null ? batch.multiplier : null,
@@ -431,6 +433,7 @@ function batchActions(
     </form>
 
     <form method="post" action="/batches/${batch.id}/delete" class="stacked">
+      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <button type="submit" class="quiet">Poista erä ruokalistalta</button>
     </form>
     <p><a href="/?week=${mondayOf(batch.startDate)}">Takaisin viikkoon</a></p>`;
@@ -476,6 +479,7 @@ function coverageEditor(
     </nav>
 
     <form method="post" action="/batches/${batch.id}/coverage" class="coverage-form">
+      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <input type="hidden" name="week" value="${monday}" />
       ${outside.map(
         (item) => html`<input type="hidden" name="occurrence" value="${occurrenceValue(item)}" />`,
@@ -622,16 +626,19 @@ export async function changeBatchMultiplierForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound(member);
+  const instanceKey = String(form.get("instanceKey") ?? "");
+  if (batch === null || batch.instanceKey !== instanceKey) return batchNotFound(member);
   const preset = String(form.get("preset") ?? "").trim();
   const chosen = preset === "" ? String(form.get("multiplier") ?? "").trim() : preset;
   try {
-    await changeMultiplier(
+    const changed = await changeMultiplier(
       env.DB,
       member,
       batch.id,
+      instanceKey,
       parseMultiplier(chosen) ?? Number.NaN,
     );
+    if (!changed) return batchNotFound(member);
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
     const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
@@ -655,9 +662,17 @@ export async function changeBatchRecipeForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound(member);
+  const instanceKey = String(form.get("instanceKey") ?? "");
+  if (batch === null || batch.instanceKey !== instanceKey) return batchNotFound(member);
   try {
-    await changeRecipe(env.DB, member, batch.id, Number(form.get("recipeId")));
+    const changed = await changeRecipe(
+      env.DB,
+      member,
+      batch.id,
+      instanceKey,
+      Number(form.get("recipeId")),
+    );
+    if (!changed) return batchNotFound(member);
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
     return refused(member, error.message, batch.startDate);
@@ -674,7 +689,8 @@ export async function coverageForm(
 ): Promise<Response> {
   const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound(member);
+  const instanceKey = String(form.get("instanceKey") ?? "");
+  if (batch === null || batch.instanceKey !== instanceKey) return batchNotFound(member);
   const monday = mondayOf(
     isDate(String(form.get("week") ?? ""))
       ? String(form.get("week"))
@@ -682,7 +698,14 @@ export async function coverageForm(
   );
   const proposed = form.getAll("occurrence").map(parseOccurrence);
   try {
-    await replaceOccurrences(env.DB, member, batch.id, proposed);
+    const changed = await replaceOccurrences(
+      env.DB,
+      member,
+      batch.id,
+      instanceKey,
+      proposed,
+    );
+    if (!changed) return batchNotFound(member);
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
     return page(
@@ -700,12 +723,15 @@ export async function coverageForm(
 }
 
 export async function removeBatchForm(
-  { env, params }: RouteContext,
+  { env, request, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
+  const form = await request.formData();
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
-  if (batch === null) return batchNotFound(member);
-  await removePlannedBatch(env.DB, member, batch.id);
+  const instanceKey = String(form.get("instanceKey") ?? "");
+  if (batch === null || batch.instanceKey !== instanceKey) return batchNotFound(member);
+  const removed = await removePlannedBatch(env.DB, member, batch.id, instanceKey);
+  if (!removed) return batchNotFound(member);
   return backToWeek(batch.startDate);
 }
 

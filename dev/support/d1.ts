@@ -67,7 +67,10 @@ export function migratedDatabase(): FakeD1 {
         return {
           results: [],
           success: true,
-          meta: { changes: Number(changes.changes) },
+          meta: {
+            changes: Number(changes.changes),
+            last_row_id: Number(changes.lastInsertRowid),
+          },
         };
       },
 

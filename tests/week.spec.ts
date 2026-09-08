@@ -495,18 +495,22 @@ test.describe("the JSON API", () => {
     const listed = await page.request.get(
       "/api/menu?from=2026-10-10&to=2026-10-10",
     );
-    const { batches } = (await listed.json()) as { batches: { id: number }[] };
-    const id = batches[0]!.id;
+    const { batches } = (await listed.json()) as {
+      batches: { id: number; instanceKey: string }[];
+    };
+    const { id, instanceKey } = batches[0]!;
 
     const context = await browser.newContext();
     await context.addCookies([sessionCookie(2)]);
 
     const patched = await context.request.patch(`/api/batches/${id}`, {
-      data: { multiplier: 2 },
+      data: { instanceKey, multiplier: 2 },
     });
     expect(patched.status()).toBe(404);
 
-    const deleted = await context.request.delete(`/api/batches/${id}`);
+    const deleted = await context.request.delete(
+      `/api/batches/${id}?instanceKey=${encodeURIComponent(instanceKey)}`,
+    );
     expect(deleted.status()).toBe(404);
 
     await context.close();
@@ -524,6 +528,7 @@ test.describe("the JSON API", () => {
 
     const refused = await page.request.patch(`/api/batches/${id}`, {
       data: {
+        instanceKey: batchKeys.get(id),
         occurrences: [
           { date: "2026-10-05", slot: "lunch" },
           { date: "2026-10-07", slot: "lunch" },
@@ -569,8 +574,12 @@ async function createBatch(
     data: { date, slot, recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
-  return ((await response.json()) as { id: number }).id;
+  const created = (await response.json()) as { id: number; instanceKey: string };
+  batchKeys.set(created.id, created.instanceKey);
+  return created.id;
 }
+
+const batchKeys = new Map<number, string>();
 
 async function setCoverage(
   page: Page,
@@ -579,6 +588,7 @@ async function setCoverage(
 ): Promise<void> {
   const response = await page.request.patch(`/api/batches/${id}`, {
     data: {
+      instanceKey: batchKeys.get(id),
       occurrences: occurrences.map(([date, slot]) => ({ date, slot })),
     },
   });
