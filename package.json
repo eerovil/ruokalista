@@ -12,6 +12,7 @@
     "check": "npm run check:pwa-assets && npm run check:client && node --experimental-strip-types --test dev/*.ts",
     "check:backup-schema": "node --experimental-strip-types scripts/check-backup-schema.ts",
     "check:restore-roundtrip": "node --experimental-strip-types scripts/check-restore-roundtrip.ts",
+    "check:backup-images": "node --experimental-strip-types scripts/backup-images.ts",
     "restore:backup": "node --experimental-strip-types scripts/restore-backup.ts",
     "migrate:local": "wrangler d1 migrations apply ruokalista --local",
     "seed:local": "wrangler d1 execute ruokalista --local --file dev/seed.sql",
