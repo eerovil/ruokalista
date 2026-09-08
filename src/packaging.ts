@@ -161,12 +161,19 @@ export interface PackagePlan {
 }
 
 /**
- * Nobody is buying twelve packets of one thing for one week's cooking. The cap
- * exists so the search is bounded rather than because twelve is meaningful; a
- * need beyond it gets no plan at all, which reads as "we could not work this
- * out" instead of as a trolley full of mince.
+ * Keep the existing twelve-packet limit on a plan. This bounds the answer, not
+ * the search work: many different sizes can still have many combinations.
  */
 const MAX_PACKAGES = 12;
+
+/** Candidate/count trials, including pruned ones; independent of machine speed. */
+export const MAX_PACKAGE_SEARCH_STEPS = 10_000;
+
+/** Optional diagnostics for deterministic work-bound checks, reset on each call. */
+export interface PackageSearchStats {
+  steps: number;
+  exhausted: boolean;
+}
 
 /**
  * The packages to buy for one need: enough, with the least left over, and — for
@@ -178,64 +185,93 @@ const MAX_PACKAGES = 12;
  * ingredient sold in 250 ml and 1 l bottles is solved by the same code.
  *
  * Returns null when there is nothing to say: no need, no sized package in the
- * need's own family, or a need too large for the cap above.
+ * need's own family, a need too large for the packet cap, or an unfinished
+ * search. In that last case even a covering candidate is discarded: it has not
+ * been proved optimal. The shopping list keeps its existing no-calculated-total
+ * fallback rather than presenting a partially searched plan as the answer.
+ *
+ * Equal sizes keep the first offered product. Other ties keep the first plan
+ * found, visiting larger sizes and higher counts first as before (#260).
  */
 export function planPackages(
   need: BaseAmount,
   options: PackageOption[],
+  stats?: PackageSearchStats,
 ): PackagePlan | null {
-  if (need.amount <= 0) return null;
+  if (stats !== undefined) {
+    stats.steps = 0;
+    stats.exhausted = false;
+  }
+  if (!Number.isFinite(need.amount) || need.amount <= 0) return null;
 
-  const usable = options
-    .filter((option) => option.size.family === need.family && option.size.amount > 0)
-    // Largest first: it reaches a plan that covers the need early, which is what
-    // makes the pruning below cut anything at all.
+  // EANs with equal sizes are interchangeable for this objective. Keep the
+  // first in caller preference order, without changing the caller's array.
+  const bySize = new Map<number, PackageOption>();
+  for (const option of options) {
+    const { family, amount } = option.size;
+    if (family !== need.family || !Number.isFinite(amount) || amount <= 0) continue;
+    if (!bySize.has(amount)) bySize.set(amount, option);
+  }
+  const usable = [...bySize.values()]
     .sort((a, b) => b.size.amount - a.size.amount);
   if (usable.length === 0) return null;
 
   let best: PackagePlan | null = null;
-
-  const counts = new Array<number>(usable.length).fill(0);
+  let bestCount = Infinity;
+  let steps = 0;
+  let exhausted = false;
+  const picks: PackagePick[] = [];
 
   const consider = (total: number, used: number): void => {
     const waste = total - need.amount;
     if (best !== null && (waste > best.waste ||
-        (waste === best.waste && used >= best.picks.reduce((n, p) => n + p.count, 0)))) {
-      return;
-    }
-    best = {
-      picks: usable
-        .map((option, index) => ({ key: option.key, count: counts[index]! }))
-        .filter((pick) => pick.count > 0),
-      total,
-      waste,
-    };
+        (waste === best.waste && used >= bestCount))) return;
+    best = { picks: picks.map((pick) => ({ ...pick })), total, waste };
+    bestCount = used;
   };
 
-  const walk = (index: number, total: number, used: number): void => {
+  const walk = (start: number, total: number, used: number): void => {
     if (total >= need.amount) {
       consider(total, used);
       return;
     }
-    if (index >= usable.length || used >= MAX_PACKAGES) return;
+    if (used >= MAX_PACKAGES) return;
 
-    // Even filling every remaining packet with this size — the largest left —
-    // cannot reach the need, so no arrangement below here can either.
-    const reach = total + usable[index]!.size.amount * (MAX_PACKAGES - used);
-    if (reach < need.amount) return;
+    // Skipped sizes are advanced by this loop, not recursive zero-count calls.
+    // Every descent buys at least one packet: recursion is bounded by twelve
+    // packets, not by the number of distinct sizes, and picks stays small.
+    for (let index = start; index < usable.length; index += 1) {
+      const option = usable[index]!;
+      const size = option.size.amount;
+      const remaining = MAX_PACKAGES - used;
+      // All later sizes are smaller: none can cover a need this one cannot.
+      if (total + size * remaining < need.amount) break;
 
-    const size = usable[index]!.size.amount;
-    for (let count = MAX_PACKAGES - used; count >= 0; count -= 1) {
-      const next = total + size * count;
-      // Overshooting further than the best answer already does is pointless: a
-      // bigger pile of this size only makes the waste worse.
-      if (best !== null && next - need.amount > best.waste) continue;
-      counts[index] = count;
-      walk(index + 1, next, used + count);
-      counts[index] = 0;
+      for (let count = remaining; count >= 1; count -= 1) {
+        // Count pruned trials too, so a wide list cannot bypass the work cap.
+        if (steps === MAX_PACKAGE_SEARCH_STEPS) {
+          exhausted = true;
+          return;
+        }
+        steps += 1;
+        const next = total + size * count;
+        if (!Number.isFinite(next)) continue;
+        if (best !== null && next - need.amount > best.waste) continue;
+
+        picks.push({ key: option.key, count });
+        walk(index + 1, next, used + count);
+        picks.pop();
+        if (exhausted) return;
+        // Zero excess in one packet is an absolute optimum; no later tie wins.
+        if (best !== null && best.waste === 0 && bestCount === 1) return;
+      }
     }
   };
 
   walk(0, 0, 0);
-  return best;
+  if (stats !== undefined) {
+    stats.steps = steps;
+    stats.exhausted = exhausted;
+  }
+  return exhausted ? null : best;
 }
