@@ -1,6 +1,7 @@
 import {
   BACKUP_TABLES,
   canonicalJson,
+  restoreTableOrder,
   type BackupSchemaEntry,
   type BackupSnapshot,
   type BackupSnapshotUnsigned,
@@ -16,41 +17,6 @@ export interface TargetSnapshotData {
 }
 
 const EXPECTED_TABLES = BACKUP_TABLES.map(({ name }) => name);
-const RESTORE_ORDER: readonly BackupTableName[] = [
-  "household",
-  "member",
-  // After household and member: an invitation belongs to one and records who made it.
-  "member_invitation",
-  "ingredient",
-  // Before recipe_category, which names a category by slug. It points at
-  // nothing itself (#199).
-  "category",
-  "recipe",
-  // After recipe too: an assisted edit job may target one owned recipe (#215).
-  "intake_job",
-  // After recipe, household and member: a selective share points at all three.
-  "recipe_share",
-  // After recipe: a category is a fact about one dish and points at nothing
-  // else (#196).
-  "recipe_category",
-  "recipe_step",
-  "ingredient_line",
-  "planned_batch",
-  "batch_occurrence",
-  // After ingredient and member: a pantry row points at both.
-  "pantry_entry",
-  // After recipe, household and member: a preference points at all three.
-  "recipe_preference",
-  // After ingredient: a product is what one ingredient is bought as (#161).
-  "ingredient_product",
-  // After household, recipe and ingredient: an override points at all three.
-  "recipe_ingredient_product",
-  // After household: a sent note is one household's memory of what it put on
-  // the S-list, and points at nothing else (#244).
-  "s_ostoslista_sent_note",
-  // After household. Deliberately no recipe reference: the recipe is gone.
-  "recipe_image_cleanup",
-];
 
 export async function parseAndValidateSnapshot(text: string): Promise<BackupSnapshot> {
   let raw: unknown;
@@ -125,13 +91,12 @@ export function assertCompatibleTarget(
     throw new Error("target schema does not exactly match the snapshot schema");
   }
 
-  for (const table of EXPECTED_TABLES) {
-    // `category` is the one table a migration seeds (#199), so a freshly
-    // migrated target already holds the vocabulary that shipped with the code.
-    // The snapshot's vocabulary replaces it wholesale — `generateRestoreSql`
-    // clears it first — so its rows are not evidence of a dirty target the way
-    // any other table's would be.
-    if (table !== "category" && target.rowCounts[table] !== 0) {
+  for (const definition of BACKUP_TABLES) {
+    const table = definition.name;
+    // Most tables restore into an empty migrated target. A table explicitly
+    // marked replace-seeded is allowed to contain migration defaults because
+    // generateRestoreSql clears those rows before inserting the snapshot.
+    if (definition.targetStart === "empty" && target.rowCounts[table] !== 0) {
       throw new Error(`target table ${table} is not empty`);
     }
     const expectedColumns = [...target.columns[table]].sort();
@@ -148,14 +113,21 @@ export function generateRestoreSql(snapshot: BackupSnapshot): string {
   const lines = [
     "PRAGMA foreign_keys = ON;",
     "BEGIN TRANSACTION;",
-    // The only table a migration seeds. Everything else is restored into an
-    // empty target; this one is restored over the vocabulary the code shipped.
-    "DELETE FROM \"category\";",
   ];
+
+  // Migration-seeded application data is replaced by the snapshot rather than
+  // treated as evidence of a dirty target. Today that is only `category`; the
+  // policy lives beside the table's other backup/restore metadata.
+  for (const definition of BACKUP_TABLES) {
+    if (definition.targetStart === "replace-seeded") {
+      lines.push(`DELETE FROM ${quoteIdentifier(definition.name)};`);
+    }
+  }
+
   const tables = { ...snapshot.tables };
   tables.recipe = sortRecipesParentFirst(snapshot.tables.recipe);
 
-  for (const table of RESTORE_ORDER) {
+  for (const table of restoreTableOrder()) {
     for (const row of tables[table]) {
       const columns = Object.keys(row);
       if (columns.length === 0) throw new Error(`snapshot ${table} contains an empty row`);
