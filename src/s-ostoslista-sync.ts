@@ -18,6 +18,12 @@ export interface SOstoslistaSyncClient {
   sync(): Promise<void>;
 }
 
+/** Only the shopping-row facts that can change what is sent externally. */
+export type SOstoslistaSendItem = Pick<
+  ShoppingItem,
+  "key" | "name" | "total" | "chosen"
+>;
+
 export type SOstoslistaSendOutcome =
   | {
       status: "sent";
@@ -52,15 +58,15 @@ export async function sendToSOstoslista(
   db: D1Database,
   householdId: number,
   client: SOstoslistaSyncClient,
-  buy: readonly ShoppingItem[],
+  items: readonly SOstoslistaSendItem[],
 ): Promise<SOstoslistaSendOutcome> {
-  const packets = packetCounts(buy);
+  const packets = packetCounts(items);
   const addedProducts = new Set<string>();
   const outstanding = await sentNotes(db, householdId);
   let sent = 0;
 
   try {
-    for (const item of buy) {
+    for (const item of items) {
       const previous = outstanding.get(item.key) ?? null;
 
       if (item.chosen.length === 0) {
@@ -95,7 +101,7 @@ export async function sendToSOstoslista(
       sent += 1;
     }
   } catch (error) {
-    return { status: "partial", sent, total: buy.length, error };
+    return { status: "partial", sent, total: items.length, error };
   }
 
   try {
@@ -103,7 +109,7 @@ export async function sendToSOstoslista(
     return {
       status: "sent",
       sent,
-      total: buy.length,
+      total: items.length,
       synced: true,
       syncError: null,
     };
@@ -111,7 +117,7 @@ export async function sendToSOstoslista(
     return {
       status: "sent",
       sent,
-      total: buy.length,
+      total: items.length,
       synced: false,
       syncError,
     };
@@ -137,9 +143,9 @@ async function dropRememberedNote(
 }
 
 /** One external product row, one packet count across every local shopping row. */
-function packetCounts(buy: readonly ShoppingItem[]): Map<string, number> {
+function packetCounts(items: readonly SOstoslistaSendItem[]): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const item of buy) {
+  for (const item of items) {
     for (const { product, count } of item.chosen) {
       counts.set(product.ean, (counts.get(product.ean) ?? 0) + count);
     }
