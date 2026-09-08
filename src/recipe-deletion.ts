@@ -53,7 +53,9 @@ export async function deleteRecipeWithImages(
     ).bind(...bindings),
   ]);
 
-  if ((results[3]?.meta.changes ?? 0) !== 1) return false;
+  // D1's count includes rows removed by this DELETE's cascades. Zero means the
+  // guarded parent was not deleted; any positive count means it was.
+  if ((results[3]?.meta.changes ?? 0) < 1) return false;
 
   // Failure here is pending cleanup, not a failed recipe deletion. The queue
   // survives a lost response or an isolate ending before this call starts.

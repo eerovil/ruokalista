@@ -80,6 +80,23 @@ test("an image-less recipe needs no storage operation", async () => {
   } finally { f.sql.close(); }
 });
 
+test("D1 cascade counts still report a committed parent deletion", async () => {
+  const f = fixture();
+  try {
+    const batch = f.env.DB.batch.bind(f.env.DB);
+    f.env.DB.batch = async (statements) => {
+      const results = await batch(statements);
+      // Real D1 includes cascaded recipe children in this DELETE's change
+      // count, unlike node:sqlite's direct-statement count in this test double.
+      results[3]!.meta.changes = 4;
+      return results;
+    };
+
+    assert.equal(await deleteRecipeWithImages(f.env, 1, 10), true);
+    assert.equal(f.count("SELECT count(*) AS n FROM recipe WHERE household_id = 1"), 0);
+  } finally { f.sql.close(); }
+});
+
 for (const reason of ["foreign", "missing", "published", "shared"] as const) {
   test(`${reason} recipes do not acquire a delete token, queue work or lose bytes`, async () => {
     const f = fixture();
