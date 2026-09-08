@@ -88,7 +88,9 @@ Each of these has cost somebody real time. The detail is in the linked doc.
 - **A new API key needs two places, not one.** A key in `.dev.vars` never
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).
-- **An inline browser script is shipped untranspiled.** Write ES5, and remember
+- **Hand-written inline browser scripts are shipped untranspiled.** Intake and
+  the image splitter use the typed-client pipeline; run `generate:client` after
+  changes there. For remaining template-string islands, write ES5 and remember
   that these scripts are template literals, so a backslash is eaten before the
   browser ever sees it — no regular expressions. See
   [screens](docs/codebase/screens.md).
