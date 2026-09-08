@@ -12,12 +12,59 @@ Credentials live in `~/.local/share/ruokalista/cloudflare.env` (mode 600), which
 `.dev.vars`: that file is loaded into the Worker's own environment during local
 development, which is no place for an account-wide API token.
 
-Issue #252 proposes making production verification the completion boundary for
-implementation issues. A merged PR means its code is on `main`, but its one
-`Issue: #N` marker remains open until a production run completes migrations,
-deploy and live health/auth checks. The run then covers every PR since the last
-successful `production` deployment, which lets a later successful run close work
-that was present in an earlier failed one without guessing from commit messages.
+## Release identity and issue completion
+
+A merged PR is on `main`; its `Issue: #N` closes only after the production
+workflow verifies the release (#252, #261). The deploy step runs `npm run deploy`,
+which stamps the checked-out Git SHA and **every migration filename** into the
+Worker bundle using Wrangler's build-time `--define`. It also sets the Worker
+version tag. The stamp is not a runtime variable or a value echoed from a request.
+The deployment wrapper refuses a dirty checkout or a `GITHUB_SHA` that disagrees
+with HEAD. `npm run deploy -- --dry-run` builds without deploying; other argument
+overrides are refused to keep the release claim tied to the reviewed artifact.
+PR CI runs that dry-run command before the tests, without production credentials.
+
+`/health` reports the baked-in release SHA, database state and schema readiness,
+with `Cache-Control: no-store`. A release is schema-ready only when every expected
+filename is present in D1's `d1_migrations` table and a zero-row query can resolve
+the active recipe, batch-identity and cleanup columns. This checks no recipe data.
+Migration filenames, not the latest numeric prefix or the row count, matter:
+some historical migrations share a numeric prefix. Additional applied migrations
+are tolerated, but missing expected ones are not. Migration history is not a
+checksum audit of manually modified schema; the column probe is a small additional
+readiness check, not an exhaustive integrity audit.
+
+The issue-closing command first verifies the **public origin**
+`https://ruokalista.vilpponen.fi` and the upstream Worker. Both must report the
+expected SHA, healthy database and ready schema. The public `/recipes` request
+must redirect an unauthenticated caller to same-origin `/signin`, not simply to
+any location. Requests carry no credentials, use a fresh cache-busting nonce,
+refuse unexpected redirects, and have a ten-second deadline each. Health bodies
+are limited to 16 KiB. At most six attempts are made, with bounded delays.
+Failure exits before **any** GitHub issue-closing API call and fails the deployment
+job. Verification and closure share one command so rerunning that command cannot
+skip the live gate.
+
+After verification, the existing catch-up logic covers PRs since the last
+successful `production` deployment. A failed verification therefore leaves issues
+open for a later successful release, and already-closed issues remain idempotent.
+
+Local `wrangler dev` remains untagged: its database health still starts browser
+tests, but `release: null` and `schema: unverified` cannot pass the production
+gate. Direct `wrangler deploy` and bootstrap scripts also produce untagged builds
+unless given the definition; use the normal production workflow or `npm run
+deploy` for a verifiable release. Restored migration metadata must accurately
+reflect applied migrations before release verification is expected to succeed.
+
+**Generic release verification is not feature acceptance.** Keep issue-specific
+regression results and any non-destructive live checks in the implementation PR
+or issue. A healthy release proves identity, routing and basic readiness, not that
+every feature's visible behavior satisfies its requirements. The verification
+does not add an authentication bypass or exercise real shopping-list writes.
+
+Wrangler's build-time definition and migration-history contracts are documented at
+https://developers.cloudflare.com/workers/wrangler/commands/workers/ and
+https://developers.cloudflare.com/d1/reference/migrations/.
 
 `scripts/cloudflare-setup.sh` does the whole setup in one command and is safe to
 re-run. `push-google-secrets.sh` pushes the Google credentials and deploys;
