@@ -53,8 +53,12 @@ async function createBatch(
     data: { date, slot: "dinner", recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
-  return ((await response.json()) as { id: number }).id;
+  const created = (await response.json()) as { id: number; instanceKey: string };
+  batchKeys.set(created.id, created.instanceKey);
+  return created.id;
 }
+
+const batchKeys = new Map<number, string>();
 
 /**
  * A recipe measuring milk in spoons, so the list has two units of one
@@ -1347,6 +1351,7 @@ test("a cooking that feeds several days is bought for once", async ({ page }) =>
   // The same pot, now covering three days and four meals.
   const spread = await page.request.patch(`/api/batches/${id}`, {
     data: {
+      instanceKey: batchKeys.get(id),
       occurrences: [
         { date: today(), slot: "dinner" },
         { date: inDays(1), slot: "lunch" },

@@ -433,8 +433,12 @@ async function createBatch(
     data: { date, slot, recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
-  return ((await response.json()) as { id: number }).id;
+  const created = (await response.json()) as { id: number; instanceKey: string };
+  batchKeys.set(created.id, created.instanceKey);
+  return created.id;
 }
+
+const batchKeys = new Map<number, string>();
 
 async function setCoverage(
   page: Page,
@@ -443,6 +447,7 @@ async function setCoverage(
 ): Promise<void> {
   const response = await page.request.patch(`/api/batches/${id}`, {
     data: {
+      instanceKey: batchKeys.get(id),
       occurrences: occurrences.map(([date, slot]) => ({ date, slot })),
     },
   });

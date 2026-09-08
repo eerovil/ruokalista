@@ -231,7 +231,7 @@ function fakeDatabase(): {
         source_line: "½ dl öljyä",
       },
     ],
-    planned_batch: [{ id: 1, household_id: 1, recipe_id: 1, multiplier: 1, legacy_portions: null }],
+    planned_batch: [{ id: 1, instance_key: "batch-instance-1", household_id: 1, recipe_id: 1, multiplier: 1, legacy_portions: null }],
     batch_occurrence: [
       { batch_id: 1, date: "2026-08-25", slot: "dinner" },
     ],
