@@ -21,6 +21,7 @@ import {
   reviewBatchScreen,
 } from "./batch-intake-screens.ts";
 import type { Env } from "./env.ts";
+import { health } from "./health.ts";
 import {
   addMemberForm,
   createHouseholdForm,
@@ -97,7 +98,7 @@ import {
   serviceWorker,
 } from "./pwa.ts";
 import { pantryRemoveForm, pantryScreen } from "./pantry-screens.ts";
-import { Router, type RouteContext } from "./router.ts";
+import { Router } from "./router.ts";
 import {
   currentListJson,
   productSearchJson,
@@ -276,26 +277,3 @@ export default {
     await processIntakeQueue(batch, env);
   },
 } satisfies ExportedHandler<Env, { jobId: string }>;
-
-/**
- * Public, and the only permanent public route. Answers whether the Worker is up
- * and whether its D1 binding actually reaches a migrated database.
- */
-async function health({ env }: RouteContext): Promise<Response> {
-  let database: "ok" | "unmigrated" | "unreachable" = "unreachable";
-
-  try {
-    const row = await env.DB.prepare(
-      "SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'household'",
-    ).first<{ tables: number }>();
-
-    database = row && row.tables > 0 ? "ok" : "unmigrated";
-  } catch {
-    database = "unreachable";
-  }
-
-  return Response.json(
-    { status: database === "ok" ? "ok" : "degraded", database },
-    { status: database === "ok" ? 200 : 503 },
-  );
-}

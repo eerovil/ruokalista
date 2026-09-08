@@ -150,10 +150,13 @@ test("a pull request target is never closed as an issue", async () => {
 
 test("workflow closes issues only after live verification with narrow permissions", () => {
   const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
-  const liveCheck = workflow.indexOf("- name: Check what is actually live");
-  const issueClose = workflow.indexOf("- name: Close the deployed issue");
-  assert.ok(liveCheck >= 0);
-  assert.ok(issueClose > liveCheck);
+  const deploy = workflow.indexOf("- name: Deploy");
+  const issueClose = workflow.indexOf("- name: Verify the public release and close deployed issues");
+  assert.ok(deploy >= 0 && issueClose > deploy);
+  assert.match(workflow, /run: npm run deploy/);
+  const command = readFileSync("scripts/close-deployed-issue.ts", "utf8");
+  assert.match(command, /await verifyAndCloseDeployedIssues\(repository, sha, request\)/);
+  assert.doesNotMatch(command, /await closeDeployedIssues\(/);
   assert.match(workflow, /deploy:\n(?:.|\n)*?permissions:\n\s+contents: read\n\s+deployments: read\n\s+pull-requests: read\n\s+issues: write/);
   assert.match(workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
 });

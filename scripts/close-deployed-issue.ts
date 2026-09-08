@@ -1,4 +1,5 @@
-import { closeDeployedIssues, type GitHubRequest } from "./deployed-issue.ts";
+import type { GitHubRequest } from "./deployed-issue.ts";
+import { verifyAndCloseDeployedIssues } from "./verify-release.ts";
 
 const repository = process.env.GITHUB_REPOSITORY ?? "";
 const sha = process.env.GITHUB_SHA ?? "";
@@ -24,7 +25,8 @@ const request: GitHubRequest = async (method, path, body) => {
   return response.json();
 };
 
-const result = await closeDeployedIssues(repository, sha, request);
+const result = await verifyAndCloseDeployedIssues(repository, sha, request);
+console.log(`Verified public release ${sha}, schema readiness and signed-out access`);
 for (const reason of result.skipped) console.log(`issue left open: ${reason}`);
 for (const issueNumber of result.alreadyClosed) {
   console.log(`issue #${issueNumber} was already closed`);
