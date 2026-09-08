@@ -20,6 +20,7 @@ import { baseAmount, packageSizeFromName } from "./packaging.ts";
 import { formatDecimal } from "./quantities.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
+import { sendToSOstoslista } from "./s-ostoslista-sync.ts";
 import {
   SOstoslistaClient,
   SOstoslistaError,
@@ -27,11 +28,6 @@ import {
   type SOstoslistaKey,
   type SOstoslistaProduct,
 } from "./s-ostoslista.ts";
-import {
-  forgetSentNote,
-  rememberSentNote,
-  sentNotes,
-} from "./s-ostoslista-notes.ts";
 import {
   AMOUNT_IN_RECIPE,
   shoppingLinesFor,
@@ -186,79 +182,26 @@ export async function sendShoppingListForm(
       : shoppingScreen(stateCtx, member, empty);
   }
 
-  // How many packets of each product the whole trip needs, worked out before
-  // anything is sent (#240). The service's add is keyed by EAN, so a product
-  // two rows both reach — a dish's pinned row beside the generic pile, or two
-  // ingredients that are bought as the same packet — is one row on the phone's
-  // list, and sending each row's own count would leave it holding whichever
-  // went last instead of the total.
-  const packets = packetCounts(buy);
-  const done = new Set<string>();
+  const outcome = await sendToSOstoslista(
+    ctx.env.DB,
+    member.householdId,
+    client,
+    buy,
+  );
 
-  // What this app's last send left on the list as free text, row by row, in
-  // the exact words it used (#244). A note carries its amount, so this is the
-  // only way to name the row again once the week's cooking has changed.
-  const db = ctx.env.DB;
-  const outstanding = await sentNotes(db, member.householdId);
-
-  let sent = 0;
-  try {
-    for (const item of buy) {
-      const previous = outstanding.get(item.key) ?? null;
-      if (item.chosen.length === 0) {
-        const note = `${item.name} — ${item.total}`;
-        await client.add({ note });
-        // Resending the same words is the same row keyed again, so there is
-        // nothing to replace — and deleting `previous` here would take the row
-        // that was just added straight back off the list.
-        if (previous !== note) {
-          if (previous !== null) await dropNote(client, previous);
-          await rememberSentNote(db, member.householdId, item.key, note);
-        }
-      } else {
-        for (const { product } of item.chosen) {
-          if (done.has(product.ean)) continue;
-          done.add(product.ean);
-          // The count goes out as the quantity the service and the S-list both
-          // hold on a product row. Until #240 a second packet was a written
-          // line beside the product, on #161's reading that the integration
-          // carried no quantity at all — it does, and the note lost the
-          // mapping the household had chosen.
-          await client.add({ ean: product.ean }, packets.get(product.ean) ?? 1);
-        }
-        // The row this issue is about: it went as text before, and now has a
-        // product. Add first, delete second, forget third — a send that dies
-        // in the middle leaves the note still recorded, so the retry finishes
-        // the job instead of stranding the old text on the list forever.
-        if (previous !== null) {
-          await dropNote(client, previous);
-          await forgetSentNote(db, member.householdId, item.key);
-        }
-      }
-      sent += 1;
-    }
-  } catch (error) {
-    console.error(`S-ostoslista send failed: ${reason(error)}`);
-    const progress = sent === 0
+  if (outcome.status === "partial") {
+    console.error(`S-ostoslista send failed: ${reason(outcome.error)}`);
+    const progress = outcome.sent === 0
       ? "Mitään ei lähetetty."
-      : `${sent}/${buy.length} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
+      : `${outcome.sent}/${outcome.total} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
     const message = `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`;
     return asJson
       ? problem(502, message)
       : shoppingScreen(stateCtx, member, message, null, 502);
   }
 
-  // Once, after the last item, and only after a send that finished: the sync
-  // pushes the service's copy to the phone, and there is nothing to push part
-  // of. A failure here is not a failed send — the items are on the list, they
-  // are just waiting for the service's own next sweep — so it is said beside
-  // the success rather than instead of it.
-  let synced = true;
-  try {
-    await client.sync();
-  } catch (error) {
-    console.error(`S-ostoslista sync failed: ${reason(error)}`);
-    synced = false;
+  if (!outcome.synced) {
+    console.error(`S-ostoslista sync failed: ${reason(outcome.syncError)}`);
   }
 
   const notSynced =
@@ -266,58 +209,19 @@ export async function sendShoppingListForm(
 
   if (asJson) {
     return Response.json({
-      sent,
-      total: buy.length,
-      synced,
-      ...(synced ? {} : { warning: notSynced }),
+      sent: outcome.sent,
+      total: outcome.total,
+      synced: outcome.synced,
+      ...(outcome.synced ? {} : { warning: notSynced }),
     });
   }
   return shoppingScreen(
     stateCtx,
     member,
-    synced ? null : notSynced,
-    `${sent} ainesta lähetettiin S-ostoslistaan.`,
+    outcome.synced ? null : notSynced,
+    `${outcome.sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
   );
-}
-
-/**
- * Take one note this app previously sent back off the list.
- *
- * A note that is not there any more is the wanted state, not a failure: the
- * household may well have ticked it off and cleared it on the phone between
- * the two sends. The service says so with a 404, and treating that as an
- * outage would refuse a send that has nothing wrong with it. Anything else is
- * a real problem and is left to the caller, which stops the send and keeps the
- * note on record for the retry.
- */
-async function dropNote(client: SOstoslistaClient, note: string): Promise<void> {
-  try {
-    await client.remove({ note });
-  } catch (error) {
-    if (error instanceof SOstoslistaError && error.status === 404) return;
-    throw error;
-  }
-}
-
-/**
- * Every product this list is buying and how many packets of it, added up across
- * the whole list rather than per row.
- *
- * The rows themselves are already right: `shopping.ts::shoppingList` puts one
- * ingredient's amounts in one total whatever recipes they came from, and
- * `packaging.ts::planPackages` turns that total into packets. What this covers
- * is the case above a row — the same product reached twice, which the packet
- * planner never sees because it only ever looks at one row's need.
- */
-function packetCounts(buy: ShoppingItem[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const item of buy) {
-    for (const { product, count } of item.chosen) {
-      counts.set(product.ean, (counts.get(product.ean) ?? 0) + count);
-    }
-  }
-  return counts;
 }
 
 /**
@@ -405,8 +309,9 @@ export async function currentListJson(
  * "this is no longer something we are buying".
  *
  * A row that is not there any more is the wanted state and not a failure, for
- * the same reason it is in `dropNote`: the household may have cleared it on the
- * phone since the panel was drawn, and the member asked for it to be gone.
+ * the same reason it is in the send reconciler: the household may have cleared
+ * it on the phone since the panel was drawn, and the member asked for it to be
+ * gone.
  */
 export async function removeCurrentItemForm(
   ctx: RouteContext,
