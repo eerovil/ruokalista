@@ -47,6 +47,9 @@ export interface RecipeEditResult {
 const CATEGORIES_MOVED =
   "Reseptin kategoriat ovat muuttuneet. Tarkista uusin versio ennen tallennusta.";
 
+/** A stale edit whose conflicting state was specifically the category set. */
+export class StaleRecipeCategories extends StaleRecipe {}
+
 /** Capture the concurrency facts a form or durable edit job was written against. */
 export function recipeEditSnapshot(recipe: Recipe): RecipeEditSnapshot {
   return {
@@ -128,7 +131,7 @@ export async function editRecipe(
       // refusal path so category movement gets its own useful explanation.
       const latest = await findRecipe(db, member.householdId, snapshot.recipeId);
       if (latest !== null && !sameCategories(latest.categories, snapshot.categories)) {
-        throw new StaleRecipe(CATEGORIES_MOVED);
+        throw new StaleRecipeCategories(CATEGORIES_MOVED);
       }
     }
     throw error;
