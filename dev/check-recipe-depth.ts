@@ -279,8 +279,8 @@ test("top-level parts and a valid part edit still reach the shopping list intact
   fake.sql
     .prepare(
       `INSERT INTO planned_batch
-         (id, household_id, recipe_id, multiplier, created_by)
-       VALUES (1, 1, ?, 1, 1)`,
+         (id, instance_key, household_id, recipe_id, multiplier, created_by)
+       VALUES (1, 'recipe-depth-1', 1, ?, 1, 1)`,
     )
     .run(dishId);
   const shopping = await shoppingLinesFor(fake.db, MEMBER.householdId, [1]);
