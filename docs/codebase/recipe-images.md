@@ -78,8 +78,26 @@ measurement in the message. Bulk callers get the bound, not the shrink.
 
 Replacing writes the new object, points the row at it, then deletes the old
 one, so a failure leaves a stray object rather than a recipe pointing at
-nothing. Deleting a recipe drops its pictures and its parts' first, since the
-keys are only readable while the rows still exist.
+nothing. Recipe deletion uses `recipe-deletion.ts::deleteRecipeWithImages`:
+its D1 batch rechecks ownership, sharing and menu references, records the actual
+image keys in `recipe_image_cleanup`, then removes children and their parent.
+A refusal or database failure leaves both the tree and its images untouched.
+Only after commit may `cleanupDeletedRecipeImages` remove the obsolete bytes.
+
+The cleanup table is a durable retry list, not a second recipe store. The same
+cleanup function runs after deletion and in the existing scheduled handler,
+processing at most ten keys per invocation. Storage or acknowledgement failures
+are logged and stay queued; they do not turn a committed deletion into a failed
+user operation. Failed attempts rotate behind older work. A live image reference
+in any household prevents cleanup; uploads always mint fresh immutable keys, so
+an in-progress new upload is never swept merely because it is not yet referenced.
+Backups retain the queue and its last-attempt times.
+
+This handles failed deletion and cleanup, not historical image retention (#262).
+Restoring an old snapshot and its image data requires maintenance/application
+writes to be stopped during the restore. After restoring, queued keys referenced
+by restored live recipes are preserved. Historical image availability is a
+separate recovery contract, not something this queue promises.
 
 `src/recipe-images.ts::storeRecipeImage` and `::removeRecipeImage` take the
 `oldKey` the caller believes is current and write with

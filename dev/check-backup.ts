@@ -36,6 +36,8 @@ test("snapshot reads schema and every allowlisted table in one D1 batch", async 
   assert.equal(snapshot.row_counts.recipe, 1);
   assert.equal(snapshot.tables.recipe[0]?.source_text, "Kaalilaatikko\n½ dl öljyä");
   assert.equal(snapshot.tables.ingredient_product[0]?.ean, "6415712506032");
+  assert.equal(snapshot.tables.recipe_image_cleanup[0]?.image_key, "recipes/1/999/deleted.png");
+  assert.equal(snapshot.tables.recipe_image_cleanup[0]?.last_attempt_at, "2026-08-25 00:01:00.000");
   assert.match(snapshot.sha256, /^[0-9a-f]{64}$/);
 
   const again = await createBackupSnapshot(
@@ -264,6 +266,12 @@ function fakeDatabase(): {
         name: "Keiton oma öljy 250 ml",
       },
     ],
+    recipe_image_cleanup: [{
+      image_key: "recipes/1/999/deleted.png",
+      household_id: 1,
+      queued_at: "2026-08-25 00:00:00.000",
+      last_attempt_at: "2026-08-25 00:01:00.000",
+    }],
     s_ostoslista_sent_note: [
       {
         id: 1,

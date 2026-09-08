@@ -507,26 +507,6 @@ export async function removeRecipeImage(
   }
 }
 
-/** Remove image objects for a recipe tree before the DB rows disappear. */
-export async function deleteImagesForRecipeTree(
-  env: RouteContext["env"],
-  householdId: number,
-  recipeId: number,
-): Promise<void> {
-  const { results } = await env.DB
-    .prepare(
-      `SELECT image_key
-         FROM recipe
-        WHERE household_id = ?
-          AND (id = ? OR parent_id = ?)
-          AND image_key IS NOT NULL`,
-    )
-    .bind(householdId, recipeId, recipeId)
-    .all<{ image_key: string }>();
-
-  await Promise.all(results.map((row) => env.RECIPE_IMAGES.delete(row.image_key)));
-}
-
 /** The one row this module reads, so a caller can pass the old key along. */
 export async function imageRow(
   db: D1Database,

@@ -33,6 +33,7 @@ const TABLES: readonly BackupTableName[] = [
   "ingredient_product",
   "recipe_ingredient_product",
   "s_ostoslista_sent_note",
+  "recipe_image_cleanup",
 ];
 
 test("a valid snapshot passes checksum and relationship validation", async () => {
@@ -44,6 +45,8 @@ test("a valid snapshot passes checksum and relationship validation", async () =>
     "Lasagne\n400 g jauhelihaa",
   );
   assert.equal(parsed.tables.ingredient_product[0]?.ean, "6415712506032");
+  assert.equal(parsed.tables.recipe_image_cleanup[0]?.image_key, "recipes/1/999/deleted.png");
+  assert.equal(parsed.tables.recipe_image_cleanup[0]?.last_attempt_at, "2026-08-25 00:01:00.000");
 });
 
 test("a corrupt checksum is rejected", async () => {
@@ -190,6 +193,29 @@ test("invalid batch identities and occurrences are rejected", async () => {
   await assert.rejects(
     parseAndValidateSnapshot(canonicalJson(invalid)),
     /duplicate batch occurrence/,
+  );
+});
+
+test("cleanup queue rejects duplicate keys, empty keys and orphan households", async () => {
+  const snapshot = await validSnapshot();
+  let unsigned = unsignedOf(snapshot);
+  unsigned.tables.recipe_image_cleanup.push({ ...unsigned.tables.recipe_image_cleanup[0]! });
+  unsigned.row_counts.recipe_image_cleanup += 1;
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(await finalizeSnapshot(unsigned))),
+    /duplicate recipe_image_cleanup image_key/,
+  );
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.recipe_image_cleanup[0]!.image_key = "";
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(await finalizeSnapshot(unsigned))),
+    /recipe_image_cleanup.image_key must be a non-empty string/,
+  );
+  unsigned = unsignedOf(snapshot);
+  unsigned.tables.recipe_image_cleanup[0]!.household_id = 999;
+  await assert.rejects(
+    parseAndValidateSnapshot(canonicalJson(await finalizeSnapshot(unsigned))),
+    /orphan recipe_image_cleanup.household_id=999/,
   );
 });
 
@@ -455,6 +481,12 @@ async function validSnapshot() {
         package_unit: "ml",
       },
     ],
+    recipe_image_cleanup: [{
+      image_key: "recipes/1/999/deleted.png",
+      household_id: 1,
+      queued_at: "2026-08-25 00:00:00.000",
+      last_attempt_at: "2026-08-25 00:01:00.000",
+    }],
     s_ostoslista_sent_note: [
       {
         id: 1,

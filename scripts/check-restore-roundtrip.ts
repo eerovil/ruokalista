@@ -47,6 +47,11 @@ try {
     "UPDATE intake_job SET import_guidance = 'Pidä kaalikerrokset erillään.' WHERE id = 'job-1'",
   ]);
 
+  runWrangler([
+    "d1", "execute", database, "--local", "--persist-to", sourceState, "--command",
+    "INSERT INTO recipe_image_cleanup (image_key, household_id, queued_at, last_attempt_at) VALUES ('recipes/1/999/deleted.png', 1, '2026-08-25 12:00:00.000', '2026-08-25 12:01:00.000')",
+  ]);
+
   const snapshot = await captureSnapshot(sourceState);
   writeFileSync(snapshotPath, `${canonicalJson(snapshot)}\n`, { encoding: "utf8", mode: 0o600 });
 
@@ -66,6 +71,13 @@ try {
     if (canonicalJson(target[name]) !== canonicalJson(snapshot.tables[name])) {
       throw new Error(`round-trip table mismatch: ${name}`);
     }
+  }
+
+  const cleanup = target.recipe_image_cleanup[0];
+  if (cleanup?.image_key !== "recipes/1/999/deleted.png" ||
+      cleanup.household_id !== 1 ||
+      cleanup.last_attempt_at !== "2026-08-25 12:01:00.000") {
+    throw new Error("round-trip did not preserve pending image cleanup");
   }
 
   const sourceRecipe = target.recipe.find((row) => row.id === 3);

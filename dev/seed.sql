@@ -6,6 +6,8 @@
 -- #244: what a previous send left on the S-list as text. Points at household
 -- only, so it goes before that.
 DELETE FROM s_ostoslista_sent_note;
+-- Pending image deletions also point at household. Tests start without cleanup work.
+DELETE FROM recipe_image_cleanup;
 -- #161: the two product tables go first, they point at everything below.
 DELETE FROM recipe_ingredient_product;
 DELETE FROM ingredient_product;
