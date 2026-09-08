@@ -3,6 +3,7 @@ import {
   packageSizeFromName,
   type BaseAmount,
 } from "./packaging.ts";
+import { boundedInChunks } from "./d1-query.ts";
 
 /**
  * Which shop products stand for which ingredient.
@@ -55,23 +56,23 @@ export async function productsForIngredients(
   ingredientIds: number[],
 ): Promise<Map<number, ProductChoice[]>> {
   const found = new Map<number, ProductChoice[]>();
-  if (ingredientIds.length === 0) return found;
+  for (const ingredientChunk of boundedInChunks(ingredientIds)) {
+    const placeholders = ingredientChunk.map(() => "?").join(", ");
+    const { results } = await db
+      .prepare(
+        `SELECT ingredient_id, ean, name, image_url, package_quantity, package_unit
+           FROM ingredient_product
+          WHERE ingredient_id IN (${placeholders})
+          ORDER BY ingredient_id, position, id`,
+      )
+      .bind(...ingredientChunk)
+      .all<ProductRow>();
 
-  const placeholders = ingredientIds.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      `SELECT ingredient_id, ean, name, image_url, package_quantity, package_unit
-         FROM ingredient_product
-        WHERE ingredient_id IN (${placeholders})
-        ORDER BY ingredient_id, position, id`,
-    )
-    .bind(...ingredientIds)
-    .all<ProductRow>();
-
-  for (const row of results) {
-    const list = found.get(row.ingredient_id) ?? [];
-    list.push(readChoice(row));
-    found.set(row.ingredient_id, list);
+    for (const row of results) {
+      const list = found.get(row.ingredient_id) ?? [];
+      list.push(readChoice(row));
+      found.set(row.ingredient_id, list);
+    }
   }
   return found;
 }
@@ -83,22 +84,22 @@ export async function overridesForRecipes(
   recipeIds: number[],
 ): Promise<Map<string, ProductChoice>> {
   const found = new Map<string, ProductChoice>();
-  if (recipeIds.length === 0) return found;
+  for (const recipeChunk of boundedInChunks(recipeIds, 1)) {
+    const placeholders = recipeChunk.map(() => "?").join(", ");
+    const { results } = await db
+      .prepare(
+        `SELECT recipe_id, ingredient_id, ean, name, image_url,
+                package_quantity, package_unit
+           FROM recipe_ingredient_product
+          WHERE household_id = ?
+            AND recipe_id IN (${placeholders})`,
+      )
+      .bind(householdId, ...recipeChunk)
+      .all<OverrideRow>();
 
-  const placeholders = recipeIds.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      `SELECT recipe_id, ingredient_id, ean, name, image_url,
-              package_quantity, package_unit
-         FROM recipe_ingredient_product
-        WHERE household_id = ?
-          AND recipe_id IN (${placeholders})`,
-    )
-    .bind(householdId, ...recipeIds)
-    .all<OverrideRow>();
-
-  for (const row of results) {
-    found.set(overrideKey(row.recipe_id, row.ingredient_id), readChoice(row));
+    for (const row of results) {
+      found.set(overrideKey(row.recipe_id, row.ingredient_id), readChoice(row));
+    }
   }
   return found;
 }
