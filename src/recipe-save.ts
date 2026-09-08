@@ -99,6 +99,9 @@ export interface RecipeToSave {
 export class SaveRefused extends Error {}
 export class StaleRecipe extends SaveRefused {}
 
+const NESTED_PARTS =
+  "Reseptin osalle ei voi lisätä omia osia. Poista osien nimet ja yritä uudelleen.";
+
 /** A line paired with the ingredient it finally resolved to. */
 interface ResolvedLine {
   line: LineToSave;
@@ -215,6 +218,9 @@ export async function replaceRecipe(
     throw new StaleRecipe("Resepti on muuttunut. Lataa uusin versio.");
   }
 
+  const writesParts = partNames(recipe).length > 0;
+  if (writesParts) await refusePartsOnPart(db, member, recipeId);
+
   const { newIngredients, lines } = await resolveIngredients(db, member, recipe);
   const writeToken = crypto.randomUUID();
   const guard: RecipeGuard = {
@@ -242,6 +248,7 @@ export async function replaceRecipe(
             SET title = ?, yield_portions = ?, revision = revision + 1,
                 edit_token = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), updated_by = ?
           WHERE id = ? AND household_id = ? AND revision = ?
+            ${writesParts ? "AND recipe.parent_id IS NULL" : ""}
             ${categoryLock(options.expectedCategories)}${partLock(parts.locked)}`,
       )
       .bind(
@@ -266,9 +273,39 @@ export async function replaceRecipe(
 
   const results = await batchWithCategories(db, statements, recipe.categories);
   if ((results[0]?.meta.changes ?? 0) === 0) {
+    if (writesParts) await refusePartsOnPart(db, member, recipeId);
     throw new StaleRecipe(
       await staleMessage(db, member, recipeId, expectedRevision, parts.locked),
     );
+  }
+}
+
+/**
+ * A part may not grow parts of its own.
+ *
+ * The first call gives an ordinary refusal before ingredient ids and part
+ * statements are prepared. The recipe UPDATE repeats the same condition in
+ * the atomic batch, and the second call explains that condition if a row was
+ * reparented after this read. The write token then leaves every later
+ * statement inert, so neither a stale form nor a concurrent hierarchy change
+ * can store a grandchild or partially rewrite the edited part.
+ */
+async function refusePartsOnPart(
+  db: D1Database,
+  member: Member,
+  recipeId: number,
+): Promise<void> {
+  const row = await db
+    .prepare(
+      `SELECT parent_id
+         FROM recipe
+        WHERE id = ? AND household_id = ?`,
+    )
+    .bind(recipeId, member.householdId)
+    .first<{ parent_id: number | null }>();
+
+  if (row?.parent_id !== null && row?.parent_id !== undefined) {
+    throw new SaveRefused(NESTED_PARTS);
   }
 }
 

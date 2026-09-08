@@ -1,7 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+import { recipeWire } from "../src/recipe-prompt-edit";
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
-import { KAALILAATIKKO as TARGET } from "./support/edit-targets";
+import {
+  JAUHELIHAKASTIKE,
+  KAALILAATIKKO as TARGET,
+  LASAGNE,
+} from "./support/edit-targets";
 import { flatPng } from "./support/png";
 import { reseed } from "./support/seed";
 import { captureReview } from "./support/review-capture";
@@ -73,6 +78,99 @@ test("replace and photographed input use the same edit intake job", async ({ pag
   expect(calls[0]?.body.mode).toBe("replace");
   expect(calls[0]?.body.images).toHaveLength(1);
   await expect(page.getByText(/Korvaa resepti/)).toBeVisible();
+});
+
+for (const mode of ["extend", "replace"] as const) {
+  const article = mode === "extend" ? "an" : "a";
+  test(`${article} ${mode} edit cannot give a recipe part another nested part`, async ({
+    page,
+  }) => {
+    const nestedDraft = {
+      title: "Jauhelihakastike",
+      yield_portions: null,
+      source_text: "Jauhelihakastike\nPaistopohja\n1 rkl öljyä",
+      steps: [
+        {
+          text: "Kuumenna öljy.",
+          section: "Paistopohja",
+          phase: null,
+          ingredient_refs: [
+            { line: 0, matched_text: "öljy", approx_position: 8 },
+          ],
+        },
+      ],
+      lines: [
+        {
+          quantity: 1,
+          quantity_max: null,
+          unit: "rkl",
+          alt_quantity: null,
+          alt_unit: null,
+          ingredient_id: 1,
+          ingredient_name: "öljy",
+          source_line: "1 rkl öljyä",
+          section: "Paistopohja",
+          phase: null,
+          note: "Mallin ehdottama uusi osa.",
+        },
+      ],
+    };
+    await stubStructuring(page, nestedDraft, {
+      targetRecipe: JAUHELIHAKASTIKE,
+    });
+
+    await page.goto("/intake?recipe=4");
+    if (mode === "replace") {
+      await page.getByRole("radio", { name: "Korvaa resepti" }).check();
+    }
+    await page.getByLabel("Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa")
+      .fill("Lisää paistopohja.");
+    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await expect(page.getByRole("heading", { name: "Tarkista reseptin muutokset" }))
+      .toBeVisible();
+    await expect(page.locator('input[name="line.0.section"]'))
+      .toHaveValue("Paistopohja");
+
+    await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+    await expect(page.locator(".refused")).toContainText(
+      "Reseptin osalle ei voi lisätä omia osia",
+    );
+    await expect(page.locator('input[name="line.0.section"]'))
+      .toHaveValue("Paistopohja");
+    await expect(page.locator('input[name="line.0.note"]'))
+      .toHaveValue("Mallin ehdottama uusi osa.");
+    if (mode === "extend") {
+      await captureReview(page, "docs/screenshots/116-nested-part-refused.png");
+    }
+
+    await page.goto("/recipes/4");
+    await expect(page.locator("main")).toContainText("400 g");
+    await expect(page.locator("main")).toContainText("Ruskista jauheliha.");
+    await expect(page.locator(".part")).toHaveCount(0);
+  });
+}
+
+test("a valid top-level multipart AI edit still saves every part", async ({
+  page,
+}) => {
+  await stubStructuring(page, recipeWire(LASAGNE), { targetRecipe: LASAGNE });
+
+  await page.goto("/intake?recipe=3");
+  await page.getByLabel("Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa")
+    .fill("Pidä osat ennallaan.");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await expect(page.getByRole("heading", { name: "Tarkista reseptin muutokset" }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/3$/);
+  const parts = page.locator(".part");
+  await expect(parts).toHaveCount(2);
+  await expect(parts.nth(0)).toContainText("400 g");
+  await expect(parts.nth(0)).toContainText("Ruskista jauheliha.");
+  await expect(parts.nth(1)).toContainText("5 dl");
+  await expect(parts.nth(1)).toContainText("Kuumenna maito");
 });
 
 test("a web address is available in the same existing-recipe mode", async ({ page }) => {
