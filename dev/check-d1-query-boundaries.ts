@@ -131,8 +131,8 @@ function insertFixtures(database: FakeD1): {
   `);
   const batch = sql.prepare(`
     INSERT INTO planned_batch
-      (id, household_id, recipe_id, multiplier, created_by, instance_key)
-    VALUES (?, ?, ?, 1, ?, lower(hex(randomblob(16))))
+      (id, instance_key, household_id, recipe_id, multiplier, created_by)
+    VALUES (?, ?, ?, ?, 1, ?)
   `);
 
   const ingredientIds: number[] = [];
@@ -155,7 +155,7 @@ function insertFixtures(database: FakeD1): {
         `override-${suffix}`,
         `Override ${suffix}`,
       );
-      batch.run(batchId, 1, recipeId, 1);
+      batch.run(batchId, `query-boundary-${batchId}`, 1, recipeId, 1);
     }
     sql.exec("COMMIT");
   } catch (error) {
@@ -164,7 +164,13 @@ function insertFixtures(database: FakeD1): {
   }
 
   const foreignBatchId = 9999;
-  batch.run(foreignBatchId, 2, sharedIds[0]!, 2);
+  batch.run(
+    foreignBatchId,
+    `query-boundary-${foreignBatchId}`,
+    2,
+    sharedIds[0]!,
+    2,
+  );
   return { ownIds, sharedIds, ingredientIds, batchIds, foreignBatchId };
 }
 

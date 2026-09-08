@@ -624,7 +624,9 @@ export function editorForm(
   // is what carries it through `+ Lisää aines` and through a refusal.
   const withSections =
     attempted?.withSections === true ||
-    String(attempted?.form.get("withSections") ?? "") === "1";
+    String(attempted?.form.get("withSections") ?? "") === "1" ||
+    rows.some((row) => (row.section ?? "").trim() !== "") ||
+    steps.some((step) => step.section.trim() !== "");
   const expectedParts =
     attempted?.expectedParts ??
     (attempted === undefined ? [] : readExpectedParts(attempted.form));

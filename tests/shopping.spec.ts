@@ -927,14 +927,26 @@ test("a product and a text row can each be taken off the S list from the panel",
   const before = await sendAndReadPanel(page);
   const items = page.locator(".s-current-items li");
   const milk = items.filter({ hasText: "Kotimaista rasvaton maito" });
-  await milk
-    .getByRole("button", { name: /Poista S-ostoslistalta/ })
-    .click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/ostoslista/s-lista/poista") &&
+        response.request().method() === "POST",
+    ),
+    milk.getByRole("button", { name: /Poista S-ostoslistalta/ }).click(),
+  ]);
   // The row goes without the screen being loaded again.
   await expect(milk).toHaveCount(0);
 
   const water = items.filter({ hasText: "vesi — 2–3 l" });
-  await water.getByRole("button", { name: /Poista S-ostoslistalta/ }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/ostoslista/s-lista/poista") &&
+        response.request().method() === "POST",
+    ),
+    water.getByRole("button", { name: /Poista S-ostoslistalta/ }).click(),
+  ]);
   await expect(water).toHaveCount(0);
   await expect(items).toHaveCount(before - 2);
 

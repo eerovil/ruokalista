@@ -134,3 +134,4 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `111-cast-nest-hub-life-size.png` | The same screen at life size — six inches wide at 96 dpi, so looking at it 1:1 shows what the kitchen sees rather than a magnified copy (#227) |
 | `114-s-ostoslista-note-replaced.png` | Proposed juusto sent as text and then given a product: the S-ostoslista panel holds one product row, and the words the earlier send left there are gone (#244) |
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |
+| `116-nested-part-refused.png` | Proposed atomic refusal when an AI edit gives a recipe part another named part: the Finnish explanation and the submitted section, ingredient, quantity and note remain on the review screen (#258) |

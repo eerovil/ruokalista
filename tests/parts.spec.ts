@@ -83,6 +83,28 @@ test("a part can still be opened and edited on its own", async ({ page }) => {
   await expect(page.locator(".line input[name$=section]")).toHaveCount(0);
 });
 
+test("a crafted ordinary form cannot add a nested part", async ({ page }) => {
+  await page.goto("/recipes/4/edit");
+  const submitted = await page.locator('form[action="/recipes/4"]').evaluate((form) =>
+    Object.fromEntries(new FormData(form as HTMLFormElement).entries())
+  );
+
+  const response = await page.request.post("/recipes/4", {
+    form: { ...submitted, "line.0.section": "Sipulipohja" },
+  });
+  expect(response.status()).toBe(400);
+  const body = await response.text();
+  expect(body).toContain("Reseptin osalle ei voi lisätä omia osia");
+  await page.setContent(body);
+  await expect(page.locator('input[name="line.0.section"]'))
+    .toHaveValue("Sipulipohja");
+
+  await page.goto("/recipes/4");
+  await expect(page.locator("main")).toContainText("400 g");
+  await expect(page.locator("main")).toContainText("Ruskista jauheliha.");
+  await expect(page.locator(".part")).toHaveCount(0);
+});
+
 test("the dish's editor names each part and links into it (#231)", async ({
   page,
 }) => {
