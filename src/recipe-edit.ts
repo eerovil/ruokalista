@@ -38,12 +38,6 @@ export interface RecipeEditOptions {
   allowEmpty?: boolean;
 }
 
-export interface RecipeEditResult {
-  recipeId: number;
-  /** A part saves back to its dish; a dish saves back to itself. */
-  parentId: number | null;
-}
-
 const CATEGORIES_MOVED =
   "Reseptin kategoriat ovat muuttuneet. Tarkista uusin versio ennen tallennusta.";
 
@@ -84,7 +78,7 @@ export async function editRecipe(
   snapshot: RecipeEditSnapshot,
   intent: RecipeEditIntent,
   options: RecipeEditOptions = {},
-): Promise<RecipeEditResult> {
+): Promise<void> {
   if (!Number.isSafeInteger(snapshot.recipeId) || snapshot.recipeId <= 0) {
     throw new StaleRecipe("Reseptiä ei enää ole.");
   }
@@ -136,8 +130,6 @@ export async function editRecipe(
     }
     throw error;
   }
-
-  return { recipeId: current.id, parentId: current.parentId };
 }
 
 function sameCategories(left: readonly string[], right: readonly string[]): boolean {
