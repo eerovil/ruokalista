@@ -8,6 +8,14 @@ verification tiers, domain docs, and workflow lessons other sessions have hit.
 Issues, PRDs and wayfinder maps live in this repo's GitHub Issues, driven with
 the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+Issue #252 proposes separating merge from completion for implementation work.
+New PR bodies carry exactly one `Issue: #N` line and no GitHub auto-close
+keyword. A merge then means the code is on `main`; the linked issue is closed
+only by the production workflow after checks, migrations, deployment and live
+verification have all succeeded. A later successful deployment also covers PRs
+since the previous successful production deployment, so a failed run leaves its
+issues open without stranding them.
+
 ### Triage labels
 
 The five canonical triage labels, unchanged: `needs-triage`, `needs-info`,

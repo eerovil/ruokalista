@@ -146,6 +146,10 @@ Each of these has cost somebody real time. The detail is in the linked doc.
 - **Finnish in the product, English in the repo.** Every screen, label and
   message a household reads is Finnish; code, comments, commits, issues and
   these docs are English.
+- **Link implementation PRs without closing their issues.** Use exactly one
+  `Issue: #N` line in the PR body; never use GitHub's `Closes`, `Fixes` or
+  `Resolves` keywords. A merge means the code is on `main`; the issue closes
+  only after production deploy and live verification succeed.
 - **Refuse in the right shape.** A screen's refusal re-renders the screen with
   `<p class="refused">` and the member's input intact. `problem()` is the JSON
   API's refusal helper — using it on a screen dumps the member into raw JSON and

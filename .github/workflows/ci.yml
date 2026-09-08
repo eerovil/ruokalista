@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 # A newer PR push makes its older check pointless. A main run is different: once
 # it may touch production it must finish, so main pushes queue instead of
 # cancelling a migration between the schema and deploy steps.
@@ -90,6 +93,11 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      deployments: read
+      pull-requests: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -119,3 +127,7 @@ jobs:
           signed_out=$(curl -s -o /dev/null -w '%{http_code}' \
             https://ruokalista.eerovil.workers.dev/recipes)
           [ "$signed_out" = "302" ] || { echo "screens not gated: $signed_out"; exit 1; }
+      - name: Close the deployed issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types scripts/close-deployed-issue.ts
