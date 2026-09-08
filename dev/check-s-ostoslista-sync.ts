@@ -219,6 +219,59 @@ test("an already-missing remembered note is successful cleanup", async () => {
   assert.equal(client.calls.at(-1)?.kind, "sync");
 });
 
+test("a failed local receipt remains retryable after the external replacement", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  await rememberSentNote(fake.db, 1, "1", "maito — 1 l");
+
+  fake.sql.exec(`
+    CREATE TRIGGER fail_sent_note_receipt
+    BEFORE INSERT ON s_ostoslista_sent_note
+    WHEN NEW.note = 'maito — 2 l'
+    BEGIN
+      SELECT RAISE(ABORT, 'receipt write failed');
+    END;
+  `);
+
+  const first = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "2 l")],
+  );
+  assert.equal(first.status, "partial");
+  if (first.status === "partial") {
+    assert.equal(first.sent, 0);
+    assert.match(String(first.error), /receipt write failed/);
+  }
+  assert.equal((await sentNotes(fake.db, 1)).get("1"), "maito — 1 l");
+  assert.deepEqual(client.calls, [
+    { kind: "add", key: { note: "maito — 2 l" }, quantity: null },
+    { kind: "remove", key: { note: "maito — 1 l" } },
+  ]);
+
+  fake.sql.exec("DROP TRIGGER fail_sent_note_receipt");
+  client.calls.length = 0;
+  client.fail = (call) =>
+    call.kind === "remove"
+      ? new SOstoslistaError("already gone", 404)
+      : null;
+
+  const retried = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "2 l")],
+  );
+  assert.equal(retried.status, "sent");
+  assert.deepEqual(client.calls, [
+    { kind: "add", key: { note: "maito — 2 l" }, quantity: null },
+    { kind: "remove", key: { note: "maito — 1 l" } },
+    { kind: "sync" },
+  ]);
+  assert.equal((await sentNotes(fake.db, 1)).get("1"), "maito — 2 l");
+});
+
 test("a failed final phone push is a warning after a complete send", async () => {
   const fake = database();
   const client = new FakeClient();
