@@ -1,9 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
-import { KAALILAATIKKO as TARGET } from "./support/edit-targets";
+import {
+  KAALILAATIKKO as TARGET,
+  LASAGNE,
+} from "./support/edit-targets";
 import { flatPng } from "./support/png";
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { captureReview } from "./support/review-capture";
 import { sessionCookie } from "./support/session";
 
@@ -93,6 +96,146 @@ test("a web address is available in the same existing-recipe mode", async ({ pag
   });
   await expect(page.getByRole("heading", { name: "Tarkista reseptin muutokset" }))
     .toBeVisible();
+});
+
+test("case variants replace one existing part without losing children", async ({
+  page,
+}) => {
+  const proposal = {
+    title: "Lasagne",
+    yield_portions: 6,
+    source_text: "",
+    steps: [
+      { text: "Kokoa vuokaan.", section: null, phase: "after_parts", ingredient_refs: [] },
+      {
+        text: "Kuumenna maito ja juusto.",
+        section: " juustokastike ",
+        phase: null,
+        ingredient_refs: [
+          { line: 1, matched_text: "maito", approx_position: 9 },
+          { line: 2, matched_text: "juusto", approx_position: 18 },
+        ],
+      },
+      { text: "Sekoita tasaiseksi.", section: "JUUSTOKASTIKE", phase: null, ingredient_refs: [] },
+    ],
+    lines: [
+      {
+        quantity: 12, quantity_max: null, unit: "kpl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 10, ingredient_name: "lasagnelevy",
+        source_line: "12 lasagnelevyä", section: null,
+        phase: "after_parts", alternative_group: null, note: null,
+      },
+      {
+        quantity: 5, quantity_max: null, unit: "dl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 9, ingredient_name: "maito",
+        source_line: "5 dl maitoa", section: "Juustokastike",
+        phase: null, alternative_group: 3, note: null,
+      },
+      {
+        quantity: 2, quantity_max: null, unit: "dl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 8, ingredient_name: "juusto",
+        source_line: "2 dl juustoa", section: " juustokastike ",
+        phase: null, alternative_group: 3, note: null,
+      },
+    ],
+  };
+
+  await stubStructuring(page, proposal, { targetRecipe: LASAGNE });
+  await page.goto("/intake?recipe=3");
+  await page.getByRole("radio", { name: "Korvaa resepti" }).check();
+  await page.getByLabel("Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa")
+    .fill("Yhdistä kastikkeen kirjoitusasut.");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  const reviewedSauce = page.locator("section.part", { hasText: "Juustokastike" });
+  await expect(reviewedSauce).toHaveCount(1);
+  await expect(reviewedSauce).toContainText("Kuumenna maito ja juusto.");
+  await expect(reviewedSauce).toContainText("Sekoita tasaiseksi.");
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+
+  await expect(page).toHaveURL("/recipes/3");
+  const sauce = page.locator(".part", { hasText: "Juustokastike" });
+  await expect(sauce).toHaveCount(1);
+  await expect(sauce.locator("h2")).toHaveText("Juustokastike");
+  await expect(sauce.locator(".lines li")).toHaveCount(1);
+  await expect(sauce.locator(".lines")).toContainText("5 dl maito tai 2 dl juusto");
+  await expect(sauce.locator(".steps li")).toHaveCount(2);
+  await expect(sauce.locator(".steps li").first())
+    .toContainText("Kuumenna");
+  await expect(sauce).toContainText("Sekoita tasaiseksi.");
+  await expect(sauce.locator(".mention")).toHaveCount(2);
+
+  await page.goto("/recipes/5/edit");
+  await expect(page.locator('input[name="revision"]')).toHaveValue("1");
+
+  const today = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Helsinki",
+  }).format(new Date());
+  const planned = await page.request.post("/api/batches", {
+    data: { date: today, slot: "dinner", recipeId: 3, multiplier: 1 },
+  });
+  expect(planned.status()).toBe(201);
+  await page.goto("/ostoslista");
+  await expect(
+    page.locator(".shopping-list > li", { hasText: "maito" })
+      .locator(".shopping-total"),
+  ).toHaveText("5 dl");
+  await expect(
+    page.locator(".shopping-list .shopping-name", { hasText: /^juusto$/ }),
+  ).toHaveCount(0);
+});
+
+test("ambiguous existing part titles refuse and preserve the proposal", async ({
+  page,
+}) => {
+  const proposal = {
+    title: "Lasagne",
+    yield_portions: 6,
+    source_text: "",
+    steps: [
+      {
+        text: "Kuumenna maito.",
+        section: "Juustokastike",
+        phase: null,
+        ingredient_refs: [],
+      },
+    ],
+    lines: [
+      {
+        quantity: 5, quantity_max: null, unit: "dl",
+        alt_quantity: null, alt_unit: null,
+        ingredient_id: 9, ingredient_name: "maito",
+        source_line: "5 dl maitoa", section: "Juustokastike",
+        phase: null, alternative_group: null, note: null,
+      },
+    ],
+  };
+
+  await stubStructuring(page, proposal, { targetRecipe: LASAGNE });
+  await page.goto("/intake?recipe=3");
+  await page.getByLabel("Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa")
+    .fill("Päivitä kastike.");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+
+  executeLocalSql(`
+    INSERT INTO recipe
+      (id, household_id, title, yield_portions, source_text, source_route,
+       created_by, updated_by, parent_id, part_position)
+    VALUES (50, 1, 'juustokastike', NULL, 'Lasagne', 'pasted', 1, 1, 3, 3)
+  `);
+
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page.locator(".refused")).toContainText(
+    "Reseptin osia ei voi tunnistaa yksiselitteisesti.",
+  );
+  await expect(page.locator('input[name="line.0.section"]'))
+    .toHaveValue("Juustokastike");
+  await expect(page.locator('textarea[name="step.0"]'))
+    .toHaveValue("Kuumenna maito.");
+
+  reseed();
 });
 
 test("another household's readable recipe cannot enter edit intake", async ({ page }) => {
