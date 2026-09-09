@@ -142,6 +142,7 @@ for (const action of ["replace", "remove", "delete"] as const) {
   test(`${action} resets a restored image's old retirement and failed-attempt timestamps`, async (t) => {
     const f = fixture(t);
     const old = await f.upload();
+    // A restored live reference can coexist with an older pending receipt.
     f.sql.prepare(`INSERT INTO recipe_image_cleanup (image_key, household_id, queued_at, last_attempt_at)
       VALUES (?, 1, '2020-01-01 00:00:00.000', '2020-02-01 00:00:00.000')`).run(old);
     await cleanupRetiredRecipeImages(f.env);
@@ -245,6 +246,8 @@ test("a delayed acknowledgement cannot delete a renewed retirement receipt", asy
   const remove = f.bucket.delete;
   f.bucket.delete = async (key: string) => {
     await remove(key);
+    // Restore is normally quiesced. This pins the receipt-generation guard
+    // even if a stale cleanup's final acknowledgement arrives late.
     f.age("+0 days", key);
   };
   await cleanupRetiredRecipeImages(f.env);
@@ -272,7 +275,7 @@ test("same-bucket retention cannot mask a full bucket loss", async (t) => {
   const f = fixture(t);
   await f.upload();
   const snapshot = await snapshotOf(f.database);
-  f.objects.clear();
+  f.objects.clear(); // Disposable simulated storage only.
   const audit = await auditBackupImages(snapshot, f.read);
   assert.throws(() => assertImagesReadable(audit), /unavailable=1/);
 });
