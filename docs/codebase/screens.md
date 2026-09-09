@@ -159,12 +159,14 @@ markup.
 
 ### Making that half feel immediate (issue #159)
 
-This pull request proposes an inline script island,
-`shopping-screens.ts::SHOPPING_ISLAND`, on top of everything above — not
-instead of it. Every form on the screen is still the form it was: without
+The optional enhancement now lives in `src/client/shopping.ts`, is
+DOM-typechecked by `tsconfig.client.json`, and is generated into the committed
+`src/generated/shopping.ts` bundle embedded by `shopping-screens.ts`. It sits
+on top of everything above — not instead of it. Every form on the screen is
+still the form it was: without
 JavaScript the row's button still navigates to `/ostoslista/tuote`, the send
 form still posts, and the only thing missing is the panel a browser has to
-fill. Three JSON answers serve the island, and two of them are new routes:
+fill. Three JSON answers serve the shopping client, and two of them are new routes:
 
 - `GET /ostoslista/haku?haku=…` (`productSearchJson`) — the catalogue search,
   echoing the term it ran.
@@ -184,7 +186,7 @@ What that buys, and the rules each part follows:
 - **A row closes itself once its product has saved** — this is what #204
   proposes. The open row is the tallest thing on the screen at exactly the
   moment there is nothing left to do in it, and what somebody reported was
-  finishing one ingredient and having to hunt for where they were. The island
+  finishing one ingredient and having to hunt for where they were. The shopping client
   sets `details.open = false` in `persist`'s success branch, so the picture is
   what is left saying the row is done and the next ingredient is on the next
   line. Only on success: a refusal's error and retry are inside the row, so a
@@ -215,12 +217,15 @@ What that buys, and the rules each part follows:
   half of. The service syncs on its own schedule anyway, so a failed push is
   not a failed send: the screen keeps its `N ainesta lähetettiin` notice and
   adds a line saying the phone will catch up at the next sweep, and the JSON
-  answer carries the same fact as `synced: false` so the island can say it too.
+  answer carries the same fact as `synced: false` so the shopping client can say it too.
 
-The island follows the same discipline as the other three: ES5, no regular
-expressions, feature-detected (it does nothing at all without `XMLHttpRequest`,
-`JSON` or `addEventListener`), and it builds every node with `createElement`
-and `createTextNode` so a product name from the shop can never become markup.
+The typed source is bundled to the same ES5 browser floor through
+`scripts/build-client.mjs` and remains feature-detected (it does nothing at all
+without `XMLHttpRequest`, `JSON` or `addEventListener`). It still builds
+every node with `createElement` and `createTextNode`, so a product name from
+the shop can never become markup. Unlike the old server template string, the
+source may use ordinary TypeScript syntax because escaping/transpilation belongs
+to the client build rather than to `shopping-screens.ts`.
 
 ### What is left to buy, and taking a row off it (issue #248)
 
@@ -268,7 +273,7 @@ This pull request proposes moving everything that changes size out of the list.
 Nothing here is a scroll-position patch; the positions never move to be
 restored.
 
-- **The picker is one fixed sheet** (`.s-sheet`), built once by the island and
+- **The picker is one fixed sheet** (`.s-sheet`), built once by the shopping client and
   appended to `<body>` rather than into a row. It is `position: fixed`, so
   opening it, searching in it and closing it reflow nothing. Because it is no
   longer sitting inside the row it belongs to, its head names the ingredient and
@@ -278,14 +283,14 @@ restored.
   centred dialog; the flow is not phone-only.
 - **The scope choice visits the sheet, it does not live there.** The server
   still draws `.s-product-scope-choice` inside the row (`.s-scope-source`,
-  hidden), the island moves that element into the sheet on open and puts it back
+  hidden), the shopping client moves that element into the sheet on open and puts it back
   on close. A dish's title is escaped once, by the server, and the option values
   cannot drift from what the save accepts.
 - **The row's product line is compact and the same height in both states.** 40 px
   rather than 64, the name and EAN held to one line each, and a reserved
   `min-height`, so swapping "Teksti" for a chosen product moves nothing. It
   takes the full width with its buttons underneath, because squeezed beside them
-  the name ellipsised away the very thing somebody is shopping for. The island's
+  the name ellipsised away the very thing somebody is shopping for. The shopping client's
   `showProduct` builds that shape **exactly** — same `.s-shopping-product-one`
   wrapper, same 40 px — because it runs the instant a member taps `Valitse`, and
   a shape of its own is a shape the row's CSS was not sized for.
@@ -300,7 +305,7 @@ restored.
   the top** — this is what #204 proposes. There are three slots (26 px on the
   row, 40 px in the open row's summary, 80 px in the picker's results) and a
   single `PRODUCT_PICTURE` in `shopping-screens.ts` holds each one's size and the
-  width to fetch, handed to the island rather than written twice.
+  width to fetch, handed to the shopping client rather than written twice.
   `s-ostoslista.ts::sProductImageAtWidth` swaps the width into the CDN path at
   render time — not in `sProductImageUrl`, because that URL is already saved in
   `image_url` for every product any household has chosen. Two reasons for all
@@ -315,7 +320,7 @@ restored.
   shoving every row under it down the screen at the exact moment the member had
   tapped something. Disabled it holds its own space and says plainly why.
 - **A row's busy line is reserved, not inserted.** The server ships an empty
-  `.s-status` on every mapped-capable row and the island only fills and empties
+  `.s-status` on every mapped-capable row and the shopping client only fills and empties
   it.
 - **A refusal is a fixed strip** (`.s-toast`) above the tab bar, with the retry
   in it, rather than a paragraph pushed into the list at the moment the member
@@ -332,7 +337,7 @@ restored.
   splits a row in two, and the cupboard moves a row to the other list.
 - **One save path still reloads, and it lands on the ingredient.** A second
   package size or a recipe's own product changes what the row adds up to, and
-  that arithmetic is the server's — so the island sets the hash to the row's
+  that arithmetic is the server's — so the shopping client sets the hash to the row's
   anchor before reloading rather than drawing a guess.
 
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
