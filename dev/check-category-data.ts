@@ -8,6 +8,10 @@ const DATA_SOURCE = readFileSync(
   new URL("../src/category-data.ts", import.meta.url),
   "utf8",
 );
+const RECIPE_SAVE_SOURCE = readFileSync(
+  new URL("../src/recipe-save.ts", import.meta.url),
+  "utf8",
+);
 
 const vocabulary = new Vocabulary([
   { slug: "pasta", label: "Pasta" },
@@ -18,6 +22,8 @@ const vocabulary = new Vocabulary([
 test("category data stays independent from rendering", () => {
   assert.doesNotMatch(DATA_SOURCE, /(?:\.\/|\.\.\/)html\.ts/);
   assert.doesNotMatch(DATA_SOURCE, /\bhtml`|\braw\(/);
+  assert.match(RECIPE_SAVE_SOURCE, /from "\.\/category-data\.ts"/);
+  assert.doesNotMatch(RECIPE_SAVE_SOURCE, /from "\.\/categories\.ts"/);
 });
 
 test("Vocabulary preserves ordering, fallback and submitted-category filtering", () => {
