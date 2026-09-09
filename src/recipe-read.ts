@@ -17,7 +17,7 @@ import {
 } from "./ingredient-products.ts";
 import type { Measurement } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
+import { readableRecipeScope } from "./recipe-publish.ts";
 
 /**
  * Reading the recipe store, without HTTP or rendering dependencies.
@@ -142,20 +142,16 @@ export async function publicRecipeSummaries(
   householdId: number,
   query: string,
 ): Promise<RecipeSummary[]> {
+  const readable = readableRecipeScope(householdId);
   const { results } = await db
     .prepare(
       `${SUMMARY_SELECT}
         WHERE recipe.household_id <> ?
-          AND (recipe.published_at IS NOT NULL
-               OR EXISTS (
-                    SELECT 1 FROM recipe_share
-                     WHERE recipe_share.recipe_id = recipe.id
-                       AND recipe_share.household_id = ?
-                  ))
+          AND ${readable.sql}
           AND recipe.parent_id IS NULL
         ORDER BY recipe.published_at DESC, recipe.id DESC`,
     )
-    .bind(householdId, householdId)
+    .bind(householdId, ...readable.bindings)
     .all<SummaryRow>();
 
   return withCategories(db, filterByTitle(results.map(toSummary), query));
@@ -284,9 +280,9 @@ async function loadRecipe(
   scope: "own" | "readable",
   productHouseholdId = householdId,
 ): Promise<Recipe | null> {
-  const ownership = scope === "own"
-    ? "recipe.household_id = ?"
-    : readableRecipeCondition();
+  const access = scope === "own"
+    ? { sql: "recipe.household_id = ?", bindings: [householdId] as const }
+    : readableRecipeScope(householdId);
 
   const row = await db
     .prepare(
@@ -311,13 +307,9 @@ async function loadRecipe(
          FROM recipe
          JOIN member ON member.id = recipe.created_by
          JOIN household ON household.id = recipe.household_id
-        WHERE recipe.id = ? AND ${ownership}`,
+        WHERE recipe.id = ? AND ${access.sql}`,
     )
-    .bind(...(
-      scope === "own"
-        ? [id, householdId]
-        : [id, householdId, householdId]
-    ))
+    .bind(id, ...access.bindings)
     .first<RecipeRow>();
 
   if (row === null) return null;

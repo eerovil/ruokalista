@@ -1,6 +1,6 @@
 import type { Member } from "./members.ts";
 import { boundedInChunks } from "./d1-query.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
+import { readableRecipeScope } from "./recipe-publish.ts";
 import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
 /**
@@ -79,14 +79,15 @@ export async function setPreferredMultiplier(
   recipeId: number,
   multiplier: number | null,
 ): Promise<void> {
+  const readable = readableRecipeScope(member.householdId);
   const visible = await db
     .prepare(
       `SELECT id FROM recipe
         WHERE id = ?
           AND parent_id IS NULL
-          AND ${readableRecipeCondition("recipe")}`,
+          AND ${readable.sql}`,
     )
-    .bind(recipeId, member.householdId, member.householdId)
+    .bind(recipeId, ...readable.bindings)
     .first<{ id: number }>();
   if (visible === null) throw new PreferenceRefused("Tuntematon resepti.");
 
