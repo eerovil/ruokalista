@@ -57,11 +57,11 @@ import {
  *
  * Issue #159 proposes making the S-ostoslista half of the screen feel
  * immediate, and it is added strictly on top of that: every form below is still
- * the form it was, and a browser that cannot run the optional shopping client still
- * navigates to `/ostoslista/tuote`, still posts the send form, and simply never
- * sees the current S-ostoslista panel. What the typed shopping client adds is the product
- * search in a panel inside the row, an optimistic selection saved in the
- * background, a spinner on everything asynchronous, and the contents of the
+ * the form it was, and a browser that cannot run the optional shopping client
+ * still navigates to `/ostoslista/tuote`, still posts the send form, and simply
+ * never sees the current S-ostoslista panel. What the typed shopping client adds
+ * is the fixed product sheet, an optimistic selection saved in the background,
+ * a spinner on everything asynchronous, and the contents of the
  * S-ostoslista read after the page is already usable. It talks to the three
  * JSON answers below, and the save still re-searches server-side, so the
  * browser cannot invent an EAN, a name or an image whichever path it takes.

@@ -163,8 +163,8 @@ The optional enhancement now lives in `src/client/shopping.ts`, is
 DOM-typechecked by `tsconfig.client.json`, and is generated into the committed
 `src/generated/shopping.ts` bundle embedded by `shopping-screens.ts`. It sits
 on top of everything above — not instead of it. Every form on the screen is
-still the form it was: without JavaScript the row's button still navigates to `/ostoslista/tuote`, the send
-form still posts, and the only thing missing is the panel a browser has to
+still the form it was: without JavaScript the row's button still navigates to
+`/ostoslista/tuote`, the send form still posts, and the only thing missing is the panel a browser has to
 fill. Three JSON answers serve the shopping client, and two of them are new routes:
 
 - `GET /ostoslista/haku?haku=…` (`productSearchJson`) — the catalogue search,
@@ -185,8 +185,8 @@ What that buys, and the rules each part follows:
 - **A row closes itself once its product has saved** — this is what #204
   proposes. The open row is the tallest thing on the screen at exactly the
   moment there is nothing left to do in it, and what somebody reported was
-  finishing one ingredient and having to hunt for where they were. The shopping client
-  sets `details.open = false` in `persist`'s success branch, so the picture is
+  finishing one ingredient and having to hunt for where they were. The shopping
+  client sets `details.open = false` in `persist`'s success branch, so the picture is
   what is left saying the row is done and the next ingredient is on the next
   line. Only on success: a refusal's error and retry are inside the row, so a
   refused save leaves it open. Collapsing removes only what is below the summary
@@ -198,8 +198,8 @@ What that buys, and the rules each part follows:
   choosing a product is not a page navigation and coming back is not a page load.
 - **The next buy row's search is prefetched** while a panel is open. The cache
   is keyed by the search term and the server echoes the term it ran, and the
-  shopping client drops any answer that does not match what the row is currently asking
-  — a prefetched answer cannot be drawn into the wrong ingredient.
+  shopping client drops any answer that does not match what the row is currently
+  asking — a prefetched answer cannot be drawn into the wrong ingredient.
 - **A selection is optimistic and never silent.** The row shows the product and
   the panel closes at once; a `.spinner` says the save is still going; a
   failure puts the row back exactly as the server still has it and shows the
@@ -216,7 +216,8 @@ What that buys, and the rules each part follows:
   half of. The service syncs on its own schedule anyway, so a failed push is
   not a failed send: the screen keeps its `N ainesta lähetettiin` notice and
   adds a line saying the phone will catch up at the next sweep, and the JSON
-  answer carries the same fact as `synced: false` so the shopping client can say it too.
+  answer carries the same fact as `synced: false` so the shopping client can say it
+  too.
 
 The typed source is bundled to the same ES5 browser floor through
 `scripts/build-client.mjs` and remains feature-detected (it does nothing at all
@@ -272,8 +273,8 @@ This pull request proposes moving everything that changes size out of the list.
 Nothing here is a scroll-position patch; the positions never move to be
 restored.
 
-- **The picker is one fixed sheet** (`.s-sheet`), built once by the shopping client and
-  appended to `<body>` rather than into a row. It is `position: fixed`, so
+- **The picker is one fixed sheet** (`.s-sheet`), built once by the shopping
+  client and appended to `<body>` rather than into a row. It is `position: fixed`, so
   opening it, searching in it and closing it reflow nothing. Because it is no
   longer sitting inside the row it belongs to, its head names the ingredient and
   its amount and says what is chosen for it now — on a phone that heading is the
@@ -282,15 +283,15 @@ restored.
   centred dialog; the flow is not phone-only.
 - **The scope choice visits the sheet, it does not live there.** The server
   still draws `.s-product-scope-choice` inside the row (`.s-scope-source`,
-  hidden), the shopping client moves that element into the sheet on open and puts it back
-  on close. A dish's title is escaped once, by the server, and the option values
+  hidden), the shopping client moves that element into the sheet on open and puts it
+  back on close. A dish's title is escaped once, by the server, and the option values
   cannot drift from what the save accepts.
 - **The row's product line is compact and the same height in both states.** 40 px
   rather than 64, the name and EAN held to one line each, and a reserved
   `min-height`, so swapping "Teksti" for a chosen product moves nothing. It
   takes the full width with its buttons underneath, because squeezed beside them
-  the name ellipsised away the very thing somebody is shopping for. The shopping client's
-  `showProduct` builds that shape **exactly** — same `.s-shopping-product-one`
+  the name ellipsised away the very thing somebody is shopping for. The shopping
+  client's `showProduct` builds that shape **exactly** — same `.s-shopping-product-one`
   wrapper, same 40 px — because it runs the instant a member taps `Valitse`, and
   a shape of its own is a shape the row's CSS was not sized for.
 - **The product pictures say their size in CSS, not only in attributes.** The
@@ -319,8 +320,8 @@ restored.
   shoving every row under it down the screen at the exact moment the member had
   tapped something. Disabled it holds its own space and says plainly why.
 - **A row's busy line is reserved, not inserted.** The server ships an empty
-  `.s-status` on every mapped-capable row and the shopping client only fills and empties
-  it.
+  `.s-status` on every mapped-capable row and the shopping client only fills and
+  empties it.
 - **A refusal is a fixed strip** (`.s-toast`) above the tab bar, with the retry
   in it, rather than a paragraph pushed into the list at the moment the member
   is being told something went wrong.
