@@ -7,7 +7,7 @@ import {
   normalizeGroups,
   type AlternativeGroup,
 } from "./alternatives.ts";
-import { loadVocabulary } from "./categories.ts";
+import { loadVocabulary } from "./category-data.ts";
 import { phaseBucket, type RecipePhase } from "./recipe-phase.ts";
 import {
   recipeSectionKey,
@@ -92,7 +92,7 @@ export interface RecipeToSave {
   steps: StepToSave[];
   lines: LineToSave[];
   /**
-   * What kind of food this is (#196), as slugs from `src/categories.ts`.
+   * What kind of food this is (#196), as slugs from `src/category-data.ts`.
    *
    * The dish's own, and only the dish's: a part is a recipe row (ADR-0002) but
    * it is not a thing anybody browses for, so `saveRecipe` writes these on the
