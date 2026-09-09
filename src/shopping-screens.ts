@@ -299,8 +299,8 @@ export async function currentListJson(
  * `POST /ostoslista/s-lista/poista` — take one row off the S-ostoslista.
  *
  * The panel this serves is drawn by the typed shopping client and exists only
- * where there is a browser to fill it, so there is no screen to re-render on a refusal: the
- * answer is JSON on both paths.
+ * where there is a browser to fill it, so there is no screen to re-render on a
+ * refusal: the answer is JSON on both paths.
  *
  * The row is named by its own key — the EAN for a product, the text itself for
  * a free-text row — because that is what the service deletes by

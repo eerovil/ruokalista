@@ -188,7 +188,7 @@ What that buys, and the rules each part follows:
   moment there is nothing left to do in it, and what somebody reported was
   finishing one ingredient and having to hunt for where they were. The shopping
   client sets `details.open = false` in `persist`'s success branch, so the
-picture is
+  picture is
   what is left saying the row is done and the next ingredient is on the next
   line. Only on success: a refusal's error and retry are inside the row, so a
   refused save leaves it open. Collapsing removes only what is below the summary
@@ -219,8 +219,8 @@ picture is
   half of. The service syncs on its own schedule anyway, so a failed push is
   not a failed send: the screen keeps its `N ainesta lähetettiin` notice and
   adds a line saying the phone will catch up at the next sweep, and the JSON
-  answer carries the same fact as `synced: false` so the shopping client can say it
-  too.
+  answer carries the same fact as `synced: false` so the shopping client can
+  say it too.
 
 The typed source is bundled to the same ES5 browser floor through
 `scripts/build-client.mjs` and remains feature-detected (it does nothing at all
@@ -287,8 +287,8 @@ restored.
   centred dialog; the flow is not phone-only.
 - **The scope choice visits the sheet, it does not live there.** The server
   still draws `.s-product-scope-choice` inside the row (`.s-scope-source`,
-  hidden), the shopping client moves that element into the sheet on open and puts it
-  back on close. A dish's title is escaped once, by the server, and the option values
+  hidden), the shopping client moves that element into the sheet on open and
+  puts it back on close. A dish's title is escaped once, by the server, and the option values
   cannot drift from what the save accepts.
 - **The row's product line is compact and the same height in both states.** 40 px
   rather than 64, the name and EAN held to one line each, and a reserved
@@ -341,8 +341,8 @@ restored.
   splits a row in two, and the cupboard moves a row to the other list.
 - **One save path still reloads, and it lands on the ingredient.** A second
   package size or a recipe's own product changes what the row adds up to, and
-  that arithmetic is the server's — so the shopping client sets the hash to the row's
-  anchor before reloading rather than drawing a guess.
+  that arithmetic is the server's — so the shopping client sets the hash to the
+  row's anchor before reloading rather than drawing a guess.
 
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
 row deep in the list and demands nothing move after opening the picker,
