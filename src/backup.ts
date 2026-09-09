@@ -4,34 +4,242 @@ const GITHUB_API_VERSION = "2026-03-10";
 const MAX_SNAPSHOT_BYTES = 50 * 1024 * 1024;
 const TRANSIENT_ATTEMPTS = 3;
 
+export type RestoreTargetStart = "empty" | "replace-seeded";
+
+export interface BackupTableDefinition {
+  name: string;
+  /** Stable row ordering inside one captured table. */
+  orderBy: string;
+  /** Tables that must already have been restored before this table. */
+  restoreAfter: readonly string[];
+  /** What a freshly migrated restore target is allowed to hold. */
+  targetStart: RestoreTargetStart;
+}
+
+/**
+ * The application-level backup/restore manifest.
+ *
+ * One durable table gets one entry here: how backup captures it, which other
+ * tables must exist before restore inserts it, and whether a migration seeds
+ * rows that the snapshot deliberately replaces. Relationship semantics remain
+ * explicit in `restore.ts`; this registry owns table-level lifecycle metadata,
+ * not schema reflection.
+ */
 export const BACKUP_TABLES = [
-  { name: "household", orderBy: "id" },
-  { name: "member", orderBy: "id" },
-  { name: "intake_job", orderBy: "created_at, id" },
-  { name: "member_invitation", orderBy: "id" },
-  { name: "ingredient", orderBy: "id" },
-  // The category vocabulary (#199). Migration-seeded, but an admin curates it,
-  // so what it holds is data and not schema.
-  { name: "category", orderBy: "position, slug" },
-  { name: "recipe", orderBy: "id" },
-  { name: "recipe_share", orderBy: "recipe_id, household_id" },
-  { name: "recipe_category", orderBy: "recipe_id, category" },
-  { name: "recipe_step", orderBy: "recipe_id, position" },
-  { name: "ingredient_line", orderBy: "id" },
-  { name: "planned_batch", orderBy: "id" },
-  { name: "batch_occurrence", orderBy: "batch_id, date, slot" },
-  { name: "pantry_entry", orderBy: "id" },
-  { name: "recipe_preference", orderBy: "id" },
-  { name: "ingredient_product", orderBy: "id" },
-  { name: "recipe_ingredient_product", orderBy: "id" },
-  // What this app last sent the S-list as free text (#244). Small, but it is
-  // the only record of which rows out there are this app's to delete.
-  { name: "s_ostoslista_sent_note", orderBy: "id" },
-  // Committed image deletions must remain retryable across a database restore.
-  { name: "recipe_image_cleanup", orderBy: "image_key" },
-] as const;
+  {
+    name: "household",
+    orderBy: "id",
+    restoreAfter: [],
+    targetStart: "empty",
+  },
+  {
+    name: "member",
+    orderBy: "id",
+    restoreAfter: ["household"],
+    targetStart: "empty",
+  },
+  {
+    name: "intake_job",
+    orderBy: "created_at, id",
+    restoreAfter: ["household", "member", "recipe"],
+    targetStart: "empty",
+  },
+  {
+    name: "member_invitation",
+    orderBy: "id",
+    restoreAfter: ["household", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "ingredient",
+    orderBy: "id",
+    restoreAfter: ["member"],
+    targetStart: "empty",
+  },
+  {
+    // The category vocabulary (#199). Migration-seeded, but an admin curates
+    // it, so the snapshot replaces the migration's defaults wholesale.
+    name: "category",
+    orderBy: "position, slug",
+    restoreAfter: [],
+    targetStart: "replace-seeded",
+  },
+  {
+    // Recipe -> recipe parent ordering is handled within this one table by the
+    // explicit parent-first sorter in restore.ts.
+    name: "recipe",
+    orderBy: "id",
+    restoreAfter: ["household", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "recipe_share",
+    orderBy: "recipe_id, household_id",
+    restoreAfter: ["recipe", "household", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "recipe_category",
+    orderBy: "recipe_id, category",
+    restoreAfter: ["recipe", "category"],
+    targetStart: "empty",
+  },
+  {
+    name: "recipe_step",
+    orderBy: "recipe_id, position",
+    restoreAfter: ["recipe"],
+    targetStart: "empty",
+  },
+  {
+    name: "ingredient_line",
+    orderBy: "id",
+    restoreAfter: ["recipe", "ingredient"],
+    targetStart: "empty",
+  },
+  {
+    name: "planned_batch",
+    orderBy: "id",
+    restoreAfter: ["household", "recipe", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "batch_occurrence",
+    orderBy: "batch_id, date, slot",
+    restoreAfter: ["planned_batch"],
+    targetStart: "empty",
+  },
+  {
+    name: "pantry_entry",
+    orderBy: "id",
+    restoreAfter: ["household", "ingredient", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "recipe_preference",
+    orderBy: "id",
+    restoreAfter: ["household", "recipe", "member"],
+    targetStart: "empty",
+  },
+  {
+    name: "ingredient_product",
+    orderBy: "id",
+    restoreAfter: ["ingredient"],
+    targetStart: "empty",
+  },
+  {
+    name: "recipe_ingredient_product",
+    orderBy: "id",
+    restoreAfter: ["household", "recipe", "ingredient"],
+    targetStart: "empty",
+  },
+  {
+    // What this app last sent the S-list as free text (#244). Small, but it is
+    // the only record of which rows out there are this app's to delete.
+    name: "s_ostoslista_sent_note",
+    orderBy: "id",
+    restoreAfter: ["household"],
+    targetStart: "empty",
+  },
+  {
+    // Committed image deletions must remain retryable across a database restore.
+    name: "recipe_image_cleanup",
+    orderBy: "image_key",
+    restoreAfter: ["household"],
+    targetStart: "empty",
+  },
+] as const satisfies readonly BackupTableDefinition[];
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number]["name"];
+
+/**
+ * Restore order derived from the same definitions backup capture uses.
+ *
+ * Declaration order is the stable tie-breaker for independent tables. That
+ * keeps generated SQL deterministic while `restoreAfter` says the actual
+ * dependency contract instead of encoding it in a second handwritten list.
+ */
+export function restoreTableOrder(): BackupTableName[] {
+  return restoreOrderFor(BACKUP_TABLES) as BackupTableName[];
+}
+
+/**
+ * Runtime guard used by the migrated-schema check.
+ *
+ * TypeScript catches incomplete entries during normal development; this check
+ * also fails loudly under Node if metadata is malformed, has unknown/cyclic
+ * dependencies, or the migrated durable-table set no longer matches the one
+ * complete manifest.
+ */
+export function assertBackupTableDefinitions(
+  migratedTables: readonly string[],
+  definitions: readonly BackupTableDefinition[] = BACKUP_TABLES,
+): void {
+  const byName = new Map<string, BackupTableDefinition>();
+  for (const definition of definitions) {
+    if (
+      typeof definition.name !== "string" ||
+      definition.name.trim() === "" ||
+      typeof definition.orderBy !== "string" ||
+      definition.orderBy.trim() === "" ||
+      !Array.isArray(definition.restoreAfter) ||
+      (definition.targetStart !== "empty" &&
+        definition.targetStart !== "replace-seeded")
+    ) {
+      throw new Error("backup table definition is incomplete");
+    }
+    if (byName.has(definition.name)) {
+      throw new Error(`duplicate backup table definition: ${definition.name}`);
+    }
+    byName.set(definition.name, definition);
+  }
+
+  for (const definition of definitions) {
+    for (const dependency of definition.restoreAfter) {
+      if (typeof dependency !== "string" || !byName.has(dependency)) {
+        throw new Error(
+          `backup table ${definition.name} has unknown restore dependency ${String(dependency)}`,
+        );
+      }
+      if (dependency === definition.name) {
+        throw new Error(`backup table ${definition.name} cannot restore after itself`);
+      }
+    }
+  }
+  // Also proves the dependency graph is acyclic and every definition can be
+  // placed into one deterministic restore order.
+  restoreOrderFor(definitions);
+
+  const actual = [...migratedTables].sort();
+  const expected = [...byName.keys()].sort();
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    throw new Error(
+      "migrated app tables and backup/restore definitions differ; add one complete BACKUP_TABLES entry for the schema change",
+    );
+  }
+}
+
+function restoreOrderFor(
+  definitions: readonly BackupTableDefinition[],
+): string[] {
+  const pending = [...definitions];
+  const restored = new Set<string>();
+  const ordered: string[] = [];
+
+  while (pending.length > 0) {
+    const index = pending.findIndex((definition) =>
+      definition.restoreAfter.every((dependency) => restored.has(dependency))
+    );
+    if (index < 0) {
+      throw new Error("backup table restore dependencies contain a cycle");
+    }
+    const [definition] = pending.splice(index, 1);
+    if (!definition) throw new Error("backup table restore ordering failed");
+    ordered.push(definition.name);
+    restored.add(definition.name);
+  }
+
+  return ordered;
+}
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
