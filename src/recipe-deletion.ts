@@ -1,8 +1,14 @@
 import type { Env } from "./env.ts";
 import {
   cleanupRetiredRecipeImages,
+  IMAGE_CLEANUP_LIMIT,
   retireRecipeTreeImages,
 } from "./recipe-image-lifecycle.ts";
+
+/** @deprecated Import cleanup policy from `recipe-image-lifecycle.ts`. */
+export const cleanupDeletedRecipeImages = cleanupRetiredRecipeImages;
+/** @deprecated Import cleanup policy from `recipe-image-lifecycle.ts`. */
+export { IMAGE_CLEANUP_LIMIT };
 
 /**
  * Delete a private, unplanned recipe tree and durably remember its image keys.
