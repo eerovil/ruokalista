@@ -22,6 +22,13 @@ day). The clock is not upload age: yesterday's snapshot can reference a year-old
 photo. Live references are never expired. This covers dish/part images through the
 common storage path for user uploads, URL imports and supplied generated images.
 
+`src/recipe-image-lifecycle.ts` is the authoritative home for this lifecycle
+contract: conditional image replacement/removal, retirement receipt renewal,
+uncertain-commit retention, the 30-day recovery plus one-day restore margin,
+whole-tree image retirement statements, and delayed R2 cleanup. HTTP/read routes
+remain in `src/recipe-images.ts`; recipe deletion remains responsible for deciding
+whether a tree may be deleted and delegates only its image-retirement statement.
+
 Reuse `recipe_image_cleanup` and the existing cron. In one D1 transaction, enqueue
 the image currently matching the owner/expected-key predicate, then perform the
 matching conditional update. Whole-tree deletion uses the same retirement renewal.
@@ -62,13 +69,14 @@ no database key or additional copy in the same lost bucket can establish it.
 
 ## Verification
 
-`dev/check-image-retention.ts` calls the actual upload, remove, tree-delete,
-cleanup, restore and audit functions against migrated disposable SQLite and a
-byte-preserving object store. It verifies original parent/part digests within the
-window, both provenances, safety-margin/expiry boundaries, reset after restore,
-failed CAS/transaction rollback, lost responses, stale cleanup acknowledgements,
-invalid timestamps, cross-household live references and explicit missing bytes.
-The existing deletion fault tests still exercise R2 and acknowledgement failures
-and bounded retries, after deliberately aging the test receipts past retention.
-CI retains the full application and browser gates. No destructive production
-restore is part of implementation verification.
+`dev/check-image-retention.ts` calls the lifecycle module's actual upload, remove and
+cleanup operations together with guarded tree deletion, restore and backup-image
+audits against migrated disposable SQLite and a byte-preserving object store. It
+verifies original parent/part digests within the window, both provenances,
+safety-margin/expiry boundaries, reset after restore, failed CAS/transaction
+rollback, lost responses, stale cleanup acknowledgements, invalid timestamps,
+cross-household live references and explicit missing bytes. The existing deletion
+fault tests still exercise R2 and acknowledgement failures and bounded retries,
+after deliberately aging the test receipts past retention. CI retains the full
+application and browser gates. No destructive production restore is part of
+implementation verification.
