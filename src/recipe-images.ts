@@ -13,7 +13,7 @@ import {
 } from "./recipe-image-lifecycle.ts";
 import type { Member } from "./members.ts";
 import { recipeFingerprint } from "./recipe-fingerprint.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
+import { readableRecipeScope } from "./recipe-publish.ts";
 import { findRecipe } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
@@ -353,22 +353,18 @@ async function readableImageRow(
   householdId: number,
   recipeId: number,
 ): Promise<ImageRow | null> {
+  const recipeScope = readableRecipeScope(householdId, "recipe");
+  const parentScope = readableRecipeScope(householdId, "parent");
   return db
     .prepare(
       `SELECT recipe.image_key
          FROM recipe
          LEFT JOIN recipe AS parent ON parent.id = recipe.parent_id
         WHERE recipe.id = ?
-          AND (${readableRecipeCondition("recipe")}
-               OR ${readableRecipeCondition("parent")})`,
+          AND (${recipeScope.sql}
+               OR ${parentScope.sql})`,
     )
-    .bind(
-      recipeId,
-      householdId,
-      householdId,
-      householdId,
-      householdId,
-    )
+    .bind(recipeId, ...recipeScope.bindings, ...parentScope.bindings)
     .first<ImageRow>();
 }
 

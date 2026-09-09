@@ -1,7 +1,7 @@
 import { problem } from "./auth.ts";
 import { addDays, isDate, today } from "./dates.ts";
 import type { Member } from "./members.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
+import { readableRecipeScope } from "./recipe-publish.ts";
 import type { RouteContext } from "./router.ts";
 import { isMultiplier, parseMultiplier } from "./scaling.ts";
 
@@ -167,6 +167,7 @@ export async function addPlannedBatch(
   const multiplier = validateMultiplier(entry.multiplier);
   validateRecipeId(entry.recipeId);
   const instanceKey = crypto.randomUUID();
+  const readable = readableRecipeScope(member.householdId);
 
   const [inserted] = await db.batch([
     db.prepare(
@@ -176,7 +177,7 @@ export async function addPlannedBatch(
          FROM recipe
         WHERE recipe.id = ?
           AND recipe.parent_id IS NULL
-          AND ${readableRecipeCondition("recipe")}`,
+          AND ${readable.sql}`,
     )
       .bind(
         member.householdId,
@@ -185,8 +186,7 @@ export async function addPlannedBatch(
         member.id,
         instanceKey,
         entry.recipeId,
-        member.householdId,
-        member.householdId,
+        ...readable.bindings,
       ),
     db.prepare(
       `INSERT INTO batch_occurrence (batch_id, date, slot)
@@ -221,6 +221,7 @@ export async function replaceOccurrences(
 
   const needsAccess = occurrences.some((occurrence) => occurrence.date >= today());
   if (needsAccess) await requireDish(db, member.householdId, owned.recipe_id);
+  const readable = needsAccess ? readableRecipeScope(member.householdId) : null;
   const access = `EXISTS (
          SELECT 1
            FROM planned_batch AS access_batch
@@ -230,14 +231,14 @@ export async function replaceOccurrences(
             AND access_batch.instance_key = ?
             ${needsAccess
               ? `AND recipe.parent_id IS NULL
-                 AND ${readableRecipeCondition("recipe")}`
+                 AND ${readable!.sql}`
               : ""}
        )`;
   const accessBindings = [
     id,
     member.householdId,
     instanceKey,
-    ...(needsAccess ? [member.householdId, member.householdId] : []),
+    ...(readable?.bindings ?? []),
   ];
 
   const [removed] = await db.batch([
@@ -305,6 +306,7 @@ export async function changeRecipe(
   recipeId: number,
 ): Promise<boolean> {
   await requireDish(db, member.householdId, recipeId);
+  const readable = readableRecipeScope(member.householdId);
   const result = await db
     .prepare(
       `UPDATE planned_batch SET recipe_id = ?
@@ -313,7 +315,7 @@ export async function changeRecipe(
                 SELECT 1 FROM recipe
                  WHERE recipe.id = ?
                    AND recipe.parent_id IS NULL
-                   AND ${readableRecipeCondition("recipe")}
+                   AND ${readable.sql}
               )`,
     )
     .bind(
@@ -322,8 +324,7 @@ export async function changeRecipe(
       member.householdId,
       instanceKey,
       recipeId,
-      member.householdId,
-      member.householdId,
+      ...readable.bindings,
     )
     .run();
   return (result.meta.changes ?? 0) > 0;
@@ -409,14 +410,15 @@ async function requireDish(
   validateRecipeId(recipeId);
   // Own, public, or selected for this household. A part is still refused
   // whoever owns it: only a dish gets planned.
+  const readable = readableRecipeScope(householdId);
   const recipe = await db
     .prepare(
       `SELECT id FROM recipe
         WHERE id = ?
           AND parent_id IS NULL
-          AND ${readableRecipeCondition("recipe")}`,
+          AND ${readable.sql}`,
     )
-    .bind(recipeId, householdId, householdId)
+    .bind(recipeId, ...readable.bindings)
     .first<{ id: number }>();
   if (recipe === null) throw new MenuRefused("Tuntematon resepti.");
 }

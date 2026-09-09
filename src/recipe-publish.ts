@@ -77,22 +77,34 @@ export interface DishRow {
   share_count: number;
 }
 
+export interface ReadableRecipeScope {
+  sql: string;
+  bindings: readonly [number, number];
+}
+
 /**
- * The SQL scope for a recipe this household may read or plan.
+ * The complete SQL scope for a recipe this household may read or plan.
  *
- * It deliberately carries two placeholders for the same household id: one for
- * ownership and one for a selected-household grant. Callers bind both. Keeping
- * the clause here stops the screen, API, picker, image and preference paths
- * from growing subtly different definitions of "shared with us".
+ * Ownership and a selected-household grant currently need the same household id
+ * in two places. That placeholder count/order belongs here with the SQL, not in
+ * every caller. Keeping the scope together also stops the screen, API, picker,
+ * image and preference paths from growing subtly different definitions of
+ * "shared with us".
  */
-export function readableRecipeCondition(alias = "recipe"): string {
-  return `(${alias}.household_id = ?
+export function readableRecipeScope(
+  householdId: number,
+  alias = "recipe",
+): ReadableRecipeScope {
+  return {
+    sql: `(${alias}.household_id = ?
            OR ${alias}.published_at IS NOT NULL
            OR EXISTS (
                 SELECT 1 FROM recipe_share
                  WHERE recipe_share.recipe_id = ${alias}.id
                    AND recipe_share.household_id = ?
-              ))`;
+              ))`,
+    bindings: [householdId, householdId],
+  };
 }
 
 /**
