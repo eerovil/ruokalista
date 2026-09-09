@@ -163,8 +163,7 @@ The optional enhancement now lives in `src/client/shopping.ts`, is
 DOM-typechecked by `tsconfig.client.json`, and is generated into the committed
 `src/generated/shopping.ts` bundle embedded by `shopping-screens.ts`. It sits
 on top of everything above — not instead of it. Every form on the screen is
-still the form it was: without
-JavaScript the row's button still navigates to `/ostoslista/tuote`, the send
+still the form it was: without JavaScript the row's button still navigates to `/ostoslista/tuote`, the send
 form still posts, and the only thing missing is the panel a browser has to
 fill. Three JSON answers serve the shopping client, and two of them are new routes:
 
@@ -194,12 +193,12 @@ What that buys, and the rules each part follows:
   line, so the row's own line and everything above it stay put — #200's promise
   survives it. The cost is one more tap to reach `Lisää toinen pakkauskoko` or
   `Löytyy jo kaapista`, which is the trade the card asked for.
-- **Product choice happens in a panel inside the row**, so choosing a product
-  is not a page navigation and coming back is not a page load. (Inside the row
-  is the part #200 takes back below — the panel is what made the list move.)
+- **Product choice is an enhancement, not a navigation.** The current fixed
+  sheet described under #200 opens without replacing the server-rendered row, so
+  choosing a product is not a page navigation and coming back is not a page load.
 - **The next buy row's search is prefetched** while a panel is open. The cache
   is keyed by the search term and the server echoes the term it ran, and the
-  island drops any answer that does not match what the row is currently asking
+  shopping client drops any answer that does not match what the row is currently asking
   — a prefetched answer cannot be drawn into the wrong ingredient.
 - **A selection is optimistic and never silent.** The row shows the product and
   the panel closes at once; a `.spinner` says the save is still going; a
