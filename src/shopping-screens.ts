@@ -227,8 +227,8 @@ export async function sendShoppingListForm(
 
 /**
  * `GET /ostoslista/haku?haku=…` — the same catalogue search the product screen
- * runs, as JSON, so the typed shopping client can search inside the row and warm the next
- * row's search before anybody asks for it.
+ * runs as JSON, so the typed shopping client can search in its fixed sheet and
+ * warm the next row's search before anybody asks for it.
  *
  * It answers with the query it actually ran, which is what lets the browser
  * throw away an answer that arrived for a term the member has already moved on
@@ -298,8 +298,8 @@ export async function currentListJson(
 /**
  * `POST /ostoslista/s-lista/poista` — take one row off the S-ostoslista.
  *
- * The panel this serves is drawn by the typed shopping client and exists only where there is
- * a browser to fill it, so there is no screen to re-render on a refusal: the
+ * The panel this serves is drawn by the typed shopping client and exists only
+ * where there is a browser to fill it, so there is no screen to re-render on a refusal: the
  * answer is JSON on both paths.
  *
  * The row is named by its own key — the EAN for a product, the text itself for
@@ -355,7 +355,7 @@ export async function removeCurrentItemForm(
   return Response.json({ deleted });
 }
 
-/** The typed shopping client asks for JSON with a field, so one route serves both callers. */
+/** The typed shopping client asks for JSON, so one route serves both callers. */
 function wantsJson(form: FormData): boolean {
   return String(form.get("muoto") ?? "") === "json";
 }
@@ -416,7 +416,8 @@ export async function saveProductForm(
   const scope = chosenScope(item, form.get("laajuus"));
 
   /**
-   * The typed shopping client shows the choice before this answer arrives, so a refusal has to
+   * The typed shopping client shows the choice before this answer arrives, so a
+ * refusal has to
    * be sayable to it. Both callers get the same words and the same status; only
    * the shape differs, and neither one has saved anything by this point.
    */
@@ -934,8 +935,8 @@ function listLocation(
  * into a square it drew as a 9 px sliver of white, and the picture that was
  * supposed to say which product this row is said nothing.
  *
- * These numbers pair with the sizes in `html.ts` and are handed to the typed shopping client
- * below, so a slot's size lives in one place.
+ * These numbers pair with the sizes in `html.ts` and are handed to the typed
+ * shopping client below, so a slot's size lives in one place.
  */
 const PRODUCT_PICTURE = {
   row: { size: 26, width: 96 },
@@ -1055,8 +1056,8 @@ function externalProductBlock(
 }
 
 /**
- * The scope choice, drawn by the server and hidden, for the typed shopping client to lift into
- * its panel.
+ * The scope choice, drawn by the server and hidden, for the typed shopping
+ * client to lift into its panel.
  *
  * It sits outside every form on the row on purpose — a hidden `<select>` inside
  * the cupboard or open-panel form would be posted along with them — and it is
@@ -1082,8 +1083,8 @@ function scopeSource(item: ShoppingItem): Raw {
  * appeared the instant a product was drawn — and a whole tap target arriving
  * mid-row shoved every row under it down the screen at exactly the moment the
  * member had just tapped something. Disabled it holds its own space, says
- * plainly that there is nothing to add a size to yet, and the typed shopping client only has to
- * enable it.
+ * plainly that there is nothing to add a size to yet, and the typed shopping
+ * client only has to enable it.
  */
 function openForm(
   item: ShoppingItem,

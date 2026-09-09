@@ -164,8 +164,9 @@ DOM-typechecked by `tsconfig.client.json`, and is generated into the committed
 `src/generated/shopping.ts` bundle embedded by `shopping-screens.ts`. It sits
 on top of everything above — not instead of it. Every form on the screen is
 still the form it was: without JavaScript the row's button still navigates to
-`/ostoslista/tuote`, the send form still posts, and the only thing missing is the panel a browser has to
-fill. Three JSON answers serve the shopping client, and two of them are new routes:
+`/ostoslista/tuote`, the send form still posts, and the only thing missing is
+the panel a browser has to fill. Three JSON answers serve the shopping client,
+and two of them are new routes:
 
 - `GET /ostoslista/haku?haku=…` (`productSearchJson`) — the catalogue search,
   echoing the term it ran.
@@ -186,7 +187,8 @@ What that buys, and the rules each part follows:
   proposes. The open row is the tallest thing on the screen at exactly the
   moment there is nothing left to do in it, and what somebody reported was
   finishing one ingredient and having to hunt for where they were. The shopping
-  client sets `details.open = false` in `persist`'s success branch, so the picture is
+  client sets `details.open = false` in `persist`'s success branch, so the
+picture is
   what is left saying the row is done and the next ingredient is on the next
   line. Only on success: a refusal's error and retry are inside the row, so a
   refused save leaves it open. Collapsing removes only what is below the summary
@@ -194,8 +196,9 @@ What that buys, and the rules each part follows:
   survives it. The cost is one more tap to reach `Lisää toinen pakkauskoko` or
   `Löytyy jo kaapista`, which is the trade the card asked for.
 - **Product choice is an enhancement, not a navigation.** The current fixed
-  sheet described under #200 opens without replacing the server-rendered row, so
-  choosing a product is not a page navigation and coming back is not a page load.
+  sheet described under #200 opens without replacing the server-rendered row,
+  so choosing a product is not a page navigation and coming back is not a page
+  load.
 - **The next buy row's search is prefetched** while a panel is open. The cache
   is keyed by the search term and the server echoes the term it ran, and the
   shopping client drops any answer that does not match what the row is currently
@@ -274,7 +277,8 @@ Nothing here is a scroll-position patch; the positions never move to be
 restored.
 
 - **The picker is one fixed sheet** (`.s-sheet`), built once by the shopping
-  client and appended to `<body>` rather than into a row. It is `position: fixed`, so
+  client and appended to `<body>` rather than into a row. It is
+  `position: fixed`, so
   opening it, searching in it and closing it reflow nothing. Because it is no
   longer sitting inside the row it belongs to, its head names the ingredient and
   its amount and says what is chosen for it now — on a phone that heading is the
