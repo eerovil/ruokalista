@@ -1,6 +1,6 @@
 import type { RouteContext } from "./router.ts";
 import type { Member } from "./members.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
+import { readableRecipeScope } from "./recipe-publish.ts";
 
 /**
  * An ingredient is a shared record for one foodstuff, referred to by every line
@@ -14,8 +14,8 @@ import { readableRecipeCondition } from "./recipe-publish.ts";
  *
  * The *count* beside each name is not global, though. It answers "how much do
  * we use this", so it counts the recipes this household can actually open: its
- * own, and the ones other households have published. What somebody else cooks
- * behind a private recipe stays their business.
+ * own, and recipes another household has made readable to it. What somebody
+ * else cooks behind a private recipe stays their business.
  */
 
 export interface IngredientSummary {
@@ -47,6 +47,8 @@ export async function ingredientsFor(
   // Counting recipes, not lines: a recipe naming an ingredient twice still uses
   // it once. The join to `recipe` is what keeps the count to what this
   // household can see; the dictionary itself is not filtered at all.
+  const recipeScope = readableRecipeScope(householdId, "recipe");
+  const dishScope = readableRecipeScope(householdId, "dish");
   const { results } = await db
     .prepare(
       `SELECT ingredient.id,
@@ -57,13 +59,13 @@ export async function ingredientsFor(
                 ON ingredient_line.ingredient_id = ingredient.id
          LEFT JOIN recipe
                 ON recipe.id = ingredient_line.recipe_id
-               AND (${readableRecipeCondition("recipe")}
+               AND (${recipeScope.sql}
                     OR EXISTS (SELECT 1 FROM recipe AS dish
                                 WHERE dish.id = recipe.parent_id
-                                  AND ${readableRecipeCondition("dish")}))
+                                  AND ${dishScope.sql}))
         GROUP BY ingredient.id, ingredient.name`,
     )
-    .bind(householdId, householdId, householdId, householdId)
+    .bind(...recipeScope.bindings, ...dishScope.bindings)
     .all<IngredientRow>();
 
   // Sorted here rather than in SQL: SQLite's NOCASE is ASCII-only, so it files
