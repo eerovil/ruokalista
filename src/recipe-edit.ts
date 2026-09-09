@@ -1,4 +1,5 @@
 import type { Member } from "./members.ts";
+import { findRecipe, type Recipe } from "./recipe-read.ts";
 import { recipeSectionKey } from "./recipe-section.ts";
 import {
   replaceRecipe,
@@ -7,7 +8,6 @@ import {
   type LineToSave,
   type StepToSave,
 } from "./recipe-save.ts";
-import { findRecipe, type Recipe } from "./recipes.ts";
 
 /**
  * The state an edit was reviewed against.
