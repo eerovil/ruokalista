@@ -1382,6 +1382,9 @@ function renderCorrection(
         hint: view.targetRecipeId === null
           ? "Uusi resepti — ei vielä tallennettu"
           : "Muutokset nykyiseen reseptiin — ei vielä tallennettu",
+        // This screen is the form, top to bottom, so the bar is the screen's
+        // bottom rather than the form's (issue #298).
+        pinned: true,
       })}
     </form>
     ${CATEGORY_STYLE}`;

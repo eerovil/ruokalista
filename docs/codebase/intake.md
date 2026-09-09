@@ -468,6 +468,24 @@ refusal. The spare blank rows sit behind `+ Lisää ainesrivi` rather than trail
 every recipe; `lineRows` decides which rows are spare by reading the values, as
 "everything after the last row anybody put anything in".
 
+The one exception to exception-first on that row is `Tämä on uusi aines`
+(#298). A line the model matched to an ingredient the household already has,
+wrongly, used to cost five steps to correct: open the picker, scroll it back
+past every ingredient there is, approve a new one, open `Lisätiedot`, type the
+name again. It is one tick on the row now, and the name it creates is the one
+the model already proposed for that line — `newName` is populated on a matched
+row too, so nothing has to be typed. `readIngredient` reads `line.N.asNew`
+ahead of the picker, deliberately: the tick's whole point is to contradict what
+the picker still says. `lineValuesFromForm` normalises a ticked row back to the
+ordinary `ingredientChoice: "new"`, so a refused save re-renders as the
+create-a-new-one row it had become rather than as a matched row carrying a
+hidden contradiction. Exactly one `newName` field is rendered per row — up on
+the row when the line is creating, beside the tick when it is offering to,
+under `Lisätiedot` otherwise — because a second one would post a second value
+and only the first is read. Only the import review offers the tick; the
+editor's compact row is about changing one thing on a recipe that is already
+right, not about checking an import.
+
 Intake requires JavaScript. The form has no server action and its submit button
 is disabled until the island in `src/intake-screens.ts` finds the browser
 features it needs. The island posts the prepared source to

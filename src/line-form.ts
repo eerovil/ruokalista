@@ -149,6 +149,16 @@ export function lineRow(
   const isNew = needsAnswer || values.ingredientChoice === "new";
   const compact = options.compact === true;
   const expanded = hasUncommonValues(values, index, compact);
+  /**
+   * The one-tap way out of a wrong match (issue #298). Only a row the model
+   * pointed at an ingredient that already exists has anything to undo, and
+   * only the import review offers it: the compact editor row is about changing
+   * one thing on a recipe that is already right, not about checking an import.
+   */
+  const offerAsNew =
+    !compact &&
+    values.ingredientChoice !== "" &&
+    values.ingredientChoice !== "new";
 
   const picker = html`<select
     name="line.${index}.ingredient"
@@ -220,7 +230,31 @@ export function lineRow(
             />
           </div>
 
-          ${picker}`}
+          ${picker}
+          <!-- Answering "the model matched this to the wrong thing, it is
+               genuinely new" from the row itself (issue #298). The name it
+               will create is the one the model proposed for this very line,
+               already on the row as newName, so nothing has to be typed; the
+               field beside it is there for when the proposal wants a word
+               changed, and the stylesheet shows it once the box is ticked. -->
+          ${offerAsNew
+            ? html`<div class="as-new">
+                <input
+                  type="checkbox"
+                  class="as-new-toggle"
+                  id="line.${index}.asNew"
+                  name="line.${index}.asNew"
+                />
+                <label for="line.${index}.asNew">Tämä on uusi aines</label>
+                <input
+                  class="as-new-name"
+                  name="line.${index}.newName"
+                  value="${values.newName}"
+                  aria-label="Uuden aineksen nimi"
+                  placeholder="Uuden aineksen nimi"
+                />
+              </div>`
+            : ""}`}
 
     <!-- The proposed name only earns its place while the line is asking to
          create one. Otherwise it rides along below with the rest. -->
@@ -288,7 +322,12 @@ export function lineRow(
         ${options.phases && values.section.trim() === ""
           ? phaseSelect(`line.${index}.phase`, values.phase)
           : ""}
-        ${isNew
+        <!-- One newName field per row and no more: a second one would post a
+             second value and the reader only ever sees the first. It is up on
+             the row itself when the line is asking to create an ingredient,
+             and beside the "Tämä on uusi aines" tick when the line is offering
+             to; here is where it lives when it is doing neither. -->
+        ${isNew || offerAsNew
           ? ""
           : field(
               `line.${index}.newName`,
@@ -452,6 +491,11 @@ export function lineValuesFromForm(
   form: FormData,
   index: number,
 ): LineFormValues {
+  // A ticked "Tämä on uusi aines" is normalised away here, so a refused save
+  // re-renders as the ordinary create-a-new-one row — badge, name field and
+  // all — rather than as a matched row still carrying a hidden contradiction.
+  const asNew = form.get(`line.${index}.asNew`) !== null;
+
   return {
     position: formField(form, `line.${index}.position`),
     quantity: formField(form, `line.${index}.quantity`),
@@ -462,7 +506,9 @@ export function lineValuesFromForm(
     section: formField(form, `line.${index}.section`),
     phase: formField(form, `line.${index}.phase`),
     alternativeGroup: formField(form, `line.${index}.alternativeGroup`),
-    ingredientChoice: formField(form, `line.${index}.ingredient`),
+    ingredientChoice: asNew
+      ? "new"
+      : formField(form, `line.${index}.ingredient`),
     newName: formField(form, `line.${index}.newName`),
     sourceLine: formField(form, `line.${index}.source`),
     note: formField(form, `line.${index}.note`),
@@ -731,6 +777,13 @@ export function expectedPartFields(parts: readonly ExpectedPart[]): Raw {
 
 export function readIngredient(form: FormData, index: number): LineIngredient {
   const choice = formField(form, `line.${index}.ingredient`);
+
+  // The row's own "Tämä on uusi aines" (issue #298) beats whatever the picker
+  // still says, because the picker is exactly what it is contradicting: the
+  // match the model made is dropped and the name it proposed is approved.
+  if (form.get(`line.${index}.asNew`) !== null) {
+    return { kind: "new", name: formField(form, `line.${index}.newName`) };
+  }
 
   if (choice === "new") {
     return { kind: "new", name: formField(form, `line.${index}.newName`) };

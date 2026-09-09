@@ -639,7 +639,13 @@ test("a normal line shows what to check, not the storage schema", async ({
   await expect(ordinary.locator('input[name$=".altQuantity"]')).toBeHidden();
   await expect(ordinary.locator('input[name$=".section"]')).toBeHidden();
   await expect(ordinary.locator('input[name$=".source"]')).toBeHidden();
-  await expect(ordinary.locator('input[type=checkbox]')).toBeHidden();
+  await expect(ordinary.locator('input[name$=".remove"]')).toBeHidden();
+
+  // The one tick that is deliberately in the way (#298). This line was matched
+  // to an ingredient the household already has, and saying that the match is
+  // wrong is the one answer that was worth five steps instead of one.
+  await expect(ordinary.locator('input[name$=".asNew"]')).toBeVisible();
+  await expect(ordinary.getByLabel("Uuden aineksen nimi")).toBeHidden();
 });
 
 test("a line that uses a rare field is already showing it", async ({ page }) => {
