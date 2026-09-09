@@ -1,0 +1,28 @@
+name: Cleanup shopping client docs
+
+on:
+  push:
+    branches:
+      - docs/279-shopping-client-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/cleanup-shopping-client-docs.mjs
+      - name: Commit documentation cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add CLAUDE.md docs/codebase/screens.md src/shopping-screens.ts .github/workflows/cleanup-shopping-client-docs.yml scripts/cleanup-shopping-client-docs.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "Document typed shopping client"
+          git push
