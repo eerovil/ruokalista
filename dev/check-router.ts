@@ -4,7 +4,7 @@ import test from "node:test";
 import { Router, type RouteContext } from "../src/router.ts";
 
 const env = {} as never;
-const response = (body: string) => () => new Response(body);
+const reply = (body: string) => () => new Response(body);
 
 async function body(router: Router, path: string, method = "GET"): Promise<string> {
   return (await router.handle(
@@ -16,7 +16,7 @@ async function body(router: Router, path: string, method = "GET"): Promise<strin
 test("literal route wins over a parameter regardless of registration order", async () => {
   for (const literalFirst of [true, false]) {
     const router = new Router();
-    const addLiteral = () => router.get("/recipes/julkiset", response("literal"));
+    const addLiteral = () => router.get("/recipes/julkiset", reply("literal"));
     const addParameter = () => router.get(
       "/recipes/:id",
       ({ params }: RouteContext) => new Response(`parameter:${params.id}`),
@@ -36,8 +36,8 @@ test("literal route wins over a parameter regardless of registration order", asy
 
 test("the first differing segment decides specificity", async () => {
   const router = new Router()
-    .get("/a/:value/c", response("later literal"))
-    .get("/a/b/:value", response("earlier literal"));
+    .get("/a/:value/c", reply("later literal"))
+    .get("/a/b/:value", reply("earlier literal"));
 
   assert.equal(await body(router, "/a/b/c"), "earlier literal");
 });
@@ -54,15 +54,15 @@ test("parameter values are decoded and exposed to the handler", async () => {
 test("a malformed percent escape is a 404 rather than an exception", async () => {
   const router = new Router().get(
     "/recipes/:id",
-    response("matched"),
+    reply("matched"),
   );
 
-  const response = await router.handle(
+  const result = await router.handle(
     new Request("https://example.test/recipes/%E0%A4%A"),
     env,
   );
 
-  assert.equal(response.status, 404);
+  assert.equal(result.status, 404);
 });
 
 test("HEAD uses the matching GET route", async () => {
@@ -82,7 +82,7 @@ test("HEAD uses the matching GET route", async () => {
 });
 
 test("an unknown path is 404", async () => {
-  const router = new Router().get("/known", response("known"));
+  const router = new Router().get("/known", reply("known"));
   const result = await router.handle(
     new Request("https://example.test/unknown"),
     env,
@@ -93,8 +93,8 @@ test("an unknown path is 404", async () => {
 
 test("method selection happens after choosing the most-specific path", async () => {
   const router = new Router()
-    .get("/recipes/:id", response("parameter get"))
-    .post("/recipes/julkiset", response("literal post"));
+    .get("/recipes/:id", reply("parameter get"))
+    .post("/recipes/julkiset", reply("literal post"));
 
   const get = await router.handle(
     new Request("https://example.test/recipes/julkiset"),
@@ -107,16 +107,16 @@ test("method selection happens after choosing the most-specific path", async () 
 test("same-method patterns with indistinguishable shapes are rejected", () => {
   assert.throws(
     () => new Router()
-      .get("/recipes/:id", response("id"))
-      .get("/recipes/:slug", response("slug")),
+      .get("/recipes/:id", reply("id"))
+      .get("/recipes/:slug", reply("slug")),
     /Ambiguous GET route pattern: \/recipes\/:slug/,
   );
 });
 
 test("the same path shape may serve different methods", async () => {
   const router = new Router()
-    .get("/recipes/:id", response("get"))
-    .post("/recipes/:slug", response("post"));
+    .get("/recipes/:id", reply("get"))
+    .post("/recipes/:slug", reply("post"));
 
   assert.equal(await body(router, "/recipes/42"), "get");
   assert.equal(await body(router, "/recipes/42", "POST"), "post");
