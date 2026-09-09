@@ -5,11 +5,15 @@ import { assertImagesReadable, auditBackupImages } from "../scripts/backup-image
 import { BACKUP_TABLES, canonicalJson, type BackupSnapshotUnsigned } from "../src/backup.ts";
 import type { Env } from "../src/env.ts";
 import { encodePng } from "../src/png.ts";
+import { deleteRecipeWithImages } from "../src/recipe-deletion.ts";
 import {
-  cleanupDeletedRecipeImages, deleteRecipeWithImages,
-  IMAGE_RECOVERY_DAYS, IMAGE_RESTORE_MARGIN_DAYS,
-} from "../src/recipe-deletion.ts";
-import { removeRecipeImage, storeRecipeImage, type ImageProvenance } from "../src/recipe-images.ts";
+  cleanupRetiredRecipeImages,
+  IMAGE_RECOVERY_DAYS,
+  IMAGE_RESTORE_MARGIN_DAYS,
+  removeRecipeImage,
+  storeRecipeImage,
+  type ImageProvenance,
+} from "../src/recipe-image-lifecycle.ts";
 import { assertRestoredRows, finalizeSnapshot, generateRestoreSql, parseAndValidateSnapshot } from "../src/restore.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
@@ -97,7 +101,7 @@ for (const origin of [MANUAL, GENERATED]) {
       assert.ok(f.receipt(parent));
       assert.ok(f.receipt(part));
       f.age("-30 days");
-      await cleanupDeletedRecipeImages(f.env);
+      await cleanupRetiredRecipeImages(f.env);
       assert.deepEqual(f.deletes, []);
       assert.deepEqual((await auditBackupImages(snapshot, f.read)).objects, original.objects);
 
@@ -109,7 +113,7 @@ for (const origin of [MANUAL, GENERATED]) {
       const recovered = await auditBackupImages(after, f.read);
       assertImagesReadable(recovered);
       assert.deepEqual(recovered.objects, original.objects, "both original digests, not replacement bytes");
-      await cleanupDeletedRecipeImages({ ...f.env, DB: restored.db });
+      await cleanupRetiredRecipeImages({ ...f.env, DB: restored.db });
       assert.deepEqual(f.deletes, [], "restored live references cannot be cleaned");
     });
   }
@@ -121,16 +125,16 @@ test("cleanup waits through the safety margin and accepts the exact expiry bound
   await removeRecipeImage(f.env, 1, 1, old);
   for (const age of ["-30 days", "-743 hours"]) {
     f.age(age);
-    await cleanupDeletedRecipeImages(f.env);
+    await cleanupRetiredRecipeImages(f.env);
     assert.ok(f.objects.has(old));
     assert.equal(f.receipt(old)?.last_attempt_at, null);
     assert.deepEqual(f.deletes, []);
   }
   f.age("-31 days");
-  await cleanupDeletedRecipeImages(f.env);
+  await cleanupRetiredRecipeImages(f.env);
   assert.ok(!f.objects.has(old));
   assert.equal(f.receipt(old), undefined);
-  await cleanupDeletedRecipeImages(f.env);
+  await cleanupRetiredRecipeImages(f.env);
   assert.deepEqual(f.deletes, [old]);
 });
 
@@ -138,17 +142,16 @@ for (const action of ["replace", "remove", "delete"] as const) {
   test(`${action} resets a restored image's old retirement and failed-attempt timestamps`, async (t) => {
     const f = fixture(t);
     const old = await f.upload();
-    // A restored live reference can coexist with an older pending receipt.
     f.sql.prepare(`INSERT INTO recipe_image_cleanup (image_key, household_id, queued_at, last_attempt_at)
       VALUES (?, 1, '2020-01-01 00:00:00.000', '2020-02-01 00:00:00.000')`).run(old);
-    await cleanupDeletedRecipeImages(f.env);
+    await cleanupRetiredRecipeImages(f.env);
     assert.deepEqual(f.deletes, [], "old age never defeats a live reference");
     if (action === "replace") await f.upload(1, old);
     if (action === "remove") await removeRecipeImage(f.env, 1, 1, old);
     if (action === "delete") assert.equal(await deleteRecipeWithImages(f.env, 1, 1), true);
     assert.ok(f.receipt(old)!.queued_at > "2020-02-01");
     assert.equal(f.receipt(old)!.last_attempt_at, null);
-    await cleanupDeletedRecipeImages(f.env);
+    await cleanupRetiredRecipeImages(f.env);
     assert.deepEqual(f.deletes, []);
   });
 }
@@ -228,7 +231,7 @@ test("a restored-and-retired key appearing after selection invalidates the stale
     if (text.includes("UPDATE recipe_image_cleanup")) f.age("+0 days", old);
     return db.prepare(text);
   } } as D1Database;
-  await cleanupDeletedRecipeImages(f.env);
+  await cleanupRetiredRecipeImages(f.env);
   assert.deepEqual(f.deletes, []);
   assert.ok(f.objects.has(old));
   assert.equal(f.receipt(old)?.last_attempt_at, null);
@@ -242,11 +245,9 @@ test("a delayed acknowledgement cannot delete a renewed retirement receipt", asy
   const remove = f.bucket.delete;
   f.bucket.delete = async (key: string) => {
     await remove(key);
-    // Restore is normally quiesced. This pins the receipt-generation guard
-    // even if a stale cleanup's final acknowledgement arrives late.
     f.age("+0 days", key);
   };
-  await cleanupDeletedRecipeImages(f.env);
+  await cleanupRetiredRecipeImages(f.env);
   assert.ok(f.receipt(old));
   assert.deepEqual(f.deletes, [old]);
 });
@@ -260,7 +261,7 @@ test("invalid/future retirement dates are retained, and old live keys in any hou
     VALUES (?, 1, '2020-01-01 00:00:00.000')`).run(other);
   for (const date of ["invalid", "", "3026-09-08 00:00:00.000"]) {
     f.sql.prepare("UPDATE recipe_image_cleanup SET queued_at = ? WHERE image_key = ?").run(date, old);
-    await cleanupDeletedRecipeImages(f.env);
+    await cleanupRetiredRecipeImages(f.env);
     assert.deepEqual(f.deletes, []);
     assert.ok(f.objects.has(old));
     assert.ok(f.objects.has(other));
@@ -271,7 +272,7 @@ test("same-bucket retention cannot mask a full bucket loss", async (t) => {
   const f = fixture(t);
   await f.upload();
   const snapshot = await snapshotOf(f.database);
-  f.objects.clear(); // Disposable simulated storage only.
+  f.objects.clear();
   const audit = await auditBackupImages(snapshot, f.read);
   assert.throws(() => assertImagesReadable(audit), /unavailable=1/);
 });
