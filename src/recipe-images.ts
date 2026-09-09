@@ -91,6 +91,10 @@ async function serveRecipeImage(
 ): Promise<Response> {
   if (row.image_key === null) return problem(404, "No image for that recipe.");
 
+  // A key is unique per upload, but the URL that reaches it is not: replacing
+  // an image leaves `/api/recipes/:id/image` pointing at different bytes. So
+  // the browser revalidates every time and pays for the body only when the
+  // etag has actually moved, rather than showing yesterday's picture.
   const object = await env.RECIPE_IMAGES.get(row.image_key, {
     onlyIf: request.headers,
   });
@@ -100,6 +104,9 @@ async function serveRecipeImage(
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", "private, no-cache");
+  // These bytes came from outside and are served from this app's own origin.
+  // Upload validation says they are an image; this says no browser may decide
+  // otherwise from the bytes it sees later.
   headers.set("x-content-type-options", "nosniff");
 
   if (!("body" in object)) return new Response(null, { status: 304, headers });
@@ -111,8 +118,12 @@ async function serveRecipeImage(
  *
  * `?origin=generated` records the picture as generated rather than uploaded,
  * with `&model=` for diagnostics and `&fingerprint=` for the recipe content it
- * was made from. `x-expected-image-key` carries the image state the caller saw
- * before any long generation gap; an empty value means it saw no image.
+ * was actually made from. A generator that read the recipe and comes back later
+ * should state that fingerprint rather than claim it depicts whatever happens
+ * to be current when the bytes arrive. A caller with a long gap between reading
+ * and writing also sends `x-expected-image-key`; an empty value means it saw no
+ * image. That captured state, not the key current when the PUT arrives, is the
+ * compare-and-swap precondition used by the lifecycle module.
  */
 export async function apiPutRecipeImage(
   { env, request, url, params }: RouteContext,
@@ -140,7 +151,8 @@ export async function apiPutRecipeImage(
  * This route deliberately resolves the recipe's owner instead of using the
  * admin's household. It is separately protected by `requireAdmin` in the route
  * table, accepts generated pictures only, and limits the exception to dishes
- * the admin screen can actually select.
+ * the admin screen can actually select. The ordinary image API above keeps its
+ * household predicate unchanged.
  */
 export async function apiAdminPutRecipeImage(
   { env, request, url, params }: RouteContext,
@@ -220,7 +232,11 @@ async function putRecipeImage(
   return new Response(null, { status: 204 });
 }
 
-/** GET /api/recipes/:id/image/status — missing, fresh or stale. */
+/**
+ * GET /api/recipes/:id/image/status — missing, fresh or stale, and what that
+ * verdict was reached from. Freshness calculation itself stays query-free in
+ * `image-freshness.ts`; this adapter supplies the current recipe fingerprint.
+ */
 export async function apiRecipeImageStatus(
   { env, params }: RouteContext,
   member: Member,
@@ -239,15 +255,18 @@ export interface RecipeImageState {
   recipeId: number;
   status: ImageStatus;
   origin: ImageOrigin | null;
+  /** What the recipe's ingredients hash to right now. */
   recipeFingerprint: string;
+  /** What the stored generated picture was made from, if it was generated. */
   imageFingerprint: string | null;
   generatedAt: string | null;
   generatedBy: string | null;
 }
 
 /**
- * Read one recipe's picture state. The fingerprint is of the whole dish — its
- * parts included — and `findRecipe` already knows how to load that shape.
+ * Read one recipe's picture state. Two reads, because the fingerprint is of the
+ * whole dish — its parts included — and that is what `findRecipe` already
+ * loads; nothing here re-implements it.
  */
 export async function recipeImageState(
   db: D1Database,
@@ -284,6 +303,7 @@ export async function recipeImageState(
   };
 }
 
+/** The recipe's own content hash, or null if the recipe is not there. */
 async function currentFingerprint(
   db: D1Database,
   householdId: number,
@@ -320,8 +340,13 @@ export async function imageRow(
 }
 
 /**
- * The same row, in the scope that may read it: this household's recipe, any
+ * The same row, in the scope that may *read* it: this household's recipe, any
  * published dish, or a part of one.
+ *
+ * A part is never published on its own and never addressable on its own either,
+ * but it is the owner's row inside a dish everybody may read, so its picture is
+ * reachable through its published parent and no other way. This mirrors the
+ * readable-recipe boundary without widening any mutation.
  */
 async function readableImageRow(
   db: D1Database,
