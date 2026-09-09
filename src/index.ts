@@ -179,9 +179,6 @@ const router = new Router()
   .post("/auth/dev-signin", devSignIn)
   .post("/auth/signout", signOut)
   .get("/recipes", requireMemberScreen(recipeListScreen))
-  // Before `/recipes/:id`: the router answers with the first pattern that
-  // matches, and a literal segment has to win over the wildcard that would
-  // otherwise swallow it.
   .get("/recipes/julkiset", requireMemberScreen(publicRecipeListScreen))
   .post("/recipes/julkaisu", requireMemberScreen(publishForm))
   .post("/recipes/kategoriat", requireMemberScreen(categoryBulkForm))
