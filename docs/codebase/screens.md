@@ -429,11 +429,24 @@ people opened the editor looking for a control that was never in it.
 
 - **`html.ts::saveBar` is the one save action**, and a form gets exactly one, at
   its end. `.save-bar` is #184's `.editor-actions` renamed and generalised —
-  same `position: sticky` clear of the fixed tab strip, so the placement is
-  still CSS only and a browser without sticky positioning gets the button at the
-  end of the form as before. The editor, the import review
-  (`intake-screens.ts::renderCorrection`) and the sharing form
-  (`recipes.ts::sharingSection`) all use it.
+  clear of the fixed tab strip, the placement still CSS only, and a browser
+  that cannot pin it gets the button at the end of the form as before. The
+  editor, the import review (`intake-screens.ts::renderCorrection`) and the
+  sharing form (`recipes.ts::sharingSection`) all use it.
+- **A bar that is its screen's one save is `position: fixed`; a bar inside a
+  section stays `position: sticky`.** #298 reported the sticky bar rising to
+  the middle of an iPhone's screen after a long import review was scrolled down
+  and back up — Safari does not recompute a bottom-sticky offset while the
+  address bar is collapsing and expanding, and the fixed tab strip an inch
+  below it has never had the problem. So `saveBar({ pinned: true })` puts the
+  bar in `.save-bar-slot.is-pinned` and it is pinned the way the tab strip is.
+  The editor and the import review pass it; the sharing form does not, because
+  it is one section of the recipe screen and a bar fixed there would sit over
+  `Muokkaa reseptiä` all the way up the page. A pinned bar owes the screen it
+  floats over two things: the slot keeps `--save-bar-height` of flow where the
+  bar used to be, and `body:has(.save-bar-slot.is-pinned) main` adds the same
+  height to the screen's bottom padding, so whatever follows the form — the
+  editor's `Poista resepti` — can still be scrolled clear of it.
 - **The bar's status line has a reserved height**, and the reserved height and
   the filled height are the same number — the rule the shopping list's busy line
   follows (#200). Untouched, unsaved and saving are the same size, so nothing

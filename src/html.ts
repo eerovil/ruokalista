@@ -81,6 +81,11 @@ const STYLES = `
     --tap-compact: 2.25rem;
     --radius: .5rem;
     --tabs-height: 3.75rem;
+    /* The height the save-bar slot reserves for the fixed save bar: its own
+       padding, the status line whose height is reserved either way, the gap,
+       and a full-height button. Written out so the space kept in the flow and
+       the space taken over it are the same number. */
+    --save-bar-height: calc(1.2rem + 1.4rem + .5rem + var(--tap));
   }
   * { box-sizing: border-box; }
   /* The hidden attribute is how the islands hide things, and the browser
@@ -102,6 +107,17 @@ const STYLES = `
   }
   body.has-tabs main {
     padding-bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1.5rem);
+  }
+  /* A pinned save bar (#298) covers a band above the tab strip for the whole
+     of the screen, so the screen needs that band's worth of room at its end —
+     otherwise whatever comes after the form, like the editor's Poista resepti,
+     can never be scrolled clear of it. Later than the rule above and of the
+     same weight, so it is the one that wins where it applies. */
+  body.has-tabs:has(.save-bar-slot.is-pinned) main {
+    padding-bottom: calc(
+      var(--tabs-height) + env(safe-area-inset-bottom) +
+      var(--save-bar-height) + 1.5rem
+    );
   }
 
   h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; letter-spacing: -.01em; }
@@ -248,6 +264,29 @@ const STYLES = `
   .line { padding: .75rem 0; border-bottom: 1px solid var(--edge); }
   .line.is-new { border-left: 3px solid var(--accent); padding-left: .6rem; }
   .amounts { display: flex; gap: .4rem; margin-bottom: .4rem; }
+  /* "Tämä on uusi aines" (issue #298). When the model matched a line to an
+     ingredient the household already has and it was wrong, saying so was five
+     steps: open the picker, scroll it back to the top past every ingredient
+     there is, approve a new one, open Lisätiedot, type the name again. It is
+     one tick here, and the name it creates is the one the model already
+     proposed on this row.
+
+     The reveal is a sibling selector rather than :has(), so the name stays
+     editable on an older Safari too; the tick itself needs no CSS to work at
+     all, because the answer is a checkbox the server reads. */
+  .as-new {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+    margin-top: .4rem;
+  }
+  .as-new input[type=checkbox] { width: auto; min-height: 0; margin: 0; }
+  .as-new label {
+    display: inline-flex; align-items: center;
+    min-height: var(--tap-compact);
+    color: var(--muted); font-size: .85rem; cursor: pointer;
+  }
+  .as-new-name { display: none; flex-basis: 100%; }
+  .as-new-toggle:checked ~ .as-new-name { display: block; }
+  .as-new-toggle:checked ~ label { color: var(--accent); font-weight: 600; }
   .badge {
     display: inline-block; margin-bottom: .35rem; padding: .15rem .45rem;
     font-size: .75rem; color: var(--muted);
@@ -580,21 +619,46 @@ const STYLES = `
     padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0);
   }
 
-  /* The one save bar (issue #184, generalised by #217). It sticks to the bottom
+  /* The one save bar (issue #184, generalised by #217). It sits at the bottom
      of the screen, clear of the fixed tab strip, so the save is one tap away
-     wherever you are in a long form; once the end of the form scrolls into view
-     the bar simply sits there. A browser without position:sticky gets exactly
-     the old behaviour, which is why the placement needs no script.
+     wherever you are in a long form.
 
      Three screens use it — the recipe editor, the import review and the
      sharing form — and they use it the same way round: what the save will do
-     on the line above, the one button under it. */
+     on the line above, the one button under it.
+
+     Sticky was how the bar stayed there, and on an iPhone that came apart
+     (#298): scroll a long form down and back up, and Safari leaves the bar
+     stranded partway up the screen, because it does not recompute a
+     bottom-sticky offset while the address bar is collapsing and expanding.
+     The tab strip on the very same screen is position:fixed and has never
+     moved, so a bar that is the screen's one save is fixed too.
+
+     "That is the screen's one save" is the whole of the distinction, and the
+     server makes it rather than a script, because it is a fact about the
+     screen and not about the scroll. The editor and the import review are one
+     form from top to bottom, so their bar is fixed. The sharing form is a
+     section of the recipe screen, where a fixed bar would sit over Muokkaa
+     reseptiä all the way up the page — so it stays sticky, which keeps it
+     inside the form it belongs to.
+
+     The slot is what keeps a fixed bar honest: it takes the bar out of the
+     flow, so the slot stands in its place and the end of the form stays
+     reachable instead of sitting under the bar. */
+  .save-bar-slot { margin-top: 1rem; }
+  .save-bar-slot.is-pinned { min-height: var(--save-bar-height); }
   .save-bar {
     position: sticky; z-index: 1;
     bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom));
     display: flex; flex-wrap: wrap; gap: .5rem;
-    padding: .6rem 0; margin-top: 1rem;
+    padding: .6rem 0;
     background: var(--bg); border-top: 1px solid var(--edge);
+  }
+  /* Full-bleed while pinned, so the side padding it borrows from main has to
+     come back as its own. */
+  .save-bar-slot.is-pinned > .save-bar {
+    position: fixed; left: 0; right: 0;
+    margin: 0 auto; max-width: 40rem; padding: .6rem 1rem;
   }
   .save-bar button { flex: 1; }
   /* The bar's one status line. Its height is reserved and the reserved height
@@ -1280,22 +1344,36 @@ export const SAVE_BAR_ISLAND = `
  * screen says what saving does there. The import review states that the recipe
  * is new and not saved yet; the editor of a stored recipe has nothing to say
  * until something changes, so it says nothing.
+ *
+ * `pinned` says this form is the screen rather than a section of one, which is
+ * what earns the bar the fixed placement an iPhone needs (issue #298). See the
+ * stylesheet above for why that is not simply always true.
  */
 export function saveBar(
-  options: { submit: string; hint?: string; name?: string; value?: string },
+  options: {
+    submit: string;
+    hint?: string;
+    name?: string;
+    value?: string;
+    pinned?: boolean;
+  },
 ): Raw {
-  return html`<div class="save-bar">
-      <p class="save-state" aria-live="polite">${options.hint ?? ""}</p>
-      <button
-        type="submit"
-        class="primary"
-        ${options.name === undefined
-          ? ""
-          : raw(`name="${escape(options.name)}"`)}
-        ${options.value === undefined
-          ? ""
-          : raw(`value="${escape(options.value)}"`)}
-      >${options.submit}</button>
+  return html`<div
+      class="save-bar-slot ${options.pinned === true ? "is-pinned" : ""}"
+    >
+      <div class="save-bar">
+        <p class="save-state" aria-live="polite">${options.hint ?? ""}</p>
+        <button
+          type="submit"
+          class="primary"
+          ${options.name === undefined
+            ? ""
+            : raw(`name="${escape(options.name)}"`)}
+          ${options.value === undefined
+            ? ""
+            : raw(`value="${escape(options.value)}"`)}
+        >${options.submit}</button>
+      </div>
     </div>
     <script>${raw(SAVE_BAR_ISLAND)}</script>`;
 }

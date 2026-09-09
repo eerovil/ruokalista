@@ -755,7 +755,7 @@ export function editorForm(
            strip while the form scrolls and settles here at the end. Since #217
            it is the same bar the import review and the sharing form use, and it
            says when there are changes not yet saved. -->
-      ${saveBar({ submit: "Tallenna muutokset" })}
+      ${saveBar({ submit: "Tallenna muutokset", pinned: true })}
     </form>
 
     <!-- Outside the form above on purpose: a link, so nothing typed into the
