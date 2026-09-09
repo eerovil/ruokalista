@@ -417,8 +417,7 @@ export async function saveProductForm(
 
   /**
    * The typed shopping client shows the choice before this answer arrives, so a
- * refusal has to
-   * be sayable to it. Both callers get the same words and the same status; only
+   * refusal has to be sayable to it. Both callers get the same words and the same status; only
    * the shape differs, and neither one has saved anything by this point.
    */
   const refuse = (
