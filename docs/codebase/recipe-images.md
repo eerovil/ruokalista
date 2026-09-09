@@ -76,15 +76,20 @@ without another Cloudflare product, so the server's half is a bound rather
 than a transform — 5 MiB and a 2,000 px longest edge, refused with the
 measurement in the message. Bulk callers get the bound, not the shrink.
 
-Replacing writes the new immutable object first, then atomically retires the old
-key and changes the recipe reference in one D1 batch. Removing an image likewise
-retires and detaches it in the same transaction. `recipe-deletion.ts` owns the
-shared retirement statement and the existing bounded cleanup queue; deleting a
-recipe tree records both parent and part keys before its guarded deletion commits.
-The recipe disappears from the application immediately; its bytes do not.
+`src/recipe-image-lifecycle.ts` is the mutation/retention boundary. Replacing
+writes the new immutable object first, then atomically retires the old key and
+changes the recipe reference in one D1 batch. Removing likewise retires and
+detaches in the same transaction. Whole-recipe deletion keeps its eligibility
+and edit-token guard in `recipe-deletion.ts`, but obtains the parent/part image
+retirement statement from the lifecycle module so the same renewal policy is
+used before the guarded deletion commits. The scheduled bounded cleanup also
+runs through this lifecycle module. The recipe disappears from the application
+immediately; its retired bytes do not.
 
 Retired bytes stay for **31 days from the last successful detachment**: a 30-day
-historical-image recovery window plus one restore day. A restored image that is
+historical-image recovery window plus one restore day. Those constants, receipt
+renewal, uncertain-commit retention and cleanup expiry rules have one
+authoritative home in `recipe-image-lifecycle.ts`. A restored image that is
 later replaced/removed resets that clock, including its failed-attempt timestamp.
 Cleanup checks both expiry and current references across all households. It also
 matches the selected receipt's timestamp before attempting deletion and before
@@ -92,13 +97,13 @@ acknowledging it. See [ADR-0016](../adr/0016-retired-images-cover-the-snapshot-w
 and [the recovery procedure](../backup-restore.md) for the rollout boundary,
 restore quiescence, missing-byte audit and explicit bucket-loss exclusion.
 
-`src/recipe-images.ts::storeRecipeImage` and `::removeRecipeImage` take the
-`oldKey` the caller believes is current. Retirement and the reference update use
-the same owner-scoped `image_key IS ?` comparison in one transaction. `IS` rather
-than `=` also matches NULL, which is necessary for a first upload. Losing a store
-race is a 409; that upload's never-published object is deleted immediately. Losing
-a remove race remains a silent no-op. Neither loss can renew the old receipt or
-retire somebody else's newer picture.
+`src/recipe-image-lifecycle.ts::storeRecipeImage` and `::removeRecipeImage` take
+the `oldKey` the caller believes is current. Retirement and the reference update
+use the same owner-scoped `image_key IS ?` comparison in one transaction. `IS`
+rather than `=` also matches NULL, which is necessary for a first upload. Losing
+a store race is a 409; that upload's never-published object is deleted
+immediately. Losing a remove race remains a silent no-op. Neither loss can renew
+the old receipt or retire somebody else's newer picture.
 
 A failed database response is different from a confirmed loss: the commit may
 have succeeded. The attempted new key is retained with best-effort cleanup

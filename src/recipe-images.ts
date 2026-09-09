@@ -1,63 +1,38 @@
 import { problem } from "./auth.ts";
-import { retainUncertainRecipeImage, retireExpectedRecipeImage } from "./recipe-deletion.ts";
-import {
-  extensionFor,
-  MAX_IMAGE_BYTES,
-  MAX_IMAGE_EDGE,
-  readImage,
-} from "./image-bytes.ts";
+import { MAX_IMAGE_BYTES } from "./image-bytes.ts";
 import {
   imageStatus,
   type ImageOrigin,
   type ImageStatus,
   type StoredImage,
 } from "./image-freshness.ts";
+import {
+  removeRecipeImage,
+  storeRecipeImage,
+  type ImageProvenance,
+} from "./recipe-image-lifecycle.ts";
 import type { Member } from "./members.ts";
-import { readableRecipeCondition } from "./recipe-publish.ts";
 import { recipeFingerprint } from "./recipe-fingerprint.ts";
+import { readableRecipeCondition } from "./recipe-publish.ts";
 import { findRecipe } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
- * A recipe's picture. The bytes live in R2 and the recipe row holds the key.
+ * A recipe picture's HTTP and read adapter. The bytes live in R2 and the recipe
+ * row holds the key.
  *
- * This module is the storage and the JSON API. The editor's own upload and
- * remove buttons live in `recipe-editor.ts` with the rest of the editor, and
- * call into `storeRecipeImage`/`removeRecipeImage` here — so a refusal can be
- * rendered as a screen there and as JSON here, from one set of rules.
- *
- * It is also where a picture's provenance is written: whether somebody uploaded
- * it or something generated it, and for a generated one, which recipe
- * fingerprint it was made from. `image-freshness.ts` turns that into missing /
- * fresh / stale.
+ * Upload/replace/remove CAS, retirement receipts, uncertain-write retention and
+ * delayed cleanup live together in `recipe-image-lifecycle.ts`. The routes here
+ * resolve ownership/provenance, translate lifecycle refusals to HTTP, serve the
+ * current bytes and expose freshness state.
  */
 
-// What we will take in lives in `image-bytes.ts`, because a picture found on a
-// recipe page has to clear the same two caps before it is worth downloading.
-// The editor shrinks before it posts, so only a bulk caller ever meets these.
-
-/** A refusal, in both languages this app has to refuse in. */
-export interface ImageRefusal {
-  status: number;
-  english: string;
-  finnish: string;
-}
+export { removeRecipeImage, storeRecipeImage } from "./recipe-image-lifecycle.ts";
+export type { ImageProvenance } from "./recipe-image-lifecycle.ts";
 
 interface ImageRow {
   image_key: string | null;
 }
-
-/**
- * Where a picture being stored came from. A generated one states the
- * fingerprint it was made from rather than having it read back out of the
- * database, because what matters is the recipe the picture actually depicts —
- * not the recipe as it stands the moment the bytes arrive.
- */
-export type ImageProvenance =
-  | { origin: "manual" }
-  | { origin: "generated"; fingerprint: string; model: string | null };
-
-const MANUAL: ImageProvenance = { origin: "manual" };
 
 interface FreshnessRow extends ImageRow {
   image_origin: ImageOrigin | null;
@@ -77,8 +52,7 @@ export async function apiRecipeImage(
   // The one lookup on this module that is not owner-scoped: a published dish
   // is readable by everybody, and a picture nobody else may fetch would show
   // as a broken image on every screen that offers them the dish. Storing,
-  // removing and the freshness read stay on `imageRow` below, so widening this
-  // cannot widen a write.
+  // removing and the freshness read stay owner-scoped.
   const row = await readableImageRow(env.DB, member.householdId, recipeId);
   if (row === null || row.image_key === null) {
     return problem(404, "No image for that recipe.");
@@ -131,8 +105,8 @@ async function serveRecipeImage(
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", "private, no-cache");
   // These bytes came from outside and are served from this app's own origin.
-  // The signature check at upload says they are an image; this says no browser
-  // may decide otherwise.
+  // Upload validation says they are an image; this says no browser may decide
+  // otherwise from the bytes it sees later.
   headers.set("x-content-type-options", "nosniff");
 
   if (!("body" in object)) return new Response(null, { status: 304, headers });
@@ -143,14 +117,13 @@ async function serveRecipeImage(
  * PUT /api/recipes/:id/image — raw image bytes, suitable for bulk tooling.
  *
  * `?origin=generated` records the picture as generated rather than uploaded,
- * with `&model=` for the diagnostics and `&fingerprint=` for the recipe content
- * it was actually made from. A generator that read the recipe, spent money on a
- * picture, and comes back to store it should state that fingerprint: leaving it
- * out means "made from the recipe as it stands right now", which is a claim
- * about a recipe nobody looked at. A caller with a long gap between reading and
- * writing also sends `x-expected-image-key`; an empty value means it saw no
+ * with `&model=` for diagnostics and `&fingerprint=` for the recipe content it
+ * was actually made from. A generator that read the recipe and comes back later
+ * should state that fingerprint rather than claim it depicts whatever happens
+ * to be current when the bytes arrive. A caller with a long gap between reading
+ * and writing also sends `x-expected-image-key`; an empty value means it saw no
  * image. That captured state, not the key current when the PUT arrives, is the
- * compare-and-swap precondition.
+ * compare-and-swap precondition used by the lifecycle module.
  */
 export async function apiPutRecipeImage(
   { env, request, url, params }: RouteContext,
@@ -222,7 +195,7 @@ async function putRecipeImage(
 ): Promise<Response> {
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_IMAGE_BYTES) {
-    return problem(413, tooLarge().english);
+    return problem(413, "Recipe image is too large (maximum 5 MiB).");
   }
 
   const origin = url.searchParams.get("origin");
@@ -230,7 +203,7 @@ async function putRecipeImage(
     return problem(400, "origin must be manual or generated.");
   }
 
-  let provenance: ImageProvenance = MANUAL;
+  let provenance: ImageProvenance = { origin: "manual" };
   if (origin === "generated") {
     const stated = url.searchParams.get("fingerprint");
     const fingerprint = stated ?? (await currentFingerprint(env.DB, householdId, recipeId));
@@ -261,11 +234,8 @@ async function putRecipeImage(
 
 /**
  * GET /api/recipes/:id/image/status — missing, fresh or stale, and what that
- * verdict was reached from.
- *
- * The calculation itself lives in `image-freshness.ts` and needs no request;
- * this is the way in for anything outside the Worker, which for now means the
- * batch generator and the admin list that are still to be built.
+ * verdict was reached from. Freshness calculation itself stays query-free in
+ * `image-freshness.ts`; this adapter supplies the current recipe fingerprint.
  */
 export async function apiRecipeImageStatus(
   { env, params }: RouteContext,
@@ -357,159 +327,7 @@ export async function apiDeleteRecipeImage(
   return new Response(null, { status: 204 });
 }
 
-/**
- * Check, store, and point the recipe at the new object. Returns the refusal
- * when the bytes are not something we will keep, or null once they are stored.
- *
- * `oldKey` is not just the object to tidy up afterwards — it is the key this
- * caller believes the row still holds, and the update only happens if it does.
- * That matters because the gap between reading the row and writing it is not
- * always short: the admin can leave the confirmation screen to draw a sheet in
- * another tool. Without the check, somebody who uploaded a picture during that
- * gap would have it silently replaced by a generated crop made from older state.
- * With it, the loser is told so and the picture chosen last survives.
- */
-export async function storeRecipeImage(
-  env: RouteContext["env"],
-  householdId: number,
-  recipeId: number,
-  oldKey: string | null,
-  bytes: ArrayBuffer,
-  provenance: ImageProvenance = MANUAL,
-): Promise<ImageRefusal | null> {
-  if (bytes.byteLength === 0) {
-    return {
-      status: 400,
-      english: "Recipe image is empty.",
-      finnish: "Valitse kuva.",
-    };
-  }
-  if (bytes.byteLength > MAX_IMAGE_BYTES) return tooLarge();
-
-  const facts = readImage(bytes);
-  if (facts === null) {
-    return {
-      status: 415,
-      english: "Use a JPEG, PNG, or WebP image.",
-      finnish: "Kuvan pitää olla JPEG, PNG tai WebP.",
-    };
-  }
-  if (Math.max(facts.width, facts.height) > MAX_IMAGE_EDGE) {
-    return {
-      status: 413,
-      english:
-        `Recipe image is ${facts.width}x${facts.height}; resize it so its ` +
-        `longest edge is at most ${MAX_IMAGE_EDGE} pixels.`,
-      finnish:
-        `Kuva on ${facts.width}×${facts.height} kuvapistettä. Pienennä se ` +
-        `niin, että pidempi sivu on enintään ${MAX_IMAGE_EDGE}.`,
-    };
-  }
-
-  const key =
-    `recipes/${householdId}/${recipeId}/${crypto.randomUUID()}.${extensionFor(facts.contentType)}`;
-
-  // The bytes go first, so a failure here leaves the recipe pointing at the
-  // picture it already had. Only a confirmed CAS loser is cleaned immediately;
-  // an uncertain database response retains the potentially published bytes.
-  await env.RECIPE_IMAGES.put(key, bytes, {
-    httpMetadata: { contentType: facts.contentType },
-  });
-
-  let changed: number;
-  try {
-    // The provenance columns are written in the same statement as the key, so
-    // there is no instant where a picture exists with somebody else's
-    // fingerprint against it. A manual upload clears them all: it is not
-    // compared against anything, and a leftover fingerprint would say it was.
-    //
-    // `image_key IS ?` rather than `=` on purpose: a recipe with no picture yet
-    // has NULL there, and `= NULL` is never true in SQL, so `=` would refuse
-    // every first upload. `IS` compares NULL to NULL as equal, which is exactly
-    // the claim being made — "there was nothing here when I looked".
-    const update = env.DB
-      .prepare(
-        `UPDATE recipe
-            SET image_key = ?,
-                image_origin = ?,
-                image_fingerprint = ?,
-                image_generated_at = ${
-          provenance.origin === "generated"
-            ? "strftime('%Y-%m-%d %H:%M:%f', 'now')"
-            : "NULL"
-        },
-                image_generated_by = ?
-          WHERE id = ? AND household_id = ? AND image_key IS ?`,
-      )
-      .bind(
-        key,
-        provenance.origin,
-        provenance.origin === "generated" ? provenance.fingerprint : null,
-        provenance.origin === "generated" ? provenance.model : null,
-        recipeId,
-        householdId,
-        oldKey,
-      );
-    const results = await env.DB.batch([
-      retireExpectedRecipeImage(env.DB, householdId, recipeId, oldKey),
-      update,
-    ]);
-    changed = results[1]!.meta.changes;
-  } catch (error) {
-    // The commit may have succeeded but lost its response. Immediate
-    // compensation could delete the winner, or bytes already in a snapshot.
-    await retainUncertainRecipeImage(env, householdId, key);
-    throw error;
-  }
-
-  if (changed !== 1) {
-    // Either the recipe is gone or its picture is no longer the one we read.
-    // Either way this upload has lost, so it takes its own object with it and
-    // leaves what is there alone — an orphan is the one thing that must not be
-    // the outcome of losing a race.
-    await env.RECIPE_IMAGES.delete(key);
-    return staleImage();
-  }
-
-  // The old key's retirement committed with the update. The existing cron
-  // removes its bytes only after the historical recovery window expires.
-  return null;
-}
-
-/**
- * Forget the recipe's image and atomically retire its bytes for delayed cleanup.
- *
- * Conditional on the same key, for the same reason as `storeRecipeImage`: a
- * remove that raced a replacement would otherwise clear the row of a picture it
- * never saw and delete the object it did see, leaving the new bytes in R2 with
- * nothing pointing at them. Removing a picture that is already gone is not an
- * error, so the answer to losing is silence rather than a refusal — the recipe
- * ends up how the person asked either way.
- */
-export async function removeRecipeImage(
-  env: RouteContext["env"],
-  householdId: number,
-  recipeId: number,
-  oldKey: string | null,
-): Promise<void> {
-  const update = env.DB
-    .prepare(
-      `UPDATE recipe
-          SET image_key = NULL,
-              image_origin = NULL,
-              image_fingerprint = NULL,
-              image_generated_at = NULL,
-              image_generated_by = NULL
-        WHERE id = ? AND household_id = ? AND image_key IS ?`,
-    )
-    .bind(recipeId, householdId, oldKey);
-  await env.DB.batch([
-    retireExpectedRecipeImage(env.DB, householdId, recipeId, oldKey),
-    update,
-  ]);
-}
-
-/** The one row this module reads, so a caller can pass the old key along. */
+/** The owner-scoped row needed to carry a mutation's expected key. */
 export async function imageRow(
   db: D1Database,
   householdId: number,
@@ -525,11 +343,10 @@ export async function imageRow(
  * The same row, in the scope that may *read* it: this household's recipe, any
  * published dish, or a part of one.
  *
- * A part is never published on its own and never addressable on its own
- * either, but it is the owner's row inside a dish everybody may read, so its
- * picture is reachable through its published parent and no other way. This
- * mirrors `recipes.ts::findReadableRecipe`; it is a separate query only
- * because a picture needs one column rather than a whole recipe.
+ * A part is never published on its own and never addressable on its own either,
+ * but it is the owner's row inside a dish everybody may read, so its picture is
+ * reachable through its published parent and no other way. This mirrors the
+ * readable-recipe boundary without widening any mutation.
  */
 async function readableImageRow(
   db: D1Database,
@@ -553,32 +370,6 @@ async function readableImageRow(
       householdId,
     )
     .first<ImageRow>();
-}
-
-/**
- * Somebody else changed this recipe's picture while we were making ours. A 409
- * rather than a 404: the recipe is there, the request was well formed, and the
- * answer is simply that it is out of date.
- */
-function staleImage(): ImageRefusal {
-  return {
-    status: 409,
-    english:
-      "This recipe's image changed while this one was being prepared, so it " +
-      "was not replaced. Look at the current image and try again if it still " +
-      "needs replacing.",
-    finnish:
-      "Reseptin kuva vaihtui samaan aikaan, joten sitä ei korvattu. Katso " +
-      "nykyinen kuva ja yritä uudelleen, jos se pitää silti vaihtaa.",
-  };
-}
-
-function tooLarge(): ImageRefusal {
-  return {
-    status: 413,
-    english: "Recipe image is too large (maximum 5 MiB).",
-    finnish: "Kuva on liian suuri (enintään 5 Mt).",
-  };
 }
 
 function parseRecipeId(raw: string | undefined): number | null {

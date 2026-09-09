@@ -43,7 +43,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Changing a recipe with a prompt | `src/recipe-prompt-edit.ts`, `src/recipe-prompt-screens.ts` |
 | Publishing a recipe, and a household's own default for one | `src/recipe-publish.ts`, `src/recipe-preference.ts`, `src/publish-screens.ts` |
 | Importing a recipe | `src/intake.ts`, `src/intake-screens.ts`, `src/intake-jobs.ts`, `src/recipe-fetch.ts`, `src/batch-intake.ts`, `src/line-form.ts`, `src/draft-amounts.ts` |
-| Pictures | `src/recipe-images.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
+| Pictures | `src/recipe-images.ts`, `src/recipe-image-lifecycle.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |
 | Which shop product an ingredient is, and in what packet | `src/ingredient-products.ts`, `src/packaging.ts`, `src/s-ostoslista.ts`, `src/s-ostoslista-notes.ts` |

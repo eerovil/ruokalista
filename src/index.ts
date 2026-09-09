@@ -6,7 +6,6 @@ import {
   requireMemberScreen,
 } from "./auth.ts";
 import { scheduledBackup } from "./backup-scheduled.ts";
-import { cleanupDeletedRecipeImages } from "./recipe-deletion.ts";
 import { categoryBulkForm } from "./category-bulk.ts";
 import {
   categoryAdminForm,
@@ -79,6 +78,7 @@ import {
   recipeImageConfirmScreen,
   recipeImageSplitter,
 } from "./recipe-image-admin.ts";
+import { cleanupRetiredRecipeImages } from "./recipe-image-lifecycle.ts";
 import {
   apiAdminPutRecipeImage,
   apiAdminRecipeImage,
@@ -263,7 +263,7 @@ export default {
         detail: String((error as Error)?.message ?? error),
       }));
     }
-    await cleanupDeletedRecipeImages(env);
+    await cleanupRetiredRecipeImages(env);
     if (controller.cron === "17 2 * * *") await scheduledBackup(controller, env);
   },
 
