@@ -88,11 +88,12 @@ Each of these has cost somebody real time. The detail is in the linked doc.
 - **A new API key needs two places, not one.** A key in `.dev.vars` never
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).
-- **Hand-written inline browser scripts are shipped untranspiled.** Intake and
-  the image splitter use the typed-client pipeline; run `generate:client` after
-  changes there. For remaining template-string islands, write ES5 and remember
-  that these scripts are template literals, so a backslash is eaten before the
-  browser ever sees it — no regular expressions. See
+- **Browser code has two paths.** Intake, shopping, and the recipe-image
+  splitter live under `src/client/` and are DOM-typechecked and generated into
+  committed `src/generated/` modules; run `generate:client` after changes
+  there, and `check:client` rejects stale output. Remaining hand-written
+  template-string islands are shipped untranspiled: write ES5 there and remember
+  that a backslash is eaten before the browser sees it. See
   [screens](docs/codebase/screens.md).
 - **A durable table starts in one backup/restore manifest.** After writing the
   migration, add one complete `BACKUP_TABLES` entry in `src/backup.ts`: capture

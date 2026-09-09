@@ -57,11 +57,11 @@ import {
  *
  * Issue #159 proposes making the S-ostoslista half of the screen feel
  * immediate, and it is added strictly on top of that: every form below is still
- * the form it was, and a browser that cannot run the optional shopping client still
- * navigates to `/ostoslista/tuote`, still posts the send form, and simply never
- * sees the current S-ostoslista panel. What the island adds is the product
- * search in a panel inside the row, an optimistic selection saved in the
- * background, a spinner on everything asynchronous, and the contents of the
+ * the form it was, and a browser that cannot run the optional shopping client
+ * still navigates to `/ostoslista/tuote`, still posts the send form, and simply
+ * never sees the current S-ostoslista panel. What the typed shopping client adds
+ * is the fixed product sheet, an optimistic selection saved in the background,
+ * a spinner on everything asynchronous, and the contents of the
  * S-ostoslista read after the page is already usable. It talks to the three
  * JSON answers below, and the save still re-searches server-side, so the
  * browser cannot invent an EAN, a name or an image whichever path it takes.
@@ -227,8 +227,8 @@ export async function sendShoppingListForm(
 
 /**
  * `GET /ostoslista/haku?haku=…` — the same catalogue search the product screen
- * runs, as JSON, so the island can search inside the row and warm the next
- * row's search before anybody asks for it.
+ * runs as JSON, so the typed shopping client can search in its fixed sheet and
+ * warm the next row's search before anybody asks for it.
  *
  * It answers with the query it actually ran, which is what lets the browser
  * throw away an answer that arrived for a term the member has already moved on
@@ -298,9 +298,9 @@ export async function currentListJson(
 /**
  * `POST /ostoslista/s-lista/poista` — take one row off the S-ostoslista.
  *
- * The panel this serves is drawn by the island and exists only where there is
- * a browser to fill it, so there is no screen to re-render on a refusal: the
- * answer is JSON on both paths.
+ * The panel this serves is drawn by the typed shopping client and exists only
+ * where there is a browser to fill it, so there is no screen to re-render on a
+ * refusal: the answer is JSON on both paths.
  *
  * The row is named by its own key — the EAN for a product, the text itself for
  * a free-text row — because that is what the service deletes by
@@ -355,7 +355,7 @@ export async function removeCurrentItemForm(
   return Response.json({ deleted });
 }
 
-/** The island asks for JSON with a field, so one route serves both callers. */
+/** The typed shopping client asks for JSON, so one route serves both callers. */
 function wantsJson(form: FormData): boolean {
   return String(form.get("muoto") ?? "") === "json";
 }
@@ -416,8 +416,8 @@ export async function saveProductForm(
   const scope = chosenScope(item, form.get("laajuus"));
 
   /**
-   * The island shows the choice before this answer arrives, so a refusal has to
-   * be sayable to it. Both callers get the same words and the same status; only
+   * The typed shopping client shows the choice before this answer arrives, so a
+   * refusal has to be sayable to it. Both callers get the same words and the same status; only
    * the shape differs, and neither one has saved anything by this point.
    */
   const refuse = (
@@ -934,8 +934,8 @@ function listLocation(
  * into a square it drew as a 9 px sliver of white, and the picture that was
  * supposed to say which product this row is said nothing.
  *
- * These numbers pair with the sizes in `html.ts` and are handed to the island
- * below, so a slot's size lives in one place.
+ * These numbers pair with the sizes in `html.ts` and are handed to the typed
+ * shopping client below, so a slot's size lives in one place.
  */
 const PRODUCT_PICTURE = {
   row: { size: 26, width: 96 },
@@ -993,7 +993,7 @@ function externalSendPanel(
 }
 
 /**
- * What the S-ostoslista already holds, filled in by the island.
+ * What the S-ostoslista already holds, filled in by the typed shopping client.
  *
  * It ships hidden and empty on purpose. The contents are an external read, and
  * #159 asks for them without letting them delay — or break — the household's
@@ -1055,8 +1055,8 @@ function externalProductBlock(
 }
 
 /**
- * The scope choice, drawn by the server and hidden, for the island to lift into
- * its panel.
+ * The scope choice, drawn by the server and hidden, for the typed shopping
+ * client to lift into its panel.
  *
  * It sits outside every form on the row on purpose — a hidden `<select>` inside
  * the cupboard or open-panel form would be posted along with them — and it is
@@ -1082,8 +1082,8 @@ function scopeSource(item: ShoppingItem): Raw {
  * appeared the instant a product was drawn — and a whole tap target arriving
  * mid-row shoved every row under it down the screen at exactly the moment the
  * member had just tapped something. Disabled it holds its own space, says
- * plainly that there is nothing to add a size to yet, and the island only has to
- * enable it.
+ * plainly that there is nothing to add a size to yet, and the typed shopping
+ * client only has to enable it.
  */
 function openForm(
   item: ShoppingItem,
