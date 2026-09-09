@@ -1,0 +1,28 @@
+name: Review-fix shopping client docs
+
+on:
+  push:
+    branches:
+      - docs/279-shopping-client-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/review-fix-shopping-docs.mjs
+      - name: Commit review fixes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/codebase/screens.md src/shopping-screens.ts .github/workflows/review-fix-shopping-docs.yml scripts/review-fix-shopping-docs.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "Review-fix shopping client documentation"
+          git push
