@@ -57,6 +57,10 @@ import {
   recipeListScreen,
   recipeScreen,
 } from "./recipes.ts";
+import {
+  recipeProductScreen,
+  saveRecipeProductForm,
+} from "./recipe-products.ts";
 import { preferredMultiplierForm, publishForm } from "./publish-screens.ts";
 import {
   apiAddPlannedBatch,
@@ -183,6 +187,8 @@ const router = new Router()
   .post("/recipes/julkaisu", requireMemberScreen(publishForm))
   .post("/recipes/kategoriat", requireMemberScreen(categoryBulkForm))
   .get("/recipes/:id", requireMemberScreen(recipeScreen))
+  .get("/recipes/:id/tuote", requireMemberScreen(recipeProductScreen))
+  .post("/recipes/:id/tuote", requireMemberScreen(saveRecipeProductForm))
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
   .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))

@@ -14,18 +14,28 @@ import {
 import {
   removeIngredientProduct,
   removeRecipeProduct,
-  saveIngredientProduct,
-  saveRecipeProduct,
 } from "./ingredient-products.ts";
-import { baseAmount, packageSizeFromName } from "./packaging.ts";
-import { formatDecimal } from "./quantities.ts";
+import { packageSizeFromName } from "./packaging.ts";
+import {
+  PRODUCT_PICTURE,
+  chosenMode,
+  externalClient,
+  productBlock,
+  productSearchBody,
+  productSearchHeading,
+  productSummary,
+  productThumbnail,
+  reason,
+  refusedProductJson,
+  saveChosenProduct,
+  savedProductJson,
+  type PickerRoutes,
+} from "./product-picker.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
 import { sendToSOstoslista } from "./s-ostoslista-sync.ts";
 import {
-  SOstoslistaClient,
   SOstoslistaError,
-  sProductImageAtWidth,
   type SOstoslistaKey,
   type SOstoslistaProduct,
 } from "./s-ostoslista.ts";
@@ -412,93 +422,45 @@ export async function saveProductForm(
 
   const mode = chosenMode(form.get("tapa"));
   const query = String(form.get("haku") ?? "").trim();
-  const ean = String(form.get("ean") ?? "").trim();
-  const scope = chosenScope(item, form.get("laajuus"));
+  const outcome = await saveChosenProduct(
+    ctx.env.DB,
+    member.householdId,
+    client,
+    item,
+    form,
+  );
 
   /**
-   * The typed shopping client shows the choice before this answer arrives, so a
-   * refusal has to be sayable to it. Both callers get the same words and the same status; only
-   * the shape differs, and neither one has saved anything by this point.
+   * The typed picker client shows the choice before this answer arrives, so a
+   * refusal has to be sayable to it. Both callers get the same words and the
+   * same status; only the shape differs, and neither one has saved anything by
+   * this point.
    */
-  const refuse = (
-    message: string,
-    status: number,
-    products: SOstoslistaProduct[],
-  ): Response =>
-    asJson
-      ? problem(status, message)
+  if (!outcome.ok) {
+    return asJson
+      ? refusedProductJson(outcome)
       : productPage(
           member,
           item,
           state.selectedIds,
           mode,
           query,
-          products,
-          message,
-          status,
+          outcome.products,
+          outcome.message,
+          outcome.status,
         );
-
-  if (scope === null) {
-    return refuse("Valinnan laajuutta ei tunnistettu. Mitään ei tallennettu.", 400, []);
-  }
-
-  let products: SOstoslistaProduct[];
-  try {
-    products = await client.search(query);
-  } catch (error) {
-    console.error(`S-ostoslista product selection search failed: ${reason(error)}`);
-    return refuse(
-      "Tuotetta ei voitu varmistaa S-ostoslistasta. Mitään ei tallennettu.",
-      502,
-      [],
-    );
-  }
-
-  const selected = products.find((product) => product.ean === ean);
-  if (selected === undefined) {
-    return refuse(
-      "Valittua tuotetta ei löytynyt uudesta hausta. Mitään ei tallennettu.",
-      400,
-      products,
-    );
-  }
-
-  const size = statedSize(form, selected.ean) ?? packageSizeFromName(selected.name);
-  const toSave = {
-    ean: selected.ean,
-    name: selected.name,
-    imageUrl: selected.imageUrl,
-    packageQuantity: size?.quantity ?? null,
-    packageUnit: size?.unit ?? null,
-  };
-
-  if (scope === "ingredient") {
-    await saveIngredientProduct(ctx.env.DB, item.ingredientId, toSave, mode);
-  } else {
-    await saveRecipeProduct(
-      ctx.env.DB,
-      member.householdId,
-      scope.recipeId,
-      item.ingredientId,
-      toSave,
-    );
   }
 
   // The confirmed product, not the one the browser drew: a re-search may have
   // found a newer name, and the row should end up saying what was stored.
+  //
+  // An added size or a recipe's own product changes what the *other* rows add
+  // up to, so the browser reloads rather than drawing it itself.
   if (asJson) {
-    return Response.json({
-      product: {
-        ean: toSave.ean,
-        name: toSave.name,
-        imageUrl: toSave.imageUrl,
-        packageQuantity: toSave.packageQuantity,
-        packageUnit: toSave.packageUnit,
-      },
-      // An added size or a recipe's own product changes what the *other* rows
-      // add up to, so the browser reloads rather than drawing it itself.
-      reload: mode === "add" || scope !== "ingredient",
-    });
+    return savedProductJson(
+      outcome.product,
+      mode === "add" || outcome.scope !== "ingredient",
+    );
   }
 
   return new Response(null, {
@@ -551,52 +513,6 @@ export async function removeProductForm(
   });
 }
 
-/** Replace what this ingredient is, or add another packet of the same thing. */
-function chosenMode(value: FormDataEntryValue | string | null): "replace" | "add" {
-  return String(value ?? "") === "lisaa" ? "add" : "replace";
-}
-
-/**
- * How far the choice reaches: every use of this ingredient, or one dish's.
- *
- * The recipe has to be one the row actually came from. A member choosing a
- * scope from a screen they can see cannot thereby pin an ingredient inside
- * somebody else's week.
- */
-function chosenScope(
-  item: ShoppingItem,
-  value: FormDataEntryValue | string | null,
-): "ingredient" | { recipeId: number } | null {
-  const raw = String(value ?? "").trim();
-  if (raw === "" || raw === "aines") return "ingredient";
-  const recipeId = Number(raw);
-  if (!Number.isSafeInteger(recipeId)) return null;
-  return item.recipes.some((one) => one.id === recipeId) ? { recipeId } : null;
-}
-
-/**
- * A package size the member typed, for a product whose name does not say one.
- *
- * The fields are named per EAN because the whole results list is one form —
- * one scope choice above many products — so `pakkaus` alone would hand the
- * chosen product whichever size was typed highest up the page.
- *
- * Both halves or neither: a number without a unit would be a size that compares
- * grams against millilitres, and `baseAmount` refusing an unknown unit is what
- * keeps a typo out of the optimisation rather than into it.
- */
-function statedSize(
-  form: FormData,
-  ean: string,
-): { quantity: number; unit: string } | null {
-  const quantity = Number(
-    String(form.get(`pakkaus_${ean}`) ?? "").trim().replace(",", "."),
-  );
-  const unit = String(form.get(`pakkausyksikko_${ean}`) ?? "").trim();
-  if (!Number.isFinite(quantity) || quantity <= 0 || unit === "") return null;
-  if (baseAmount(quantity, unit) === null) return null;
-  return { quantity, unit };
-}
 
 /**
  * `POST /ostoslista/kaappi` — the cupboard, changed from the list itself.
@@ -839,12 +755,13 @@ function itemList(
       (item) => html`<li ${rowAnchor(item, anchored)}>
         <details
           class="shopping-item"
+          data-product-row
           data-aines="${item.ingredientId}"
           data-rivi="${item.key}"
           data-haku="${item.name}"
         >
           <summary>
-            <span class="shopping-thumb">${thumbnail(item)}</span>
+            <span class="shopping-thumb">${productThumbnail(item)}</span>
             <span class="shopping-line">
               <span class="shopping-name">${item.name}</span>
               <span class="${item.total === AMOUNT_IN_RECIPE
@@ -921,53 +838,6 @@ function listLocation(
   return `/ostoslista?${selectionQueryFromIds(selectedIds)}${anchor}`;
 }
 
-/**
- * Every slot a product picture is drawn in, with the width the CDN should
- * render it at. Three of them, and the widths are roughly three times the slot
- * — enough for a phone's own pixel density and no more (#204). Left to itself
- * the CDN sends one 256 px picture for all three, which on a portrait carton is
- * 44 kB apiece: nearly a megabyte to fill twenty 26 px squares.
- *
- * The CSS crops each of these to its box rather than fitting the whole picture
- * inside it, which is the other half of the same complaint. A product photo is
- * shot however the package stands, so a milk carton arrives at 256 × 705; fitted
- * into a square it drew as a 9 px sliver of white, and the picture that was
- * supposed to say which product this row is said nothing.
- *
- * These numbers pair with the sizes in `html.ts` and are handed to the typed
- * shopping client below, so a slot's size lives in one place.
- */
-const PRODUCT_PICTURE = {
-  row: { size: 26, width: 96 },
-  summary: { size: 40, width: 128 },
-  result: { size: 80, width: 192 },
-} as const;
-
-type PictureSlot = (typeof PRODUCT_PICTURE)[keyof typeof PRODUCT_PICTURE];
-
-function productPicture(url: string, slot: PictureSlot): Raw {
-  return html`<img
-    src="${sProductImageAtWidth(url, slot.width)}"
-    alt=""
-    width="${String(slot.size)}"
-    height="${String(slot.size)}"
-    loading="lazy"
-    onerror="this.hidden=true"
-  />`;
-}
-
-/**
- * The chosen product's picture on the row itself (#159), small enough that the
- * row it sits in is the height it always was. Without a picture the slot stays
- * empty and collapses, so an unmapped ingredient — or one whose CDN image is
- * missing — reads exactly as it did before rather than as a broken box.
- */
-function thumbnail(item: ShoppingItem): Raw {
-  const image = item.chosen[0]?.product.imageUrl ?? null;
-  if (image === null) return html``;
-  return productPicture(image, PRODUCT_PICTURE.row);
-}
-
 function externalSendPanel(
   buy: ShoppingItem[],
   selectedIds: Set<number>,
@@ -1016,13 +886,27 @@ function currentListPanel(): Raw {
 }
 
 /**
- * What this row is buying, and the two buttons that change it.
- *
- * The intelligence stays behind the row (#161): a member reads the product,
- * how many of it, and — where a recipe has its own — which dish this row
- * belongs to. There is no rule editor and no settings page; the two things
- * anybody needs to say are said by opening the product panel from here, either
- * to change the product or to teach the ingredient another package size.
+ * Where this screen's picker forms go. Everything else about choosing a
+ * product is the shared component in `product-picker.ts`, driven here by the
+ * same browser module a recipe's ingredient row uses (#302).
+ */
+function shoppingRoutes(
+  item: ShoppingItem,
+  selectedIds: Set<number>,
+): PickerRoutes {
+  return {
+    open: "/ostoslista/tuote",
+    save: "/ostoslista/tuote",
+    remove: "/ostoslista/tuote/poista",
+    back: listLocation(selectedIds, item.ingredientId),
+    fields: selectionFields(selectedIds),
+  };
+}
+
+/**
+ * The row's product block, or — for a row the cupboard already covers — only
+ * what was chosen for it, with nothing to press. A row that is not being bought
+ * has nothing on it to change.
  */
 function externalProductBlock(
   item: ShoppingItem,
@@ -1031,151 +915,10 @@ function externalProductBlock(
   external: boolean,
 ): Raw {
   if (!external) return html``;
-
-  const mapped = item.chosen.length > 0;
-  if (inPantry) return mapped ? productSummary(item) : html``;
-
-  return html`<div class="s-shopping-product ${mapped ? "is-mapped" : "is-note"}">
-    <div class="s-shopping-product-body">
-      ${mapped
-        ? productSummary(item)
-        : html`<div class="s-shopping-product-copy">
-            <strong>Teksti</strong>
-            <span class="meta">Lähetetään tekstinä: ${item.name} — ${item.total}</span>
-          </div>`}
-    </div>
-    ${openForm(item, selectedIds, "korvaa", mapped ? "Vaihda tuote" : "Valitse tuote")}
-    <p class="s-status" role="status" aria-live="polite"></p>
-    ${item.recipeId === null
-      ? openForm(item, selectedIds, "lisaa", "Lisää toinen pakkauskoko", !mapped)
-      : ""}
-    ${knownProducts(item, selectedIds)}
-    ${scopeSource(item)}
-  </div>`;
-}
-
-/**
- * The scope choice, drawn by the server and hidden, for the typed shopping
- * client to lift into its panel.
- *
- * It sits outside every form on the row on purpose — a hidden `<select>` inside
- * the cupboard or open-panel form would be posted along with them — and it is
- * rendered here rather than built in JavaScript so a dish's title is escaped by
- * the same `html` tag as everything else.
- */
-function scopeSource(item: ShoppingItem): Raw {
-  if (item.recipeId !== null || item.recipes.length === 0) return html``;
-  return html`<div class="s-scope-source" hidden>${scopeChoice(item, "replace")}</div>`;
-}
-
-/**
- * One button that opens the product panel — in the browser, or as a plain
- * navigation to `/ostoslista/tuote` where it cannot.
- *
- * `tapa` is the difference between the two: `korvaa` means this ingredient is
- * something else than we thought, `lisaa` means it is the same thing in a
- * second packet. Both end up in the same panel; only what the save does with
- * the answer differs.
- *
- * There is nothing to add a second size *to* until something is chosen, so on an
- * unmapped row that button is **disabled rather than hidden** (#200). Hidden, it
- * appeared the instant a product was drawn — and a whole tap target arriving
- * mid-row shoved every row under it down the screen at exactly the moment the
- * member had just tapped something. Disabled it holds its own space, says
- * plainly that there is nothing to add a size to yet, and the typed shopping
- * client only has to enable it.
- */
-function openForm(
-  item: ShoppingItem,
-  selectedIds: Set<number>,
-  mode: "korvaa" | "lisaa",
-  label: string,
-  disabled = false,
-): Raw {
-  return html`<form
-    method="get"
-    action="/ostoslista/tuote"
-    class="inline s-product-open"
-    data-tapa="${mode}"
-  >
-    <input type="hidden" name="rivi" value="${item.key}" />
-    <input type="hidden" name="tapa" value="${mode}" />
-    <input type="hidden" name="haku" value="${item.name}" />
-    ${selectionFields(selectedIds)}
-    <button type="submit" ${disabled ? rawDisabled : ""}>${label}</button>
-  </form>`;
-}
-
-/**
- * The package sizes this row knows beyond the one it is buying, each with the
- * one thing that can go wrong made fixable: a size nobody could read, and a
- * choice somebody made by mistake.
- *
- * It is only drawn when there is more than one product or a recipe's own — the
- * ordinary row, one ingredient with one packet, shows nothing extra at all.
- */
-function knownProducts(item: ShoppingItem, selectedIds: Set<number>): Raw {
-  const pinned = item.recipeId !== null;
-  if (!pinned && item.products.length < 2) return html``;
-
-  return html`<ul class="s-product-sizes">
-    ${item.products.map(
-      (product) => html`<li>
-        <span class="s-product-size-name">${product.name}</span>
-        <span class="meta"
-          >${product.packageQuantity === null || product.packageUnit === null
-            ? "pakkauskoko tuntematon"
-            : `${formatDecimal(product.packageQuantity)} ${product.packageUnit}`}</span
-        >
-        <form method="post" action="/ostoslista/tuote/poista" class="inline">
-          <input type="hidden" name="rivi" value="${item.key}" />
-          <input type="hidden" name="ean" value="${product.ean}" />
-          ${selectionFields(selectedIds)}
-          <button type="submit">${pinned ? "Poista poikkeus" : "Poista"}</button>
-        </form>
-      </li>`,
-    )}
-  </ul>`;
-}
-
-/**
- * The row's answer to "what do I put in the trolley": every chosen packet, and
- * how many of it. A single packet reads exactly as it did before #161 — the
- * count only appears where there is one to say.
- *
- * #200 shrinks it. It used to be a card with a 64 px picture, and swapping the
- * two-line "Teksti" placeholder for it changed the row's height at the exact
- * moment somebody had just tapped something — so the rest of the list moved
- * under their thumb. At 40 px with the name and EAN each held to one line, the
- * mapped and unmapped states are the same two lines tall and the swap moves
- * nothing.
- */
-function productSummary(item: ShoppingItem): Raw {
-  return html`<div class="s-shopping-product-summary">
-    ${item.recipeTitle === null
-      ? ""
-      : html`<span class="s-product-scope meta"
-          >Vain reseptissä ${item.recipeTitle}</span
-        >`}
-    ${item.chosen.map(
-      ({ product, count }) => html`<span class="s-shopping-product-one">
-        ${product.imageUrl === null
-          ? ""
-          : productPicture(product.imageUrl, PRODUCT_PICTURE.summary)}
-        <span class="s-shopping-product-copy">
-          <strong
-            >${count > 1 ? `${count} × ` : ""}${product.name}</strong
-          >
-          <span class="meta">EAN ${product.ean}</span>
-        </span>
-      </span>`,
-    )}
-    ${item.packageTotal === null
-      ? ""
-      : html`<span class="s-package-total meta"
-          >Pakkauksissa yhteensä ${item.packageTotal}</span
-        >`}
-  </div>`;
+  if (inPantry) {
+    return item.chosen.length > 0 ? productSummary(item) : html``;
+  }
+  return productBlock(item, shoppingRoutes(item, selectedIds));
 }
 
 function productPage(
@@ -1188,147 +931,22 @@ function productPage(
   refused: string | null,
   status: number,
 ): Response {
-  const back = listLocation(selectedIds, item.ingredientId);
-  const heading =
-    mode === "add"
-      ? `Lisää pakkauskoko: ${item.name}`
-      : `Valitse tuote: ${item.name}`;
   return page(
-    heading,
-    html`<p><a href="${back}">← Takaisin ostoslistaan</a></p>
-      <h1>${heading}</h1>
-      ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
-      <form method="get" action="/ostoslista/tuote" class="stacked product-search-form">
-        <input type="hidden" name="rivi" value="${item.key}" />
-        <input type="hidden" name="tapa" value="${mode === "add" ? "lisaa" : "korvaa"}" />
-        ${selectionFields(selectedIds)}
-        <label>
-          Haku
-          <input type="search" name="haku" value="${query}" required />
-        </label>
-        <button type="submit" class="primary">Hae tuotteita</button>
-      </form>
-      ${products.length === 0 && refused === null
-        ? html`<p class="empty">Haulla ei löytynyt tuotteita.</p>`
-        : productResults(item, selectedIds, mode, query, products)}`,
+    productSearchHeading(item, mode),
+    productSearchBody(
+      item,
+      shoppingRoutes(item, selectedIds),
+      mode,
+      query,
+      products,
+      refused,
+      "Takaisin ostoslistaan",
+    ),
     "shopping",
     member,
     status,
   );
 }
-
-/**
- * How wide a choice reaches, asked in one line above the results.
- *
- * A dropdown rather than a pair of buttons on every result: the answer is
- * almost always the default, the results are already busy, and a row that draws
- * two batches' worth of dishes needs to be able to say *which* dish anyway.
- * Adding a second package size is not a scope question at all — it is by
- * definition about the ingredient — so the choice is not offered there.
- */
-function scopeChoice(item: ShoppingItem, mode: "replace" | "add"): Raw {
-  if (mode === "add" || item.recipeId !== null || item.recipes.length === 0) {
-    return html``;
-  }
-
-  return html`<label class="s-product-scope-choice">
-    Valinnan laajuus
-    <select name="laajuus">
-      <option value="aines">Käytä aina tälle ainekselle</option>
-      ${item.recipes.map(
-        (recipe) => html`<option value="${recipe.id}">
-          Käytä tässä reseptissä: ${recipe.title}
-        </option>`,
-      )}
-    </select>
-  </label>`;
-}
-
-function productResults(
-  item: ShoppingItem,
-  selectedIds: Set<number>,
-  mode: "replace" | "add",
-  query: string,
-  products: SOstoslistaProduct[],
-): Raw {
-  return html`<form method="post" action="/ostoslista/tuote" class="s-product-choice">
-    <input type="hidden" name="rivi" value="${item.key}" />
-    <input type="hidden" name="haku" value="${query}" />
-    <input type="hidden" name="tapa" value="${mode === "add" ? "lisaa" : "korvaa"}" />
-    ${selectionFields(selectedIds)}
-    ${scopeChoice(item, mode)}
-    <ul class="s-product-results">
-      ${products.map((product) => productResult(product))}
-    </ul>
-  </form>`;
-}
-
-function productResult(product: SOstoslistaProduct): Raw {
-  const size = packageSizeFromName(product.name);
-  return html`<li>
-    ${productPicture(product.imageUrl, PRODUCT_PICTURE.result)}
-    <div class="s-product-result-copy">
-      <strong>${product.name}</strong>
-      <span class="meta">EAN ${product.ean}</span>
-      ${product.price === null
-        ? ""
-        : html`<span class="meta"
-            >${product.price.toLocaleString("fi-FI", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })} €${product.priceUnit === null
-              ? ""
-              : ` / ${product.priceUnit.toLocaleLowerCase("fi-FI")}`}</span
-          >`}
-      ${product.available === false
-        ? html`<span class="meta">Ei saatavilla valitussa kaupassa</span>`
-        : ""}
-      ${size === null ? "" : html`<span class="meta s-product-size">Pakkaus ${formatDecimal(size.quantity)} ${size.unit}</span>`}
-    </div>
-    ${size === null ? packageSizeFields(product) : ""}
-    <button
-      type="submit"
-      class="primary"
-      name="ean"
-      value="${product.ean}"
-    >
-      Valitse
-    </button>
-  </li>`;
-}
-
-/**
- * The one field this screen ever asks for, and only where the shop's own name
- * does not answer it: `Kanan rintafilee marinoitu` says nothing about grams.
- *
- * Left empty, the product is still perfectly choosable — it just never gets a
- * package count, which is the safe half of #161's bargain. Filled in, it is
- * stored once as data like every other size.
- */
-function packageSizeFields(product: SOstoslistaProduct): Raw {
-  return html`<span class="s-product-size-entry">
-    <label
-      >Pakkauskoko
-      <input
-        type="text"
-        inputmode="decimal"
-        name="pakkaus_${product.ean}"
-        size="5"
-        data-ean="${product.ean}"
-      />
-    </label>
-    <label
-      >Yksikkö
-      <select name="pakkausyksikko_${product.ean}" data-ean="${product.ean}">
-        <option value="">–</option>
-        ${["g", "kg", "ml", "dl", "l", "kpl"].map(
-          (unit) => html`<option value="${unit}">${unit}</option>`,
-        )}
-      </select>
-    </label>
-  </span>`;
-}
-
 function selectedBuyItem(
   buy: ShoppingItem[],
   rawKey: FormDataEntryValue | string | null,
@@ -1336,47 +954,6 @@ function selectedBuyItem(
   const key = String(rawKey ?? "").trim();
   if (key === "") return null;
   return buy.find((item) => item.key === key) ?? null;
-}
-
-/**
- * A URL means "call the service over HTTP", which is how the browser tests
- * reach their fixture. Otherwise the bound Worker is the transport, and the
- * base URL only has to be a valid absolute URL for the client to resolve paths
- * against — the binding decides where the request actually goes, so the
- * hostname below is never resolved.
- */
-const BOUND_SERVICE_BASE = "https://s-ostoslista-worker.invalid/";
-
-function externalClient(env: RouteContext["env"], member: Member): SOstoslistaClient | null {
-  const householdId = Number(env.SOSTOSLISTA_HOUSEHOLD_ID);
-  if (!Number.isSafeInteger(householdId) || householdId !== member.householdId) {
-    return null;
-  }
-  if (!env.SOSTOSLISTA_API_TOKEN) return null;
-  const overrideUrl = env.SOSTOSLISTA_SERVICE_URL;
-  const service = env.SOSTOSLISTA_SERVICE;
-  if (!overrideUrl && !service) return null;
-  try {
-    return new SOstoslistaClient(
-      overrideUrl || BOUND_SERVICE_BASE,
-      env.SOSTOSLISTA_API_TOKEN,
-      overrideUrl || !service
-        ? undefined
-        : (input, init) => service.fetch(input as RequestInfo, init),
-    );
-  } catch (error) {
-    console.error(`S-ostoslista configuration is invalid: ${reason(error)}`);
-    return null;
-  }
-}
-
-/**
- * Workers Logs keeps a thrown Error's stack but not its message, so passing the
- * error as a second argument to console.error loses the one line that says what
- * went wrong. Interpolating it is what makes a failure diagnosable from the log.
- */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

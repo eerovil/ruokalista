@@ -266,6 +266,8 @@ number they share, scoped to their own recipe row.
   and where the options genuinely carry different wording each keeps its own.
 - **The thumbnail follows the default option.** A row showing two products would
   say "buy both", which is what a `tai` line does not mean.
+  Issue #302 adds the picker beside it, and it follows the same option for the
+  same reason: the row chooses a product for the ingredient the row is about.
 - **The shopping list buys the first option and no other**, per cooking and per
   recipe row. The same dish planned twice needs its choice bought twice, and a
   dish's group 1 has nothing to do with its part's — which is why

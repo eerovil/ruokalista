@@ -44,6 +44,7 @@ Which spec covers what, roughly:
 | --- | --- |
 | the week, the days, a planned meal | `week.spec.ts`, `week-grouping.spec.ts` |
 | the shopping list, ingredient aggregation | `shopping.spec.ts`, `dev/check-shopping.ts` |
+| the S-ostoslista product picker, on either screen | `shopping.spec.ts`, `recipe-products.spec.ts` |
 | the shopping row's own layout on a narrow phone | `shopping-row-213.spec.ts` |
 | the recipe screen, the list, the picker | `recipes.spec.ts` |
 | the editor, the line form | `editor.spec.ts` |
