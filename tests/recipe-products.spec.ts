@@ -179,6 +179,38 @@ test.describe("our household", () => {
     );
   });
 
+  test("choosing a product does not change the row's height", async ({ page }) => {
+    // The regression CI caught and this machine did not: left to size itself,
+    // the block took whatever room the product's name wanted, so a mapped row
+    // left the ingredient less width — and a long ingredient then wrapped onto a
+    // second line in one state and not the other. A row that grows when it is
+    // given a product is the thing #200 and #204 removed from the shopping list.
+    const widths = [375, 768, 1024];
+
+    await page.goto(`/recipes/${LASAGNE}`);
+    const before: number[] = [];
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 900 });
+      const box = await ingredient(page, "maito").boundingBox();
+      expect(box).not.toBeNull();
+      before.push(box!.height);
+    }
+
+    await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
+    await page.goto(`/recipes/${LASAGNE}`);
+    await expect(ingredient(page, "maito").locator(".s-shopping-product"))
+      .toHaveClass(/is-mapped/);
+
+    for (const [index, width] of widths.entries()) {
+      await page.setViewportSize({ width, height: 900 });
+      const box = await ingredient(page, "maito").boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeCloseTo(before[index]!, 0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(width);
+    }
+  });
+
   test("a shared recipe from another household can still be given our product", async ({
     page,
   }) => {

@@ -1072,11 +1072,23 @@ const RECIPE_VIEW_STYLE = html`<style>
  * already on the row's own slot, so the summary's copy of it is not drawn
  * twice, the EAN and the note wording go, and what is left is the product's
  * name beside a small button.
+ *
+ * **The block's width is fixed, and that is the whole point.** Left to size
+ * itself it took as much room as the product's name wanted, so a row with a
+ * product had less width for the ingredient than a row without one — and a
+ * long ingredient then wrapped onto a second line in one state and not the
+ * other. That is a row whose height depends on whether it is mapped, which is
+ * exactly what #200 and #204 spent two pull requests removing from the shopping
+ * list; `tests/recipes.spec.ts` caught it on a CI runner while this machine's
+ * text happened to fit. At a fixed width both states leave the ingredient the
+ * same room, the name ellipsises inside it, and nothing moves when a product is
+ * chosen.
  */
 const RECIPE_PRODUCT_STYLE = html`<style>
   .recipe-ingredient .s-shopping-product {
     display: flex; align-items: center; gap: .35rem;
-    flex: 0 1 auto; min-width: 0; max-width: 60%;
+    flex: 0 0 8.5rem; width: 8.5rem; min-width: 0;
+    min-height: var(--tap-compact);
     margin: 0; padding: 0; border: 0; background: none;
   }
   .recipe-ingredient .s-shopping-product-body {
@@ -1084,14 +1096,13 @@ const RECIPE_PRODUCT_STYLE = html`<style>
   }
   .recipe-ingredient .s-shopping-product-one img,
   .recipe-ingredient .s-shopping-product-copy .meta,
-  .recipe-ingredient .s-product-scope { display: none; }
-  .recipe-ingredient .s-shopping-product-copy strong {
+  .recipe-ingredient .s-product-scope,
+  .recipe-ingredient .s-package-total { display: none; }
+  .recipe-ingredient .s-shopping-product-copy strong,
+  .recipe-ingredient .s-shopping-product-copy .meta:only-child {
     display: block; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; font-weight: 500; font-size: .85rem;
-    color: var(--muted);
-  }
-  .recipe-ingredient .s-shopping-product-copy .meta:only-child {
-    display: block; font-size: .85rem;
+    line-height: 1.3; color: var(--muted);
   }
   .recipe-ingredient .s-product-open button {
     min-height: var(--tap-compact); padding: 0 .5rem; font-size: .85rem;
