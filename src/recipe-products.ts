@@ -63,6 +63,18 @@ function dishId(recipe: Recipe): number {
   return recipe.parentId ?? recipe.id;
 }
 
+/**
+ * And the dish's own name, for the same reason.
+ *
+ * The recipe screen always hands the picker the dish, so this only matters for
+ * a hand-typed `/recipes/<partId>/tuote` — but there the scope choice would
+ * otherwise offer "Käytä tässä reseptissä: Jauhelihakastike" while pinning the
+ * product to Lasagne, which is a sentence that is not true.
+ */
+function dishTitle(recipe: Recipe): string {
+  return recipe.parentTitle ?? recipe.title;
+}
+
 /** Every line of a dish and of its parts, which is what a reader sees. */
 function allLines(recipe: Recipe): RecipeLine[] {
   const lines = [...recipe.lines];
@@ -96,13 +108,13 @@ export function recipeProductSubject(
     key: String(ingredientId),
     ingredientId,
     recipeId: null,
-    recipeTitle: override === null ? null : recipe.title,
+    recipeTitle: override === null ? null : dishTitle(recipe),
     name: line.ingredient,
     total: amount === "" ? "määrä reseptin mukaan" : amount,
     products: override === null ? products : [override],
     chosen: chosen === null ? [] : [{ product: chosen, count: 1 }],
     packageTotal: null,
-    recipes: [{ id: dishId(recipe), title: recipe.title }],
+    recipes: [{ id: dishId(recipe), title: dishTitle(recipe) }],
   };
 }
 

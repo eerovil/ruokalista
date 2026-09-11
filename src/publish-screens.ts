@@ -1,6 +1,7 @@
 import { loadVocabulary } from "./categories.ts";
 import { html, page } from "./html.ts";
 import type { Member } from "./members.ts";
+import { externalClient } from "./product-picker.ts";
 import {
   PreferenceRefused,
   setPreferredMultiplier,
@@ -149,6 +150,8 @@ export async function preferredMultiplierForm(
       DEFAULT_MULTIPLIER,
       error.message,
       env.CAST_APP_ID,
+      undefined,
+      externalClient(env, member) !== null,
     );
   }
 
@@ -223,6 +226,7 @@ async function refuse(
         message,
         env.CAST_APP_ID,
         sharingDraft,
+        externalClient(env, member) !== null,
       );
     }
   }
