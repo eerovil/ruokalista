@@ -303,6 +303,105 @@ test.describe("our household", () => {
     }
   });
 
+  test("two rows of one ingredient cannot save over each other", async ({ page }) => {
+    // The overlapping-save case. Each row used to hold its own "saving" flag,
+    // so both could post at once for the *same* `ingredient_product` row: the
+    // second one's rollback then restored a state older than the first one's
+    // confirmed save, and the screen ended up showing a product on one row and
+    // "Ei tuotetta" on the other until a reload.
+    executeLocalSql(`
+      INSERT INTO ingredient_line
+        (recipe_id, position, quantity, quantity_max, unit,
+         alt_quantity, alt_unit, ingredient_id, source_line, phase)
+      VALUES (${LASAGNE}, 11, 2, NULL, 'dl', NULL, NULL, ${MAITO},
+              '2 dl maitoa', 'after_parts')
+    `);
+
+    // The save is held open until this test lets it go, and counted.
+    let release: (() => void) | null = null;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let posts = 0;
+    await page.route(`**/recipes/${LASAGNE}/tuote`, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      posts += 1;
+      await held;
+      return route.continue();
+    });
+
+    await page.goto(`/recipes/${LASAGNE}`);
+    const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
+    await expect(rows).toHaveCount(2);
+
+    // The opener by position rather than by label: once the first choice is
+    // drawn, every row of this mapping says "Vaihda" instead of "Valitse".
+    async function choose(index: number, product: string): Promise<void> {
+      await rows.nth(index).locator("form.s-product-open button").first().click();
+      await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
+      await page
+        .locator(".s-sheet .s-product-results > li", { hasText: product })
+        .getByRole("button", { name: "Valitse" })
+        .click();
+    }
+
+    await choose(0, "Kotimaista rasvaton maito");
+
+    // Both rows show the choice while it is still in flight: they are one
+    // mapping, so there is no moment where they disagree with each other.
+    for (const index of [0, 1]) {
+      await expect(rows.nth(index).locator(".s-shopping-product-copy"))
+        .toContainText("Kotimaista rasvaton maito 1 l");
+    }
+    await expect(rows.nth(0).locator(".s-status")).toContainText("Tallennetaan");
+
+    // A second choice on the sibling while that save is open is ignored — the
+    // same rule a single row has always followed.
+    await choose(1, "Valio kevytmaito");
+    expect(posts).toBe(1);
+
+    release!();
+    await expect(rows.nth(0).locator(".s-status")).toBeEmpty();
+    await page.unroute(`**/recipes/${LASAGNE}/tuote`);
+    await page.reload();
+    for (const index of [0, 1]) {
+      await expect(rows.nth(index).locator(".s-shopping-product-copy"))
+        .toContainText("Kotimaista rasvaton maito 1 l");
+    }
+  });
+
+  test("a refused save puts both rows of one ingredient back", async ({ page }) => {
+    executeLocalSql(`
+      INSERT INTO ingredient_line
+        (recipe_id, position, quantity, quantity_max, unit,
+         alt_quantity, alt_unit, ingredient_id, source_line, phase)
+      VALUES (${LASAGNE}, 11, 2, NULL, 'dl', NULL, NULL, ${MAITO},
+              '2 dl maitoa', 'after_parts')
+    `);
+
+    await page.route(`**/recipes/${LASAGNE}/tuote`, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Tuotetta ei voitu varmistaa S-ostoslistasta." }),
+      });
+    });
+
+    await page.goto(`/recipes/${LASAGNE}`);
+    const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
+    await rows.nth(0).getByRole("button", { name: "Valitse", exact: true }).click();
+    await page
+      .locator(".s-sheet .s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+
+    // Nothing was written, so neither row is left claiming otherwise.
+    await expect(page.locator(".s-toast")).toContainText("ei voitu varmistaa");
+    for (const index of [0, 1]) {
+      await expect(rows.nth(index).locator(".s-shopping-product")).toHaveClass(/is-note/);
+      await expect(rows.nth(index)).toContainText("Ei tuotetta");
+    }
+  });
+
   test("a shared recipe from another household can still be given our product", async ({
     page,
   }) => {

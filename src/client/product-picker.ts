@@ -647,7 +647,16 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     product: PickedProduct,
     fields: SizeFields | null,
   ): void {
-    if (row.saving) return;
+    // The guard is the *mapping*, not the row. Two rows of one dish can name the
+    // same ingredient, and both of them are one `ingredient_product` row — so
+    // letting each hold its own flag let two saves for it run at once, and the
+    // loser's rollback then restored a state older than the winner's confirmed
+    // save. A choice made while that mapping is saving is ignored, which is the
+    // rule a single row has always followed.
+    var group = savingGroup(row);
+    for (var busyIndex = 0; busyIndex < group.length; busyIndex += 1) {
+      if (group[busyIndex]!.saving) return;
+    }
     var extra: Record<string, string> = {
       tapa: row.mode,
       laajuus: row.scope && row.mode !== "lisaa" ? scopeValue(row) : "aines",
@@ -666,10 +675,10 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     // these two say they are saving and then reload onto the row, rather than
     // drawing a guess the server would immediately contradict.
     if (extra["tapa"] === "lisaa" || extra["laajuus"] !== "aines") {
-      row.saving = true;
+      hold(group, true);
       status(row, "Tallennetaan…");
       send(row, query, product, extra, function (ok, payload) {
-        row.saving = false;
+        hold(group, false);
         if (ok) {
           settled(true);
           reloadOnto(row);
@@ -689,15 +698,48 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
       return;
     }
 
-    var before: BeforeProduct = {
-      body: row.body.innerHTML,
-      thumb: row.thumb ? row.thumb.innerHTML : null,
-      blockClass: row.block.className,
-      openLabel: openerLabel(row),
-      disabledOpeners: openerAvailability(row),
-    };
-    showProduct(row, product);
-    persist(row, query, product, extra, before);
+    // Every row of this mapping is drawn at once and rolled back at once. The
+    // one that was pressed is not special: they all say the same thing, and a
+    // sibling left behind until the answer came back was the same
+    // local-and-server-disagree state as one left behind for good.
+    var before: BeforeProduct[] = [];
+    for (var index = 0; index < group.length; index += 1) {
+      var one = group[index]!;
+      before.push({
+        body: one.body.innerHTML,
+        thumb: one.thumb ? one.thumb.innerHTML : null,
+        blockClass: one.block.className,
+        openLabel: openerLabel(one),
+        disabledOpeners: openerAvailability(one),
+      });
+      showProduct(one, product);
+    }
+    persist(row, group, query, product, extra, before);
+  }
+
+  /**
+   * Every row this save is really about: the one that was pressed, plus any
+   * other row reading the same ingredient's product.
+   *
+   * A row following one dish's own product is not in it — that row is not
+   * reading the mapping being written, so it must neither be blocked by the
+   * save nor drawn into by it.
+   */
+  function savingGroup(row: PickerRow): PickerRow[] {
+    var group = [row];
+    if (row.aines === "" || row.ownRecipe) return group;
+    for (var index = 0; index < rows.length; index += 1) {
+      var other = rows[index]!;
+      if (other === row || other.ownRecipe) continue;
+      if (other.aines === row.aines) group.push(other);
+    }
+    return group;
+  }
+
+  function hold(group: PickerRow[], saving: boolean): void {
+    for (var index = 0; index < group.length; index += 1) {
+      group[index]!.saving = saving;
+    }
   }
 
   function reloadOnto(row: PickerRow): void {
@@ -779,19 +821,21 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
 
   function persist(
     row: PickerRow,
+    group: PickerRow[],
     query: string,
     product: PickedProduct,
     extra: Record<string, string>,
-    before: BeforeProduct,
+    before: BeforeProduct[],
   ): void {
-    row.saving = true;
+    hold(group, true);
     clearError();
     status(row, "Tallennetaan…");
     send(row, query, product, extra, function (ok, payload) {
-      row.saving = false;
+      hold(group, false);
       status(row, null);
       var record = isRecord(payload) ? payload : null;
       var confirmed = record ? readProduct(record["product"]) : null;
+      var index: number;
       if (ok && confirmed) {
         // The save can say the answer is bigger than this row — a package size
         // added, or a product pinned to one dish. That arithmetic is the
@@ -801,48 +845,37 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
           reloadOnto(row);
           return;
         }
-        showProduct(row, confirmed);
-        followIngredient(row, confirmed);
-        if (before.blockClass.indexOf("is-note") !== -1 && hooks.onNoteBecameProduct) {
-          hooks.onNoteBecameProduct();
+        // The confirmed product rather than the chosen one: a re-search may
+        // have found a newer name, and every row of this mapping says it.
+        for (index = 0; index < group.length; index += 1) {
+          showProduct(group[index]!, confirmed);
         }
+        var wasNote = false;
+        for (index = 0; index < before.length; index += 1) {
+          if (before[index]!.blockClass.indexOf("is-note") !== -1) wasNote = true;
+        }
+        if (wasNote && hooks.onNoteBecameProduct) hooks.onNoteBecameProduct();
         closeRow(row);
         settled(true);
         return;
       }
-      restore(row, before);
+      for (index = 0; index < group.length; index += 1) {
+        restore(group[index]!, before[index]!);
+      }
       showError(
         "Tuotteen tallennus epäonnistui.",
         record && typeof record["error"] === "string"
           ? record["error"] as string
           : null,
         function () {
-          showProduct(row, product);
-          persist(row, query, product, extra, before);
+          for (var again = 0; again < group.length; again += 1) {
+            showProduct(group[again]!, product);
+          }
+          persist(row, group, query, product, extra, before);
         },
       );
       settled(false);
     });
-  }
-
-  /**
-   * The same ingredient can be on the screen twice — a dish naming it and one
-   * of its parts naming it again — and a choice made on either is a choice
-   * about the ingredient, so both rows have to show it. Left alone, the row
-   * nobody pressed sat there saying "Ei tuotetta" until a reload, which is the
-   * local-and-server-disagree state #159 rules out.
-   *
-   * A row following one dish's own product is skipped: it is not reading the
-   * mapping that just changed, and drawing this product into it would be a lie.
-   */
-  function followIngredient(row: PickerRow, product: PickedProduct): void {
-    if (row.aines === "" || row.ownRecipe) return;
-    for (var index = 0; index < rows.length; index += 1) {
-      var other = rows[index]!;
-      if (other === row || other.saving) continue;
-      if (other.ownRecipe || other.aines !== row.aines) continue;
-      showProduct(other, product);
-    }
   }
 
   function settled(ok: boolean): void {

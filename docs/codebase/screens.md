@@ -310,10 +310,16 @@ can behave differently about, which is what the card asked for.
   went on winning when the row was read back, and the row sat there showing a
   product the list would not use — while every other dish quietly changed. A
   pinned row's save now goes where the row says it goes.
-- **A choice about an ingredient reaches every row for it.** A dish can name the
-  same ingredient twice, itself and in a part; the client draws the saved
-  product into all of them, skipping any row pinned to a dish, because that row
-  is not reading the mapping that changed.
+- **A choice about an ingredient is one save for every row of it.** A dish can
+  name the same ingredient twice, itself and in a part, and both rows are the
+  same `ingredient_product` row. So the client treats them as one unit: it
+  draws the product into all of them at once, posts once, confirms or rolls
+  back all of them together, and ignores a choice made on any of them while
+  that save is open — the rule a single row has always followed. Letting each
+  row hold its own flag let two saves for one mapping run at once, and the
+  loser's rollback then restored a state older than the winner's confirmed
+  save. A row pinned to a dish is not in the unit: it is not reading the
+  mapping being written, so it is neither blocked by the save nor drawn into.
 - **Dropping a package size or an override is not offered here.** That is the
   shopping list's screen, where the package arithmetic it changes is visible.
   So is turning a dish's own product back into the ingredient's.
