@@ -1087,7 +1087,7 @@ const RECIPE_VIEW_STYLE = html`<style>
 const RECIPE_PRODUCT_STYLE = html`<style>
   .recipe-ingredient .s-shopping-product {
     display: flex; align-items: center; gap: .35rem;
-    flex: 0 0 8.5rem; width: 8.5rem; min-width: 0;
+    flex: 0 0 10rem; width: 10rem; min-width: 0;
     min-height: var(--tap-compact);
     margin: 0; padding: 0; border: 0; background: none;
   }
