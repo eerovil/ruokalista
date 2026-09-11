@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
@@ -208,6 +208,98 @@ test.describe("our household", () => {
       expect(box!.height).toBeCloseTo(before[index]!, 0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth))
         .toBeLessThanOrEqual(width);
+    }
+  });
+
+  test("changing a dish's own product changes that, not everyone's", async ({
+    page,
+  }) => {
+    // Found in review. The scope choice was drawn on a row that already had a
+    // dish's own product and defaulted to "Käytä aina tälle ainekselle", so
+    // changing the row wrote the *global* mapping while the override went on
+    // winning — the row showed a product the screen would not use, and every
+    // other dish quietly changed instead.
+    await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
+    await chooseFromRecipe(page, LASAGNE, MAITO, "maito", KEVYTMAITO, String(LASAGNE));
+    await page.goto(`/recipes/${LASAGNE}`);
+
+    const milk = ingredient(page, "maito");
+    await expect(milk.locator(".recipe-product-thumb"))
+      .toHaveAttribute("src", new RegExp(KEVYTMAITO));
+    await milk.getByRole("button", { name: "Vaihda", exact: true }).click();
+
+    const sheet = page.locator(".s-sheet");
+    await expect(sheet).toBeVisible();
+    // There is no scope question on a row that is already one dish's own.
+    await expect(sheet.locator(".s-product-scope-choice")).toHaveCount(0);
+
+    await sheet
+      .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+
+    // What the row says after the save is what a reload says too.
+    await expect(ingredient(page, "maito").locator(".recipe-product-thumb"))
+      .toHaveAttribute("src", new RegExp(RASVATON));
+    await page.reload();
+    await expect(ingredient(page, "maito").locator(".recipe-product-thumb"))
+      .toHaveAttribute("src", new RegExp(RASVATON));
+
+    // And it moved the dish's own product, not the ingredient's: the shopping
+    // list still draws this as the dish's exception.
+    const date = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Helsinki",
+    }).format(new Date());
+    const cooking = await page.request.post("/api/batches", {
+      data: { date, slot: "dinner", recipeId: LASAGNE, multiplier: 1 },
+    });
+    expect(cooking.status()).toBe(201);
+
+    await page.goto("/ostoslista");
+    const row = page.locator(".shopping-item", { hasText: "maito" });
+    await row.locator("summary").click();
+    await expect(row.locator(".s-product-scope")).toContainText(
+      "Vain reseptissä Lasagne",
+    );
+    await expect(row.locator(".s-shopping-product-summary")).toContainText(
+      "Kotimaista rasvaton maito 1 l",
+    );
+  });
+
+  test("one ingredient on two rows of a dish moves together", async ({ page }) => {
+    // Also from review. A dish can name the same ingredient twice — itself and
+    // in a part — and a choice on either is a choice about the ingredient. The
+    // row nobody pressed used to sit there saying "Ei tuotetta" until a reload.
+    executeLocalSql(`
+      INSERT INTO ingredient_line
+        (recipe_id, position, quantity, quantity_max, unit,
+         alt_quantity, alt_unit, ingredient_id, source_line, phase)
+      VALUES (${LASAGNE}, 11, 2, NULL, 'dl', NULL, NULL, ${MAITO},
+              '2 dl maitoa', 'after_parts')
+    `);
+
+    await page.goto(`/recipes/${LASAGNE}`);
+    const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
+    await expect(rows).toHaveCount(2);
+    // Each row's own amount, not the first one's, reaches the panel.
+    await expect(rows.nth(0)).toHaveAttribute("data-maara", "5 dl");
+    await expect(rows.nth(1)).toHaveAttribute("data-maara", "2 dl");
+
+    const saved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/recipes/${LASAGNE}/tuote`),
+    );
+    await rows.nth(0).getByRole("button", { name: "Valitse", exact: true }).click();
+    await page
+      .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+    expect((await saved).ok()).toBe(true);
+
+    for (const index of [0, 1]) {
+      await expect(rows.nth(index).locator(".s-shopping-product-copy"))
+        .toContainText("Kotimaista rasvaton maito 1 l");
     }
   });
 

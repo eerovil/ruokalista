@@ -56,6 +56,8 @@ export interface PickerRow {
   saving: boolean;
   /** Where a selection posts. The row knows; the component does not. */
   saveUrl: string;
+  /** This row follows one dish's own product, not the ingredient's. */
+  ownRecipe: boolean;
 }
 
 export interface PickerHooks {
@@ -330,6 +332,7 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
         status: block.querySelector<HTMLElement>(".s-status"),
         saving: false,
         saveUrl: opener.getAttribute("data-tallenna") || "/ostoslista/tuote",
+        ownRecipe: block.getAttribute("data-oma-resepti") !== null,
       };
       rows.push(row);
     }
@@ -790,7 +793,16 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
       var record = isRecord(payload) ? payload : null;
       var confirmed = record ? readProduct(record["product"]) : null;
       if (ok && confirmed) {
+        // The save can say the answer is bigger than this row — a package size
+        // added, or a product pinned to one dish. That arithmetic is the
+        // server's, so the screen is re-read rather than guessed at.
+        if (record && record["reload"] === true) {
+          settled(true);
+          reloadOnto(row);
+          return;
+        }
         showProduct(row, confirmed);
+        followIngredient(row, confirmed);
         if (before.blockClass.indexOf("is-note") !== -1 && hooks.onNoteBecameProduct) {
           hooks.onNoteBecameProduct();
         }
@@ -811,6 +823,26 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
       );
       settled(false);
     });
+  }
+
+  /**
+   * The same ingredient can be on the screen twice — a dish naming it and one
+   * of its parts naming it again — and a choice made on either is a choice
+   * about the ingredient, so both rows have to show it. Left alone, the row
+   * nobody pressed sat there saying "Ei tuotetta" until a reload, which is the
+   * local-and-server-disagree state #159 rules out.
+   *
+   * A row following one dish's own product is skipped: it is not reading the
+   * mapping that just changed, and drawing this product into it would be a lie.
+   */
+  function followIngredient(row: PickerRow, product: PickedProduct): void {
+    if (row.aines === "" || row.ownRecipe) return;
+    for (var index = 0; index < rows.length; index += 1) {
+      var other = rows[index]!;
+      if (other === row || other.saving) continue;
+      if (other.ownRecipe || other.aines !== row.aines) continue;
+      showProduct(other, product);
+    }
   }
 
   function settled(ok: boolean): void {

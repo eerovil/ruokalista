@@ -606,6 +606,7 @@ function body(
                     picker.state,
                     shown.ingredientId,
                     multiplier,
+                    shown,
                   );
               return html`<li
                 class="${set.group === null

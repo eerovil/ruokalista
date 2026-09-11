@@ -1554,6 +1554,45 @@ test("a recipe's own product is not merged into the generic pile", async ({
   await expect(generic.locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
+test("changing a pinned row changes that dish's product, not the ingredient's", async ({
+  page,
+}) => {
+  // Found reviewing #302. "Vaihda tuote" on a row that says "Vain reseptissä
+  // Lasagne" used to write the *global* ingredient mapping: the override went
+  // on winning when the row was read back, so the row showed a product the
+  // list would not use, and every other dish changed instead.
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  const milk = row(page, "maito");
+  await milk.locator("summary").click();
+  await openPanelWith(page, milk, "Valitse tuote");
+  await page
+    .locator(".s-sheet .s-product-scope-choice select")
+    .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+  await chooseAndReload(page, "Kotimaista rasvaton maito");
+
+  const pinned = page.locator(".shopping-list > li", { hasText: "Vain reseptissä" });
+  await pinned.locator("summary").click();
+  await openPanelWith(page, pinned, "Vaihda tuote");
+  // A pinned row has nothing to ask: it is this dish's row.
+  await expect(page.locator(".s-sheet .s-product-scope-choice")).toHaveCount(0);
+  await chooseAndReload(page, "Valio kevytmaito");
+
+  const stillPinned = page.locator(".shopping-list > li", {
+    hasText: "Vain reseptissä",
+  });
+  await expect(stillPinned).toContainText("Valio kevytmaito 1 l");
+
+  // The other cooking's spoons of milk are untouched — the ingredient never
+  // learned a product at all.
+  const generic = page
+    .locator(".shopping-list > li", { hasText: "maito" })
+    .filter({ hasNot: page.locator(".s-product-scope") });
+  await generic.locator("summary").click();
+  await expect(generic.locator(".s-shopping-product.is-note")).toBeVisible();
+});
+
 test("the packet count follows what the week actually needs", async ({ page }) => {
   // 5 dl from one lasagne and 10 dl from a double batch: 1,5 l of milk, which
   // one litre does not cover and two do.

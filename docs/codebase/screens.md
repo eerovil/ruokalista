@@ -302,8 +302,21 @@ can behave differently about, which is what the card asked for.
   reseptissä` writes this household's override, which changes what the rest of
   the screen says, so that save reloads onto the row exactly as it does on the
   shopping list.
+- **A row that already has a dish's own product is a pinned row**, said in the
+  same word the shopping list says it in, and no scope choice is drawn on it.
+  That is a fix to both screens rather than a recipe rule: `chosenScope` used to
+  read the empty answer as "the ingredient", so pressing `Vaihda tuote` on a row
+  reading `Vain reseptissä Lasagne` wrote the *global* mapping, the override
+  went on winning when the row was read back, and the row sat there showing a
+  product the list would not use — while every other dish quietly changed. A
+  pinned row's save now goes where the row says it goes.
+- **A choice about an ingredient reaches every row for it.** A dish can name the
+  same ingredient twice, itself and in a part; the client draws the saved
+  product into all of them, skipping any row pinned to a dish, because that row
+  is not reading the mapping that changed.
 - **Dropping a package size or an override is not offered here.** That is the
   shopping list's screen, where the package arithmetic it changes is visible.
+  So is turning a dish's own product back into the ingredient's.
 - **None of it exists for another household.** `externalClient` gates the block,
   the row's data attributes, the stylesheet, the settings element, the script
   and both routes, which answer a bare 404. The chosen product's *picture* is

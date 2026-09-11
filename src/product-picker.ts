@@ -144,6 +144,15 @@ export interface BlockOptions {
 const rawDisabled = raw("disabled");
 
 /**
+ * This row follows one dish's own product rather than the ingredient's.
+ *
+ * The browser half needs it for one thing: when a choice changes what an
+ * ingredient means everywhere, every other row for that ingredient should
+ * follow — except a row like this one, which is not reading that mapping.
+ */
+const rawOwnRecipe = raw("data-oma-resepti");
+
+/**
  * What this row is buying, and the buttons that change it.
  *
  * The intelligence stays behind the row (#161): a member reads the product,
@@ -175,6 +184,7 @@ export function productBlock(
     class="${compact
       ? `s-shopping-product is-compact ${mapped ? "is-mapped" : "is-note"}`
       : `s-shopping-product ${mapped ? "is-mapped" : "is-note"}`}"
+    ${subject.recipeId === null ? "" : rawOwnRecipe}
   >
     <div class="s-shopping-product-body">
       ${mapped
@@ -520,6 +530,25 @@ export function chosenScope(
   value: FormDataEntryValue | string | null,
 ): "ingredient" | { recipeId: number } | null {
   const asked = String(value ?? "").trim();
+
+  /**
+   * A row that already follows one dish's own product has no scope question on
+   * it, and no scope choice is drawn for it — so whatever arrives here, the
+   * answer is that dish.
+   *
+   * Reading the empty answer as "the ingredient" is what it used to do, and it
+   * was wrong in a way that showed: the save wrote the *global* mapping, the
+   * override went on winning when the row was read back, and the row sat there
+   * showing a product the screen would not use until somebody reloaded. It also
+   * changed what every other dish buys, from a button labelled "Vaihda tuote"
+   * on a row that says "Vain reseptissä …".
+   */
+  if (subject.recipeId !== null) {
+    const same = asked === "" || asked === "aines" ||
+      Number(asked) === subject.recipeId;
+    return same ? { recipeId: subject.recipeId } : null;
+  }
+
   if (asked === "" || asked === "aines") return "ingredient";
   const recipeId = Number(asked);
   if (!Number.isSafeInteger(recipeId)) return null;

@@ -97,8 +97,15 @@ export function recipeProductSubject(
   multiplier: number,
   products: ProductChoice[],
   override: ProductChoice | null,
+  drawn?: RecipeLine,
 ): ProductSubject | null {
-  const line = allLines(recipe).find((one) => one.ingredientId === ingredientId);
+  // The drawn line when a screen has one — a dish may name the same ingredient
+  // twice, once itself and once in a part, and each of those rows wants its own
+  // amount in the panel's heading rather than the first one's. A route has only
+  // the ingredient, and there the amount decides a heading and nothing else.
+  const line = drawn ?? allLines(recipe).find(
+    (one) => one.ingredientId === ingredientId,
+  );
   if (line === undefined) return null;
 
   const chosen = override ?? products[0] ?? null;
@@ -107,7 +114,13 @@ export function recipeProductSubject(
   return {
     key: String(ingredientId),
     ingredientId,
-    recipeId: null,
+    // A dish that already insists on its own product is a *pinned* row, said in
+    // the same word the shopping list says it in. It is what stops the scope
+    // choice defaulting to "always for this ingredient" on a row that is not
+    // reading the ingredient's product at all — a save that then wrote the
+    // global mapping, left the override winning, and left the row showing a
+    // product the screen would not use.
+    recipeId: override === null ? null : dishId(recipe),
     recipeTitle: override === null ? null : dishTitle(recipe),
     name: line.ingredient,
     total: amount === "" ? "määrä reseptin mukaan" : amount,
@@ -147,6 +160,7 @@ export function subjectFromState(
   state: RecipeProductState,
   ingredientId: number,
   multiplier: number,
+  drawn?: RecipeLine,
 ): ProductSubject | null {
   return recipeProductSubject(
     recipe,
@@ -154,6 +168,7 @@ export function subjectFromState(
     multiplier,
     state.products.get(ingredientId) ?? [],
     state.overrides.get(overrideKey(state.dishId, ingredientId)) ?? null,
+    drawn,
   );
 }
 
