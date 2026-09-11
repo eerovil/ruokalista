@@ -1109,9 +1109,17 @@ const RECIPE_PRODUCT_STYLE = html`<style>
     min-height: var(--tap-compact); padding: 0 .5rem; font-size: .85rem;
     white-space: nowrap;
   }
-  .recipe-ingredient .s-status:empty { display: none; }
+  /* The busy line is a reserved slot, never an inserted one (#200): it is
+     always there at the same width, and only the spinner inside it is ever
+     drawn. Its words stay in the markup for the screen reader the aria-live
+     region is for — there is no room on a phone row to print them, and
+     printing them wrapped the row onto a second line at exactly the moment
+     somebody had tapped something. */
   .recipe-ingredient .s-status {
-    flex: 0 0 auto; margin: 0; font-size: .8rem; color: var(--muted);
+    flex: 0 0 1.25rem; width: 1.25rem;
+    height: 1.5rem; min-height: 0; line-height: 1.5rem;
+    margin: 0; font-size: 0; white-space: nowrap; overflow: hidden;
+    color: var(--muted);
   }
 </style>`;
 

@@ -353,6 +353,13 @@ test.describe("our household", () => {
     }
     await expect(rows.nth(0).locator(".s-status")).toContainText("Tallennetaan");
 
+    // And saying so moves nothing: the busy slot is reserved, not inserted.
+    const saving = await rows.nth(0).boundingBox();
+    const neighbour = await rows.nth(1).boundingBox();
+    expect(saving).not.toBeNull();
+    expect(neighbour).not.toBeNull();
+    expect(saving!.height).toBeCloseTo(neighbour!.height, 0);
+
     // A second choice on the sibling while that save is open is ignored — the
     // same rule a single row has always followed.
     await choose(1, "Valio kevytmaito");
