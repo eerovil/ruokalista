@@ -85,11 +85,13 @@ function allLines(recipe: Recipe): RecipeLine[] {
 /**
  * The picker's row for one ingredient of one recipe.
  *
- * `recipeId` stays null and `recipes` holds the one dish: that is how the
- * shared component words "this row is not pinned yet, and here is the dish it
- * could be pinned to", which is exactly the choice a recipe screen offers.
- * `recipeTitle` is set only where the dish already has its own product, so the
- * summary says `Vain reseptissä …` for the same reason it does on the list.
+ * `recipes` always holds the one dish, because that is the only scope a recipe
+ * screen can offer beyond the ingredient itself. `recipeId` is what says which
+ * of the two this row is already following: null while the row reads the
+ * ingredient's product and a scope choice is worth asking, the dish's id once
+ * the dish has a product of its own — the same word the shopping list uses for
+ * the same row, and what keeps a later change going back to the dish rather
+ * than to every household recipe that uses the ingredient.
  */
 export function recipeProductSubject(
   recipe: Recipe,
