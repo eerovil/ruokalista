@@ -430,6 +430,46 @@ test.describe("our household", () => {
   test.describe("without JavaScript", () => {
     test.use({ javaScriptEnabled: false });
 
+    test("the second of two rows for one ingredient is its own row", async ({
+      page,
+    }) => {
+      // Without JavaScript the row is named only by what `rivi` carries, and
+      // that used to be the ingredient alone — so opening the second of two
+      // milk rows reached the route as "milk" and it rebuilt the first one.
+      executeLocalSql(`
+        INSERT INTO ingredient_line
+          (recipe_id, position, quantity, quantity_max, unit,
+           alt_quantity, alt_unit, ingredient_id, source_line, phase)
+        VALUES (${LASAGNE}, 11, 2, NULL, 'dl', NULL, NULL, ${MAITO},
+                '2 dl maitoa', 'after_parts')
+      `);
+
+      await page.goto(`/recipes/${LASAGNE}`);
+      const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
+      await expect(rows).toHaveCount(2);
+
+      await rows.nth(1).locator("form.s-product-open button").first().click();
+      await expect(page.locator("h1")).toHaveText("Valitse tuote: maito");
+      await expect(page.locator(".s-product-row-amount")).toContainText("2 dl");
+      await expect(page.locator(".s-product-row-amount")).not.toContainText("5 dl");
+
+      // And back again for the other one, which is the row it says it is.
+      await page.goBack();
+      await rows.nth(0).locator("form.s-product-open button").first().click();
+      await expect(page.locator(".s-product-row-amount")).toContainText("5 dl");
+
+      // Choosing from that page still writes the ingredient's mapping.
+      await page
+        .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
+        .getByRole("button", { name: "Valitse" })
+        .click();
+      await expect(page).toHaveURL(new RegExp(`/recipes/${LASAGNE}`));
+      for (const index of [0, 1]) {
+        await expect(rows.nth(index).locator(".s-shopping-product-copy"))
+          .toContainText("Kotimaista rasvaton maito 1 l");
+      }
+    });
+
     test("the row still reaches a real product screen", async ({ page }) => {
       await page.goto(`/recipes/${LASAGNE}`);
 

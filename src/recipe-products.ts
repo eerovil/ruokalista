@@ -75,11 +75,91 @@ function dishTitle(recipe: Recipe): string {
   return recipe.parentTitle ?? recipe.title;
 }
 
+/**
+ * One line of a dish, and which of its recipe rows it was written on.
+ *
+ * The owner matters because a dish and one of its parts number their lines
+ * from 1 each, so a position alone does not name a line.
+ */
+export interface DrawnLine {
+  ownerId: number;
+  line: RecipeLine;
+}
+
 /** Every line of a dish and of its parts, which is what a reader sees. */
+function linesWithOwner(recipe: Recipe): DrawnLine[] {
+  const found: DrawnLine[] = recipe.lines.map((line) => ({
+    ownerId: recipe.id,
+    line,
+  }));
+  for (const part of recipe.parts) {
+    for (const line of part.lines) found.push({ ownerId: part.id, line });
+  }
+  return found;
+}
+
 function allLines(recipe: Recipe): RecipeLine[] {
-  const lines = [...recipe.lines];
-  for (const part of recipe.parts) lines.push(...part.lines);
-  return lines;
+  return linesWithOwner(recipe).map((one) => one.line);
+}
+
+/**
+ * What a recipe row calls itself on its own forms.
+ *
+ * The ingredient alone is what the *save* needs — the mapping is the
+ * ingredient's — but it is not enough to name the row, and a dish may name one
+ * ingredient twice with different amounts. Without the rest, a plain
+ * no-JavaScript `GET /recipes/:id/tuote?rivi=9` rebuilt whichever of those
+ * rows came first, so the member opened one row and the screen answered about
+ * another.
+ */
+function rowKey(ingredientId: number, drawn: DrawnLine | undefined): string {
+  return drawn === undefined
+    ? String(ingredientId)
+    : `${ingredientId}:${drawn.ownerId}:${drawn.line.position}`;
+}
+
+interface AskedRow {
+  ingredientId: number;
+  ownerId: number | null;
+  position: number | null;
+}
+
+/**
+ * Read one back. The bare ingredient is still accepted, because that is what
+ * the key is when no particular row drew it and what older links carry.
+ */
+function parseRowKey(raw: string): AskedRow | null {
+  const parts = raw.trim().split(":");
+  const ingredientId = Number(parts[0]);
+  if (!Number.isSafeInteger(ingredientId)) return null;
+  if (parts.length === 1) {
+    return { ingredientId, ownerId: null, position: null };
+  }
+  if (parts.length !== 3) return null;
+  const ownerId = Number(parts[1]);
+  const position = Number(parts[2]);
+  if (!Number.isSafeInteger(ownerId) || !Number.isSafeInteger(position)) {
+    return null;
+  }
+  return { ingredientId, ownerId, position };
+}
+
+/**
+ * The row a key names, or undefined when it names none.
+ *
+ * A key that no longer resolves — the recipe was edited since the link was
+ * drawn — falls back to "no particular row" rather than refusing. It decides
+ * which amount a heading says; the ingredient itself is checked either way, so
+ * a key cannot reach a line this recipe does not have.
+ */
+function drawnRow(recipe: Recipe, asked: AskedRow): DrawnLine | undefined {
+  if (asked.ownerId === null || asked.position === null) return undefined;
+  return linesWithOwner(recipe).find(
+    (one) =>
+      one.ownerId === asked.ownerId &&
+      one.line.position === asked.position &&
+      one.line.ingredientId === asked.ingredientId,
+  );
 }
 
 /**
@@ -99,13 +179,13 @@ export function recipeProductSubject(
   multiplier: number,
   products: ProductChoice[],
   override: ProductChoice | null,
-  drawn?: RecipeLine,
+  drawn?: DrawnLine,
 ): ProductSubject | null {
   // The drawn line when a screen has one — a dish may name the same ingredient
   // twice, once itself and once in a part, and each of those rows wants its own
   // amount in the panel's heading rather than the first one's. A route has only
   // the ingredient, and there the amount decides a heading and nothing else.
-  const line = drawn ?? allLines(recipe).find(
+  const line = drawn?.line ?? allLines(recipe).find(
     (one) => one.ingredientId === ingredientId,
   );
   if (line === undefined) return null;
@@ -114,7 +194,7 @@ export function recipeProductSubject(
   const amount = formatMeasurement(scaleMeasurement(line, multiplier));
 
   return {
-    key: String(ingredientId),
+    key: rowKey(ingredientId, drawn),
     ingredientId,
     // A dish that already insists on its own product is a *pinned* row, said in
     // the same word the shopping list says it in. It is what stops the scope
@@ -162,7 +242,7 @@ export function subjectFromState(
   state: RecipeProductState,
   ingredientId: number,
   multiplier: number,
-  drawn?: RecipeLine,
+  drawn?: DrawnLine,
 ): ProductSubject | null {
   return recipeProductSubject(
     recipe,
@@ -344,15 +424,22 @@ async function requestedSubject(
   const recipe = await findReadableRecipe(ctx.env.DB, member.householdId, recipeId);
   if (recipe === null) return null;
 
-  const asked = form?.get("rivi") ?? ctx.url.searchParams.get("rivi");
-  const ingredientId = Number(String(asked ?? "").trim());
-  if (!Number.isSafeInteger(ingredientId)) return null;
+  const asked = parseRowKey(
+    String(form?.get("rivi") ?? ctx.url.searchParams.get("rivi") ?? ""),
+  );
+  if (asked === null) return null;
 
   const multiplier = askedMultiplier(
     form?.get("multiplier") ?? ctx.url.searchParams.get("multiplier"),
   );
   const state = await recipeProductState(ctx.env.DB, member.householdId, recipe);
-  const subject = subjectFromState(recipe, state, ingredientId, multiplier);
+  const subject = subjectFromState(
+    recipe,
+    state,
+    asked.ingredientId,
+    multiplier,
+    drawnRow(recipe, asked),
+  );
   if (subject === null) return null;
 
   return { client, recipe, subject, multiplier };

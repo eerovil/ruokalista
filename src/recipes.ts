@@ -608,7 +608,9 @@ function body(
                     picker.state,
                     shown.ingredientId,
                     multiplier,
-                    shown,
+                    // `recipe` is the row's own recipe row — the dish, or the
+                    // part being drawn — which is half of what names the line.
+                    { ownerId: recipe.id, line: shown },
                   );
               return html`<li
                 class="${set.group === null

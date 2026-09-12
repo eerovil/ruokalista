@@ -360,6 +360,11 @@ export function productSummary(subject: ProductSubject): Raw {
  * The no-JavaScript product screen: search, results, choose. It is the same
  * page on either screen, because the only thing that differs is where the forms
  * post and where "Takaisin" goes — and those are the routes above.
+ *
+ * It says which row it is about, in the same words the sheet's own heading uses
+ * — the amount, and what is chosen for it now. Without JavaScript that line is
+ * the only thing that distinguishes one row from another: a dish can name one
+ * ingredient twice, and `Valitse tuote: maito` is the same sentence on both.
  */
 export function productSearchBody(
   subject: ProductSubject,
@@ -373,6 +378,11 @@ export function productSearchBody(
   const heading = productSearchHeading(subject, mode);
   return html`<p><a href="${routes.back}">← ${backLabel}</a></p>
     <h1>${heading}</h1>
+    <p class="meta s-product-row-amount">
+      ${subject.total}${subject.chosen[0] === undefined
+        ? " · Ei valittua tuotetta"
+        : ` · Nyt: ${subject.chosen[0].product.name}`}
+    </p>
     ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
     <form method="get" action="${routes.open}" class="stacked product-search-form">
       <input type="hidden" name="rivi" value="${subject.key}" />
