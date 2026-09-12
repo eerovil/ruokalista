@@ -325,9 +325,16 @@ can behave differently about, which is what the card asked for.
   So is turning a dish's own product back into the ingredient's.
 - **None of it exists for another household.** `externalClient` gates the block,
   the row's data attributes, the stylesheet, the settings element, the script
-  and both routes, which answer a bare 404. The chosen product's *picture* is
-  deliberately not gated: it predates this and `tests/public-recipes.spec.ts`
-  pins it, a household reading a shared dish seeing its own mapping's picture.
+  and both routes, which answer a bare 404.
+- **The chosen product's *picture* is deliberately not gated**, and that is a
+  decision rather than an oversight. It predates #302,
+  `tests/public-recipes.spec.ts` pins it — a household reading a shared dish
+  sees its own mapping's picture — and because `ingredient_product` is a global
+  dictionary (#143/#147) a second household can see the integration household's
+  picture on an ingredient they share. #302 raised that and the household that
+  owns the integration answered: a product picture is fine to be public. So the
+  gate is the picker, not the picture, and a later reviewer noticing the same
+  thing can stop here rather than re-opening it.
 - `tests/recipe-products.spec.ts` is the regression, on both sides of that gate.
 
 ### Stopping the screen moving under the member (issue #200)

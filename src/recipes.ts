@@ -450,8 +450,10 @@ export async function recipeScreen(
  * attributes, its stylesheet and its script. It deliberately does **not** gate
  * the chosen product's *picture*, which predates this and which
  * `tests/public-recipes.spec.ts` pins on purpose — a household reading a shared
- * dish sees its own mapping's picture, and taking that away is a separate
- * decision from adding a way to choose one.
+ * dish sees its own mapping's picture. #302 asked whether that should be shut
+ * too, since the ingredient dictionary is global; the household that owns the
+ * integration said a product picture is fine to be public. Nothing here is
+ * waiting on that answer any more.
  */
 export async function renderRecipe(
   db: D1Database,
