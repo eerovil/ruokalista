@@ -14,10 +14,23 @@ import {
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
+import recipeProductsClient from "./generated/recipe-products.ts";
 import { html, multiplierField, page, raw, type Raw, saveBar } from "./html.ts";
 import { resolveMentions } from "./ingredient-refs.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
+import {
+  externalClient,
+  pickerSettings,
+  productBlock,
+  type ProductSubject,
+} from "./product-picker.ts";
+import {
+  recipeProductState,
+  recipeRoutes,
+  subjectFromState,
+  type RecipeProductState,
+} from "./recipe-products.ts";
 import { formatMeasurement } from "./quantities.ts";
 import { normaliseRecipeUrl } from "./recipe-fetch.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
@@ -394,9 +407,10 @@ function noticeLine(notice: ListNotice | null): Raw {
 
 /** `GET /recipes/:id` — one recipe, as it gets read at the hob. */
 export async function recipeScreen(
-  { env, params, url }: RouteContext,
+  ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
+  const { env, params, url } = ctx;
   const recipe = await loadRequested(env.DB, member, params["id"]);
 
   if (recipe === null) {
@@ -419,10 +433,28 @@ export async function recipeScreen(
     asked ?? DEFAULT_MULTIPLIER,
     null,
     env.CAST_APP_ID,
+    undefined,
+    externalClient(env, member) !== null,
   );
 }
 
-/** Re-render the recipe screen from a route that needs to show a refusal. */
+/**
+ * Re-render the recipe screen from a route that needs to show a refusal.
+ *
+ * `external` says whether this household has the S-ostoslista integration
+ * (#302). It defaults to false rather than being read here, because these
+ * callers hold a `D1Database` and not an `Env` — and a screen that cannot
+ * answer the question must draw none of it rather than guess.
+ *
+ * What it gates is the picker: the block, the buttons, the row's data
+ * attributes, its stylesheet and its script. It deliberately does **not** gate
+ * the chosen product's *picture*, which predates this and which
+ * `tests/public-recipes.spec.ts` pins on purpose — a household reading a shared
+ * dish sees its own mapping's picture. #302 asked whether that should be shut
+ * too, since the ingredient dictionary is global; the household that owns the
+ * integration said a product picture is fine to be public. Nothing here is
+ * waiting on that answer any more.
+ */
 export async function renderRecipe(
   db: D1Database,
   member: Member,
@@ -431,14 +463,18 @@ export async function renderRecipe(
   refusal: string | null,
   castApplicationId?: string,
   sharingDraft?: SharingDraft,
+  external = false,
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
-  const [preference, sharing, vocabulary] = await Promise.all([
+  const [preference, sharing, vocabulary, products] = await Promise.all([
     preferredMultiplierFor(db, member.householdId, recipe.id),
     owned && recipe.parentId === null
       ? recipeSharingState(db, member.householdId, recipe.id, sharingDraft)
       : Promise.resolve(null),
     loadVocabulary(db),
+    external
+      ? recipeProductState(db, member.householdId, recipe)
+      : Promise.resolve(null),
   ]);
 
   return page(
@@ -449,6 +485,7 @@ export async function renderRecipe(
       refusal,
       sharing,
       vocabulary,
+      products,
     }, castApplicationId),
     "recipes",
     member,
@@ -506,9 +543,43 @@ export function amountsByIngredient(
   );
 }
 
+/**
+ * What a recipe screen needs to offer product choice on its ingredient rows.
+ *
+ * `dish` is the recipe the screen is *about* — never one of its parts — because
+ * that is what a product override is keyed by (#161) and what the reader looks
+ * it up under. `anchored` hands out `#aines-…` once per ingredient across the
+ * whole screen, so a dish and one of its parts naming the same ingredient still
+ * leave the round-trip somewhere to land.
+ */
+interface RecipePicker {
+  dish: Recipe;
+  state: RecipeProductState;
+  anchored: Set<number>;
+}
+
+const rawPickerRow = raw("data-product-row");
+
+/**
+ * What the shared picker client reads off a row: that it is one, which
+ * ingredient it is about, what to search for, and how much of it this recipe
+ * wants. The amount is an attribute rather than an element because the row has
+ * no room to print it twice — the panel's heading is where it is read.
+ */
+function pickerRowAttributes(picker: RecipePicker, subject: ProductSubject): Raw {
+  const first = !picker.anchored.has(subject.ingredientId);
+  picker.anchored.add(subject.ingredientId);
+  return html`${rawPickerRow}
+    ${first ? raw(`id="aines-${subject.ingredientId}"`) : ""}
+    data-aines="${String(subject.ingredientId)}"
+    data-haku="${subject.name}"
+    data-maara="${subject.total}"`;
+}
+
 function body(
   recipe: Recipe,
   multiplier: number,
+  picker: RecipePicker | null,
   phases?: RecipePhase[],
   bucket = "a",
 ): Raw {
@@ -530,12 +601,24 @@ function body(
               const shared = sharedSource(set.options, (line) =>
                 sourceWorthShowing(line, multiplier),
               );
+              const subject = picker === null
+                ? null
+                : subjectFromState(
+                    picker.dish,
+                    picker.state,
+                    shown.ingredientId,
+                    multiplier,
+                    // `recipe` is the row's own recipe row — the dish, or the
+                    // part being drawn — which is half of what names the line.
+                    { ownerId: recipe.id, line: shown },
+                  );
               return html`<li
                 class="${set.group === null
                   ? "recipe-ingredient"
                   : "recipe-ingredient is-alternative"}"
+                ${subject === null ? "" : pickerRowAttributes(picker!, subject)}
               >
-                <span class="recipe-product-slot" aria-hidden="true">
+                <span class="recipe-product-slot shopping-thumb" aria-hidden="true">
                   ${shown.productImageUrl === null
                     ? ""
                     : html`<img
@@ -568,6 +651,11 @@ function body(
                     ? ""
                     : html`<span class="source">${shared}</span>`}
                 </span>
+                ${subject === null
+                  ? ""
+                  : productBlock(subject, recipeRoutes(picker!.dish, multiplier), {
+                      compact: true,
+                    })}
               </li>`;
             })}
           </ul>`}
@@ -610,6 +698,8 @@ interface RecipeView {
   refusal: string | null;
   sharing: RecipeSharingState | null;
   vocabulary: Vocabulary;
+  /** Null for every household without the S-ostoslista integration (#302). */
+  products: RecipeProductState | null;
 }
 
 function recipeBody(
@@ -619,6 +709,10 @@ function recipeBody(
   castApplicationId?: string,
 ): Raw {
   const canRevealAmounts = hasRevealableMention(recipe, multiplier);
+  const picker: RecipePicker | null =
+    view.products === null
+      ? null
+      : { dish: recipe, state: view.products, anchored: new Set<number>() };
 
   return html`<div class="recipe-view">
     <div class="recipe-summary">
@@ -660,17 +754,17 @@ function recipeBody(
         : ""}
 
       ${recipe.parts.length === 0
-        ? body(recipe, multiplier)
-        : body(recipe, multiplier, [null, "before_parts"])}
+        ? body(recipe, multiplier, picker)
+        : body(recipe, multiplier, picker, [null, "before_parts"])}
       ${recipe.parts.map(
         (part) => html`<section class="part">
           <h2>${part.title}</h2>
-          ${body(part, multiplier)}
+          ${body(part, multiplier, picker)}
         </section>`,
       )}
       ${recipe.parts.length === 0
         ? ""
-        : body(recipe, multiplier, ["after_parts"], "b")}
+        : body(recipe, multiplier, picker, ["after_parts"], "b")}
 
       ${canRevealAmounts
         ? html`<label for="reveal-all-amounts" class="reveal-all-label"
@@ -691,7 +785,12 @@ function recipeBody(
     ${MENTION_STYLE}
     ${PUBLISH_STYLE}
     ${CATEGORY_STYLE}
+    ${picker === null ? "" : RECIPE_PRODUCT_STYLE}
     ${canRevealAmounts ? html`<script>${raw(REVEAL_ALL_ISLAND)}</script>` : ""}
+    ${picker === null
+      ? ""
+      : html`${pickerSettings()}
+          <script>${raw(recipeProductsClient)}</script>`}
 
     ${sharingSection(recipe, view)}
 
@@ -965,6 +1064,66 @@ const RECIPE_VIEW_STYLE = html`<style>
     .recipe-section .lines li { padding: .35rem 0; font-size: 1rem; }
     .recipe-section .steps li { padding: .25rem 0; line-height: 1.45; }
     .recipe-cooking > .reveal-all-label { margin-top: .5rem; }
+  }
+</style>`;
+
+/**
+ * The picker on an ingredient row, kept to the row's own height (#302).
+ *
+ * The block is the same element tree the shopping list draws, because that is
+ * what the shared client writes into — a shape of its own here would be a shape
+ * `showProduct` was not sized for, which is the fault #200 spent a pull request
+ * removing. What changes is only how much of it a recipe shows: the picture is
+ * already on the row's own slot, so the summary's copy of it is not drawn
+ * twice, the EAN and the note wording go, and what is left is the product's
+ * name beside a small button.
+ *
+ * **The block's width is fixed, and that is the whole point.** Left to size
+ * itself it took as much room as the product's name wanted, so a row with a
+ * product had less width for the ingredient than a row without one — and a
+ * long ingredient then wrapped onto a second line in one state and not the
+ * other. That is a row whose height depends on whether it is mapped, which is
+ * exactly what #200 and #204 spent two pull requests removing from the shopping
+ * list; `tests/recipes.spec.ts` caught it on a CI runner while this machine's
+ * text happened to fit. At a fixed width both states leave the ingredient the
+ * same room, the name ellipsises inside it, and nothing moves when a product is
+ * chosen.
+ */
+const RECIPE_PRODUCT_STYLE = html`<style>
+  .recipe-ingredient .s-shopping-product {
+    display: flex; align-items: center; gap: .35rem;
+    flex: 0 0 10rem; width: 10rem; min-width: 0;
+    min-height: var(--tap-compact);
+    margin: 0; padding: 0; border: 0; background: none;
+  }
+  .recipe-ingredient .s-shopping-product-body {
+    min-width: 0; flex: 1; text-align: right;
+  }
+  .recipe-ingredient .s-shopping-product-one img,
+  .recipe-ingredient .s-shopping-product-copy .meta,
+  .recipe-ingredient .s-product-scope,
+  .recipe-ingredient .s-package-total { display: none; }
+  .recipe-ingredient .s-shopping-product-copy strong,
+  .recipe-ingredient .s-shopping-product-copy .meta:only-child {
+    display: block; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-weight: 500; font-size: .85rem;
+    line-height: 1.3; color: var(--muted);
+  }
+  .recipe-ingredient .s-product-open button {
+    min-height: var(--tap-compact); padding: 0 .5rem; font-size: .85rem;
+    white-space: nowrap;
+  }
+  /* The busy line is a reserved slot, never an inserted one (#200): it is
+     always there at the same width, and only the spinner inside it is ever
+     drawn. Its words stay in the markup for the screen reader the aria-live
+     region is for — there is no room on a phone row to print them, and
+     printing them wrapped the row onto a second line at exactly the moment
+     somebody had tapped something. */
+  .recipe-ingredient .s-status {
+    flex: 0 0 1.25rem; width: 1.25rem;
+    height: 1.5rem; min-height: 0; line-height: 1.5rem;
+    margin: 0; font-size: 0; white-space: nowrap; overflow: hidden;
+    color: var(--muted);
   }
 </style>`;
 

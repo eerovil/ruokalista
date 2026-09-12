@@ -262,6 +262,81 @@ it one action.
   `--tap-compact` square with no background, so the panel stays the compact
   thing it was on a phone.
 
+### The same picker, on a recipe's ingredient row (issue #302)
+
+Everything above is now a component rather than a part of this screen, and a
+recipe uses it. `src/product-picker.ts` holds the markup, the save and the
+household gate; `src/client/product-picker.ts` holds the sheet, the search
+cache, the optimistic choice and the toast. `shopping-screens.ts` and
+`recipes.ts` render the same `productBlock`, `src/client/shopping.ts` and
+`src/client/recipe-products.ts` start the same client, and the shopping list's
+own two additions — the send that waits for pending saves, and the counts line
+— stay in its own module as hooks. There is deliberately nothing a recipe row
+can behave differently about, which is what the card asked for.
+
+- **A recipe row is the shopping row's shape, drawn small.** The block, its
+  classes and its body are identical, because that is what `showProduct` writes
+  into and a shape of its own is a shape the CSS was not sized for — the fault
+  #200 spent a pull request removing. `is-compact` only takes things away: the
+  summary's own 40 px picture (the row already has a 26 px one), the EAN, the
+  note wording, the package sizes and `Lisää toinen pakkauskoko`. What is left
+  on the row is the product's name and one button, which is what "tiiviisti"
+  asks for.
+- **The button says `Valitse` / `Vaihda` rather than `Valitse tuote`.** A phone
+  row already carries an amount and an ingredient, and the sheet's own heading
+  names the ingredient anyway. The mapped label rides on the form as
+  `data-vaihda` so the client relabels to whatever the screen calls it.
+- **A row says where its selection posts**, in `data-tallenna` on the open
+  form. The client is one component serving two screens; the row is the thing
+  that knows which one it is. `/ostoslista/haku` is shared as it stands — the
+  catalogue is the shop's, and the gate is only that this household has the
+  integration at all.
+- **The row is named by the dish and the ingredient**, not by a shopping row.
+  A shopping row is resolved by recomputing the week, and a recipe's ingredient
+  is not in anybody's week — so `/recipes/:id/tuote` takes `rivi=<ingredientId>`
+  and resolves it against that dish's lines and its parts'. A part's line is
+  pinned to the *dish*, because `recipe-read.ts` reads an override back under
+  `parent_id ?? id`.
+- **Both scopes are offered and mean what they meant.** `Käytä aina tälle
+  ainekselle` writes the global `ingredient_product` row; `Käytä tässä
+  reseptissä` writes this household's override, which changes what the rest of
+  the screen says, so that save reloads onto the row exactly as it does on the
+  shopping list.
+- **A row that already has a dish's own product is a pinned row**, said in the
+  same word the shopping list says it in, and no scope choice is drawn on it.
+  That is a fix to both screens rather than a recipe rule: `chosenScope` used to
+  read the empty answer as "the ingredient", so pressing `Vaihda tuote` on a row
+  reading `Vain reseptissä Lasagne` wrote the *global* mapping, the override
+  went on winning when the row was read back, and the row sat there showing a
+  product the list would not use — while every other dish quietly changed. A
+  pinned row's save now goes where the row says it goes.
+- **A choice about an ingredient is one save for every row of it.** A dish can
+  name the same ingredient twice, itself and in a part, and both rows are the
+  same `ingredient_product` row. So the client treats them as one unit: it
+  draws the product into all of them at once, posts once, confirms or rolls
+  back all of them together, and ignores a choice made on any of them while
+  that save is open — the rule a single row has always followed. Letting each
+  row hold its own flag let two saves for one mapping run at once, and the
+  loser's rollback then restored a state older than the winner's confirmed
+  save. A row pinned to a dish is not in the unit: it is not reading the
+  mapping being written, so it is neither blocked by the save nor drawn into.
+- **Dropping a package size or an override is not offered here.** That is the
+  shopping list's screen, where the package arithmetic it changes is visible.
+  So is turning a dish's own product back into the ingredient's.
+- **None of it exists for another household.** `externalClient` gates the block,
+  the row's data attributes, the stylesheet, the settings element, the script
+  and both routes, which answer a bare 404.
+- **The chosen product's *picture* is deliberately not gated**, and that is a
+  decision rather than an oversight. It predates #302,
+  `tests/public-recipes.spec.ts` pins it — a household reading a shared dish
+  sees its own mapping's picture — and because `ingredient_product` is a global
+  dictionary (#143/#147) a second household can see the integration household's
+  picture on an ingredient they share. #302 raised that and the household that
+  owns the integration answered: a product picture is fine to be public. So the
+  gate is the picker, not the picture, and a later reviewer noticing the same
+  thing can stop here rather than re-opening it.
+- `tests/recipe-products.spec.ts` is the regression, on both sides of that gate.
+
 ### Stopping the screen moving under the member (issue #200)
 
 The shape above worked and read badly on a phone. Every part of choosing a

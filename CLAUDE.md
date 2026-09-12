@@ -46,7 +46,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Pictures | `src/recipe-images.ts`, `src/recipe-image-lifecycle.ts`, `src/image-generation.ts`, `src/contact-sheet.ts`, `src/png.ts` |
 | The week and planned batches | `src/menu.ts`, `src/week-screens.ts` |
 | The shopping list | `src/shopping.ts`, `src/shopping-screens.ts` |
-| Which shop product an ingredient is, and in what packet | `src/ingredient-products.ts`, `src/packaging.ts`, `src/s-ostoslista.ts`, `src/s-ostoslista-notes.ts` |
+| Which shop product an ingredient is, and in what packet | `src/product-picker.ts`, `src/client/product-picker.ts`, `src/recipe-products.ts`, `src/ingredient-products.ts`, `src/packaging.ts`, `src/s-ostoslista.ts`, `src/s-ostoslista-notes.ts` |
 | The cupboard | `src/pantry.ts`, `src/pantry-screens.ts` |
 | Markup and the shell | `src/html.ts` |
 | Schema and backups | `migrations/`, `src/backup.ts`, `src/restore.ts` |
@@ -88,10 +88,10 @@ Each of these has cost somebody real time. The detail is in the linked doc.
 - **A new API key needs two places, not one.** A key in `.dev.vars` never
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).
-- **Browser code has two paths.** Intake, shopping, and the recipe-image
-  splitter live under `src/client/` and are DOM-typechecked and generated into
-  committed `src/generated/` modules; run `generate:client` after changes
-  there, and `check:client` rejects stale output. Remaining hand-written
+- **Browser code has two paths.** Intake, shopping, the recipe screen's
+  product picker, and the recipe-image splitter live under `src/client/` and
+  are DOM-typechecked and generated into committed `src/generated/` modules;
+  run `generate:client` after changes there, and `check:client` rejects stale output. Remaining hand-written
   template-string islands are shipped untranspiled: write ES5 there and remember
   that a backslash is eaten before the browser sees it. See
   [screens](docs/codebase/screens.md).
