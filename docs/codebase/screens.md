@@ -356,6 +356,12 @@ is drawn at all.
   tick is a working control on a browser with no JavaScript too, rather than the
   buttons being hidden by a script that a no-JS reader never runs. Do not wrap
   the input and the label in anything: `~` is how the rule reaches the rows.
+- **The words are the tap target.** The box a browser draws for a checkbox is a
+  fraction of a thumb, so `.product-picks-label` is a full `--tap` tall — the
+  bargain `.as-new` makes in `html.ts`, and the full height rather than
+  `--tap-compact` because this control has a line to itself rather than sitting
+  in a row. `tests/recipe-products.spec.ts` measures it against the page's own
+  `--tap`, so the two cannot drift apart.
 - **Only the remembering needs a browser.** `src/client/recipe-products.ts`
   stores `ruokalista.tuotevalinnat` in `localStorage`, so somebody doing a round
   of product mapping ticks it once rather than once per dish. Per browser and

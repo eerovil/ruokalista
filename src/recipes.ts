@@ -1158,15 +1158,22 @@ const RECIPE_PRODUCT_STYLE = html`<style>
     color: var(--muted);
   }
 
-  /* The tick itself (#305), reading as one control with its words. */
+  /* The tick itself (#305), reading as one control with its words.
+
+     The words carry the tap target, the way .as-new does in html.ts: the box a
+     browser draws for a checkbox is a fraction of a thumb, so the label beside
+     it is a full --tap tall and tapping anywhere on it toggles. This one is on
+     a line of its own above the ingredient lists rather than inside a row, so
+     it gets the full height rather than --tap-compact. The spec measures it
+     against the page's own token, so the two cannot drift apart. */
   .product-picks {
-    vertical-align: middle; margin: 0 .4rem .65rem 0;
-    width: 1.1rem; height: 1.1rem; accent-color: var(--accent);
+    vertical-align: middle; margin: 0 .45rem 0 0;
+    width: 1.25rem; height: 1.25rem; accent-color: var(--accent);
   }
   .product-picks-label {
-    display: inline-block; vertical-align: middle;
-    margin: 0 0 .65rem; cursor: pointer;
-    font-size: .9rem; color: var(--muted);
+    display: inline-flex; align-items: center; vertical-align: middle;
+    min-height: var(--tap); margin: 0 0 .35rem; padding-right: .5rem;
+    cursor: pointer; font-size: .9rem; color: var(--muted);
   }
   .product-picks:focus-visible + .product-picks-label {
     outline: 2px solid var(--accent); outline-offset: 2px;

@@ -492,6 +492,38 @@ test.describe("our household", () => {
       ).toBeVisible();
     });
 
+    test("the tick is a thumb-sized target, not a checkbox-sized one", async ({
+      page,
+    }) => {
+      // The screens' standing rule: a control is at least `--tap` tall. The box
+      // a browser draws for a checkbox is a fraction of that, so the words
+      // beside it are the tap target — the same bargain `.as-new` makes in
+      // `html.ts`. Measured against the page's own token rather than a number
+      // typed in here, so the two cannot drift apart.
+      await page.goto(`/recipes/${LASAGNE}`);
+
+      const tap = await page.evaluate(() => {
+        const root = document.documentElement;
+        const declared = getComputedStyle(root).getPropertyValue("--tap").trim();
+        const size = parseFloat(getComputedStyle(root).fontSize);
+        return declared.endsWith("rem") ? parseFloat(declared) * size : parseFloat(declared);
+      });
+      expect(tap).toBeGreaterThan(0);
+
+      const label = page.locator(".product-picks-label");
+      const box = await label.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(tap - 0.5);
+
+      // And it is a target in the sense that matters: tapping the words is what
+      // brings the buttons out.
+      await label.click();
+      await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+      await expect(
+        ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+    });
+
     test("the tick is remembered from one recipe to the next", async ({ page }) => {
       // Somebody doing a round of product mapping ticks it once, not once per
       // dish — and it is remembered in this browser, not for the household.
