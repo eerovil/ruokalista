@@ -1510,6 +1510,64 @@ test.describe("signed in", () => {
   });
 
   /**
+   * #305: a recipe's ingredient rows without the product buttons, and with
+   * them. The dish is photographed after a real choice has been made through
+   * the picker, because the whole question the tick answers is what a mapped
+   * row looks like when nobody is mapping products.
+   */
+  test("a recipe's product choices, hidden and shown", async ({ page }) => {
+    expect(
+      (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
+    ).toBe(true);
+
+    // Map the milk from the recipe screen itself, which needs the tick.
+    await page.setViewportSize({ width: 1024, height: 1200 });
+    await page.goto("/recipes/3");
+    await page.getByLabel("Näytä tuotevalinnat").check();
+    const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
+    const picked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/recipes/3/tuote"),
+    );
+    await milk.getByRole("button", { name: "Vaihda", exact: true }).or(
+      milk.getByRole("button", { name: "Valitse", exact: true }),
+    ).click();
+    await page
+      .locator(".s-sheet .s-product-results > li", {
+        hasText: "Kotimaista rasvaton maito",
+      })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+    expect((await picked).ok()).toBe(true);
+
+    // Ticked: every row offers its button, mapped or not.
+    await expect(
+      milk.getByRole("button", { name: "Vaihda", exact: true }),
+    ).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/124-recipe-product-picks-shown.png`,
+      fullPage: true,
+    });
+
+    // The ordinary case, on a fresh read of the dish: the buttons gone, the
+    // chosen product still said.
+    await page.reload();
+    await page.getByLabel("Näytä tuotevalinnat").uncheck();
+    await expect(
+      page.getByRole("button", { name: "Vaihda", exact: true }),
+    ).toBeHidden();
+    await expect(milk.locator(".s-shopping-product-copy")).toContainText(
+      "Kotimaista rasvaton maito 1 l",
+    );
+    await expect(milk.locator(".recipe-product-thumb")).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/123-recipe-product-picks-hidden.png`,
+      fullPage: true,
+    });
+  });
+
+  /**
    * The cupboard, used rather than empty: two staples put in from the list,
    * the list split into its two sections, and the cupboard's own page.
    */
