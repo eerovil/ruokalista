@@ -1190,6 +1190,13 @@ test.describe("signed in", () => {
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
     );
+    // The panel re-reads the S-ostoslista only once the send has answered, so
+    // this row waits on a whole external round trip that has not even started
+    // when `sent` resolves. Wait for that read to land rather than for the row
+    // itself: on a loaded CI runner it took longer than the default five
+    // seconds, and the failure read as "the product was never sent" when the
+    // page was still saying `Luetaan S-ostoslistaa…`.
+    await expect(page.locator(".s-current-state")).toBeHidden({ timeout: 20_000 });
     await expect(
       page.locator(".s-current-items li").filter({ hasText: "Kotimaista rasvaton maito" }),
     ).toHaveCount(1);
