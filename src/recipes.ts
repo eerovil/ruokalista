@@ -576,6 +576,36 @@ function pickerRowAttributes(picker: RecipePicker, subject: ProductSubject): Raw
     data-maara="${subject.total}"`;
 }
 
+/**
+ * The tick that brings the rows' product buttons back (#305).
+ *
+ * Reading a recipe is what this screen is for and choosing a shop product is
+ * the rare errand, so #302's buttons are hidden until somebody says they are
+ * doing a round of product mapping. Off, a mapped row still shows which product
+ * it is — the name and the picture stay; only the way to change it goes.
+ *
+ * It is a plain checkbox in front of the ingredient lists, and what hides the
+ * buttons is CSS reading `:checked` on it — so the tick works on a browser with
+ * no JavaScript too, the same trick `reveal-all` has always used. The typed
+ * recipe-products client adds only the remembering, in `localStorage`, which is
+ * why the checkbox has an id. That also keeps it per browser rather than per
+ * household, which is what the card asks for: one person mapping products does
+ * not change what everybody else's recipe screen looks like.
+ *
+ * The input and the label are siblings of the sections rather than wrapped in
+ * anything, because `~` is how the CSS reaches the rows and a wrapper would cut
+ * that off.
+ */
+function productPicksToggle(): Raw {
+  return html`<input
+      type="checkbox"
+      id="show-product-picks"
+      class="product-picks"
+    /><label for="show-product-picks" class="product-picks-label"
+      >Näytä tuotevalinnat</label
+    >`;
+}
+
 function body(
   recipe: Recipe,
   multiplier: number,
@@ -745,6 +775,8 @@ function recipeBody(
     </div>
 
     <div class="recipe-cooking">
+      ${picker === null ? "" : productPicksToggle()}
+
       ${canRevealAmounts
         ? html`<input
               type="checkbox"
@@ -1124,6 +1156,50 @@ const RECIPE_PRODUCT_STYLE = html`<style>
     height: 1.5rem; min-height: 0; line-height: 1.5rem;
     margin: 0; font-size: 0; white-space: nowrap; overflow: hidden;
     color: var(--muted);
+  }
+
+  /* The tick itself (#305), reading as one control with its words.
+
+     The words carry the tap target, the way .as-new does in html.ts: the box a
+     browser draws for a checkbox is a fraction of a thumb, so the label beside
+     it is a full --tap tall and tapping anywhere on it toggles. This one is on
+     a line of its own above the ingredient lists rather than inside a row, so
+     it gets the full height rather than --tap-compact. The spec measures it
+     against the page's own token, so the two cannot drift apart. */
+  .product-picks {
+    vertical-align: middle; margin: 0 .45rem 0 0;
+    width: 1.25rem; height: 1.25rem; accent-color: var(--accent);
+  }
+  .product-picks-label {
+    display: inline-flex; align-items: center; vertical-align: middle;
+    min-height: var(--tap); margin: 0 0 .35rem; padding-right: .5rem;
+    cursor: pointer; font-size: .9rem; color: var(--muted);
+  }
+  .product-picks:focus-visible + .product-picks-label {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  /* Off — the ordinary case. The button goes and the busy slot with it, and a
+     row with no product goes entirely: an "Ei tuotetta" on every line is the
+     same clutter in quieter words. A mapped row keeps its name and its
+     picture, so the screen still says what an ingredient is bought as. Nothing
+     reserves the picker's fixed column while it is off, which is what gives a
+     long ingredient name the width back on a phone. */
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-product-open,
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-status,
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product.is-note {
+    display: none;
+  }
+  /* And with no button in it the block is a line of text, so it stops
+     reserving a tap target's worth of height: a row showing its product has to
+     be the same height as one that has none, or a dish's ingredient list steps
+     up and down as it is read. */
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product,
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product-body {
+    min-height: 0;
+  }
+  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product {
+    flex: 0 1 auto; width: auto; max-width: 10rem; min-width: 0;
   }
 </style>`;
 

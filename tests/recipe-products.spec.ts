@@ -35,6 +35,16 @@ test.beforeEach(async ({ request }) => {
 
 test.afterAll(reseed);
 
+/**
+ * Bring the rows' product buttons out from behind the tick (#305).
+ *
+ * Off is the default now, so every test that presses a row's button says so
+ * first — the same two taps a member doing a round of product mapping makes.
+ */
+async function showPicks(page: Page): Promise<void> {
+  await page.getByLabel("Näytä tuotevalinnat").check();
+}
+
 /** The recipe row for one ingredient, by the name printed on it. */
 function ingredient(page: Page, name: string): Locator {
   return page.locator(".recipe-ingredient", { hasText: name });
@@ -72,6 +82,7 @@ test.describe("our household", () => {
     page,
   }) => {
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
 
     const milk = ingredient(page, "maito");
     await expect(milk.locator(".s-shopping-product")).toHaveClass(/is-note/);
@@ -136,6 +147,7 @@ test.describe("our household", () => {
   }) => {
     await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
 
     const milk = ingredient(page, "maito");
     await milk.getByRole("button", { name: "Vaihda", exact: true }).click();
@@ -188,6 +200,7 @@ test.describe("our household", () => {
     const widths = [375, 768, 1024];
 
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
     const before: number[] = [];
     for (const width of widths) {
       await page.setViewportSize({ width, height: 900 });
@@ -198,6 +211,7 @@ test.describe("our household", () => {
 
     await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
     await expect(ingredient(page, "maito").locator(".s-shopping-product"))
       .toHaveClass(/is-mapped/);
 
@@ -222,6 +236,7 @@ test.describe("our household", () => {
     await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
     await chooseFromRecipe(page, LASAGNE, MAITO, "maito", KEVYTMAITO, String(LASAGNE));
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
 
     const milk = ingredient(page, "maito");
     await expect(milk.locator(".recipe-product-thumb"))
@@ -279,6 +294,7 @@ test.describe("our household", () => {
     `);
 
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
     const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
     await expect(rows).toHaveCount(2);
     // Each row's own amount, not the first one's, reaches the panel.
@@ -329,6 +345,7 @@ test.describe("our household", () => {
     });
 
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
     const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
     await expect(rows).toHaveCount(2);
 
@@ -394,6 +411,7 @@ test.describe("our household", () => {
     });
 
     await page.goto(`/recipes/${LASAGNE}`);
+    await showPicks(page);
     const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
     await rows.nth(0).getByRole("button", { name: "Valitse", exact: true }).click();
     await page
@@ -413,6 +431,7 @@ test.describe("our household", () => {
     page,
   }) => {
     await page.goto(`/recipes/${NAAPURIN_UUNIKALA}`);
+    await showPicks(page);
 
     const oil = ingredient(page, "öljy");
     await oil.getByRole("button", { name: "Valitse", exact: true }).click();
@@ -425,6 +444,121 @@ test.describe("our household", () => {
     await expect(oil.locator(".s-shopping-product-copy")).toContainText(
       "Keiju rypsiöljy 1 l",
     );
+  });
+
+  /**
+   * The tick itself (#305). Reading a recipe is the common case and choosing a
+   * shop product is the rare one, so the buttons start hidden — but what an
+   * ingredient is already bought as stays on the row either way.
+   */
+  test.describe("the tuotevalinnat tick", () => {
+    test("the buttons are hidden by default, the chosen product is not", async ({
+      page,
+    }) => {
+      await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
+      await page.goto(`/recipes/${LASAGNE}`);
+
+      await expect(page.getByLabel("Näytä tuotevalinnat")).not.toBeChecked();
+      await expect(
+        page.getByRole("button", { name: "Vaihda", exact: true }),
+      ).toBeHidden();
+      await expect(
+        page.getByRole("button", { name: "Valitse", exact: true }).first(),
+      ).toBeHidden();
+
+      // The mapping is still readable: the name and the picture stay put.
+      const milk = ingredient(page, "maito");
+      await expect(milk.locator(".s-shopping-product-copy")).toContainText(
+        "Kotimaista rasvaton maito 1 l",
+      );
+      await expect(milk.locator(".recipe-product-thumb")).toHaveAttribute(
+        "src",
+        new RegExp(RASVATON),
+      );
+
+      // And a row with no product says nothing at all rather than "Ei tuotetta"
+      // on every line of the dish.
+      await expect(
+        ingredient(page, "juusto").locator(".s-shopping-product"),
+      ).toBeHidden();
+
+      // Ticked, it is #302's screen again.
+      await showPicks(page);
+      await expect(
+        milk.getByRole("button", { name: "Vaihda", exact: true }),
+      ).toBeVisible();
+      await expect(
+        ingredient(page, "juusto").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("the tick is a thumb-sized target, not a checkbox-sized one", async ({
+      page,
+    }) => {
+      // The screens' standing rule: a control is at least `--tap` tall. The box
+      // a browser draws for a checkbox is a fraction of that, so the words
+      // beside it are the tap target — the same bargain `.as-new` makes in
+      // `html.ts`. Measured against the page's own token rather than a number
+      // typed in here, so the two cannot drift apart.
+      await page.goto(`/recipes/${LASAGNE}`);
+
+      const tap = await page.evaluate(() => {
+        const root = document.documentElement;
+        const declared = getComputedStyle(root).getPropertyValue("--tap").trim();
+        const size = parseFloat(getComputedStyle(root).fontSize);
+        return declared.endsWith("rem") ? parseFloat(declared) * size : parseFloat(declared);
+      });
+      expect(tap).toBeGreaterThan(0);
+
+      const label = page.locator(".product-picks-label");
+      const box = await label.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(tap - 0.5);
+
+      // And it is a target in the sense that matters: tapping the words is what
+      // brings the buttons out.
+      await label.click();
+      await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+      await expect(
+        ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("the tick is remembered from one recipe to the next", async ({ page }) => {
+      // Somebody doing a round of product mapping ticks it once, not once per
+      // dish — and it is remembered in this browser, not for the household.
+      await page.goto(`/recipes/${LASAGNE}`);
+      await showPicks(page);
+
+      await page.goto(`/recipes/${NAAPURIN_UUNIKALA}`);
+      await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+      await expect(
+        ingredient(page, "öljy").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+
+      // And unticking is remembered just as well.
+      await page.getByLabel("Näytä tuotevalinnat").uncheck();
+      await page.goto(`/recipes/${LASAGNE}`);
+      await expect(page.getByLabel("Näytä tuotevalinnat")).not.toBeChecked();
+      await expect(
+        page.getByRole("button", { name: "Valitse", exact: true }).first(),
+      ).toBeHidden();
+    });
+
+    test("another browser is not ticked by the first one", async ({ page, browser }) => {
+      await page.goto(`/recipes/${LASAGNE}`);
+      await showPicks(page);
+
+      const other = await browser.newContext();
+      await other.addCookies([sessionCookie(1)]);
+      const theirs = await other.newPage();
+      await theirs.goto(`/recipes/${LASAGNE}`);
+      await expect(theirs.getByLabel("Näytä tuotevalinnat")).not.toBeChecked();
+      await expect(
+        theirs.getByRole("button", { name: "Valitse", exact: true }).first(),
+      ).toBeHidden();
+      await other.close();
+    });
   });
 
   test.describe("without JavaScript", () => {
@@ -445,6 +579,7 @@ test.describe("our household", () => {
       `);
 
       await page.goto(`/recipes/${LASAGNE}`);
+      await showPicks(page);
       const rows = page.locator(`.recipe-ingredient[data-aines="${MAITO}"]`);
       await expect(rows).toHaveCount(2);
 
@@ -455,6 +590,7 @@ test.describe("our household", () => {
 
       // And back again for the other one, which is the row it says it is.
       await page.goBack();
+      await showPicks(page);
       await rows.nth(0).locator("form.s-product-open button").first().click();
       await expect(page.locator(".s-product-row-amount")).toContainText("5 dl");
 
@@ -470,8 +606,27 @@ test.describe("our household", () => {
       }
     });
 
+    test("the tick still works, it is just not remembered", async ({ page }) => {
+      // What hides the buttons is the stylesheet reading the checkbox, so the
+      // tick is a working control with no script behind it. Only the
+      // remembering needs one, and there is nothing here to do the remembering.
+      await page.goto(`/recipes/${LASAGNE}`);
+      await expect(
+        page.getByRole("button", { name: "Valitse", exact: true }).first(),
+      ).toBeHidden();
+
+      await showPicks(page);
+      await expect(
+        ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+
+      await page.goto(`/recipes/${LASAGNE}`);
+      await expect(page.getByLabel("Näytä tuotevalinnat")).not.toBeChecked();
+    });
+
     test("the row still reaches a real product screen", async ({ page }) => {
       await page.goto(`/recipes/${LASAGNE}`);
+      await showPicks(page);
 
       await ingredient(page, "maito")
         .getByRole("button", { name: "Valitse", exact: true })
@@ -516,6 +671,8 @@ test.describe("every other household", () => {
     await expect(theirs.locator("[data-product-row]")).toHaveCount(0);
     await expect(theirs.getByRole("button", { name: "Valitse", exact: true })).toHaveCount(0);
     await expect(theirs.getByRole("button", { name: "Vaihda", exact: true })).toHaveCount(0);
+    // Not even the tick that would bring those buttons back (#305).
+    await expect(theirs.getByText("Näytä tuotevalinnat")).toHaveCount(0);
     // Not the shop's name for the product, and no script to search for another.
     expect(await theirs.content()).not.toContain("Keiju rypsiöljy");
     expect(await theirs.content()).not.toContain("/ostoslista/haku");

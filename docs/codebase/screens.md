@@ -337,6 +337,41 @@ can behave differently about, which is what the card asked for.
   thing can stop here rather than re-opening it.
 - `tests/recipe-products.spec.ts` is the regression, on both sides of that gate.
 
+### The tick that brings those buttons back (issue #305)
+
+Reading a recipe is what the screen is for and choosing a shop product is the
+rare errand, so #302's buttons are behind `Näytä tuotevalinnat`, off by default.
+The checkbox is drawn by `recipes.ts::productPicksToggle`, only where the picker
+is drawn at all.
+
+- **Off takes the button, not the answer.** A mapped row keeps the product's
+  name and the 26 px picture, so the screen still says what an ingredient is
+  bought as — you just cannot change it from there. A row with no product hides
+  its block entirely; `Ei tuotetta` on every line of a dish is the same clutter
+  in quieter words. Nothing reserves the picker's fixed 10 rem column while the
+  tick is off, which is what gives a long ingredient its width back on a phone.
+- **What hides them is CSS, not the client.** The checkbox and its label are
+  siblings of the ingredient sections and `RECIPE_PRODUCT_STYLE` reads
+  `.product-picks:not(:checked) ~ *` — the same trick `reveal-all` uses. So the
+  tick is a working control on a browser with no JavaScript too, rather than the
+  buttons being hidden by a script that a no-JS reader never runs. Do not wrap
+  the input and the label in anything: `~` is how the rule reaches the rows.
+- **The words are the tap target.** The box a browser draws for a checkbox is a
+  fraction of a thumb, so `.product-picks-label` is a full `--tap` tall — the
+  bargain `.as-new` makes in `html.ts`, and the full height rather than
+  `--tap-compact` because this control has a line to itself rather than sitting
+  in a row. `tests/recipe-products.spec.ts` measures it against the page's own
+  `--tap`, so the two cannot drift apart.
+- **Only the remembering needs a browser.** `src/client/recipe-products.ts`
+  stores `ruokalista.tuotevalinnat` in `localStorage`, so somebody doing a round
+  of product mapping ticks it once rather than once per dish. Per browser and
+  not per household on purpose — it is one person's view of the screen, not a
+  decision about the kitchen. Every read and write is wrapped, because a browser
+  with storage denied throws on the property itself and a recipe screen is not
+  worth breaking over a tick it cannot remember.
+- **The shopping list is untouched.** That screen is for shopping, so its
+  buttons belong on it.
+
 ### Stopping the screen moving under the member (issue #200)
 
 The shape above worked and read badly on a phone. Every part of choosing a
