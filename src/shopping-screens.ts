@@ -33,7 +33,10 @@ import {
 } from "./product-picker.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
-import { sendToSOstoslista } from "./s-ostoslista-sync.ts";
+import {
+  sendToSOstoslista,
+  type SOstoslistaRowFailure,
+} from "./s-ostoslista-sync.ts";
 import {
   SOstoslistaError,
   type SOstoslistaKey,
@@ -201,11 +204,8 @@ export async function sendShoppingListForm(
   );
 
   if (outcome.status === "partial") {
-    console.error(`S-ostoslista send failed: ${reason(outcome.error)}`);
-    const progress = outcome.sent === 0
-      ? "Mitään ei lähetetty."
-      : `${outcome.sent}/${outcome.total} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
-    const message = `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`;
+    logSendFailures(outcome.failures);
+    const message = partialSendMessage(outcome);
     return asJson
       ? problem(502, message)
       : shoppingScreen(stateCtx, member, message, null, 502);
@@ -233,6 +233,67 @@ export async function sendShoppingListForm(
     `${outcome.sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
   );
+}
+
+/** Beyond this many named rows the refusal stops listing them one by one. */
+const FAILURES_IN_MESSAGE = 3;
+
+/**
+ * One log line per row that did not go, carrying what a diagnosis needs and
+ * nothing a household would mind being in a log.
+ *
+ * The row key, whether it went as a product or as text, and the service's own
+ * status and message are the four facts that separate "this EAN is rejected"
+ * from "we were throttled". The ingredient name is left out on purpose: it is
+ * for the member on the screen, not for the logs.
+ */
+function logSendFailures(failures: readonly SOstoslistaRowFailure[]): void {
+  for (const failure of failures) {
+    console.error(
+      `S-ostoslista row failed: key=${failure.key} kind=${failure.note ? "note" : "product"} ` +
+        `status=${failure.status ?? "none"} permanent=${failure.permanent} ${failure.message}`,
+    );
+  }
+}
+
+/**
+ * What the member is told when part of the list did not go.
+ *
+ * The old text said only how many rows had been reached before the send gave
+ * up, which was the same sentence whatever had gone wrong and pointed at
+ * nothing (#308). This names the rows, and it separates the two answers a
+ * member actually has: press it again, or go and look at that ingredient's
+ * product. Pressing it again is always safe either way — a repeated send is
+ * keyed and makes no duplicates — so that is said outright rather than implied.
+ */
+function partialSendMessage(outcome: {
+  sent: number;
+  total: number;
+  failures: readonly SOstoslistaRowFailure[];
+}): string {
+  const { sent, total, failures } = outcome;
+  const progress = sent === 0
+    ? "Mitään ei lähetetty."
+    : `${sent}/${total} ainesta lähti perille.`;
+
+  const named = failures.slice(0, FAILURES_IN_MESSAGE).map(failureNote);
+  const rest = failures.length - named.length;
+  const listed = rest > 0
+    ? `${named.join(" ")} Lisäksi ${rest} muuta riviä ei mennyt läpi.`
+    : named.join(" ");
+
+  const advice = failures.every((failure) => failure.permanent)
+    ? "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta."
+    : "Yritä uudelleen — sama lähetys ei tee tuplarivejä.";
+
+  return `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress} ${listed} ${advice}`;
+}
+
+function failureNote(failure: SOstoslistaRowFailure): string {
+  const status = failure.status === null ? "" : ` (${failure.status})`;
+  return failure.permanent
+    ? `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`
+    : `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
 }
 
 /**

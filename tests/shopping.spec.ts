@@ -205,6 +205,11 @@ async function sendAndReadPanel(page: Page): Promise<number> {
   return items.count();
 }
 
+/** How many rows the Ostettavat list is offering to send right now. */
+async function buyableRows(page: Page): Promise<number> {
+  return page.locator(".shopping-list").first().locator("> li").count();
+}
+
 async function externalRequests(page: Page): Promise<
   Array<{ method: string; path: string; body: Record<string, unknown> | null }>
 > {
@@ -1175,10 +1180,13 @@ test("a send puts an already-ticked row back to still-to-buy (#236)", async ({
   const cleared = calls.filter(
     (call) => call.method === "PATCH" && call.body?.["collected"] === false,
   );
-  // Every row the send put on the list, not only the two that were ticked:
-  // whether a row was collected before is not something this has to know.
   expect(added.length).toBeGreaterThan(2);
-  expect(cleared).toHaveLength(added.length);
+  // The two rows that came back ticked are the two that had to be cleared, and
+  // #308 stopped this sending the same edit for every other row as well: a row
+  // the service hands back already unticked and holding the asked-for count has
+  // nothing left to say to it. What the send promises is the state below, not a
+  // fixed number of calls.
+  expect(cleared).toHaveLength(2);
 
   const list = await request.get(`${S_OSTOSLISTA_FIXTURE}/items`, {
     headers: { authorization: "Bearer test-s-ostoslista-token" },
@@ -1221,7 +1229,9 @@ test("a partial send does not push the phone's list", async ({ page, request }) 
   await planTheFortnight(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  // A refusal the service will give again however often it is asked, so this
+  // is one row lost rather than a blip the send rides out (#308).
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400`);
 
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".refused")).toContainText(
@@ -1230,6 +1240,49 @@ test("a partial send does not push the phone's list", async ({ page, request }) 
 
   const calls = await externalRequests(page);
   expect(calls.some((call) => call.path === "/sync")).toBe(false);
+});
+
+test("a row the service refuses is named, and the rest of the list still goes (#308)", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400`);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  const refusal = page.locator(".s-shopping-send .refused");
+  await expect(refusal).toContainText("ei ottanut vastaan riviä");
+  await expect(refusal).toContainText("(400)");
+  await expect(refusal).toContainText("tarkista niiden tuotevalinta");
+
+  // The whole point: the one bad row no longer takes the rest of the list with
+  // it. Everything but that row went, in the one send.
+  const rows = await buyableRows(page);
+  expect(rows).toBeGreaterThan(1);
+  await expect(refusal).toContainText(`${rows - 1}/${rows} ainesta lähti perille`);
+  expect(await listNames(request)).toHaveLength(rows - 1);
+});
+
+test("a moment's congestion is ridden out rather than reported (#308)", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await currentListLoaded(page);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=503&times=2`);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  await expect(page.locator(".s-shopping-send .refused")).toHaveCount(0);
+
+  expect(await listNames(request)).toHaveLength(await buyableRows(page));
 });
 
 test("a failed push is said beside the send, not instead of it", async ({
@@ -1265,13 +1318,16 @@ test("an external outage refuses recoverably without replacing the list", async 
   // The current-list read is an external call too, so let it finish before
   // arming the fixture — otherwise it, not the send, would take the outage.
   await currentListLoaded(page);
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  // Out for the whole send, not for one call: an outage is the case where
+  // every row fails and the retries change nothing.
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?times=999`);
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
 
   await expect(page.locator(".refused")).toContainText(
     "S-ostoslistaan ei saatu lähetettyä kaikkea",
   );
   await expect(row(page, "maito")).toBeVisible();
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?times=0`);
 });
 
 test("a failed product search keeps the local ingredient unmapped", async ({ page }) => {
@@ -1803,7 +1859,7 @@ test("a send that fails partway still replaces the note on the retry (#244)", as
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   await currentListLoaded(page);
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next`);
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?times=999`);
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".refused")).toContainText(
     "S-ostoslistaan ei saatu lähetettyä kaikkea",
@@ -1811,6 +1867,7 @@ test("a send that fails partway still replaces the note on the retry (#244)", as
 
   // The note is still recorded, so the retry finishes what the outage stopped
   // rather than stranding the text row on the phone for good.
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?times=0`);
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toContainText(
     "lähetettiin S-ostoslistaan",
@@ -1848,23 +1905,34 @@ function addCalls(calls: SentCall[]): SentCall[] {
 /**
  * The count that actually reached one product's row on the phone's list.
  *
- * Both the add and the edit that follows it carry the count, and it is the edit
- * that decides: the service's add is keyed, so a product already on the list
- * comes back holding whatever last week's trip left on it and only the edit
- * overwrites that. So this reads the pair, and answers null unless they agree.
+ * The add carries the count, and so does the edit that follows it when there is
+ * one — the service's add is keyed, so a product already on the list can come
+ * back holding whatever last week's trip left on it, and then it is the edit
+ * that decides. Since #308 that edit is sent only when the add's own answer
+ * disagreed with what was asked for, so a row the service accepted outright has
+ * no edit at all and the add's value is the count. Where both are there they
+ * have to agree, which is what the `before` window checks: the send reconciles
+ * one row at a time, so an edit belonging to this add is one that lands before
+ * the next add goes out.
  */
 function quantityFor(calls: SentCall[], ean: string): number | null {
   const at = calls.findIndex(
     (call) => call.method === "POST" && call.path === "/items" && call.body?.["ean"] === ean,
   );
   if (at === -1) return null;
-  const patch = calls
-    .slice(at + 1)
-    .find((call) => call.method === "PATCH" && call.path.startsWith("/items/"));
   const onAdd = calls[at]?.body?.["quantity"];
-  const onPatch = patch?.body?.["quantity"];
-  if (typeof onAdd !== "number" || onAdd !== onPatch) return null;
-  return onAdd;
+  if (typeof onAdd !== "number") return null;
+
+  const after = calls.slice(at + 1);
+  const nextAdd = after.findIndex(
+    (call) => call.method === "POST" && call.path === "/items",
+  );
+  const before = nextAdd === -1 ? after : after.slice(0, nextAdd);
+  const patch = before.find(
+    (call) => call.method === "PATCH" && call.path.startsWith("/items/"),
+  );
+  if (patch === undefined) return onAdd;
+  return patch.body?.["quantity"] === onAdd ? onAdd : null;
 }
 
 /**

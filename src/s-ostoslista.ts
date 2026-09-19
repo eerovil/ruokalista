@@ -13,6 +13,13 @@ export interface SOstoslistaItem {
   ean: string | null;
   /** Whether the phone's list shows this row as already picked up. */
   collected: boolean;
+  /**
+   * True when the service actually said so, rather than this being the reading
+   * of a field it left out. `add` is the only thing that decides on it.
+   */
+  collectedStated: boolean;
+  /** How many of it the row is for, or null when the service did not say. */
+  quantity: number | null;
 }
 
 export interface SOstoslistaProduct {
@@ -123,6 +130,14 @@ export class SOstoslistaClient {
    * existing row carrying whatever quantity the last trip left on it, so the
    * POST's own value would be ignored exactly when it matters. The patch that
    * follows states it again (#240).
+   *
+   * What the patch is no longer is unavoidable (#308). The one case it was
+   * written for is the keyed add handing back a row that disagrees with what
+   * was asked for; an answer that already reads `collected: false` and carries
+   * the asked-for quantity is that agreement in writing, and patching it says
+   * nothing new at the price of a second round trip on every row of the list.
+   * The caution stays where it was aimed: a service that omits the flag has
+   * told us nothing, so that still patches, exactly as before.
    */
   async add(
     key: SOstoslistaKey,
@@ -137,6 +152,13 @@ export class SOstoslistaClient {
       }),
     });
     const item = readItem(payload, "add response");
+    if (
+      item.collectedStated &&
+      !item.collected &&
+      (count === null || item.quantity === count)
+    ) {
+      return item;
+    }
     return this.#patch(item.id, {
       collected: false,
       ...(count === null ? {} : { quantity: count }),
@@ -334,6 +356,8 @@ function readItem(value: unknown, at: string): SOstoslistaItem {
     name: item["name"],
     ean: item["ean"],
     collected: collected === true,
+    collectedStated: collected !== null,
+    quantity: nullableNumber(item["quantity"], `${at}.quantity`),
   };
 }
 

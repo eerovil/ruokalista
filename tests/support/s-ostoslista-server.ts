@@ -20,7 +20,16 @@ interface Item {
 }
 
 const items: Item[] = [];
-let failNext = false;
+/**
+ * The next N authorized calls refuse with this status.
+ *
+ * A status and a count rather than a single 503, because since #308 the two
+ * are read differently: a 503 is the service saying "later" and the send
+ * retries it, while a 400 is a row the service will never take and the send
+ * records it and moves on. A test that wants one of those has to be able to
+ * ask for it.
+ */
+let failures: { status: number; left: number } = { status: 503, left: 0 };
 let failSync = false;
 let nextId = 1;
 
@@ -114,13 +123,16 @@ createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname === "/_test/reset") {
     requests.length = 0;
     items.length = 0;
-    failNext = false;
+    failures = { status: 503, left: 0 };
     failSync = false;
     nextId = 1;
     return send(response, 200, { ok: true });
   }
   if (request.method === "POST" && url.pathname === "/_test/fail-next") {
-    failNext = true;
+    failures = {
+      status: Number(url.searchParams.get("status") ?? "503"),
+      left: Number(url.searchParams.get("times") ?? "1"),
+    };
     return send(response, 200, { ok: true });
   }
   // Separate from fail-next, because a send's own calls come first: this fails
@@ -162,9 +174,9 @@ createServer(async (request, response) => {
   const body = await readBody(request);
   requests.push({ method: request.method ?? "GET", path: url.pathname + url.search, body });
 
-  if (failNext) {
-    failNext = false;
-    return send(response, 503, { error: "test outage" });
+  if (failures.left > 0) {
+    failures.left -= 1;
+    return send(response, failures.status, { error: "test outage" });
   }
   if (request.method === "GET" && url.pathname === "/items") {
     return send(response, 200, { items });
