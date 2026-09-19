@@ -64,61 +64,128 @@ export class SubrequestBudgetSpent extends Error {
   }
 }
 
-export class SubrequestBudget {
-  #left: number;
-  #tail: number;
+/**
+ * An allowance set aside for one operation, and spent by that operation's own
+ * calls.
+ *
+ * This is the single rule the rest of the file exists to keep: work that may
+ * cost more than one subrequest reserves its worst case *before* it starts,
+ * the real HTTP and D1 boundaries spend from that reservation as the calls
+ * actually happen, and whatever was not needed goes back at the end.
+ *
+ * Two things went wrong without it, and they are the same thing. The receipt
+ * batch was charged once by the send and once again by the metered database,
+ * so with exactly the reserved call left the batch was refused by our own
+ * ledger. And an `add` was priced at one call on a guess about the service,
+ * which let a row begin on a single free slot and stop between its `POST` and
+ * its `PATCH` — a row on the list, still ticked, which is the state #236
+ * exists to prevent.
+ */
+export class SubrequestReservation {
+  #remaining: number;
 
-  constructor(left: number, tail = 0) {
-    this.#left = Math.max(0, Math.floor(left));
-    this.#tail = Math.max(0, Math.floor(tail));
+  constructor(calls: number) {
+    this.#remaining = calls;
   }
 
-  /** Everything still unspent, the tail included. */
+  get remaining(): number {
+    return this.#remaining;
+  }
+
+  /** Internal: the budget draws a call down through this. */
+  take(): boolean {
+    if (this.#remaining <= 0) return false;
+    this.#remaining -= 1;
+    return true;
+  }
+
+  /** Internal: what is handed back when the operation ends. */
+  surrender(): number {
+    const left = this.#remaining;
+    this.#remaining = 0;
+    return left;
+  }
+}
+
+export class SubrequestBudget {
+  #left: number;
+  /** Calls promised to reservations that are still open. */
+  #held = 0;
+  /** The reservation the meters are currently spending from, if any. */
+  #active: SubrequestReservation | null = null;
+
+  constructor(left: number) {
+    this.#left = Math.max(0, Math.floor(left));
+  }
+
+  /** Everything still unspent, reservations included. */
   get left(): number {
     return this.#left;
   }
 
-  /** What ordinary work may still have, leaving the tail alone. */
-  get spendable(): number {
-    return Math.max(0, this.#left - this.#tail);
+  /** What is not already promised to some open reservation. */
+  get free(): number {
+    return Math.max(0, this.#left - this.#held);
   }
 
-  /**
-   * Whether a piece of work costing at most `calls` may start.
-   *
-   * A gate, not a deduction: the spending happens call by call as the work
-   * actually makes them. Asking for the worst case here is what stops a row
-   * beginning something it cannot finish.
-   */
+  /** Whether work costing at most `calls` could be reserved right now. */
   canAfford(calls: number): boolean {
-    return this.spendable >= calls;
-  }
-
-  /** Take `calls` for work now happening. False means it must not. */
-  spend(calls = 1): boolean {
-    if (calls <= 0) return true;
-    if (this.spendable < calls) return false;
-    this.#left -= calls;
-    return true;
+    return this.free >= calls;
   }
 
   /**
-   * Take `calls` from the part held back for the mandatory finish.
+   * Set `calls` aside for one operation, or refuse.
    *
-   * It does not compete with the row work that was going on while it waited,
-   * which is the whole reason for holding it back.
+   * Refusing is the whole point: an operation that cannot be finished is never
+   * begun, so nothing is left half-done.
    */
-  spendTail(calls = 1): boolean {
-    if (calls <= 0) return true;
-    if (this.#left < calls || this.#tail < calls) return false;
-    this.#left -= calls;
-    this.#tail -= calls;
-    return true;
+  reserve(calls: number): SubrequestReservation | null {
+    const wanted = Math.max(0, Math.floor(calls));
+    if (this.free < wanted) return null;
+    this.#held += wanted;
+    return new SubrequestReservation(wanted);
   }
 
-  /** The tail turned out not to be needed; let ordinary work have it. */
-  releaseTail(): void {
-    this.#tail = 0;
+  /** Hand back whatever the operation did not need. */
+  release(reservation: SubrequestReservation): void {
+    this.#held -= reservation.surrender();
+    if (this.#active === reservation) this.#active = null;
+  }
+
+  /**
+   * Run `work` with its calls spent from `reservation` rather than from the
+   * free allowance, and give the remainder back when it ends.
+   */
+  async within<T>(
+    reservation: SubrequestReservation,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.#active;
+    this.#active = reservation;
+    try {
+      return await work();
+    } finally {
+      this.#active = previous;
+      this.release(reservation);
+    }
+  }
+
+  /**
+   * Take one call for something now happening.
+   *
+   * Called by the meters, never by the work itself. Inside an operation it
+   * draws on that operation's reservation, so the same allowance is spent
+   * exactly once; outside one it draws on what is free.
+   */
+  spend(): boolean {
+    if (this.#active !== null && this.#active.take()) {
+      this.#held -= 1;
+      this.#left -= 1;
+      return true;
+    }
+    if (this.free < 1) return false;
+    this.#left -= 1;
+    return true;
   }
 }
 
@@ -134,7 +201,7 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
  */
 export function meteredFetch(budget: SubrequestBudget, fetcher: Fetcher): Fetcher {
   return (input, init) => {
-    if (!budget.spend(1)) return Promise.reject(new SubrequestBudgetSpent());
+    if (!budget.spend()) return Promise.reject(new SubrequestBudgetSpent());
     return fetcher(input, init);
   };
 }
@@ -163,7 +230,7 @@ export function meteredDatabase(budget: SubrequestBudget, db: D1Database): D1Dat
   // Rejected rather than thrown: every method this wraps is async, and a
   // caller awaiting one should not have to guard a synchronous throw as well.
   const spend = (run: () => unknown): unknown => {
-    if (!budget.spend(1)) return Promise.reject(new SubrequestBudgetSpent());
+    if (!budget.spend()) return Promise.reject(new SubrequestBudgetSpent());
     return run();
   };
 

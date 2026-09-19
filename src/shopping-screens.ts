@@ -203,10 +203,7 @@ export async function sendShoppingListForm(
   // the client spends it on every call it makes. Handing it to the client
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
-  const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SESSION_LOOKUP,
-    COMPLETION_TAIL,
-  );
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
   const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
@@ -295,12 +292,6 @@ const FAILURES_IN_MESSAGE = 3;
  */
 const SESSION_LOOKUP = 1;
 
-/**
- * Held back for the send's mandatory finish: one `db.batch` of note receipts.
- * Mirrors `s-ostoslista-sync.ts::COMPLETION_TAIL`, and is stated here because
- * this is where the ledger is made.
- */
-const COMPLETION_TAIL = 1;
 
 /**
  * One log line per row that did not go, carrying what a diagnosis needs and
@@ -503,10 +494,7 @@ export async function removeCurrentItemForm(
   // the client spends it on every call it makes. Handing it to the client
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
-  const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SESSION_LOOKUP,
-    COMPLETION_TAIL,
-  );
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
   const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
@@ -593,10 +581,7 @@ export async function saveProductForm(
   // the client spends it on every call it makes. Handing it to the client
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
-  const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SESSION_LOOKUP,
-    COMPLETION_TAIL,
-  );
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
   const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 

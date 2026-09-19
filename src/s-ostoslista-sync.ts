@@ -248,8 +248,7 @@ export async function sendToSOstoslista(
   options: SOstoslistaSendOptions = {},
 ): Promise<SOstoslistaSendOutcome> {
   const wait = options.wait ?? sleep;
-  const budget = options.budget ??
-    new SubrequestBudget(SUBREQUEST_CEILING, COMPLETION_TAIL);
+  const budget = options.budget ?? new SubrequestBudget(SUBREQUEST_CEILING);
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
   const failures: SOstoslistaRowFailure[] = [];
@@ -265,7 +264,16 @@ export async function sendToSOstoslista(
   // Reading what this household has out on the list. Not optional: without it
   // a send cannot tell its own old notes from rows the household added itself.
   // D1 is spent here by hand because only the transport meters itself.
-  if (!budget.spend(1)) return nothingSent();
+  // Held for the whole send, and spent by the receipt batch itself at the end
+  // — not taken here and then charged again by the metered database, which was
+  // costing the batch two of the one call it had (#308 review).
+  const tail = budget.reserve(COMPLETION_TAIL);
+  if (tail === null) return nothingSent();
+
+  // Gated, not charged. The database meters itself when the caller hands in a
+  // metered one, and taking the call here as well was the same double charge
+  // the receipt batch had: one real statement, two calls off the ledger.
+  if (!budget.canAfford(1)) return nothingSent();
   const outstanding = await sentNotes(db, householdId);
 
   // And what the service is holding. This one the transport meters, so it is
@@ -275,10 +283,7 @@ export async function sendToSOstoslista(
   const opening = await heldByService(client);
   if (opening.ceiling) return nothingSent();
   const held = opening.held;
-  const listKnown = opening.read;
-  // Shared across rows on purpose: what the service does with one answer is
-  // what it will do with the next.
-  const stating = { fully: false };
+
 
   let retriesLeft = RETRY_BUDGET;
   let ceiling = false;
@@ -291,25 +296,27 @@ export async function sendToSOstoslista(
       addedProducts,
       outstanding,
       held,
-      listKnown,
-      stating,
     });
 
     // Approved before it is begun, against the most it can cost. This is the
     // whole of the design: an old-note DELETE the budget cannot cover is not
     // started and then explained, it is not started. A row that does not fit
     // ends the send at a row boundary, every row after it untouched rather
-    // than half-done. The spending itself happens call by call in the
-    // transport, so an add that turns out to need its PATCH is charged for
-    // both whatever this thought.
-    if (!budget.canAfford(priceOf(planned))) {
+    // than half-done.
+    //
+    // The reservation is what makes the price honest rather than merely
+    // hopeful: the row's calls are spent from it at the real HTTP boundary, so
+    // an add that needs its PATCH is charged for both — and one that does not
+    // hands the spare call straight back when the row ends.
+    let hold = budget.reserve(priceOf(planned));
+    if (hold === null) {
       ceiling = true;
       break;
     }
 
     for (let attempt = 1; attempt <= ROW_ATTEMPTS; attempt += 1) {
       try {
-        await runRow(planned);
+        await budget.within(hold, () => runRow(planned));
         error = null;
         break;
       } catch (thrown) {
@@ -324,17 +331,17 @@ export async function sendToSOstoslista(
           break;
         }
         // A retry is re-planned, because some of the row may have gone
-        // through, and then priced again. It cannot borrow against the
-        // reserved tail.
+        // through, and reserved again at what the remainder will cost. It
+        // cannot borrow against the tail, which is held for the whole send.
         planned = planRow(db, householdId, client, item, {
           packets,
           addedProducts,
           outstanding,
           held,
-          listKnown,
-          stating,
         });
-        if (!budget.canAfford(priceOf(planned))) break;
+        const again = budget.reserve(priceOf(planned));
+        if (again === null) break;
+        hold = again;
         retriesLeft -= 1;
         await wait(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
       }
@@ -367,12 +374,12 @@ export async function sendToSOstoslista(
     failures.push(describeFailure(item, error));
   }
 
-  // The reserved tail. A send that stopped at the wall still gets here, which
-  // is the point of having reserved it: the rows that went out are written
-  // down, so the next press knows about them.
-  if (bookkeeping.length > 0 && budget.spendTail(COMPLETION_TAIL)) {
-    const lost = await flush(db, bookkeeping);
-    if (lost !== null && !isCeiling(lost)) {
+  // The reserved tail, spent by the batch itself. A send that stopped at the
+  // wall still gets here, which is the point of having held it: the rows that
+  // went out are written down, so the next press knows about them.
+  if (bookkeeping.length > 0) {
+    const lost = await budget.within(tail, () => flush(db, bookkeeping));
+    if (lost !== null && !isCeiling(lost) && !(lost instanceof SubrequestBudgetSpent)) {
       // A lost receipt is this app losing track of a row it did put on the
       // list — never a refusal, and never a reason to send a member looking at
       // a product. `sent` is not reduced for it: the row reached the service,
@@ -382,7 +389,7 @@ export async function sendToSOstoslista(
       ceiling = true;
     }
   } else {
-    budget.releaseTail();
+    budget.release(tail);
   }
 
   if (failures.length > 0 || ceiling) {
@@ -538,32 +545,6 @@ interface RowPlanContext {
   addedProducts: Set<string>;
   outstanding: Map<string, string>;
   held: readonly SOstoslistaItem[];
-  /**
-   * Whether `held` is what the service really has, or a guess.
-   *
-   * It is a guess when the opening list read failed. A key missing from a
-   * guessed list may still be on the service, so the keyed `POST` can land on
-   * last week's ticked row and need the `PATCH` too.
-   */
-  listKnown: boolean;
-  /**
-   * What this service has actually been doing with `collected` and `quantity`
-   * on this send.
-   *
-   * A create is two subrequests whenever the `POST` answer might disagree with
-   * what was asked for — and it might, not only when the row already existed,
-   * but whenever the service leaves the fields out, which
-   * `dev/check-s-ostoslista.ts` covers as a supported answer. Pricing that at
-   * one is how a row could begin on a single free slot and be stopped between
-   * its `POST` and its `PATCH`, which is the half-done row #236 exists to
-   * prevent.
-   *
-   * So the price is evidence, not assumption: two until an add on this send
-   * has come back stating both fields, one after that. The first row of a send
-   * pays the pessimistic price; the rest pay what this service has shown it
-   * costs.
-   */
-  stating: { fully: boolean };
 }
 
 /**
@@ -589,7 +570,7 @@ function planRow(
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outstanding, held, listKnown, stating }: RowPlanContext,
+  { packets, addedProducts, outstanding, held }: RowPlanContext,
 ): PlannedRow {
   const previous = outstanding.get(item.key) ?? null;
   const steps: PlannedStep[] = [];
@@ -603,7 +584,7 @@ function planRow(
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    for (const call of callsFor(client, held, listKnown, stating, { note }, null)) {
+    for (const call of callsFor(client, held, { note }, null)) {
       steps.push({
         operation: { kind: "note", note },
         cost: call.cost,
@@ -626,7 +607,7 @@ function planRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    const calls = callsFor(client, held, listKnown, stating, { ean: product.ean }, count);
+    const calls = callsFor(client, held, { ean: product.ean }, count);
     // A product the list already holds correctly costs nothing, and is done
     // the moment it is planned.
     if (calls.length === 0) {
@@ -704,8 +685,6 @@ async function runRow(planned: PlannedRow): Promise<void> {
 function callsFor(
   client: SOstoslistaSyncClient,
   held: readonly SOstoslistaItem[],
-  listKnown: boolean,
-  stating: { fully: boolean },
   key: SOstoslistaKey,
   quantity: number | null,
 ): Array<{ cost: number; run: () => Promise<unknown> }> {
@@ -713,36 +692,21 @@ function callsFor(
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
   );
   if (matching.length === 0) {
-    // One call only when both things are known: the list read is trustworthy
-    // and says this row is absent, *and* this service has already shown on
-    // this send that it states `collected` and `quantity`, so the answer to
-    // the POST cannot be the kind that needs a PATCH after it. Otherwise two,
-    // because two is what it may take.
-    return [{
-      cost: listKnown && stating.fully ? 1 : 2,
-      run: async () => {
-        const answer = await client.add(key, quantity);
-        if (statesFully(answer)) stating.fully = true;
-        return answer;
-      },
-    }];
+    // Two, always. `SOstoslistaClient.add` is a keyed POST and then a PATCH
+    // whenever the answer does not say plainly that the row is untick(ed) at
+    // this trip's count — and whether it will is not knowable before the POST.
+    //
+    // An earlier attempt tried to learn it from a previous add's return value,
+    // which was worse than a guess: `add` hands back the *patched* row, so a
+    // service whose POST always omits the fields — the very one that always
+    // needs the pair — looked like one that never does. Reserving the worst
+    // case and handing back the spare call needs no such inference, and the
+    // reservation makes the spare call free to give back.
+    return [{ cost: 2, run: () => client.add(key, quantity) }];
   }
   return matching
     .filter((row) => !agrees(row, quantity))
     .map((row) => ({ cost: 1, run: () => client.correct(row.id, quantity) }));
-}
-
-/**
- * Whether an answer told us everything a create needs it to.
- *
- * Structural because the send talks to a shape, not to `SOstoslistaClient`: a
- * fake may answer with anything. Silence reads as "no evidence", which keeps
- * the pessimistic price — never the other way round.
- */
-function statesFully(answer: unknown): boolean {
-  if (answer === null || typeof answer !== "object") return false;
-  const row = answer as Record<string, unknown>;
-  return row["collectedStated"] === true && row["collected"] === false;
 }
 
 function agrees(row: SOstoslistaItem, quantity: number | null): boolean {

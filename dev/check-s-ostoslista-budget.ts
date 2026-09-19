@@ -10,6 +10,7 @@ import { SOstoslistaClient } from "../src/s-ostoslista.ts";
 import {
   SUBREQUEST_CEILING,
   SubrequestBudget,
+  meteredDatabase,
   meteredFetch,
 } from "../src/subrequests.ts";
 import { rememberSentNote, sentNotes } from "../src/s-ostoslista-notes.ts";
@@ -241,7 +242,9 @@ test("a re-used 24+8 list stays inside one invocation's subrequest budget (#308)
   const { fetch: fetcher, calls } = service(rows);
   const ledger = budget();
 
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
     budget: ledger,
   });
 
@@ -300,7 +303,9 @@ test("every row really is buyable at this trip's count afterwards (#236, #240)",
   const { fetch: fetcher } = service(rows);
 
   const ledger = budget();
-  await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+  await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
     budget: ledger,
   });
 
@@ -330,7 +335,9 @@ test("a fresh list fits, though it is not the worst case (#308)", async () => {
   const { fetch: fetcher, calls } = service([]);
 
   const ledger = budget();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
     budget: ledger,
   });
 
@@ -354,14 +361,18 @@ test("a second press after a full send costs almost nothing (#308)", async () =>
   const rows: Row[] = [];
   const first = service(rows);
   const firstLedger = budget();
-  await sendToSOstoslista(fake.db, 1, metered(first.fetch, firstLedger), items, {
+  await sendToSOstoslista(
+    meteredDatabase(firstLedger, fake.db),
+    1, metered(first.fetch, firstLedger), items, {
     budget: firstLedger,
   });
 
   const second = service(rows);
   const before = fake.subrequests();
   const secondLedger = budget();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(second.fetch, secondLedger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(secondLedger, fake.db),
+    1, metered(second.fetch, secondLedger), items, {
     budget: secondLedger,
   });
 
@@ -396,41 +407,78 @@ function lastWeeksNotes(items: SOstoslistaSendItem[]): Array<[string, string]> {
     .map((item) => [item.key, `${item.name} — viime viikon määrä`]);
 }
 
-test("a recurring list with eight changed reminders fits in one press (#308 review)", async () => {
+test("a recurring list with eight changed reminders takes two presses (#308 review)", async () => {
+  // The extreme of the recurring shape: nothing on the service, and every one
+  // of the eight reminders owes a DELETE as well as an add. It used to be said
+  // here that this fits in one press at exactly 50. It no longer does, and the
+  // reason is deliberate: a create is reserved at the two calls it may take,
+  // because whether the POST's answer needs a PATCH after it is not knowable
+  // before the POST. The last row is refused for want of a second free call it
+  // would probably not have used.
+  //
+  // The alternative was inferring the service's behaviour from an earlier
+  // add's return value, and that was worse than a guess — `add` hands back the
+  // patched row, so the service that always needs the pair looked like one
+  // that never does, and rows began on a single slot and stopped half-way.
+  // One row deferred to a second press is the price of never doing that.
   const fake = database();
   const { items } = reportedList();
-
-  // Every text row carries last week's exact wording, and it is not this
-  // week's, so every one owes a DELETE as well as an add.
   for (const [key, note] of lastWeeksNotes(items)) {
     await rememberSentNote(fake.db, 1, key, note);
   }
 
+  const rows: Row[] = [];
+  const first = service(rows);
   const spentBefore = fake.subrequests();
-  const { fetch: fetcher, calls } = service([]);
-  const ledger = budget();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
-    budget: ledger,
+  const firstLedger = budget();
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(firstLedger, fake.db),
+    1, metered(first.fetch, firstLedger), items, {
+    budget: firstLedger,
   });
 
-  const http = calls.length;
-  const d1 = fake.subrequests() - spentBefore;
-  const total = http + d1 + SCREEN_QUERIES_AROUND_THE_SEND;
-
-  // Exactly the reviewer's arithmetic: 6 + 1 + 1 + 33 + 8 + 1. The push would
-  // have been the 51st call, so it is the one thing given up — every row is on
-  // the list and every receipt is written.
-  assert.equal(total, SUBREQUEST_CEILING);
-  assert.equal(outcome.status, "sent");
-  assert.equal(outcome.sent, 32);
-  assert.equal(outcome.status === "sent" && outcome.synced, false);
-  assert.equal(calls.filter((call) => call === "POST sync").length, 0);
-  assert.equal(
-    calls.filter((call) => call.startsWith("DELETE items")).length,
-    8,
-    "last week's wording really is taken off, not just overwritten",
+  const total = first.calls.length + (fake.subrequests() - spentBefore) +
+    SCREEN_QUERIES_AROUND_THE_SEND;
+  assert.ok(
+    total <= SUBREQUEST_CEILING,
+    `it must not overspend: ${total} > ${SUBREQUEST_CEILING}`,
   );
-  assert.equal((await sentNotes(fake.db, 1)).size, 8, "the reserved tail still runs");
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 31, "one row short, and it is a whole row");
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+  // Seven of the eight, because the row that was refused is the eighth: its
+  // add and its DELETE are one operation and neither was begun.
+  assert.equal(
+    first.calls.filter((call) => call.startsWith("DELETE items")).length,
+    7,
+    "last week's wording really is taken off the rows that went",
+  );
+  // The receipts for what did go are written: the tail is spent by the batch
+  // itself, so holding it back actually buys something. Still eight rows in
+  // the table — seven rewritten to this week's wording, and the eighth left
+  // holding last week's, because its row never ran and its old note is still
+  // out there to be deleted next press.
+  const receipts = await sentNotes(fake.db, 1);
+  assert.equal(receipts.size, 8);
+  assert.equal(
+    [...receipts.values()].filter((note) => note.includes("viime viikon")).length,
+    1,
+  );
+
+  // And the second press finishes it, cheaply, because the service is now
+  // holding everything the first press sent.
+  const second = service(rows);
+  const secondLedger = budget();
+  const resumed = await sendToSOstoslista(
+    meteredDatabase(secondLedger, fake.db),
+    1, metered(second.fetch, secondLedger), items, {
+    budget: secondLedger,
+  });
+  assert.equal(resumed.status, "sent");
+  assert.equal(resumed.sent, 32);
+  const keys = rows.map((row) => row.ean ?? row.name);
+  assert.equal(new Set(keys).size, keys.length, "no row on the list twice");
 });
 
 test("one deletion more than fits stops at a row, and the next press finishes it (#308 review)", async () => {
@@ -449,7 +497,9 @@ test("one deletion more than fits stops at a row, and the next press finishes it
   const first = service(rows);
   const spentBefore = fake.subrequests();
   const firstLedger = budget();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(first.fetch, firstLedger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(firstLedger, fake.db),
+    1, metered(first.fetch, firstLedger), items, {
     budget: firstLedger,
   });
 
@@ -474,7 +524,9 @@ test("one deletion more than fits stops at a row, and the next press finishes it
   // those rows cost nothing and the rest goes.
   const second = service(rows);
   const secondLedger = budget();
-  const resumed = await sendToSOstoslista(fake.db, 1, metered(second.fetch, secondLedger), items, {
+  const resumed = await sendToSOstoslista(
+    meteredDatabase(secondLedger, fake.db),
+    1, metered(second.fetch, secondLedger), items, {
     budget: secondLedger,
   });
 
@@ -513,7 +565,9 @@ test("a transient retry is priced before it is taken (#308 review)", async () =>
 
   const spentBefore = fake.subrequests();
   const ledger = budget();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
     budget: ledger,
     wait: async () => {},
   });
@@ -579,7 +633,9 @@ test("a failed list read cannot make the send overspend (#308 review)", async ()
 
   const ledger = budget();
   const spentBefore = fake.subrequests();
-  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+  const outcome = await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
     budget: ledger,
     wait: async () => {},
   });
@@ -633,7 +689,9 @@ test("the next press, with the list read working, finishes it (#308 review)", as
 
   const blind = refusingTheListRead(rows);
   const blindLedger = budget();
-  const first = await sendToSOstoslista(fake.db, 1, metered(blind.fetch, blindLedger), items, {
+  const first = await sendToSOstoslista(
+    meteredDatabase(blindLedger, fake.db),
+    1, metered(blind.fetch, blindLedger), items, {
     budget: blindLedger,
     wait: async () => {},
   });
@@ -648,7 +706,9 @@ test("the next press, with the list read working, finishes it (#308 review)", as
     const again = service(rows);
     const ledger = budget();
     const spentBefore = fake.subrequests();
-    outcome = await sendToSOstoslista(fake.db, 1, metered(again.fetch, ledger), items, {
+    outcome = await sendToSOstoslista(
+    meteredDatabase(ledger, fake.db),
+    1, metered(again.fetch, ledger), items, {
       budget: ledger,
       wait: async () => {},
     });
@@ -694,24 +754,33 @@ function silentAboutCollected(): { fetch: typeof fetch; calls: string[] } {
   return { fetch: fetcher, calls };
 }
 
-/** One text row, and a ledger sized so the send has `slots` ordinary calls. */
-async function sendWithSlots(slots: number): Promise<{
+/**
+ * One text row per key, and a ledger sized so the send has `slots` calls for
+ * row work after its two opening reads and the receipt batch it holds back.
+ */
+async function sendWithSlots(slots: number, rows = 1): Promise<{
   outcome: Awaited<ReturnType<typeof sendToSOstoslista>>;
   calls: string[];
+  left: number;
 }> {
   const fake = database();
-  // One for the sent-notes read, one for the list read, one held back for the
-  // receipt batch, and `slots` left for the row itself.
-  const ledger = new SubrequestBudget(slots + 3, 1);
+  // The sent-notes read, the list read, the receipt batch held back, and
+  // `slots` for the rows.
+  const ledger = new SubrequestBudget(slots + 3);
   const { fetch: fetcher, calls } = silentAboutCollected();
+  const items: SOstoslistaSendItem[] = Array.from({ length: rows }, (_, index) => ({
+    key: String(index + 1),
+    name: `aines ${index + 1}`,
+    total: "1 l",
+    chosen: [],
+  }));
   const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    metered(fetcher, ledger),
-    [{ key: "1", name: "maito", total: "1 l", chosen: [] }],
-    { budget: ledger, wait: async () => {} },
-  );
-  return { outcome, calls };
+    meteredDatabase(ledger, fake.db),
+    1, metered(fetcher, ledger), items, {
+    budget: ledger,
+    wait: async () => {},
+  });
+  return { outcome, calls, left: ledger.left };
 }
 
 test("a create is not begun on one slot when it may need two (#308 review)", async () => {
@@ -741,4 +810,76 @@ test("the same row goes when both of its calls fit (#308 review)", async () => {
     1,
     "the pair this service really needs",
   );
+});
+
+test("one row's pair does not let the next begin on a single slot (#308 review)", async () => {
+  // The case the ninth round's "evidence" got wrong. This service's POST never
+  // states the fields, so every create is a pair — but `add` hands back the
+  // *patched* row, which looks complete. Inferring from that made the second
+  // row cost one, begin on the last slot and stop at its PATCH.
+  //
+  // Three slots: the first row takes its two, and the second must not start on
+  // the one that is left.
+  const { outcome, calls, left } = await sendWithSlots(3, 2);
+
+  assert.deepEqual(calls, [
+    "GET items",
+    "POST items",
+    "PATCH items/item-1",
+  ], "the first row's pair, and then nothing");
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 1, "one row through, whole");
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+  // Nothing is left over: the first row used both of its two, the second
+  // reserved nothing at all, and the batch spent the call held for it.
+  assert.equal(left, 1);
+});
+
+test("four slots let both pairs through (#308 review)", async () => {
+  const { outcome, calls } = await sendWithSlots(4, 2);
+
+  assert.equal(outcome.status, "sent");
+  assert.equal(outcome.sent, 2);
+  assert.equal(calls.filter((call) => call === "POST items").length, 2);
+  assert.equal(calls.filter((call) => call.startsWith("PATCH")).length, 2);
+});
+
+test("the receipt batch spends its held call once (#308 review)", async () => {
+  // The double charge: the send took the tail itself and the metered database
+  // then took it again, so with exactly the held call left the batch was
+  // refused by our own ledger and the receipts were lost.
+  const fake = database();
+  // Two for the row's pair, one for the sent-notes read, one for the list
+  // read, and one held for the batch — all of them real, and all metered.
+  const ledger = new SubrequestBudget(5);
+  // Count the batches the database really runs, which is the fact this is
+  // about: one real statement must cost one call, not two.
+  let batches = 0;
+  const realBatch = fake.db.batch.bind(fake.db);
+  fake.db.batch = ((statements: D1PreparedStatement[]) => {
+    batches += 1;
+    return realBatch(statements);
+  }) as D1Database["batch"];
+  const db = meteredDatabase(ledger, fake.db);
+  const { fetch: fetcher, calls } = silentAboutCollected();
+
+  const outcome = await sendToSOstoslista(
+    db,
+    1,
+    metered(fetcher, ledger),
+    [{ key: "1", name: "maito", total: "1 l", chosen: [] }],
+    { budget: ledger, wait: async () => {} },
+  );
+
+  assert.equal(outcome.status, "sent", "no local failure from a refused batch");
+  assert.equal(outcome.sent, 1);
+  // The receipt really is written — which is what the double charge cost.
+  assert.equal((await sentNotes(fake.db, 1)).get("1"), "maito — 1 l");
+  // Charged exactly once each: the sent-notes read, the list read, the row's
+  // pair, and the batch. Five calls, five off the ledger — the double charge
+  // would have left this unable to run the batch at all.
+  assert.equal(ledger.left, 0);
+  assert.equal(batches, 1, "one batch, run once");
+  assert.equal(calls.filter((call) => call === "POST sync").length, 0, "no room left to push");
 });

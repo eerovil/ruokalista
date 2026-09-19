@@ -50,18 +50,49 @@ test("a statement that would go over is refused rather than run", async () => {
   );
 });
 
-test("the tail is held back from ordinary work and spent on its own", async () => {
-  const budget = new SubrequestBudget(3, 1);
-  assert.equal(budget.spendable, 2);
-  assert.equal(budget.spend(2), true);
-  assert.equal(budget.spendable, 0);
-  // Ordinary work cannot touch what the finish needs.
-  assert.equal(budget.spend(1), false);
-  assert.equal(budget.spendTail(1), true);
+test("a reservation is held back from ordinary work and spent from itself", async () => {
+  const budget = new SubrequestBudget(3);
+  const tail = budget.reserve(1)!;
+  assert.notEqual(tail, null);
+  assert.equal(budget.free, 2);
+
+  // Ordinary work can have what is free and no more, whatever is left in total.
+  assert.equal(budget.spend(), true);
+  assert.equal(budget.spend(), true);
+  assert.equal(budget.free, 0);
+  assert.equal(budget.left, 1, "the reservation is still unspent");
+  assert.equal(budget.spend(), false, "ordinary work cannot touch it");
+
+  // The work the reservation was made for spends it, once.
+  await budget.within(tail, async () => {
+    assert.equal(budget.spend(), true);
+  });
   assert.equal(budget.left, 0);
 });
 
-test("approving is a gate, not a deduction", () => {
+test("a reservation hands back what it did not use", async () => {
+  const budget = new SubrequestBudget(4);
+  const hold = budget.reserve(2)!;
+  assert.equal(budget.free, 2);
+
+  await budget.within(hold, async () => {
+    assert.equal(budget.spend(), true);
+  });
+
+  // One of the two was used; the other is free again, not lost and not spent.
+  assert.equal(budget.left, 3);
+  assert.equal(budget.free, 3);
+});
+
+test("a reservation that does not fit is refused rather than shrunk", () => {
+  const budget = new SubrequestBudget(3);
+  assert.equal(budget.reserve(4), null);
+  assert.equal(budget.free, 3, "a refusal promises nothing");
+  assert.notEqual(budget.reserve(3), null);
+  assert.equal(budget.free, 0);
+});
+
+test("reserving is a gate, not a deduction", () => {
   const budget = new SubrequestBudget(5);
   assert.equal(budget.canAfford(5), true);
   assert.equal(budget.left, 5, "asking does not spend");
