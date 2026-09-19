@@ -125,8 +125,7 @@ import {
   addBatchForm,
   changeBatchMultiplierForm,
   changeBatchRecipeForm,
-  coverageForm,
-  coverageScreen,
+  moveBatchDayForm,
   pickerScreen,
   plannedBatchScreen,
   removeBatchForm,
@@ -157,8 +156,7 @@ const router = new Router()
   .get("/picker", requireMemberScreen(pickerScreen))
   .post("/batches", requireMemberScreen(addBatchForm))
   .get("/batches/:id", requireMemberScreen(plannedBatchScreen))
-  .get("/batches/:id/coverage", requireMemberScreen(coverageScreen))
-  .post("/batches/:id/coverage", requireMemberScreen(coverageForm))
+  .post("/batches/:id/day", requireMemberScreen(moveBatchDayForm))
   .post("/batches/:id/multiplier", requireMemberScreen(changeBatchMultiplierForm))
   .post("/batches/:id/recipe", requireMemberScreen(changeBatchRecipeForm))
   .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))

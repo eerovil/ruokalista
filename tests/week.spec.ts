@@ -92,8 +92,13 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
   await expect(entry.locator("input")).toHaveCount(0);
   await expect(entry.getByRole("button")).toHaveCount(0);
 
-  // Change the multiplier on the focused surface.
+  // The plain tap cooks: it opens the recipe at this batch's amounts (#309).
   await entry.locator("a").click();
+  await expect(page).toHaveURL(/\/recipes\/\d+\?multiplier=1$/);
+  await page.goBack();
+
+  // Changing the plan is the quiet Muokkaa beside it.
+  await page.locator(".day").first().locator(".batch-edit").click();
   await expect(page).toHaveURL(/\/batches\/\d+$/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Kaalilaatikko",
@@ -113,14 +118,63 @@ test("putting a recipe on a day, changing it, and taking it off", async ({
 
   // Cooking it opens the recipe at the amounts this meal needs.
   await page.locator(".day").first().locator(".entry a").click();
-  await page.getByRole("link", { name: "Avaa resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+\?multiplier=1\.5$/);
 
-  // And take it off again, from the same surface.
+  // And take it off again, from the edit surface.
   await page.goBack();
+  await page.locator(".day").first().locator(".batch-edit").click();
   await page.getByRole("button", { name: "Poista erä ruokalistalta" }).click();
   await expect(page).toHaveURL(/\/\?week=2026-10-05$/);
   await expect(page.locator(".day").first().locator(".entry")).toHaveCount(0);
+});
+
+test("a planned dish moves to another day, into a week that is not on screen", async ({
+  page,
+}) => {
+  const id = await createBatch(page, "2026-10-07", "dinner", 1);
+  await page.goto(`/?week=${MONDAY}`);
+  await page.locator(`.batch-card[data-batch-id="${id}"] .batch-edit`).click();
+
+  const date = page.locator("input[name=date]");
+  await expect(date).toHaveValue("2026-10-07");
+  // Three weeks on — past the visible fortnight, and reached by typing a date
+  // rather than by paging the week arrows (#309).
+  await date.fill("2026-10-28");
+  await page.getByRole("button", { name: "Siirrä" }).click();
+
+  // The week it landed in, not the one it left.
+  await expect(page).toHaveURL(/\/\?week=2026-10-26$/);
+  await expect(page.locator(`.batch-card[data-batch-id="${id}"]`)).toHaveCount(1);
+  expect((await getBatch(page, id)).startDate).toBe("2026-10-28");
+});
+
+test("moving a cooking that feeds several days carries the whole run", async ({
+  page,
+}) => {
+  const id = await createBatch(page, "2026-10-08", "dinner", 1);
+  await setCoverage(page, id, [
+    ["2026-10-08", "dinner"],
+    ["2026-10-09", "lunch"],
+  ]);
+
+  await page.goto(`/?week=${MONDAY}`);
+  await page.locator(`.batch-card[data-batch-id="${id}"] .batch-edit`).click();
+  await expect(page.locator(".stacked .meta")).toContainText("Koko erä siirtyy");
+  await page.locator("input[name=date]").fill("2026-10-15");
+  await page.getByRole("button", { name: "Siirrä" }).click();
+
+  const moved = await getBatch(page, id);
+  expect(moved.startDate).toBe("2026-10-15");
+  expect(moved.endDate).toBe("2026-10-16");
+});
+
+test("the separate continuation screen is gone", async ({ page }) => {
+  const id = await createBatch(page, "2026-10-09", "lunch", 1);
+  const response = await page.goto(`/batches/${id}/coverage`);
+  expect(response?.status()).toBe(404);
+
+  await page.goto(`/batches/${id}`);
+  await expect(page.getByRole("link", { name: "Jatkuu…" })).toHaveCount(0);
 });
 
 test("a nonsense planned batch is a 404, not a crash", async ({ page }) => {
@@ -153,7 +207,7 @@ test("a multiplier that makes no sense keeps you on the meal, with the reason", 
 }) => {
   await addEntry(page, "2026-10-11", "lunch", "Kaalilaatikko");
   // The Sunday that closes the first week, not the last day on screen.
-  await page.locator(".day").nth(6).locator(".entry a").click();
+  await page.locator(".day").nth(6).locator(".batch-edit").click();
 
   await page.locator(".multiplier-choice input").fill("0");
   await page
@@ -199,14 +253,17 @@ test("a slot can hold more than one recipe", async ({ page }) => {
 });
 
 test("one cooked batch continues through selected lunches", async ({ page }) => {
-  await addEntry(page, "2026-11-02", "lunch", "Kaalilaatikko");
-  await page.locator(".day").first().locator(".entry a").click();
-  await page.getByRole("link", { name: "Jatkuu…" }).click();
-
-  await page.locator('input[value="2026-11-03:lunch"]').check();
-  await page.locator('input[value="2026-11-04:lunch"]').check();
-  await page.getByRole("button", { name: "Tallenna jatkumo" }).click();
-  await page.getByRole("link", { name: "Takaisin erään" }).click();
+  // A cooking may still feed several meals — the planned-batch model is intact
+  // (#309); it is only the separate continuation screen that is gone, so the
+  // run is set up the way the API sets it up.
+  const id = await createBatch(page, "2026-11-02", "lunch", 1);
+  await setCoverage(page, id, [
+    ["2026-11-02", "lunch"],
+    ["2026-11-03", "lunch"],
+    ["2026-11-04", "lunch"],
+  ]);
+  await page.goto("/?week=2026-11-02");
+  await page.locator(".day").first().locator(".batch-edit").click();
   await page.locator("select[name=recipeId]").selectOption("2");
   await page.getByRole("button", { name: "Vaihda" }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Öljykastike");
