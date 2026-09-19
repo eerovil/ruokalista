@@ -9,6 +9,7 @@ import {
 import { baseAmount, packageSizeFromName } from "./packaging.ts";
 import { formatDecimal } from "./quantities.ts";
 import type { RouteContext } from "./router.ts";
+import { meteredFetch, type SubrequestBudget } from "./subrequests.ts";
 import {
   SOstoslistaClient,
   sProductImageAtWidth,
@@ -716,6 +717,7 @@ const BOUND_SERVICE_BASE = "https://s-ostoslista-worker.invalid/";
 export function externalClient(
   env: RouteContext["env"],
   member: Member,
+  budget: SubrequestBudget | null = null,
 ): SOstoslistaClient | null {
   const householdId = Number(env.SOSTOSLISTA_HOUSEHOLD_ID);
   if (!Number.isSafeInteger(householdId) || householdId !== member.householdId) {
@@ -725,13 +727,18 @@ export function externalClient(
   const overrideUrl = env.SOSTOSLISTA_SERVICE_URL;
   const service = env.SOSTOSLISTA_SERVICE;
   if (!overrideUrl && !service) return null;
+  const transport = overrideUrl || !service
+    ? (input: RequestInfo | URL, init?: RequestInit) => fetch(input as RequestInfo, init)
+    : (input: RequestInfo | URL, init?: RequestInit) =>
+        service.fetch(input as RequestInfo, init);
   try {
     return new SOstoslistaClient(
       overrideUrl || BOUND_SERVICE_BASE,
       env.SOSTOSLISTA_API_TOKEN,
-      overrideUrl || !service
-        ? undefined
-        : (input, init) => service.fetch(input as RequestInfo, init),
+      // Given a budget, every call this client makes is charged the moment it
+      // is made. That is the only place the count cannot drift from the
+      // runtime's, because one `add` is sometimes two requests (#308).
+      budget === null ? transport : meteredFetch(budget, transport),
     );
   } catch (error) {
     console.error(`S-ostoslista configuration is invalid: ${reason(error)}`);

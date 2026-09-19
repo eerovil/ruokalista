@@ -7,12 +7,21 @@
  * accepted the local change, not when the phone has completed a sync.
  */
 
+import { SubrequestBudgetSpent } from "./subrequests.ts";
+
 export interface SOstoslistaItem {
   id: string;
   name: string;
   ean: string | null;
   /** Whether the phone's list shows this row as already picked up. */
   collected: boolean;
+  /**
+   * True when the service actually said so, rather than this being the reading
+   * of a field it left out. `add` is the only thing that decides on it.
+   */
+  collectedStated: boolean;
+  /** How many of it the row is for, or null when the service did not say. */
+  quantity: number | null;
 }
 
 export interface SOstoslistaProduct {
@@ -28,16 +37,40 @@ export interface SOstoslistaProduct {
 
 export type SOstoslistaKey = { ean: string } | { note: string };
 
+/**
+ * What went wrong, as opposed to what it looked like.
+ *
+ * Three unrelated failures used to arrive as "a `SOstoslistaError` with no
+ * status", and a caller deciding whether to try again could not tell them
+ * apart: a connection that never landed, a service that answered perfectly
+ * well with a body this client cannot read, and this app catching its own
+ * arithmetic before sending it. Only the first is worth repeating, and only
+ * the first is a connection problem to tell a member about (#308).
+ *
+ * - `transport`: the request did not complete. Nothing was said either way.
+ * - `http`: the service answered, with a status that says no.
+ * - `response`: the service answered, and the answer is not one this client
+ *   can act on — invalid JSON, or a field missing or of the wrong type. It may
+ *   still carry the status it came with, which is what separates a gateway's
+ *   HTML error page from a malformed 200.
+ * - `local`: this app refused to send something before it left. A second
+ *   identical attempt refuses identically.
+ */
+export type SOstoslistaErrorCause = "transport" | "http" | "response" | "local";
+
 export class SOstoslistaError extends Error {
   readonly status: number | null;
+  readonly cause: SOstoslistaErrorCause;
 
   constructor(
     message: string,
     status: number | null = null,
+    cause: SOstoslistaErrorCause = status === null ? "local" : "http",
   ) {
     super(message);
     this.name = "SOstoslistaError";
     this.status = status;
+    this.cause = cause;
   }
 }
 
@@ -123,6 +156,14 @@ export class SOstoslistaClient {
    * existing row carrying whatever quantity the last trip left on it, so the
    * POST's own value would be ignored exactly when it matters. The patch that
    * follows states it again (#240).
+   *
+   * What the patch is no longer is unavoidable (#308). The one case it was
+   * written for is the keyed add handing back a row that disagrees with what
+   * was asked for; an answer that already reads `collected: false` and carries
+   * the asked-for quantity is that agreement in writing, and patching it says
+   * nothing new at the price of a second round trip on every row of the list.
+   * The caution stays where it was aimed: a service that omits the flag has
+   * told us nothing, so that still patches, exactly as before.
    */
   async add(
     key: SOstoslistaKey,
@@ -137,6 +178,13 @@ export class SOstoslistaClient {
       }),
     });
     const item = readItem(payload, "add response");
+    if (
+      item.collectedStated &&
+      !item.collected &&
+      (count === null || item.quantity === count)
+    ) {
+      return item;
+    }
     return this.#patch(item.id, {
       collected: false,
       ...(count === null ? {} : { quantity: count }),
@@ -146,6 +194,26 @@ export class SOstoslistaClient {
   /** Say whether one row on the list has been picked up. */
   async setCollected(id: string, collected: boolean): Promise<SOstoslistaItem> {
     return this.#patch(id, { collected });
+  }
+
+  /**
+   * Put a row this app can already see back to "still to buy", at the count
+   * this trip worked out.
+   *
+   * This is `add`'s second half without its first. `add` exists for a row
+   * whose id nobody knows, so it asks the keyed POST for one and then corrects
+   * whatever came back; a send that has just read the list knows the id
+   * already, and asking again to be told it costs a subrequest the send does
+   * not have (#308). The correction itself is the same one, so a ticked row or
+   * a row still holding last week's count ends up exactly where `add` would
+   * have left it — for half the calls.
+   */
+  async correct(id: string, quantity: number | null = null): Promise<SOstoslistaItem> {
+    const count = cleanQuantity(quantity);
+    return this.#patch(id, {
+      collected: false,
+      ...(count === null ? {} : { quantity: count }),
+    });
   }
 
   async #patch(
@@ -208,8 +276,14 @@ export class SOstoslistaClient {
         headers,
       });
     } catch (error) {
+      // The ledger refusing a call is not a transport failure and must not be
+      // dressed as one: the send reads it as "stop here, nothing was spent",
+      // and wrapping it hid that behind a message about the network (#308).
+      if (error instanceof SubrequestBudgetSpent) throw error;
       throw new SOstoslistaError(
         `S-ostoslista request failed: ${error instanceof Error ? error.message : String(error)}`,
+        null,
+        "transport",
       );
     }
 
@@ -221,6 +295,7 @@ export class SOstoslistaClient {
         throw new SOstoslistaError(
           `S-ostoslista returned invalid JSON (${response.status}).`,
           response.status,
+          "response",
         );
       }
     } else {
@@ -334,6 +409,8 @@ function readItem(value: unknown, at: string): SOstoslistaItem {
     name: item["name"],
     ean: item["ean"],
     collected: collected === true,
+    collectedStated: collected !== null,
+    quantity: nullableNumber(item["quantity"], `${at}.quantity`),
   };
 }
 
@@ -388,5 +465,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function malformed(detail: string): SOstoslistaError {
-  return new SOstoslistaError(`Malformed S-ostoslista response: ${detail}.`);
+  return new SOstoslistaError(
+    `Malformed S-ostoslista response: ${detail}.`,
+    null,
+    "response",
+  );
 }
