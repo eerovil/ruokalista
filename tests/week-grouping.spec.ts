@@ -120,10 +120,13 @@ test("a batch spanning three days is one card with three occurrence rows", async
     "Lounas · Päivällinen",
   );
 
-  // The card is still the way into everything you can do to the batch.
+  // The card's plain tap cooks, and Muokkaa is the way into the plan (#309).
   await card.locator(".entry a").click();
+  await expect(page).toHaveURL(/\/recipes\/1\?multiplier=1$/);
+  await page.goBack();
+  await card.locator(".batch-edit").click();
   await expect(page).toHaveURL(new RegExp(`/batches/${spanning}$`));
-  await expect(page.getByRole("link", { name: "Jatkuu…" })).toBeVisible();
+  await expect(page.locator("input[name=date]")).toBeVisible();
 });
 
 test("two continuing batches of one recipe share one summary row", async ({

@@ -214,29 +214,13 @@ test.describe("signed in", () => {
   });
 
   test("the week", async ({ page }) => {
+    const id = await createBatch(page, "2026-10-05", "lunch", 1);
+    await setCoverage(page, id, [
+      ["2026-10-05", "lunch"],
+      ["2026-10-06", "lunch"],
+      ["2026-10-07", "lunch"],
+    ]);
     await page.goto("/?week=2026-10-05");
-    await page
-      .locator(".day")
-      .first()
-      .locator(".empty-slot")
-      .first()
-      .click();
-    await page
-      .locator(".pick li", { hasText: "Kaalilaatikko" })
-      .getByRole("button", { name: "Lisää" })
-      .click();
-    await page.locator(".entry a").first().click();
-    await page.getByRole("link", { name: "Jatkuu…" }).click();
-    await page.locator('input[value="2026-10-06:lunch"]').check();
-    await page.locator('input[value="2026-10-07:lunch"]').check();
-    await expect(page.locator('input[value="2026-10-07:lunch"]')).toBeChecked();
-    await capture(page, {
-      path: `${SHOTS}/19-batch-coverage.png`,
-      fullPage: true,
-    });
-    await page.getByRole("button", { name: "Tallenna jatkumo" }).click();
-    await page.getByRole("link", { name: "Takaisin erään" }).click();
-    await page.getByRole("link", { name: "Takaisin viikkoon" }).click();
     await expect(page.locator(".batch-start")).toBeVisible();
     await expect(page.locator(".batch-end")).toBeVisible();
     await capture(page, { path: `${SHOTS}/02-week.png`, fullPage: true });
@@ -342,8 +326,9 @@ test.describe("signed in", () => {
       .locator(".pick li", { hasText: "Kaalilaatikko" })
       .getByRole("button", { name: "Lisää" })
       .click();
-    await page.locator(".day .entry a").first().click();
+    await page.locator(".day .batch-edit").first().click();
     await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
+    await expect(page.locator("input[name=date]")).toHaveValue("2026-10-13");
     await capture(page, { path: `${SHOTS}/15-meal-actions.png`, fullPage: true });
   });
 

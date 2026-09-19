@@ -380,6 +380,11 @@ const STYLES = `
   .batch-end, .batch-onward { margin: 0; padding: .35rem .7rem .45rem;
     font-size: .75rem; color: var(--muted); }
   .batch-end { text-align: right; }
+  /* Findable but quiet: the card's own tap goes to the recipe, and changing the
+     plan is the smaller thing you do next to it (#309). */
+  .batch-edit { display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); margin: 0 .7rem .3rem;
+    font-size: .8rem; color: var(--muted); }
   /* Jump back to today after scrolling away — the week's one floating action. */
   .to-today {
     position: fixed; right: 1rem; z-index: 2;
@@ -411,6 +416,10 @@ const STYLES = `
   .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
   .control-row { display: flex; gap: .5rem; align-items: center; }
   .control-row input { width: 5rem; text-align: center; }
+  /* A date box needs room for a whole date and the browser's own picker glyph,
+     so it opts out of the narrow, centred default the row gives a number. */
+  .control-row input[type="date"] { width: auto; min-height: var(--tap);
+    text-align: left; }
   /* One tap for the four multipliers a household actually uses, and a box for
      everything else — the domain takes any positive number. */
   .multiplier-choice { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
@@ -418,30 +427,6 @@ const STYLES = `
   .multiplier-choice .is-current { background: var(--accent); color: var(--bg);
     border-color: var(--accent); }
   .multiplier-choice input { width: 4.5rem; text-align: center; }
-  .coverage-weeks { align-items: center; }
-  .coverage-weeks span { color: var(--muted); }
-  .coverage-grid { display: grid; grid-template-columns: minmax(7rem, 1fr) 1fr 1fr;
-    gap: .35rem; align-items: stretch; margin-bottom: 1rem; }
-  .coverage-grid > strong { align-self: end; font-size: .75rem; text-align: center; }
-  .coverage-day { display: flex; flex-direction: column; justify-content: center;
-    min-height: var(--tap); text-transform: capitalize; }
-  .coverage-day small { color: var(--muted); }
-  .coverage-form { display: block; }
-  .coverage-cell { position: relative; display: flex; cursor: pointer; }
-  .coverage-cell input { position: absolute; width: 1px; height: 1px;
-    overflow: hidden; opacity: 0; }
-  .coverage-cell > span { display: flex; align-items: center; justify-content: center;
-    width: 100%; min-height: var(--tap); padding: .3rem;
-    color: var(--muted); font-size: .75rem; border: 1px solid var(--edge);
-    border-radius: var(--radius); }
-  .coverage-cell .chosen { display: none; }
-  .coverage-cell input:checked + span { color: var(--accent-fg);
-    background: var(--accent); border-color: var(--accent); font-weight: 600; }
-  .coverage-cell input:checked + span .choose { display: none; }
-  .coverage-cell input:checked + span .chosen { display: inline; }
-  .coverage-cell input:focus-visible + span { outline: 2px solid var(--accent);
-    outline-offset: 2px; }
-  .coverage-form > button { width: 100%; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
   .part { margin: 1.5rem 0; padding-left: .7rem;

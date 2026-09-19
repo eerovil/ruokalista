@@ -46,9 +46,8 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
 | `14-scaled.png` | Proposed same lasagne at 1,5×, amounts rounded for a kitchen |
-| `15-meal-actions.png` | Proposed whole-batch recipe, multiplier chips, continuation and removal actions |
+| `15-meal-actions.png` | The one screen that edits a planned dish: recipe, day, multiplier chips and removal |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
-| `19-batch-coverage.png` | Proposed tap-based lunch/dinner coverage editor |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
 | `24-multi-day-batch.png` | Proposed one card for a batch spanning three days beside a shorter one |
