@@ -54,9 +54,13 @@ are display/scaling context and never determine coverage. See
 [ADR-0004](../adr/0004-a-planned-batch-owns-its-occurrences.md).
 
 Routes moved with the model: `/meal-entries/:id` no longer exists. Planning
-goes through `/batches/:id`, `/batches/:id/coverage`, `/batches/:id/portions`,
+goes through `/batches/:id`, `/batches/:id/day`, `/batches/:id/multiplier`,
 `/batches/:id/recipe`, `/batches/:id/delete`, plus the matching
-`/api/batches...` JSON routes in `src/index.ts`.
+`/api/batches...` JSON routes in `src/index.ts`. Since #309 the screen edits a
+planned dish's day by moving the whole cooking to a date
+(`src/menu.ts::moveBatchTo`); the free-form coverage editor is gone from the
+UI, but `replaceOccurrences` and the multi-occurrence model it writes are
+unchanged and still reachable through `PATCH /api/batches/:id`.
 
 Issue #255 proposes adding `planned_batch.instance_key` in
 `migrations/0024_planned_batch_instance_key.sql`. The integer id remains the
