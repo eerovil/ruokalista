@@ -111,11 +111,14 @@ test("a name search made inside a category stays inside it", async ({ page }) =>
   await expect(page.locator(".recipes li")).toHaveCount(2);
 
   await page.getByLabel("Hae nimellä").fill("kaali");
-  await page.getByRole("button", { name: "Hae" }).click();
 
+  // Typing narrows the list where it stands (#307): the category the reader is
+  // inside is still the category they are inside.
   await expect(page).toHaveURL(/kategoria=uuniruoka/);
-  await expect(page.locator(".recipes li")).toHaveCount(1);
-  await expect(page.locator(".recipes li")).toContainText("Kaalilaatikko");
+  await expect(page.locator(".recipes li:not([hidden])")).toHaveCount(1);
+  await expect(page.locator(".recipes li:not([hidden])")).toContainText(
+    "Kaalilaatikko",
+  );
 });
 
 test("an empty category says so and offers the way back", async ({ page }) => {
@@ -269,8 +272,10 @@ test("a bulk edit comes back to the same search and category", async ({ page }) 
   await page.getByRole("button", { name: "Lisää valituille" }).click();
 
   await expect(page.locator(".done")).toContainText("Lisuke");
-  await expect(page.locator(".recipes li")).toHaveCount(1);
-  await expect(page.locator(".recipes li")).toContainText("Lasagne");
+  // The category is the server's to keep; the typed text is this browser's,
+  // and rides back on the address the form posted to (#307).
+  await expect(page.locator(".recipes li:not([hidden])")).toHaveCount(1);
+  await expect(page.locator(".recipes li:not([hidden])")).toContainText("Lasagne");
   await expect(page.getByLabel("Hae nimellä")).toHaveValue("lasagne");
 });
 

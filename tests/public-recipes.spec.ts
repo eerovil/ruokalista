@@ -68,7 +68,8 @@ test("a published recipe reaches the other household, and can be planned", async
   await signIn(page, 2);
   await page.goto("/recipes/julkiset");
   await expect(page.locator(".recipes a")).toContainText("Kaalilaatikko");
-  await expect(page.locator(".recipes .meta").first()).toContainText("Koti");
+  // Whose it is sits on the row's provenance line, under the cooking one.
+  await expect(page.locator(".recipes li").first()).toContainText("Koti");
 
   // Reading it works, and says whose it is.
   await page.getByRole("link", { name: /Kaalilaatikko/ }).click();
@@ -78,7 +79,7 @@ test("a published recipe reaches the other household, and can be planned", async
   // And it can go on the week, the same as an own recipe.
   await page.goto("/picker?date=2026-09-01&slot=dinner");
   const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
-  await expect(row.locator(".meta")).toContainText("Koti");
+  await expect(row).toContainText("Koti");
   await row.getByRole("button", { name: "Lisää" }).click();
   // Two Tuesdays are on screen since #250; the planned one is the first.
   await expect(

@@ -26,19 +26,21 @@ test("the list shows the household's recipes, newest first", async ({ page }) =>
 
 test("search matches regardless of case", async ({ page }) => {
   await page.goto("/recipes");
+  // The search filters as it is typed since #307, so there is nothing to
+  // submit; `tests/recipe-browser.spec.ts` covers that on both screens.
   await page.getByLabel("Hae nimellä").fill("KAALI");
-  await page.getByRole("button", { name: "Hae" }).click();
 
-  await expect(page.locator(".recipes li")).toHaveCount(1);
-  await expect(page.locator(".recipes a")).toContainText("Kaalilaatikko");
+  await expect(page.locator(".recipes li:not([hidden])")).toHaveCount(1);
+  await expect(page.locator(".recipes a:visible")).toContainText("Kaalilaatikko");
 });
 
 test("a search that finds nothing says so, and what to do next", async ({
   page,
 }) => {
   await page.goto("/recipes?q=pizza");
-  await expect(page.locator(".nothing")).toContainText("pizza");
-  await page.getByRole("link", { name: "Näytä kaikki reseptit" }).click();
+  await expect(page.locator(".browse-none")).toContainText("pizza");
+  // Clearing the box is the way back, and the whole list is already here.
+  await page.getByLabel("Hae nimellä").fill("");
   await expect(page.locator(".recipes li").first()).toBeVisible();
 });
 

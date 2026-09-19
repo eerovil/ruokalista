@@ -6,7 +6,8 @@ import {
 import { page } from "./html.ts";
 import type { Member } from "./members.ts";
 import { ownedDishes } from "./recipe-publish.ts";
-import { askedCategory, ownRecipeList, type ListNotice } from "./recipes.ts";
+import { browseState, type BrowseState } from "./recipe-browser.ts";
+import { ownRecipeList, type ListNotice } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -155,16 +156,15 @@ export async function categoryBulkForm(
   const form = await request.formData();
   const vocabulary = await loadVocabulary(env.DB);
   const action = String(form.get("action") ?? "");
-  const query = String(form.get("q") ?? "");
-  const filter = askedCategory(
+  const state = browseState(
     vocabulary,
-    String(form.get("kategoria") ?? "") || null,
+    (name) => String(form.get(name) ?? "") || null,
   );
   const category = String(form.get("bulkCategory") ?? "");
   const ids = form.getAll("recipeId").map((value) => Number(String(value)));
 
   if (action !== "add" && action !== "remove") {
-    return list(env, vocabulary, member, query, filter, category, {
+    return list(env, vocabulary, member, state, category, {
       message: "Tuntematon toiminto.",
       refused: true,
     });
@@ -178,7 +178,7 @@ export async function categoryBulkForm(
         : await removeCategoryFromRecipes(env.DB, vocabulary, member, ids, category);
   } catch (error) {
     if (!(error instanceof CategoryBulkRefused)) throw error;
-    return list(env, vocabulary, member, query, filter, category, {
+    return list(env, vocabulary, member, state, category, {
       message: error.message,
       refused: true,
     });
@@ -188,8 +188,7 @@ export async function categoryBulkForm(
     env,
     vocabulary,
     member,
-    query,
-    filter,
+    state,
     category,
     doneNotice(vocabulary, action, category, outcome),
   );
@@ -238,8 +237,7 @@ async function list(
   env: RouteContext["env"],
   vocabulary: Vocabulary,
   member: Member,
-  query: string,
-  filter: string | null,
+  state: BrowseState,
   chosen: string,
   notice: ListNotice,
 ): Promise<Response> {
@@ -249,9 +247,8 @@ async function list(
       env.DB,
       vocabulary,
       member,
-      query,
+      state,
       notice,
-      filter,
       vocabulary.has(chosen) ? chosen : null,
     ),
     "recipes",

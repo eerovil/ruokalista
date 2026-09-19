@@ -39,6 +39,7 @@ lines have to mean the same foodstuff in every household's shopping list. See
 | Routing and the one handler | `src/index.ts`, `src/router.ts`, `src/env.ts` |
 | Sign-in, sessions, admin | `src/auth.ts`, `src/signin.ts`, `src/members.ts`, `src/admin-screens.ts` |
 | Households and their members, admin-side | `src/households.ts`, `src/household-admin.ts` |
+| Browsing recipes: the filters, the order, the cooking history | `src/recipe-browser.ts`, `src/client/recipe-browser.ts`, `src/cook-history.ts`, `src/recipe-picture.ts` |
 | Recipes, parts, scaling | `src/recipes.ts`, `src/recipe-save.ts`, `src/recipe-editor.ts`, `src/scaling.ts`, `src/recipe-phase.ts`, `src/ingredient-refs.ts`, `src/alternatives.ts`, `src/categories.ts`, `src/category-bulk.ts`, `src/category-admin.ts` |
 | Changing a recipe with a prompt | `src/recipe-prompt-edit.ts`, `src/recipe-prompt-screens.ts` |
 | Publishing a recipe, and a household's own default for one | `src/recipe-publish.ts`, `src/recipe-preference.ts`, `src/publish-screens.ts` |
@@ -89,7 +90,8 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).
 - **Browser code has two paths.** Intake, shopping, the recipe screen's
-  product picker, and the recipe-image splitter live under `src/client/` and
+  product picker, the recipe browser's instant search, and the recipe-image
+  splitter live under `src/client/` and
   are DOM-typechecked and generated into committed `src/generated/` modules;
   run `generate:client` after changes there, and `check:client` rejects stale output. Remaining hand-written
   template-string islands are shipped untranspiled: write ES5 there and remember

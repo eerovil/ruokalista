@@ -7,6 +7,7 @@ import {
   categoryFilter,
 } from "../src/categories.ts";
 import { doneNotice } from "../src/category-bulk.ts";
+import { browseHref, DEFAULT_SORT } from "../src/recipe-browser.ts";
 import { slugFor } from "../src/category-admin.ts";
 
 /**
@@ -78,20 +79,38 @@ test("a label is Finnish and a slug is not", () => {
   assert.equal(VOCABULARY.label("wellington"), "wellington");
 });
 
+/**
+ * Where a chip leads is `recipe-browser.ts::browseHref` since #307 — one
+ * address for one browse state, so the picker's day and the chosen order ride
+ * along with the search. These check the two together, which is how they are
+ * used.
+ */
+const linkTo = (
+  path: string,
+  query: string,
+  carried?: Record<string, string>,
+) =>
+  (slug: string | null) =>
+    browseHref({ path, ...(carried ? { carried } : {}) }, {
+      query,
+      category: slug,
+      sort: DEFAULT_SORT,
+    });
+
 test("a chip keeps the name search it was tapped from", () => {
-  const markup = categoryFilter(VOCABULARY, "/recipes", "kaali", null, ["keitto"]).value;
+  const markup = categoryFilter(VOCABULARY, linkTo("/recipes", "kaali"), null, ["keitto"]).value;
   assert.ok(markup.includes('href="/recipes?q=kaali&amp;kategoria=keitto"'));
   // Kaikki drops the category and keeps the search, which is the way back.
   assert.ok(markup.includes('href="/recipes?q=kaali"'));
 });
 
 test("Kaikki with no search is the bare list path", () => {
-  const markup = categoryFilter(VOCABULARY, "/recipes", "", null, ["pasta"]).value;
+  const markup = categoryFilter(VOCABULARY, linkTo("/recipes", ""), null, ["pasta"]).value;
   assert.ok(markup.includes('href="/recipes"'));
 });
 
 test("only categories something in the list has get a chip", () => {
-  const markup = categoryFilter(VOCABULARY, "/recipes", "", null, ["pasta"]).value;
+  const markup = categoryFilter(VOCABULARY, linkTo("/recipes", ""), null, ["pasta"]).value;
   assert.ok(markup.includes("Pasta"));
   // A chip leading to an empty screen makes the reader do the work of finding
   // out it was empty.
@@ -101,13 +120,29 @@ test("only categories something in the list has get a chip", () => {
 test("the chip being stood on stays even once it matches nothing", () => {
   // Otherwise unticking the last recipe in a category would take away the only
   // marker of where the reader is, and the screen would read as broken.
-  const markup = categoryFilter(VOCABULARY, "/recipes", "", "keitto", []).value;
+  const markup = categoryFilter(VOCABULARY, linkTo("/recipes", ""), "keitto", []).value;
   assert.ok(markup.includes("Keitto"));
   assert.ok(markup.includes('aria-current="page"'));
 });
 
 test("a list with nothing categorised offers no filter at all", () => {
-  assert.equal(categoryFilter(VOCABULARY, "/recipes", "", null, []).value, "");
+  assert.equal(categoryFilter(VOCABULARY, linkTo("/recipes", ""), null, []).value, "");
+});
+
+test("a chip on the week picker keeps the day and the meal it belongs to", () => {
+  const markup = categoryFilter(
+    VOCABULARY,
+    linkTo("/picker", "", { date: "2026-09-21", slot: "lunch" }),
+    null,
+    ["keitto"],
+  ).value;
+  assert.ok(
+    markup.includes(
+      'href="/picker?date=2026-09-21&amp;slot=lunch&amp;kategoria=keitto"',
+    ),
+  );
+  // Kaikki drops the category and keeps the meal it was tapped from.
+  assert.ok(markup.includes('href="/picker?date=2026-09-21&amp;slot=lunch"'));
 });
 
 /**

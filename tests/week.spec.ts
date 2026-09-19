@@ -455,11 +455,14 @@ test("a batch crossing a Sunday is one card in the fortnight, and carried when t
 });
 
 test("the picker searches, and can find nothing", async ({ page }) => {
+  // ?q= still narrows on the server, and the browser then replaces it with the
+  // whole list filtered as typed (#307) — so the visible rows are the answer.
   await page.goto(`/picker?date=${MONDAY}&slot=lunch&q=KAALI`);
-  await expect(page.locator(".pick li")).toHaveCount(1);
+  await expect(page.locator(".pick li:not([hidden])")).toHaveCount(1);
 
   await page.goto(`/picker?date=${MONDAY}&slot=lunch&q=pizza`);
-  await expect(page.locator(".nothing")).toContainText("Haku \"pizza\"");
+  await expect(page.locator(".pick li:not([hidden])")).toHaveCount(0);
+  await expect(page.locator(".browse-none")).toContainText("Haku \"pizza\"");
 });
 
 test("a picker with a nonsense day or meal is a 404", async ({ page }) => {

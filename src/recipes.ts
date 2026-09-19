@@ -9,11 +9,18 @@ import {
   CATEGORY_STYLE,
   SELECTION_COUNT_ISLAND,
   categoryBulkControls,
-  categoryFilter,
   categoryTags,
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
+import { cookHistory } from "./cook-history.ts";
+import {
+  browseFields,
+  browseStateFrom,
+  recipeBrowser,
+  type BrowseState,
+} from "./recipe-browser.ts";
+import { recipeImage, type Pictured } from "./recipe-picture.ts";
 import recipeProductsClient from "./generated/recipe-products.ts";
 import { html, multiplierField, page, raw, type Raw, saveBar } from "./html.ts";
 import { resolveMentions } from "./ingredient-refs.ts";
@@ -77,25 +84,14 @@ export type {
   RecipeStep,
   RecipeSummary,
 } from "./recipe-read.ts";
-
-/**
- * The category a list was asked to show, or null for all of them.
- * An unknown slug is read as no filter rather than as an empty list.
- */
-export function askedCategory(
-  vocabulary: Vocabulary,
-  value: string | null,
-): string | null {
-  return value !== null && vocabulary.has(value) ? value : null;
-}
-
-function inCategory(
-  summaries: RecipeSummary[],
-  category: string | null,
-): RecipeSummary[] {
-  if (category === null) return summaries;
-  return summaries.filter((recipe) => recipe.categories.includes(category));
-}
+// Where a picture and the browse state are drawn moved out of this module; the
+// names stay importable from here, which is where every screen already looks.
+export { recipeImage, type Pictured } from "./recipe-picture.ts";
+export {
+  askedCategory,
+  browseStateFrom,
+  type BrowseState,
+} from "./recipe-browser.ts";
 
 /** `GET /api/recipes?q=` */
 export async function apiListRecipes(
@@ -174,7 +170,6 @@ export async function recipeListScreen(
   { env, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const query = url.searchParams.get("q") ?? "";
   const vocabulary = await loadVocabulary(env.DB);
   return page(
     "Reseptit",
@@ -182,9 +177,8 @@ export async function recipeListScreen(
       env.DB,
       vocabulary,
       member,
-      query,
+      browseStateFrom(vocabulary, url.searchParams),
       null,
-      askedCategory(vocabulary, url.searchParams.get("kategoria")),
     ),
     "recipes",
     member,
@@ -201,76 +195,47 @@ export async function ownRecipeList(
   db: D1Database,
   vocabulary: Vocabulary,
   member: Member,
-  query: string,
+  state: BrowseState,
   notice: ListNotice | null,
-  category: string | null = null,
   bulkCategory: string | null = null,
 ): Promise<Raw> {
-  const matching = await recipeSummaries(db, member.householdId, query);
-  const recipes = inCategory(matching, category);
+  const [matching, history] = await Promise.all([
+    recipeSummaries(db, member.householdId, state.query),
+    cookHistory(db, member.householdId),
+  ]);
 
   return html`<h1>Reseptit</h1>
     <p class="public-link"><a href="/recipes/julkiset">Jaetut reseptit</a></p>
-    <form method="get" action="/recipes">
-      <input
-        type="search"
-        name="q"
-        value="${query}"
-        placeholder="Hae nimellä"
-        aria-label="Hae nimellä"
-      />
-      ${category === null
-        ? ""
-        : html`<input type="hidden" name="kategoria" value="${category}" />`}
-      <button type="submit">Hae</button>
-    </form>
-    ${categoryFilter(
-      vocabulary,
-      "/recipes",
-      query,
-      category,
-      availableCategories(matching),
-    )}
-    ${noticeLine(notice)}
-    ${recipes.length === 0
-      ? html`<div class="nothing">
-          <p class="empty">
-            ${category !== null
-              ? `Kategoriassa ${vocabulary.label(category)} ei ole yhtään reseptiä.`
-              : query.trim() === ""
-                ? "Reseptejä ei ole vielä yhtään."
-                : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}
-          </p>
-          ${category === null && query.trim() === ""
-            ? html`<p><a class="button" href="/intake">Lisää ensimmäinen</a></p>`
-            : html`<p><a href="/recipes">Näytä kaikki reseptit</a></p>`}
-        </div>`
-      : html`<form method="post" action="/recipes/julkaisu" class="stacked">
-          <input type="hidden" name="q" value="${query}" />
-          ${category === null
-            ? ""
-            : html`<input type="hidden" name="kategoria" value="${category}" />`}
-          <ul class="recipes is-selectable">
-            ${recipes.map(
-              (recipe) => html`<li>
-                <input
-                  type="checkbox"
-                  name="recipeId"
-                  value="${recipe.id}"
-                  class="recipe-pick"
-                  aria-label="Valitse ${recipe.title}"
-                />
-                <a href="/recipes/${recipe.id}">
-                  ${recipeImage(recipe, "thumb")}
-                  <span class="recipes-text">
-                    ${recipe.title}
-                    <span class="meta">${metaLine(vocabulary, recipe)}</span>
-                  </span>
-                  ${sharingBadge(recipe)}
-                </a>
-              </li>`,
-            )}
-          </ul>
+    ${recipeBrowser(
+      { path: "/recipes" },
+      {
+        state,
+        vocabulary,
+        matching,
+        history,
+        viewerHouseholdId: member.householdId,
+        notice: noticeLine(notice),
+        emptyAll: "Reseptejä ei ole vielä yhtään.",
+        emptyAction: html`<p>
+          <a class="button" href="/intake">Lisää ensimmäinen</a>
+        </p>`,
+        listClass: "recipes is-selectable",
+        row: (recipe, card) => html`<input
+            type="checkbox"
+            name="recipeId"
+            value="${recipe.id}"
+            class="recipe-pick"
+            aria-label="Valitse ${recipe.title}"
+          />
+          <a href="/recipes/${recipe.id}">${card}${sharingBadge(recipe)}</a>`,
+        // The list rides inside the form the bulk actions post, so ticking a
+        // row means one thing on this screen rather than two.
+        wrap: (list) => html`<form
+          method="post"
+          action="/recipes/julkaisu"
+          class="stacked"
+        >
+          ${browseFields(state)} ${list}
           <p class="selection-count">
             Toiminto kohdistuu valitsemiisi resepteihin.
           </p>
@@ -284,7 +249,9 @@ export async function ownRecipeList(
             </button>
           </p>
           <script>${raw(SELECTION_COUNT_ISLAND)}</script>
-        </form>`}
+        </form>`,
+      },
+    )}
     ${PUBLISH_STYLE}
     ${CATEGORY_STYLE}`;
 }
@@ -294,15 +261,12 @@ export async function publicRecipeListScreen(
   { env, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const query = url.searchParams.get("q") ?? "";
   const vocabulary = await loadVocabulary(env.DB);
-  const category = askedCategory(vocabulary, url.searchParams.get("kategoria"));
-  const matching = await publicRecipeSummaries(
-    env.DB,
-    member.householdId,
-    query,
-  );
-  const recipes = inCategory(matching, category);
+  const state = browseStateFrom(vocabulary, url.searchParams);
+  const [matching, history] = await Promise.all([
+    publicRecipeSummaries(env.DB, member.householdId, state.query),
+    cookHistory(env.DB, member.householdId),
+  ]);
 
   return page(
     "Jaetut reseptit",
@@ -312,78 +276,32 @@ export async function publicRecipeListScreen(
         muokata voi vain reseptin oma talous.
       </p>
       <p class="public-link"><a href="/recipes">Omat reseptit</a></p>
-      <form method="get" action="/recipes/julkiset">
-        <input
-          type="search"
-          name="q"
-          value="${query}"
-          placeholder="Hae nimellä"
-          aria-label="Hae nimellä"
-        />
-        ${category === null
-          ? ""
-          : html`<input type="hidden" name="kategoria" value="${category}" />`}
-        <button type="submit">Hae</button>
-      </form>
-      ${categoryFilter(
-        vocabulary,
-        "/recipes/julkiset",
-        query,
-        category,
-        availableCategories(matching),
+      ${recipeBrowser(
+        { path: "/recipes/julkiset" },
+        {
+          state,
+          vocabulary,
+          matching,
+          history,
+          viewerHouseholdId: member.householdId,
+          noun: "jaettua reseptiä",
+          emptyAll:
+            "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille.",
+          resetLabel: "Näytä kaikki jaetut",
+          listClass: "recipes",
+          row: (recipe, card) => html`<a href="/recipes/${recipe.id}"
+            >${card}
+            <span class="badge is-published">
+              ${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}
+            </span>
+          </a>`,
+        },
       )}
-      ${recipes.length === 0
-        ? html`<div class="nothing">
-            <p class="empty">
-              ${category !== null
-                ? `Kategoriassa ${vocabulary.label(category)} ei ole yhtään jaettua reseptiä.`
-                : query.trim() === ""
-                  ? "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille."
-                  : `Haku "${query.trim()}" ei löytänyt yhtään jaettua reseptiä.`}
-            </p>
-            ${category === null && query.trim() === ""
-              ? ""
-              : html`<p><a href="/recipes/julkiset">Näytä kaikki jaetut</a></p>`}
-          </div>`
-        : html`<ul class="recipes">
-            ${recipes.map(
-              (recipe) => html`<li>
-                <a href="/recipes/${recipe.id}">
-                  ${recipeImage(recipe, "thumb")}
-                  <span class="recipes-text">
-                    ${recipe.title}
-                    <span class="meta"
-                      >${recipe.categories.length === 0
-                        ? recipe.householdName
-                        : `${recipe.householdName} · ${recipe.categories
-                            .map((slug) => vocabulary.label(slug))
-                            .join(", ")}`}</span
-                    >
-                  </span>
-                  <span class="badge is-published">
-                    ${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}
-                  </span>
-                </a>
-              </li>`,
-            )}
-          </ul>`}
       ${PUBLISH_STYLE}
     ${CATEGORY_STYLE}`,
     "recipes",
     member,
   );
-}
-
-function availableCategories(recipes: readonly RecipeSummary[]): string[] {
-  return [...new Set(recipes.flatMap((recipe) => recipe.categories))];
-}
-
-function metaLine(vocabulary: Vocabulary, recipe: RecipeSummary): string {
-  const parts = [finnishDate(recipe.createdAt), recipe.createdBy];
-  if (recipe.categories.length > 0) {
-    parts.push(recipe.categories.map((slug) => vocabulary.label(slug)).join(", "));
-  }
-  return parts.join(" · ");
 }
 
 function sharingBadge(recipe: RecipeSummary): Raw {
@@ -700,26 +618,6 @@ function body(
             )}
           </ol>`}
   </section>`;
-}
-
-/** Everything rendering a picture needs to know. A `Recipe` is one of these. */
-export interface Pictured {
-  id: number;
-  imageKey: string | null;
-}
-
-/** A recipe picture, or a same-size empty placeholder. */
-export function recipeImage(
-  recipe: Pictured,
-  size: "hero" | "thumb" = "hero",
-): Raw {
-  const shape =
-    size === "thumb" ? "recipe-image is-thumb" : "recipe-image is-hero";
-  return recipe.imageKey === null
-    ? html`<div class="${shape} is-empty" aria-hidden="true"></div>`
-    : html`<div class="${shape}">
-        <img src="/api/recipes/${recipe.id}/image" alt="" loading="lazy" />
-      </div>`;
 }
 
 interface RecipeView {
@@ -1281,14 +1179,4 @@ async function loadRequested(
   const id = Number(rawId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   return findReadableRecipe(db, member.householdId, id);
-}
-
-/** `2026-08-25 06:12:00` as `25.8.2026`. */
-function finnishDate(timestamp: string): string {
-  const [date] = timestamp.split(" ");
-  const parts = (date ?? "").split("-");
-  if (parts.length !== 3) return timestamp;
-
-  const [year, month, day] = parts as [string, string, string];
-  return `${Number(day)}.${Number(month)}.${year}`;
 }
