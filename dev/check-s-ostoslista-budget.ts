@@ -7,6 +7,8 @@ import {
   type SOstoslistaSendItem,
 } from "../src/s-ostoslista-sync.ts";
 import { SOstoslistaClient } from "../src/s-ostoslista.ts";
+import { SUBREQUEST_CEILING, SubrequestBudget } from "../src/subrequests.ts";
+import { rememberSentNote, sentNotes } from "../src/s-ostoslista-notes.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
 /**
@@ -56,8 +58,12 @@ const TOKEN = "test-token";
  * send already had. `dev/check-s-ostoslista-route.ts` is where that is proved
  * over the real route, end to end.
  */
-const SUBREQUEST_CEILING = 50;
 const SCREEN_QUERIES_AROUND_THE_SEND = 6;
+
+/** The send's own share, the way `sendShoppingListForm` works it out. */
+function budget(): SubrequestBudget {
+  return new SubrequestBudget(SUBREQUEST_CEILING - SCREEN_QUERIES_AROUND_THE_SEND);
+}
 
 interface Row {
   id: string;
@@ -223,7 +229,9 @@ test("a re-used 24+8 list stays inside one invocation's subrequest budget (#308)
   const { fetch: fetcher, calls } = service(rows);
   const client = new SOstoslistaClient(BASE, TOKEN, fetcher);
 
-  const outcome = await sendToSOstoslista(fake.db, 1, client, items);
+  const outcome = await sendToSOstoslista(fake.db, 1, client, items, {
+    budget: budget(),
+  });
 
   assert.equal(outcome.status, "sent");
   assert.equal(outcome.sent, 32);
@@ -279,7 +287,9 @@ test("every row really is buyable at this trip's count afterwards (#236, #240)",
   ];
   const { fetch: fetcher } = service(rows);
 
-  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, fetcher), items);
+  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, fetcher), items, {
+    budget: budget(),
+  });
 
   for (const item of items) {
     const want = wanted(item);
@@ -296,9 +306,12 @@ test("every row really is buyable at this trip's count afterwards (#236, #240)",
   }
 });
 
-test("a fresh list is the worst case, and it fits too (#308)", async () => {
-  // Nothing on the service at all: every external row needs its creating POST,
-  // which is the one call that cannot be avoided. This is the ceiling case.
+test("a fresh list fits, though it is not the worst case (#308)", async () => {
+  // Nothing on the service at all: every external row needs its creating POST.
+  // This was once described here as the worst case, which was wrong — a fresh
+  // list has no old text rows to delete, and it is the recurring list, with a
+  // DELETE per changed reminder, that costs the most. The test below is that
+  // one.
   const fake = database();
   const { items } = reportedList();
   const { fetch: fetcher, calls } = service([]);
@@ -308,6 +321,7 @@ test("a fresh list is the worst case, and it fits too (#308)", async () => {
     1,
     new SOstoslistaClient(BASE, TOKEN, fetcher),
     items,
+    { budget: budget() },
   );
 
   assert.equal(outcome.status, "sent");
@@ -329,7 +343,9 @@ test("a second press after a full send costs almost nothing (#308)", async () =>
   const { items } = reportedList();
   const rows: Row[] = [];
   const first = service(rows);
-  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, first.fetch), items);
+  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, first.fetch), items, {
+    budget: budget(),
+  });
 
   const second = service(rows);
   const before = fake.subrequests();
@@ -338,6 +354,7 @@ test("a second press after a full send costs almost nothing (#308)", async () =>
     1,
     new SOstoslistaClient(BASE, TOKEN, second.fetch),
     items,
+    { budget: budget() },
   );
 
   assert.equal(outcome.status, "sent");
@@ -346,5 +363,175 @@ test("a second press after a full send costs almost nothing (#308)", async () =>
     fake.subrequests() - before,
     1,
     "only the read of what this household has out on the list",
+  );
+});
+
+/**
+ * The state a household is actually in on an ordinary Tuesday.
+ *
+ * Last week's send is still on the phone, and this week the amounts moved. A
+ * text row whose amount changed needs the new words put on the list *and* last
+ * week's words taken off, so each of the eight is two calls, not one — and a
+ * product row that used to go as text has a DELETE of its own on top of the
+ * product. None of that exists on a fresh list, which is why calling the fresh
+ * list the worst case was wrong.
+ *
+ * Arithmetic the reviewer did, and this reproduces: 6 for the screen, 1 for
+ * the sent notes, 1 for the list read, 33 external rows, 8 old-note deletes
+ * and the receipt batch is 50 exactly — leaving the phone push as the 51st
+ * call. Add one transient retry, or one product row with an old text receipt,
+ * and the wall arrives while rows are still unsent.
+ */
+function lastWeeksNotes(items: SOstoslistaSendItem[]): Array<[string, string]> {
+  return items
+    .filter((item) => item.chosen.length === 0)
+    .map((item) => [item.key, `${item.name} — viime viikon määrä`]);
+}
+
+test("a recurring list with eight changed reminders fits in one press (#308 review)", async () => {
+  const fake = database();
+  const { items } = reportedList();
+
+  // Every text row carries last week's exact wording, and it is not this
+  // week's, so every one owes a DELETE as well as an add.
+  for (const [key, note] of lastWeeksNotes(items)) {
+    await rememberSentNote(fake.db, 1, key, note);
+  }
+
+  const spentBefore = fake.subrequests();
+  const { fetch: fetcher, calls } = service([]);
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    new SOstoslistaClient(BASE, TOKEN, fetcher),
+    items,
+    { budget: budget() },
+  );
+
+  const http = calls.length;
+  const d1 = fake.subrequests() - spentBefore;
+  const total = http + d1 + SCREEN_QUERIES_AROUND_THE_SEND;
+
+  // Exactly the reviewer's arithmetic: 6 + 1 + 1 + 33 + 8 + 1. The push would
+  // have been the 51st call, so it is the one thing given up — every row is on
+  // the list and every receipt is written.
+  assert.equal(total, SUBREQUEST_CEILING);
+  assert.equal(outcome.status, "sent");
+  assert.equal(outcome.sent, 32);
+  assert.equal(outcome.status === "sent" && outcome.synced, false);
+  assert.equal(calls.filter((call) => call === "POST sync").length, 0);
+  assert.equal(
+    calls.filter((call) => call.startsWith("DELETE items")).length,
+    8,
+    "last week's wording really is taken off, not just overwritten",
+  );
+  assert.equal((await sentNotes(fake.db, 1)).size, 8, "the reserved tail still runs");
+});
+
+test("one deletion more than fits stops at a row, and the next press finishes it (#308 review)", async () => {
+  // The extra cost the reviewer named: a product row that used to go as text
+  // and still owes a DELETE. That is the 51st call, so it does not fit — and
+  // the answer is to stop cleanly at a row boundary, not to start an operation
+  // that cannot land.
+  const fake = database();
+  const { items } = reportedList();
+  for (const [key, note] of lastWeeksNotes(items)) {
+    await rememberSentNote(fake.db, 1, key, note);
+  }
+  await rememberSentNote(fake.db, 1, "p3", "tuote 3 — viime viikon määrä");
+
+  const rows: Row[] = [];
+  const first = service(rows);
+  const spentBefore = fake.subrequests();
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    new SOstoslistaClient(BASE, TOKEN, first.fetch),
+    items,
+    { budget: budget() },
+  );
+
+  const total = first.calls.length + (fake.subrequests() - spentBefore) +
+    SCREEN_QUERIES_AROUND_THE_SEND;
+  assert.ok(
+    total <= SUBREQUEST_CEILING,
+    `the stopping case must not overspend: ${total} > ${SUBREQUEST_CEILING}`,
+  );
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 31, "one row short, and it is a whole row");
+  assert.deepEqual(
+    outcome.status === "partial" ? outcome.failures : null,
+    [],
+    "nothing failed; there was simply no room left",
+  );
+  // The rows that went are written down, because the tail was reserved.
+  assert.ok((await sentNotes(fake.db, 1)).size > 0);
+
+  // The second press. The service is holding everything the first sent, so
+  // those rows cost nothing and the rest goes.
+  const second = service(rows);
+  const resumed = await sendToSOstoslista(
+    fake.db,
+    1,
+    new SOstoslistaClient(BASE, TOKEN, second.fetch),
+    items,
+    { budget: budget() },
+  );
+
+  assert.equal(resumed.status, "sent");
+  assert.equal(resumed.sent, 32);
+  const keys = rows.map((row) => row.ean ?? row.name);
+  assert.equal(new Set(keys).size, keys.length, "no row on the list twice");
+  assert.equal(
+    rows.every((row) => row.collected === false),
+    true,
+    "and every one of them still to be bought",
+  );
+});
+
+test("a transient retry is priced before it is taken (#308 review)", async () => {
+  // A retry is another call out of the same allowance. It is re-planned and
+  // re-claimed, so it cannot quietly borrow against the reserved tail — the
+  // send either affords it or stops at a row.
+  const fake = database();
+  const { items } = reportedList();
+  for (const [key, note] of lastWeeksNotes(items)) {
+    await rememberSentNote(fake.db, 1, key, note);
+  }
+
+  const rows: Row[] = [];
+  const inner = service(rows);
+  let stumbled = false;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (!stumbled && method === "POST" && String(input).endsWith("/items")) {
+      stumbled = true;
+      return Response.json({ error: "busy" }, { status: 429 });
+    }
+    return inner.fetch(input, init);
+  }) as typeof fetch;
+
+  const spentBefore = fake.subrequests();
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    new SOstoslistaClient(BASE, TOKEN, fetcher),
+    items,
+    { budget: budget(), wait: async () => {} },
+  );
+
+  const total = inner.calls.length + (fake.subrequests() - spentBefore) +
+    SCREEN_QUERIES_AROUND_THE_SEND;
+  assert.ok(
+    total <= SUBREQUEST_CEILING,
+    `the retry must be inside the budget too: ${total} > ${SUBREQUEST_CEILING}`,
+  );
+  // The retry itself happened — the 429 was ridden out, not reported.
+  assert.equal(stumbled, true);
+  assert.equal(
+    outcome.status === "partial" ? outcome.failures.length : 0,
+    0,
+    "a transient stumble is not a failed row",
   );
 });

@@ -37,6 +37,7 @@ import {
   sendToSOstoslista,
   type SOstoslistaRowFailure,
 } from "./s-ostoslista-sync.ts";
+import { SUBREQUEST_CEILING, SubrequestBudget } from "./subrequests.ts";
 import {
   SOstoslistaError,
   type SOstoslistaKey,
@@ -218,6 +219,7 @@ export async function sendShoppingListForm(
     member.householdId,
     client,
     buy,
+    { budget: new SubrequestBudget(SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND) },
   );
 
   if (outcome.status === "partial") {
@@ -260,6 +262,27 @@ export async function sendShoppingListForm(
 
 /** Beyond this many named rows the refusal stops listing them one by one. */
 const FAILURES_IN_MESSAGE = 3;
+
+/**
+ * What this request has already spent by the time the send begins.
+ *
+ * Six D1 statements: the member behind the session cookie (`members.ts`), the
+ * fortnight's batches (`menu.ts::menuBetween`), the ingredient lines and the
+ * two product queries that follow them (`shopping.ts::shoppingLinesFor`), and
+ * the cupboard (`pantry.ts::pantryIngredientIds`). They come out of the same
+ * per-invocation allowance as every S-ostoslista call, so the send is handed
+ * what is left rather than the whole ceiling (#308).
+ *
+ * Nothing after the send is counted here because nothing after it costs
+ * anything: the answer is drawn from the state `shoppingState` already
+ * returned, which is what `shoppingScreen`'s `known` parameter is for.
+ *
+ * Hand-counted, and therefore the one number here that can drift. If
+ * `shoppingState` grows a query, this has to grow with it —
+ * `dev/check-s-ostoslista-route.ts` asserts the end-to-end total, which is
+ * where that would show up.
+ */
+const SPENT_REACHING_THE_SEND = 6;
 
 /**
  * One log line per row that did not go, carrying what a diagnosis needs and

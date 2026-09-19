@@ -9,6 +9,7 @@ import {
   sentNotes,
 } from "./s-ostoslista-notes.ts";
 import type { ShoppingItem } from "./shopping.ts";
+import { SUBREQUEST_CEILING, SubrequestBudget } from "./subrequests.ts";
 
 /**
  * The part of the S-ostoslista client the reconciliation workflow needs.
@@ -118,7 +119,7 @@ export type SOstoslistaSendOutcome =
       /**
        * True when the Worker ran out of subrequests rather than the rows
        * having anything wrong with them. The rows after that point were never
-       * attempted, so they are not failures — see `SUBREQUEST_CEILING`.
+       * attempted, so they are not failures — see `subrequests.ts`.
        */
       ceiling: boolean;
     };
@@ -163,7 +164,7 @@ const RETRY_BUDGET = 8;
  * bad row blames thirty rows that were never tried. So the send stops there
  * and says so, and the next press picks up where this one ran out.
  */
-const SUBREQUEST_CEILING = /too many subrequests/i;
+const CEILING_MESSAGE = /too many subrequests/i;
 
 /**
  * Deliberately not narrowed to `SOstoslistaError`. The budget is shared with
@@ -171,13 +172,35 @@ const SUBREQUEST_CEILING = /too many subrequests/i;
  * fetch, and it is the message that identifies it either way.
  */
 function isCeiling(error: unknown): boolean {
-  return error instanceof Error && SUBREQUEST_CEILING.test(error.message);
+  return error instanceof Error && CEILING_MESSAGE.test(error.message);
 }
 
 export interface SOstoslistaSendOptions {
   /** Swapped out in tests so a retry path costs no wall-clock. */
   wait?: (ms: number) => Promise<void>;
+  /**
+   * This send's share of the invocation's subrequest allowance.
+   *
+   * The caller owns it because the caller knows what the request has already
+   * spent getting here. Left out, the send assumes it has the whole ceiling,
+   * which is right for a focused check and wrong for a screen.
+   */
+  budget?: SubrequestBudget;
 }
+
+/**
+ * What the send must be able to do after the last row, whatever happens.
+ *
+ * One `db.batch` for the note receipts. It is reserved before the first row so
+ * that a send which stops at the wall can still write down what it did send —
+ * the alternative is losing the record of rows that really went out, and
+ * making the next send re-derive it.
+ *
+ * `sync()` is deliberately not in here. The service pushes to the phone on its
+ * own schedule, so a send that cannot afford the push has still done its job;
+ * the screen already has the sentence for it.
+ */
+const COMPLETION_TAIL = 1;
 
 /**
  * Reconcile one freshly-computed Ruokalista shopping list into S-ostoslista.
@@ -221,106 +244,145 @@ export async function sendToSOstoslista(
   options: SOstoslistaSendOptions = {},
 ): Promise<SOstoslistaSendOutcome> {
   const wait = options.wait ?? sleep;
+  const budget = options.budget ?? new SubrequestBudget(SUBREQUEST_CEILING);
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
-  const outstanding = await sentNotes(db, householdId);
-  const opening = await heldByService(client);
-  // Out of budget before the first row. Carrying on would mean a row call per
-  // item that cannot land, so there is nothing to do but say so; nothing has
-  // been sent and nothing has been written down.
-  if (opening.ceiling) {
-    return {
-      status: "partial",
-      sent: 0,
-      total: items.length,
-      failures: [],
-      ceiling: true,
-    };
-  }
-  const held = opening.held;
-  const bookkeeping: Receipt[] = [];
   const failures: SOstoslistaRowFailure[] = [];
+  const bookkeeping: Receipt[] = [];
+  const nothingSent = (): SOstoslistaSendOutcome => ({
+    status: "partial",
+    sent: 0,
+    total: items.length,
+    failures: [],
+    ceiling: true,
+  });
+
+  // The receipts have to be affordable at the end however the middle goes, so
+  // their space is taken out of circulation before anything else is spent.
+  budget.reserve(COMPLETION_TAIL);
+
+  // Reading what this household has out on the list, and what the service is
+  // holding. Neither is optional: without the first a send cannot tell its own
+  // old notes from the household's own rows, and without the second every row
+  // pays full price. If there is no room for them there is no room for the
+  // send.
+  if (!budget.claim(1)) return nothingSent();
+  const outstanding = await sentNotes(db, householdId);
+
+  if (!budget.claim(1)) return nothingSent();
+  const opening = await heldByService(client);
+  if (opening.ceiling) return nothingSent();
+  const held = opening.held;
+
   let retriesLeft = RETRY_BUDGET;
   let ceiling = false;
   let sent = 0;
 
   for (const item of items) {
     let error: unknown = null;
+    let planned = planRow(db, householdId, client, item, {
+      packets,
+      addedProducts,
+      outstanding,
+      held,
+    });
 
-    // The budget is checked immediately before each retry and spent only when
-    // one is actually made. Deciding a row's allowance up front instead let a
-    // row that failed twice take two retries out of a budget with one left in
-    // it, so the eighth retry was followed by a ninth.
+    // Priced before it is begun. This is the whole of the design: an old-note
+    // DELETE that the budget cannot cover is not started and then explained,
+    // it is not started. A row that does not fit ends the send at a row
+    // boundary, with every row after it untouched rather than half-done.
+    if (!budget.claim(planned.steps.length)) {
+      ceiling = true;
+      break;
+    }
+
     for (let attempt = 1; attempt <= ROW_ATTEMPTS; attempt += 1) {
       try {
-        await reconcileRow(db, householdId, client, item, {
-          packets,
-          addedProducts,
-          outstanding,
-          held,
-          bookkeeping,
-        });
+        await runRow(planned);
         error = null;
         break;
       } catch (thrown) {
         error = thrown;
         const why = causeOf(thrown);
-        // The ceiling first, because it reaches here looking exactly like a
-        // dropped connection — a transport failure, which `isTransient` says to
-        // retry. Retrying it is the one thing it must never get: the budget
-        // does not come back inside this invocation, so each further attempt is
-        // another call that cannot succeed and another backoff spent waiting
-        // for nothing.
+        // The runtime refusing a call outright is the accounting having been
+        // wrong. It is never worth repeating — the allowance does not come
+        // back inside one invocation — so it ends the row here and, below, the
+        // send.
         if (isCeiling(why)) break;
         if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(why)) {
           break;
         }
+        // A retry is re-planned, because some of the row may have gone
+        // through, and then priced again. It cannot borrow against the
+        // reserved tail.
+        planned = planRow(db, householdId, client, item, {
+          packets,
+          addedProducts,
+          outstanding,
+          held,
+        });
+        if (!budget.claim(planned.steps.length)) break;
         retriesLeft -= 1;
         await wait(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
       }
     }
 
     if (error === null) {
+      if (planned.receipt !== null) bookkeeping.push(planned.receipt);
       sent += 1;
       continue;
     }
-    // Out of subrequests is the invocation ending, not this row being bad. The
-    // rows after it are untouched rather than failed, and there is no point
-    // asking for the next one.
     if (isCeiling(causeOf(error))) {
-      ceiling = true;
-      break;
+      // The backstop fired: the budget said yes and the runtime said no, so
+      // the accounting is not to be trusted for the tail either.
+      return {
+        status: "partial",
+        sent,
+        total: items.length,
+        failures,
+        ceiling: true,
+      };
     }
     failures.push(describeFailure(item, error));
   }
 
-  // Nothing follows the ceiling. Not the receipts, not the push — the budget
-  // is gone, so every one of those is a call that cannot succeed, and the
-  // batch failing was being charged back against `sent`, which is how a send
-  // that really did put rows on the list could report "Mitään ei lähetetty".
-  //
-  // The receipts simply stay unwritten. That is safe for the reason the whole
-  // send is safe to repeat: the next press reads the list first, finds those
-  // rows already there, re-earns the same receipts for no external call, and
-  // writes them then.
-  if (!ceiling) {
+  // The reserved tail. A send that stopped at the wall still gets here, which
+  // is the point of having reserved it: the rows that went out are written
+  // down, so the next press knows about them.
+  if (bookkeeping.length > 0 && budget.claimReserved(COMPLETION_TAIL)) {
     const lost = await flush(db, bookkeeping);
-    if (lost !== null) {
-      // The batch itself can be the call that runs out. Same answer.
-      if (isCeiling(lost)) {
-        ceiling = true;
-      } else {
-        // A lost receipt is this app losing track of a row it did put on the
-        // list — never a refusal, and never a reason to send a member looking
-        // at a product. `sent` is not reduced for it either: the row reached
-        // the service, which is what that number says.
-        for (const { item } of bookkeeping) failures.push(describeFailure(item, lost));
-      }
+    if (lost !== null && !isCeiling(lost)) {
+      // A lost receipt is this app losing track of a row it did put on the
+      // list — never a refusal, and never a reason to send a member looking at
+      // a product. `sent` is not reduced for it: the row reached the service,
+      // which is what that number says.
+      for (const { item } of bookkeeping) failures.push(describeFailure(item, lost));
+    } else if (lost !== null) {
+      ceiling = true;
     }
+  } else {
+    budget.release(COMPLETION_TAIL);
   }
 
   if (failures.length > 0 || ceiling) {
     return { status: "partial", sent, total: items.length, failures, ceiling };
+  }
+
+  // Optional, and the only thing in the send that is. The service pushes to
+  // the phone on its own schedule, so a send with no allowance left for this
+  // has still done everything that had to happen — and the screen already has
+  // the sentence that says the phone will catch up.
+  if (!budget.claim(1)) {
+    return {
+      status: "sent",
+      sent,
+      total: items.length,
+      failures: [],
+      synced: false,
+      syncError: new Error(
+        "no subrequests left for the phone push; the service will sync on its own schedule",
+      ),
+    };
   }
 
   try {
@@ -388,17 +450,6 @@ async function flush(
   }
 }
 
-/** The state one row's reconciliation shares with the rest of the send. */
-interface RowContext {
-  packets: Map<string, number>;
-  addedProducts: Set<string>;
-  outstanding: Map<string, string>;
-  /** What the service already held when this send started. */
-  held: readonly SOstoslistaItem[];
-  /** Note receipts earned so far, run as one batch when the send ends. */
-  bookkeeping: Receipt[];
-}
-
 /**
  * An error with the operation that raised it attached.
  *
@@ -423,92 +474,143 @@ class StepFailure extends Error {
   }
 }
 
-/** Run one step of a row's reconciliation, saying what it was. */
-async function step<T>(
-  operation: SOstoslistaOperation,
-  run: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    throw error instanceof StepFailure ? error : new StepFailure(operation, error);
-  }
-}
-
 /** One deferred note write, kept beside the row that earned it. */
 interface Receipt {
   item: SOstoslistaSendItem;
   statement: D1PreparedStatement;
 }
 
+/** One external call this row needs, and what it is for. */
+interface PlannedStep {
+  operation: SOstoslistaOperation;
+  run: () => Promise<unknown>;
+}
+
+/** A row's whole cost, worked out before any of it is spent. */
+interface PlannedRow {
+  steps: PlannedStep[];
+  receipt: Receipt | null;
+}
+
+/** What `planRow` needs to see; deliberately not the bookkeeping. */
+interface RowPlanContext {
+  packets: Map<string, number>;
+  addedProducts: Set<string>;
+  outstanding: Map<string, string>;
+  held: readonly SOstoslistaItem[];
+}
+
 /**
- * Put one shopping row where it belongs on the external list.
+ * Work out what putting this row where it belongs will cost, and how, without
+ * spending any of it.
  *
- * Unchanged from the single-pass version it was lifted out of, except that it
- * can now be called twice for the same row. `addedProducts` is what makes the
- * second call cheap rather than wrong: a product already accepted this send is
- * not re-sent, so a row that failed on its note deletion does not re-add its
- * product on the retry.
+ * Splitting the planning from the doing is what lets the budget be consulted
+ * before an operation instead of after the runtime refuses one. It matters
+ * most for the row shape this was missing: a text row whose amount changed
+ * since last week needs the new words put on the list *and* last week's words
+ * taken off, so eight such rows are eight calls that nothing had counted. The
+ * pair is priced as a pair now, and a row that will not fit is not begun.
+ *
+ * Re-planning is how a retry stays honest. A row that got its product onto the
+ * list and then failed its note deletion plans one step the second time, not
+ * two, because `addedProducts` already holds the product — so the retry is
+ * priced at what it will actually cost.
+ *
+ * Every step is exactly one call, so `steps.length` is the row's price.
  */
-async function reconcileRow(
+function planRow(
   db: D1Database,
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outstanding, held, bookkeeping }: RowContext,
-): Promise<void> {
+  { packets, addedProducts, outstanding, held }: RowPlanContext,
+): PlannedRow {
   const previous = outstanding.get(item.key) ?? null;
+  const steps: PlannedStep[] = [];
+  let receipt: Receipt | null = null;
+
+  const removeOldNote = (note: string): PlannedStep => ({
+    operation: { kind: "old-note", note },
+    run: () => dropRememberedNote(client, note),
+  });
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    await step({ kind: "note", note }, () =>
-      ensureOnList(client, held, { note }, null),
-    );
+    for (const call of callsFor(client, held, { note }, null)) {
+      steps.push({ operation: { kind: "note", note }, run: call });
+    }
 
     // Re-sending identical words is the same keyed external row. Removing
     // `previous` here would delete the row we just made sure exists.
     if (previous !== note) {
-      if (previous !== null) {
-        await step({ kind: "old-note", note: previous }, () =>
-          dropRememberedNote(client, previous),
-        );
-      }
-      bookkeeping.push({
+      if (previous !== null) steps.push(removeOldNote(previous));
+      receipt = {
         item,
         statement: rememberSentNoteStatement(db, householdId, item.key, note),
-      });
+      };
     }
-    return;
+    return { steps, receipt };
   }
 
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    await step({ kind: "product", ean: product.ean }, () =>
-      ensureOnList(client, held, { ean: product.ean }, count),
-    );
-    addedProducts.add(product.ean);
+    const calls = callsFor(client, held, { ean: product.ean }, count);
+    // A product the list already holds correctly costs nothing, and is done
+    // the moment it is planned.
+    if (calls.length === 0) {
+      addedProducts.add(product.ean);
+      continue;
+    }
+    calls.forEach((call, index) => {
+      steps.push({
+        operation: { kind: "product", ean: product.ean },
+        // Marked done only once the last of this product's calls has landed,
+        // so a retry does not skip a product it only half-sent.
+        run: async () => {
+          const answer = await call();
+          if (index === calls.length - 1) addedProducts.add(product.ean);
+          return answer;
+        },
+      });
+    });
   }
 
   // Product first, old text second, local receipt last. If any one of these
   // steps loses its response, repeating the whole send converges on the same
   // state instead of stranding either representation.
   if (previous !== null) {
-    await step({ kind: "old-note", note: previous }, () =>
-      dropRememberedNote(client, previous),
-    );
-    bookkeeping.push({
+    steps.push(removeOldNote(previous));
+    receipt = {
       item,
       statement: forgetSentNoteStatement(db, householdId, item.key),
-    });
+    };
+  }
+  return { steps, receipt };
+}
+
+/**
+ * Run a planned row, tagging each failure with the step that raised it.
+ *
+ * A product accepted before a note deletion is refused must not read as a
+ * refused product, which is what reading the row's own shape afterwards said.
+ */
+async function runRow(planned: PlannedRow): Promise<void> {
+  for (const { operation, run } of planned.steps) {
+    try {
+      await run();
+    } catch (error) {
+      throw error instanceof StepFailure ? error : new StepFailure(operation, error);
+    }
   }
 }
 
 /**
- * Make sure the service is holding this row, still to be bought, at this
- * trip's count — for as few calls as the list read allows.
+ * The calls it will take to have the service holding this row, still to be
+ * bought, at this trip's count — as callables, so the price is known before
+ * any of them is made.
  *
- * Three cases, and the middle one is what #308's review was about:
+ * Three cases, and the middle one is what an earlier round was about:
  *
  * - the service is not holding it at all: one keyed `POST`, which is the only
  *   call that can create a row;
@@ -517,36 +619,29 @@ async function reconcileRow(
  *   ordinary state of a re-used shopping list, not an edge case, and it used
  *   to cost a `POST` whose entire purpose was to be told an id we were already
  *   looking at, and then the same `PATCH` anyway;
- * - it is holding it exactly as asked: nothing at all.
- *
- * So a row costs at most one call however the list started, which is what
- * keeps a normal week inside one invocation's budget.
+ * - it is holding it exactly as asked: no calls at all.
  *
  * `agrees` is deliberately hard to satisfy: a service that omits `collected`
  * has told us nothing, and #236 is exactly the bug where a row that looked
  * fine was last week's, ticked. Silence therefore counts as disagreement and
  * gets the correction. Where the list holds the same key more than once, every
  * copy that disagrees is corrected — one ticked duplicate is still a row the
- * member would not buy, and the old keyed `POST` could never reach more than
- * one of them.
+ * member would not buy, and the keyed `POST` could never reach more than one
+ * of them.
  */
-async function ensureOnList(
+function callsFor(
   client: SOstoslistaSyncClient,
   held: readonly SOstoslistaItem[],
   key: SOstoslistaKey,
   quantity: number | null,
-): Promise<void> {
+): Array<() => Promise<unknown>> {
   const matching = held.filter((row) =>
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
   );
-  if (matching.length === 0) {
-    await client.add(key, quantity);
-    return;
-  }
-  for (const row of matching) {
-    if (agrees(row, quantity)) continue;
-    await client.correct(row.id, quantity);
-  }
+  if (matching.length === 0) return [() => client.add(key, quantity)];
+  return matching
+    .filter((row) => !agrees(row, quantity))
+    .map((row) => () => client.correct(row.id, quantity));
 }
 
 function agrees(row: SOstoslistaItem, quantity: number | null): boolean {
@@ -556,7 +651,6 @@ function agrees(row: SOstoslistaItem, quantity: number | null): boolean {
     (quantity === null || row.quantity === quantity)
   );
 }
-
 
 /**
  * Whether pressing on is worth anything.
