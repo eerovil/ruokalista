@@ -65,11 +65,14 @@ test("the list says how many times each recipe has been cooked", async ({
   await page.goto("/recipes");
 
   const kaali = page.locator(".recipes li", { hasText: "Kaalilaatikko" });
-  await expect(kaali.locator(".meta")).toContainText("Kokattu 2×");
-  await expect(kaali.locator(".meta")).toContainText("viimeksi");
+  await expect(kaali.locator(".meta").first()).toContainText("Kokattu 2×");
+  await expect(kaali.locator(".meta").first()).toContainText("viimeksi");
   await expect(
-    page.locator(".recipes li", { hasText: "Lasagne" }).locator(".meta"),
+    page.locator(".recipes li", { hasText: "Lasagne" }).locator(".meta").first(),
   ).toContainText("Ei vielä kokattu");
+  // The row still says who imported it: a member removed from the household
+  // keeps their name on the recipes they wrote (#187).
+  await expect(kaali.locator(".meta").last()).toContainText("Eero");
 });
 
 test("a batch still to come is a plan, not a cooking", async ({ page }) => {
@@ -78,7 +81,7 @@ test("a batch still to come is a plan, not a cooking", async ({ page }) => {
   await page.goto("/recipes");
 
   await expect(
-    page.locator(".recipes li", { hasText: "Lasagne" }).locator(".meta"),
+    page.locator(".recipes li", { hasText: "Lasagne" }).locator(".meta").first(),
   ).toContainText("Ei vielä kokattu");
 });
 

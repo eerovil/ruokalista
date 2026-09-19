@@ -259,24 +259,25 @@ function recipeCard(options: BrowseOptions, recipe: RecipeSummary): Raw {
   return html`${recipeImage(recipe, "thumb")}
     <span class="recipes-text">
       <span class="recipes-title">${recipe.title}</span>
+      <span class="meta">${cookLine(options.history, recipe)}</span>
       <span class="meta">${metaLine(options, recipe)}</span>
     </span>`;
 }
 
 /**
- * The one line under a recipe's name.
+ * Where a recipe came from: when it was imported and by whom, or — on one
+ * somebody else shared — whose kitchen it is. Categories last.
  *
- * Cooking first, because that is what the reader is choosing on: how many times
- * this kitchen has made it and when it last did. Categories after it, and — on
- * a recipe somebody else shared — whose it is, which is the one thing a shared
- * row cannot leave out. One line and not three: the picker row already carries
- * a thumbnail, a multiplier and a button, and this list is read on a phone.
+ * Its own line under the cooking one, rather than joined onto it. Two short
+ * muted lines fit a phone where one long one wraps anyway, and this line has to
+ * stay: a member removed from the household keeps their name on the recipes
+ * they wrote (#187), and the recipe list is where that is visible.
  */
 function metaLine(options: BrowseOptions, recipe: RecipeSummary): string {
-  const parts = [cookLine(options.history, recipe)];
-  if (recipe.householdId !== options.viewerHouseholdId) {
-    parts.push(recipe.householdName);
-  }
+  const parts =
+    recipe.householdId === options.viewerHouseholdId
+      ? [finnishDate(recipe.createdAt), recipe.createdBy]
+      : [recipe.householdName];
   if (recipe.categories.length > 0) {
     parts.push(
       recipe.categories.map((slug) => options.vocabulary.label(slug)).join(", "),
@@ -284,6 +285,18 @@ function metaLine(options: BrowseOptions, recipe: RecipeSummary): string {
   }
   return parts.join(" · ");
 }
+
+/** `2026-08-25 06:12:00` as `25.8.2026`. */
+function finnishDate(timestamp: string): string {
+  const [date] = timestamp.split(" ");
+  const parts = (date ?? "").split("-");
+  if (parts.length !== 3) return timestamp;
+
+  const [year, month, day] = parts as [string, string, string];
+  return `${Number(day)}.${Number(month)}.${year}`;
+}
+
+/** How this kitchen's own cooking of a recipe reads on a row. */
 
 export function cookLine(
   history: CookHistory,

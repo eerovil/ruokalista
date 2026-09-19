@@ -1098,8 +1098,10 @@ test.describe("signed in", () => {
   });
 
   test("a search that finds nothing", async ({ page }) => {
+    // The instant search (#307) answers this one in the browser, so what is
+    // shown is the browser's line and not the server's empty block.
     await page.goto("/recipes?q=pizza");
-    await expect(page.locator(".nothing")).toBeVisible();
+    await expect(page.locator(".browse-none")).toBeVisible();
     await capture(page, { path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
   });
 
@@ -1620,7 +1622,7 @@ test.describe("signed in", () => {
 
   test("search results", async ({ page }) => {
     await page.goto("/recipes?q=kaali");
-    await expect(page.locator(".recipes li")).toHaveCount(1);
+    await expect(page.locator(".recipes li:not([hidden])")).toHaveCount(1);
     await capture(page, { path: `${SHOTS}/10-recipes-search.png`, fullPage: true });
   });
 
