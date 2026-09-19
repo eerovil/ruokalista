@@ -666,3 +666,77 @@ test("the last retry in the budget is the last one taken (#308 review)", async (
   );
   assert.equal(outcome.sent, 2, "only rows 4 and 6 came good");
 });
+
+test("the subrequest ceiling is never retried or waited on (#308 review)", async () => {
+  // It arrives status-less, which is what a dropped connection looks like, so
+  // without the check at the top of the catch it took a row's whole allowance:
+  // three attempts and 800 ms of backoff, all of it against a budget that had
+  // already run out and does not come back by waiting.
+  const fake = database();
+  const client = new FakeClient();
+  const timing = recordingWait();
+  const ceiling = new SOstoslistaError(
+    "S-ostoslista request failed: Too many subrequests by single Worker invocation.",
+  );
+
+  client.fail = (call) => (call.kind === "add" ? ceiling : null);
+
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [
+      item("1", "maito", "1 l"),
+      item("2", "suola", "1 tl"),
+      item("3", "sokeri", "2 dl"),
+    ],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 0);
+  assert.equal(outcome.total, 3);
+  // The rows after it were never attempted, so they are not anybody's fault.
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+  assert.deepEqual(timing.waits, [], "nothing is waited on");
+  assert.deepEqual(client.calls, [
+    { kind: "list" },
+    { kind: "add", key: { note: "maito — 1 l" }, quantity: null },
+  ], "one attempt at the row that hit it, and nothing after it");
+});
+
+test("a ceiling partway through keeps what already went (#308 review)", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  const timing = recordingWait();
+  const ceiling = new SOstoslistaError(
+    "S-ostoslista request failed: Too many subrequests by single Worker invocation.",
+  );
+
+  client.fail = (call) =>
+    call.kind === "add" && "note" in call.key && call.key.note.startsWith("sokeri")
+      ? ceiling
+      : null;
+
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [
+      item("1", "maito", "1 l"),
+      item("2", "suola", "1 tl"),
+      item("3", "sokeri", "2 dl"),
+    ],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 2);
+  assert.deepEqual(timing.waits, []);
+  // The two rows that did go are written down, so the next press skips them
+  // rather than spending the same budget on them again.
+  assert.deepEqual([...(await sentNotes(fake.db, 1)).keys()].sort(), ["1", "2"]);
+  assert.equal(client.calls.some((call) => call.kind === "sync"), false);
+});

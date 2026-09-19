@@ -215,6 +215,13 @@ export async function sendToSOstoslista(
         break;
       } catch (thrown) {
         error = thrown;
+        // The ceiling first, because it reaches here looking exactly like a
+        // dropped connection — a status-less client error, which `isTransient`
+        // says to retry. Retrying it is the one thing it must never get: the
+        // budget does not come back inside this invocation, so each further
+        // attempt is another call that cannot succeed and another backoff spent
+        // waiting for nothing.
+        if (isCeiling(thrown)) break;
         if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(thrown)) {
           break;
         }
