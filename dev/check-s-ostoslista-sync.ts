@@ -18,6 +18,7 @@ import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 type Call =
   | { kind: "list" }
   | { kind: "add"; key: SOstoslistaKey; quantity: number | null }
+  | { kind: "correct"; id: string; quantity: number | null }
   | { kind: "remove"; key: SOstoslistaKey }
   | { kind: "sync" };
 
@@ -36,6 +37,12 @@ class FakeClient implements SOstoslistaSyncClient {
 
   async add(key: SOstoslistaKey, quantity: number | null = null): Promise<void> {
     const call: Call = { kind: "add", key, quantity };
+    this.calls.push(call);
+    this.maybeFail(call);
+  }
+
+  async correct(id: string, quantity: number | null = null): Promise<void> {
+    const call: Call = { kind: "correct", id, quantity };
     this.calls.push(call);
     this.maybeFail(call);
   }
@@ -341,11 +348,12 @@ test("a 24-product, 8-text list goes in one send (#308)", async () => {
   assert.equal(outcome.sent, 32);
   assert.equal(outcome.total, 32);
   assert.deepEqual(outcome.failures, []);
-  // The budget this list used to break. Every call a Worker invocation makes
-  // counts against one per-invocation ceiling — these and every D1 query alike
-  // — and on this account's plan that ceiling is fifty. One list read, one add
-  // per row and one push is 34, where two calls per row was 64 before a single
-  // D1 query was counted, which is why it ran out in the twenties.
+  // One reconciliation call per row, one list read, one push — and no second
+  // call for any row. This counts *this module's* calls, which is not the same
+  // as counting subrequests: `SOstoslistaClient.add` can be two of those.
+  // `dev/check-s-ostoslista-budget.ts` is where the real budget is asserted,
+  // through the real client and a counting `fetch`; reading a number off this
+  // fake and calling it a subrequest count is the mistake #308's review caught.
   assert.equal(client.calls.length, 34);
   assert.equal(client.calls.filter((call) => call.kind === "add").length, 32);
   assert.equal(client.calls.filter((call) => call.kind === "sync").length, 1);
@@ -413,11 +421,13 @@ test("a row the service holds but has ticked off is sent again (#236)", async ()
     item("2", "suola", "1 tl"),
   ]);
 
+  // One call each, straight at the id the list already gave us — not a keyed
+  // POST asking to be told an id we were looking at, and then the same PATCH.
   assert.deepEqual(
-    client.calls.filter((call) => call.kind === "add"),
+    client.calls.filter((call) => call.kind !== "list" && call.kind !== "sync"),
     [
-      { kind: "add", key: { ean: milk.ean }, quantity: 2 },
-      { kind: "add", key: { note: "suola — 1 tl" }, quantity: null },
+      { kind: "correct", id: "item-1", quantity: 2 },
+      { kind: "correct", id: "item-2", quantity: null },
     ],
   );
 });
@@ -441,9 +451,10 @@ test("a row the service holds at the wrong count is sent again (#240)", async ()
     item("1", "maito", "800 g", [{ product: milk, count: 2 }]),
   ]);
 
-  assert.deepEqual(client.calls.filter((call) => call.kind === "add"), [
-    { kind: "add", key: { ean: milk.ean }, quantity: 2 },
-  ]);
+  assert.deepEqual(
+    client.calls.filter((call) => call.kind !== "list" && call.kind !== "sync"),
+    [{ kind: "correct", id: "item-1", quantity: 2 }],
+  );
 });
 
 test("a list read that fails costs the send nothing but the shortcut (#308)", async () => {

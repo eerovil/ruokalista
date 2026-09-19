@@ -37,6 +37,16 @@ export interface FakeD1 {
   sql: DatabaseSync;
   /** Binding counts observed through the D1-shaped API. */
   bindingCounts: number[];
+  /**
+   * How many subrequests this database has cost, counted as the Workers
+   * runtime counts them: one per statement executed, and one for a whole
+   * `batch` however many statements are in it.
+   *
+   * D1 comes out of the same per-invocation budget as every outgoing fetch, so
+   * a check that wants to know whether a request fits has to count both
+   * (#308).
+   */
+  subrequests: () => number;
 }
 
 export function migratedDatabase(): FakeD1 {
@@ -49,6 +59,7 @@ export function migratedDatabase(): FakeD1 {
 
   let hook: (() => void) | null = null;
   const bindingCounts: number[] = [];
+  let subrequests = 0;
 
   function bound(text: string, values: Value[]): D1PreparedStatement {
     const statement = {
@@ -61,6 +72,7 @@ export function migratedDatabase(): FakeD1 {
       },
 
       first: async (column?: string) => {
+        subrequests += 1;
         const row = sql.prepare(text).get(...values) as
           | Record<string, Value>
           | undefined;
@@ -69,11 +81,13 @@ export function migratedDatabase(): FakeD1 {
       },
 
       all: async () => {
+        subrequests += 1;
         const results = sql.prepare(text).all(...values);
         return { results, success: true, meta: {} };
       },
 
       run: async () => {
+        subrequests += 1;
         const changes = sql.prepare(text).run(...values);
         return {
           results: [],
@@ -99,9 +113,13 @@ export function migratedDatabase(): FakeD1 {
     // every statement before it back out with it. That is the half of this
     // double the integrity checks actually lean on.
     batch: async (statements: D1PreparedStatement[]) => {
+      // One subrequest for the batch, and the per-statement `run` calls below
+      // are its internals rather than separate trips.
+      subrequests += 1;
       const ran = statements as unknown as Array<{
         run: () => Promise<{ meta: { changes: number } }>;
       }>;
+      const inBatch = statements.length;
       if (hook !== null) {
         const once = hook;
         hook = null;
@@ -113,9 +131,11 @@ export function migratedDatabase(): FakeD1 {
         for (const statement of ran) results.push(await statement.run());
       } catch (error) {
         sql.exec("ROLLBACK");
+        subrequests -= inBatch;
         throw error;
       }
       sql.exec("COMMIT");
+      subrequests -= inBatch;
       return results;
     },
 
@@ -127,6 +147,7 @@ export function migratedDatabase(): FakeD1 {
 
   return {
     db: db as unknown as D1Database,
+    subrequests: () => subrequests,
     beforeBatch: (next: () => void) => {
       hook = next;
     },

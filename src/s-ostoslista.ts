@@ -170,6 +170,26 @@ export class SOstoslistaClient {
     return this.#patch(id, { collected });
   }
 
+  /**
+   * Put a row this app can already see back to "still to buy", at the count
+   * this trip worked out.
+   *
+   * This is `add`'s second half without its first. `add` exists for a row
+   * whose id nobody knows, so it asks the keyed POST for one and then corrects
+   * whatever came back; a send that has just read the list knows the id
+   * already, and asking again to be told it costs a subrequest the send does
+   * not have (#308). The correction itself is the same one, so a ticked row or
+   * a row still holding last week's count ends up exactly where `add` would
+   * have left it — for half the calls.
+   */
+  async correct(id: string, quantity: number | null = null): Promise<SOstoslistaItem> {
+    const count = cleanQuantity(quantity);
+    return this.#patch(id, {
+      collected: false,
+      ...(count === null ? {} : { quantity: count }),
+    });
+  }
+
   async #patch(
     id: string,
     fields: { collected: boolean; quantity?: number },

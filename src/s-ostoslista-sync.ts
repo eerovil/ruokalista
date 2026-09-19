@@ -19,6 +19,7 @@ import type { ShoppingItem } from "./shopping.ts";
 export interface SOstoslistaSyncClient {
   list(): Promise<SOstoslistaItem[]>;
   add(key: SOstoslistaKey, quantity?: number | null): Promise<unknown>;
+  correct(id: string, quantity?: number | null): Promise<unknown>;
   remove(key: SOstoslistaKey): Promise<unknown>;
   sync(): Promise<void>;
 }
@@ -171,11 +172,11 @@ export interface SOstoslistaSendOptions {
  * that has already gone.
  *
  * The send opens by reading the list the service already holds, and that one
- * call is what keeps the whole thing inside the subrequest budget. A row the
- * list already holds in the state this send wants costs nothing to reconcile,
- * so a second press after a send that ran out is not the same send over again:
- * it is only what is left. It also makes an ordinary week's re-send nearly
- * free. Nothing is skipped on a guess — see `alreadyOnList`.
+ * call is what keeps the whole thing inside the subrequest budget: it tells
+ * every row whether it needs a call at all, and if it does, which single call.
+ * So a row costs at most one, and a second press after a send that ran out is
+ * not the same send over again — it is only what is left. Nothing is decided
+ * on a guess; see `ensureOnList`.
  */
 export async function sendToSOstoslista(
   db: D1Database,
@@ -355,7 +356,7 @@ async function reconcileRow(
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    if (!alreadyOnList(held, { note }, null)) await client.add({ note });
+    await ensureOnList(client, held, { note }, null);
 
     // Re-sending identical words is the same keyed external row. Removing
     // `previous` here would delete the row we just made sure exists.
@@ -372,9 +373,7 @@ async function reconcileRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    if (!alreadyOnList(held, { ean: product.ean }, count)) {
-      await client.add({ ean: product.ean }, count);
-    }
+    await ensureOnList(client, held, { ean: product.ean }, count);
     addedProducts.add(product.ean);
   }
 
@@ -391,36 +390,58 @@ async function reconcileRow(
 }
 
 /**
- * Whether the service is already holding this row exactly as this send wants
- * it, so that adding it again would change nothing.
+ * Make sure the service is holding this row, still to be bought, at this
+ * trip's count — for as few calls as the list read allows.
  *
- * Deliberately hard to satisfy. It is not enough for a row with this key to
- * exist: it has to be one the service has said out loud is still to be bought,
- * and for a product it has to be holding this trip's packet count as well. A
- * service that omits the flag has told us nothing, and #236 is exactly the bug
- * where a row that looked fine was in fact last week's, ticked — so silence
- * means add, the same answer this returned before the check existed.
+ * Three cases, and the middle one is what #308's review was about:
  *
- * Where the list holds the same key more than once, every copy has to pass:
- * one ticked duplicate is a row the member would not buy, and the add is what
- * clears it.
+ * - the service is not holding it at all: one keyed `POST`, which is the only
+ *   call that can create a row;
+ * - it is holding it but has it ticked, or at last week's count, or will not
+ *   say: one `PATCH` straight at the id the list already gave us. This is the
+ *   ordinary state of a re-used shopping list, not an edge case, and it used
+ *   to cost a `POST` whose entire purpose was to be told an id we were already
+ *   looking at, and then the same `PATCH` anyway;
+ * - it is holding it exactly as asked: nothing at all.
+ *
+ * So a row costs at most one call however the list started, which is what
+ * keeps a normal week inside one invocation's budget.
+ *
+ * `agrees` is deliberately hard to satisfy: a service that omits `collected`
+ * has told us nothing, and #236 is exactly the bug where a row that looked
+ * fine was last week's, ticked. Silence therefore counts as disagreement and
+ * gets the correction. Where the list holds the same key more than once, every
+ * copy that disagrees is corrected — one ticked duplicate is still a row the
+ * member would not buy, and the old keyed `POST` could never reach more than
+ * one of them.
  */
-function alreadyOnList(
+async function ensureOnList(
+  client: SOstoslistaSyncClient,
   held: readonly SOstoslistaItem[],
   key: SOstoslistaKey,
   quantity: number | null,
-): boolean {
+): Promise<void> {
   const matching = held.filter((row) =>
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
   );
-  if (matching.length === 0) return false;
-  return matching.every(
-    (row) =>
-      row.collectedStated &&
-      !row.collected &&
-      (quantity === null || row.quantity === quantity),
+  if (matching.length === 0) {
+    await client.add(key, quantity);
+    return;
+  }
+  for (const row of matching) {
+    if (agrees(row, quantity)) continue;
+    await client.correct(row.id, quantity);
+  }
+}
+
+function agrees(row: SOstoslistaItem, quantity: number | null): boolean {
+  return (
+    row.collectedStated &&
+    !row.collected &&
+    (quantity === null || row.quantity === quantity)
   );
 }
+
 
 /**
  * Whether pressing on is worth anything.
