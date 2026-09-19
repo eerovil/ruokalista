@@ -33,7 +33,15 @@ import {
 } from "./product-picker.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
-import { sendToSOstoslista } from "./s-ostoslista-sync.ts";
+import {
+  sendToSOstoslista,
+  type SOstoslistaRowFailure,
+} from "./s-ostoslista-sync.ts";
+import {
+  SUBREQUEST_CEILING,
+  SubrequestBudget,
+  meteredDatabase,
+} from "./subrequests.ts";
 import {
   SOstoslistaError,
   type SOstoslistaKey,
@@ -97,15 +105,28 @@ const CHOICE = "ateria";
  */
 const CHOSEN = "valittu";
 
+/**
+ * `known` is the state the caller has already worked out, and passing it is
+ * the difference between one answer and two identical ones.
+ *
+ * A send changes nothing this screen reads. The list is recomputed from the
+ * week and the cupboard every time it is drawn, and the only thing a send
+ * writes is `s_ostoslista_sent_note`, which no screen reads. So the five
+ * statements this used to spend re-deriving the same list after a send were
+ * bought at full price against a budget shared with the send itself — and on
+ * the one path where that budget has just run out, the re-derivation is what
+ * would fail, taking the message explaining the ceiling down with it (#308).
+ */
 export async function shoppingScreen(
   ctx: RouteContext,
   member: Member,
   refused: string | null = null,
   notice: string | null = null,
   status = refused === null ? 200 : 400,
+  known: ShoppingState | null = null,
 ): Promise<Response> {
-  const { env, url } = ctx;
-  const state = await shoppingState(ctx, member);
+  const { env } = ctx;
+  const state = known ?? (await shoppingState(ctx, member));
   const { cookings, selectedIds, selected, buy, atHome } = state;
   const external = externalClient(env, member) !== null;
   const heading = headingFor(selected);
@@ -178,37 +199,52 @@ export async function sendShoppingListForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();
   const selectedUrl = selectionUrl(form, ctx.url);
-  const stateCtx = { ...ctx, url: selectedUrl };
+  // Everything this handler reads or writes goes through the metered database,
+  // so a statement nobody counted still spends the allowance it really uses.
+  const metered = { ...ctx.env, DB: meteredDatabase(budget, ctx.env.DB) };
+  const stateCtx = { ...ctx, env: metered, url: selectedUrl };
   const asJson = wantsJson(form);
-  const { buy } = await shoppingState(stateCtx, member);
+  // Worked out once and then handed to every screen below. The send does not
+  // change what this screen shows, and after a send that ran out of
+  // subrequests there is nothing left to ask a second time with.
+  const state = await shoppingState(stateCtx, member);
+  const { buy } = state;
   if (buy.length === 0) {
     const empty = "Ostoslistalla ei ole lähetettäviä aineksia.";
     return asJson
       ? problem(400, empty)
-      : shoppingScreen(stateCtx, member, empty);
+      : shoppingScreen(stateCtx, member, empty, null, 400, state);
   }
 
   const outcome = await sendToSOstoslista(
-    ctx.env.DB,
+    metered.DB,
     member.householdId,
     client,
     buy,
+    { budget },
   );
 
   if (outcome.status === "partial") {
-    console.error(`S-ostoslista send failed: ${reason(outcome.error)}`);
-    const progress = outcome.sent === 0
-      ? "Mitään ei lähetetty."
-      : `${outcome.sent}/${outcome.total} ainesta ehdittiin lähettää. Uudelleen yrittäminen on turvallista.`;
-    const message = `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress}`;
+    if (outcome.ceiling) {
+      console.error(
+        `S-ostoslista send ran out of subrequests after ${outcome.sent}/${outcome.total} rows`,
+      );
+    }
+    logSendFailures(outcome.failures);
+    const message = partialSendMessage(outcome);
     return asJson
       ? problem(502, message)
-      : shoppingScreen(stateCtx, member, message, null, 502);
+      : shoppingScreen(stateCtx, member, message, null, 502, state);
   }
 
   if (!outcome.synced) {
@@ -232,7 +268,133 @@ export async function sendShoppingListForm(
     outcome.synced ? null : notSynced,
     `${outcome.sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
+    state,
   );
+}
+
+/** Beyond this many named rows the refusal stops listing them one by one. */
+const FAILURES_IN_MESSAGE = 3;
+
+/**
+ * The one call this request makes that the ledger cannot see.
+ *
+ * `requireMember` looks up the session before the router reaches this handler,
+ * so it is already spent by the time there is a budget to spend it from. It is
+ * exactly one statement and it does not vary, which is what makes it safe to
+ * state as a number; everything after it is metered rather than counted
+ * (#308).
+ *
+ * The six-statement estimate this replaced was not safe in that way.
+ * `shopping.ts::shoppingLinesFor` runs an extra batch when a legacy product
+ * still needs its package size written down, and `d1-query.ts::boundedInChunks`
+ * runs one statement per chunk — so the real number moved and the constant did
+ * not.
+ */
+const SESSION_LOOKUP = 1;
+
+
+/**
+ * One log line per row that did not go, carrying what a diagnosis needs and
+ * nothing a household would mind being in a log.
+ *
+ * The row key, whether it went as a product or as text, and the service's own
+ * status and message are the four facts that separate "this EAN is rejected"
+ * from "we were throttled". The ingredient name is left out on purpose: it is
+ * for the member on the screen, not for the logs.
+ */
+function logSendFailures(failures: readonly SOstoslistaRowFailure[]): void {
+  for (const failure of failures) {
+    console.error(
+      `S-ostoslista row failed: key=${failure.key} step=${failure.operation.kind} ` +
+        `kind=${failure.kind} status=${failure.status ?? "none"} ${failure.message}`,
+    );
+  }
+}
+
+/**
+ * What the member is told when part of the list did not go.
+ *
+ * Exported for `dev/check-s-ostoslista-message.ts`: which of these sentences a
+ * member gets is the whole difference between "press it again" and "go and fix
+ * a product", so it is worth asserting directly rather than through a screen.
+ *
+ * The old text said only how many rows had been reached before the send gave
+ * up, which was the same sentence whatever had gone wrong and pointed at
+ * nothing (#308). This names the rows, and it separates the two answers a
+ * member actually has: press it again, or go and look at that ingredient's
+ * product. Pressing it again is always safe either way — a repeated send is
+ * keyed and makes no duplicates — so that is said outright rather than implied.
+ */
+export function partialSendMessage(outcome: {
+  sent: number;
+  total: number;
+  failures: readonly SOstoslistaRowFailure[];
+  ceiling: boolean;
+}): string {
+  const { sent, total, failures, ceiling } = outcome;
+  const progress = sent === 0
+    ? "Mitään ei lähetetty."
+    : `${sent}/${total} ainesta lähti perille.`;
+
+  // Nothing was wrong with the rows, so naming any of them would send the
+  // member looking in the wrong place. Pressing again really does finish it:
+  // the next send reads the list first and skips everything already on it.
+  if (ceiling) {
+    return `Lista oli liian pitkä yhteen lähetykseen. ${progress} ` +
+      "Paina Lähetä uudelleen, niin loput menevät perille — " +
+      "jo lähetetyt rivit ohitetaan eivätkä tule kahteen kertaan.";
+  }
+
+  const named = failures.slice(0, FAILURES_IN_MESSAGE).map(failureNote);
+  const rest = failures.length - named.length;
+  const listed = rest > 0
+    ? `${named.join(" ")} Lisäksi ${rest} muuta riviä ei mennyt läpi.`
+    : named.join(" ");
+
+  return `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress} ${listed} ${advice(failures)}`;
+}
+
+/**
+ * The one sentence that says what to do next.
+ *
+ * Two things have to line up before a member is sent to look at something:
+ * the service has to have actually refused it, and the refusal has to have
+ * been about the thing they would be looking at. A product row whose product
+ * was accepted and whose leftover text reminder was then refused fails neither
+ * test for "check the product choice" — the product is fine, and the row is on
+ * the list. Everything else is a send worth pressing again.
+ */
+function advice(failures: readonly SOstoslistaRowFailure[]): string {
+  if (!failures.every((failure) => failure.kind === "refused")) {
+    return "Yritä uudelleen — sama lähetys ei tee tuplarivejä.";
+  }
+  if (failures.every((failure) => failure.operation.kind === "product")) {
+    return "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta.";
+  }
+  if (failures.every((failure) => failure.operation.kind === "old-note")) {
+    // The rows themselves went. What is left behind is last send's wording,
+    // still sitting on the phone, and the member can lift it off there.
+    return "Rivit ovat listalla, mutta vanhoja tekstirivejä ei saatu pois: poista ne S-ostoslistalta itse.";
+  }
+  return "Uudelleen yrittäminen ei auta näihin riveihin: S-ostoslista ei hyväksynyt niitä.";
+}
+
+function failureNote(failure: SOstoslistaRowFailure): string {
+  const status = failure.status === null ? "" : ` (${failure.status})`;
+  if (failure.kind === "local") {
+    return `Rivin ${failure.name} kirjaaminen epäonnistui täällä päässä.`;
+  }
+  if (failure.kind === "malformed") {
+    return `S-ostoslista vastasi riviin ${failure.name} jotain odottamatonta${status}.`;
+  }
+  if (failure.kind === "unreachable") {
+    return `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
+  }
+  // Refused, and by now it matters what was refused.
+  if (failure.operation.kind === "old-note") {
+    return `Rivin ${failure.name} vanhaa tekstiriviä ei saatu poistettua S-ostoslistalta${status}.`;
+  }
+  return `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`;
 }
 
 /**
@@ -328,7 +490,12 @@ export async function removeCurrentItemForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();
@@ -410,7 +577,12 @@ export async function saveProductForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();

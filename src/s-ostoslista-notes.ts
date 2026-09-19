@@ -49,15 +49,32 @@ export async function rememberSentNote(
   rowKey: string,
   note: string,
 ): Promise<void> {
-  await db
+  await rememberSentNoteStatement(db, householdId, rowKey, note).run();
+}
+
+/**
+ * The same write, not yet run.
+ *
+ * A send collects these and puts the whole send's bookkeeping through one
+ * `db.batch` (#308). Every D1 call a Worker makes is a subrequest against the
+ * same per-invocation budget the S-ostoslista calls come out of, and a 32-row
+ * list cannot afford to spend eight of them saying eight separate things to the
+ * same table.
+ */
+export function rememberSentNoteStatement(
+  db: D1Database,
+  householdId: number,
+  rowKey: string,
+  note: string,
+): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO s_ostoslista_sent_note (household_id, row_key, note, sent_at)
             VALUES (?, ?, ?, datetime('now'))
        ON CONFLICT(household_id, row_key)
        DO UPDATE SET note = excluded.note, sent_at = excluded.sent_at`,
     )
-    .bind(householdId, rowKey, note)
-    .run();
+    .bind(householdId, rowKey, note);
 }
 
 /** This row no longer has a note out on the list. */
@@ -66,10 +83,18 @@ export async function forgetSentNote(
   householdId: number,
   rowKey: string,
 ): Promise<void> {
-  await db
+  await forgetSentNoteStatement(db, householdId, rowKey).run();
+}
+
+/** The same delete, not yet run — see `rememberSentNoteStatement`. */
+export function forgetSentNoteStatement(
+  db: D1Database,
+  householdId: number,
+  rowKey: string,
+): D1PreparedStatement {
+  return db
     .prepare(
       "DELETE FROM s_ostoslista_sent_note WHERE household_id = ? AND row_key = ?",
     )
-    .bind(householdId, rowKey)
-    .run();
+    .bind(householdId, rowKey);
 }

@@ -33,7 +33,14 @@ test("list uses bearer auth and reads the service item shape", async () => {
     json({ items: [{ id: "one", name: "Maito", ean: "6415712506032" }] }),
   ]);
   assert.deepEqual(await api.list(), [
-    { id: "one", name: "Maito", ean: "6415712506032", collected: false },
+    {
+      id: "one",
+      name: "Maito",
+      ean: "6415712506032",
+      collected: false,
+      collectedStated: false,
+      quantity: null,
+    },
   ]);
   assert.equal(calls[0]?.url, "https://private.example/api/items");
   assert.equal(new Headers(calls[0]?.init?.headers).get("authorization"), "Bearer secret-token");
@@ -117,6 +124,52 @@ test("a packet count goes out as the row's quantity, twice (#240)", async () => 
     collected: false,
     quantity: 2,
   });
+});
+
+test("a row the service accepts as asked costs one call, not two (#308)", async () => {
+  // The service's answer already says what the patch would have said, so the
+  // patch is a second round trip that changes nothing — and a 32-row list pays
+  // that toll 32 times over.
+  const api = client([
+    json(
+      { id: "ean-item", name: "Maito", ean: "6415712506032", collected: false, quantity: 2 },
+      201,
+    ),
+  ]);
+  const added = await api.add({ ean: "6415712506032" }, 2);
+  assert.equal(added.collected, false);
+  assert.equal(added.quantity, 2);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.init?.method, "POST");
+});
+
+test("a keyed row handed back with the wrong count is still patched (#308)", async () => {
+  // Last week's trip left a one on this row. The add is keyed, so that is what
+  // comes back, and the count this trip worked out still has to be stated.
+  const api = client([
+    json(
+      { id: "ean-item", name: "Maito", ean: "6415712506032", collected: false, quantity: 1 },
+      200,
+    ),
+    json(
+      { id: "ean-item", name: "Maito", ean: "6415712506032", collected: false, quantity: 3 },
+    ),
+  ]);
+  await api.add({ ean: "6415712506032" }, 3);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]?.init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), {
+    collected: false,
+    quantity: 3,
+  });
+});
+
+test("a note the service accepts as asked costs one call too (#308)", async () => {
+  const api = client([
+    json({ id: "note-item", name: "Suola — 1 tl", ean: null, collected: false }, 201),
+  ]);
+  await api.add({ note: "Suola — 1 tl" });
+  assert.equal(calls.length, 1);
 });
 
 test("a count this app could not have worked out is refused, not rounded (#240)", async () => {
