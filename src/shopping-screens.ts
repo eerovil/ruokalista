@@ -195,7 +195,15 @@ export async function sendShoppingListForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(
+    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    COMPLETION_TAIL,
+  );
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();
@@ -219,7 +227,7 @@ export async function sendShoppingListForm(
     member.householdId,
     client,
     buy,
-    { budget: new SubrequestBudget(SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND) },
+    { budget },
   );
 
   if (outcome.status === "partial") {
@@ -283,6 +291,13 @@ const FAILURES_IN_MESSAGE = 3;
  * where that would show up.
  */
 const SPENT_REACHING_THE_SEND = 6;
+
+/**
+ * Held back for the send's mandatory finish: one `db.batch` of note receipts.
+ * Mirrors `s-ostoslista-sync.ts::COMPLETION_TAIL`, and is stated here because
+ * this is where the ledger is made.
+ */
+const COMPLETION_TAIL = 1;
 
 /**
  * One log line per row that did not go, carrying what a diagnosis needs and
@@ -481,7 +496,15 @@ export async function removeCurrentItemForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(
+    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    COMPLETION_TAIL,
+  );
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();
@@ -563,7 +586,15 @@ export async function saveProductForm(
   ctx: RouteContext,
   member: Member,
 ): Promise<Response> {
-  const client = externalClient(ctx.env, member);
+  // One ledger for this request's share of the invocation's allowance, and
+  // the client spends it on every call it makes. Handing it to the client
+  // rather than only to the send is what keeps the count in the same unit the
+  // runtime counts in: `add` is sometimes two requests (#308).
+  const budget = new SubrequestBudget(
+    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    COMPLETION_TAIL,
+  );
+  const client = externalClient(ctx.env, member, budget);
   if (client === null) return new Response("Not found", { status: 404 });
 
   const form = await ctx.request.formData();

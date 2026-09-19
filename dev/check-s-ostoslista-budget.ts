@@ -7,7 +7,11 @@ import {
   type SOstoslistaSendItem,
 } from "../src/s-ostoslista-sync.ts";
 import { SOstoslistaClient } from "../src/s-ostoslista.ts";
-import { SUBREQUEST_CEILING, SubrequestBudget } from "../src/subrequests.ts";
+import {
+  SUBREQUEST_CEILING,
+  SubrequestBudget,
+  meteredFetch,
+} from "../src/subrequests.ts";
 import { rememberSentNote, sentNotes } from "../src/s-ostoslista-notes.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
@@ -60,9 +64,24 @@ const TOKEN = "test-token";
  */
 const SCREEN_QUERIES_AROUND_THE_SEND = 6;
 
+/** Held back for the receipt batch, as `sendShoppingListForm` holds it back. */
+const COMPLETION_TAIL = 1;
+
 /** The send's own share, the way `sendShoppingListForm` works it out. */
 function budget(): SubrequestBudget {
-  return new SubrequestBudget(SUBREQUEST_CEILING - SCREEN_QUERIES_AROUND_THE_SEND);
+  return new SubrequestBudget(
+    SUBREQUEST_CEILING - SCREEN_QUERIES_AROUND_THE_SEND,
+    COMPLETION_TAIL,
+  );
+}
+
+/**
+ * The client as the route builds it: every request it makes spends the ledger
+ * as it is made, which is the only accounting that cannot drift from the
+ * runtime's (#308 review).
+ */
+function metered(fetcher: typeof fetch, ledger: SubrequestBudget): SOstoslistaClient {
+  return new SOstoslistaClient(BASE, TOKEN, meteredFetch(ledger, fetcher));
 }
 
 interface Row {
@@ -227,10 +246,10 @@ test("a re-used 24+8 list stays inside one invocation's subrequest budget (#308)
   }
 
   const { fetch: fetcher, calls } = service(rows);
-  const client = new SOstoslistaClient(BASE, TOKEN, fetcher);
+  const ledger = budget();
 
-  const outcome = await sendToSOstoslista(fake.db, 1, client, items, {
-    budget: budget(),
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
   });
 
   assert.equal(outcome.status, "sent");
@@ -287,8 +306,9 @@ test("every row really is buyable at this trip's count afterwards (#236, #240)",
   ];
   const { fetch: fetcher } = service(rows);
 
-  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, fetcher), items, {
-    budget: budget(),
+  const ledger = budget();
+  await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
   });
 
   for (const item of items) {
@@ -316,13 +336,10 @@ test("a fresh list fits, though it is not the worst case (#308)", async () => {
   const { items } = reportedList();
   const { fetch: fetcher, calls } = service([]);
 
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, fetcher),
-    items,
-    { budget: budget() },
-  );
+  const ledger = budget();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
+  });
 
   assert.equal(outcome.status, "sent");
   const total = calls.length + fake.subrequests() + SCREEN_QUERIES_AROUND_THE_SEND;
@@ -343,19 +360,17 @@ test("a second press after a full send costs almost nothing (#308)", async () =>
   const { items } = reportedList();
   const rows: Row[] = [];
   const first = service(rows);
-  await sendToSOstoslista(fake.db, 1, new SOstoslistaClient(BASE, TOKEN, first.fetch), items, {
-    budget: budget(),
+  const firstLedger = budget();
+  await sendToSOstoslista(fake.db, 1, metered(first.fetch, firstLedger), items, {
+    budget: firstLedger,
   });
 
   const second = service(rows);
   const before = fake.subrequests();
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, second.fetch),
-    items,
-    { budget: budget() },
-  );
+  const secondLedger = budget();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(second.fetch, secondLedger), items, {
+    budget: secondLedger,
+  });
 
   assert.equal(outcome.status, "sent");
   assert.deepEqual(second.calls, ["GET items", "POST sync"]);
@@ -400,13 +415,10 @@ test("a recurring list with eight changed reminders fits in one press (#308 revi
 
   const spentBefore = fake.subrequests();
   const { fetch: fetcher, calls } = service([]);
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, fetcher),
-    items,
-    { budget: budget() },
-  );
+  const ledger = budget();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
+  });
 
   const http = calls.length;
   const d1 = fake.subrequests() - spentBefore;
@@ -443,13 +455,10 @@ test("one deletion more than fits stops at a row, and the next press finishes it
   const rows: Row[] = [];
   const first = service(rows);
   const spentBefore = fake.subrequests();
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, first.fetch),
-    items,
-    { budget: budget() },
-  );
+  const firstLedger = budget();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(first.fetch, firstLedger), items, {
+    budget: firstLedger,
+  });
 
   const total = first.calls.length + (fake.subrequests() - spentBefore) +
     SCREEN_QUERIES_AROUND_THE_SEND;
@@ -471,13 +480,10 @@ test("one deletion more than fits stops at a row, and the next press finishes it
   // The second press. The service is holding everything the first sent, so
   // those rows cost nothing and the rest goes.
   const second = service(rows);
-  const resumed = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, second.fetch),
-    items,
-    { budget: budget() },
-  );
+  const secondLedger = budget();
+  const resumed = await sendToSOstoslista(fake.db, 1, metered(second.fetch, secondLedger), items, {
+    budget: secondLedger,
+  });
 
   assert.equal(resumed.status, "sent");
   assert.equal(resumed.sent, 32);
@@ -513,13 +519,11 @@ test("a transient retry is priced before it is taken (#308 review)", async () =>
   }) as typeof fetch;
 
   const spentBefore = fake.subrequests();
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    new SOstoslistaClient(BASE, TOKEN, fetcher),
-    items,
-    { budget: budget(), wait: async () => {} },
-  );
+  const ledger = budget();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
+    wait: async () => {},
+  });
 
   const total = inner.calls.length + (fake.subrequests() - spentBefore) +
     SCREEN_QUERIES_AROUND_THE_SEND;
@@ -534,4 +538,136 @@ test("a transient retry is priced before it is taken (#308 review)", async () =>
     0,
     "a transient stumble is not a failed row",
   );
+});
+
+/**
+ * The service answering the list read with a transient 5xx, once.
+ *
+ * This is the shape that broke the ledger's unit. The send carries on without
+ * the shortcut, so `held` is empty — but the service is still holding last
+ * week's rows, so the next keyed `POST` lands on one of them and
+ * `SOstoslistaClient.add` needs its `PATCH` as well. Two real subrequests for
+ * something the planner had called one.
+ */
+function refusingTheListRead(rows: Row[]): { fetch: typeof fetch; calls: string[] } {
+  const inner = service(rows);
+  let refused = false;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (!refused && method === "GET" && String(input).endsWith("/items")) {
+      refused = true;
+      inner.calls.push("GET items");
+      return Response.json({ error: "busy" }, { status: 503 });
+    }
+    return inner.fetch(input, init);
+  }) as typeof fetch;
+  return { fetch: fetcher, calls: inner.calls };
+}
+
+/** Last week's trip, still on the service: ticked, and at last week's count. */
+function staleRows(eans: string[]): Row[] {
+  return eans.map((code, index) => ({
+    id: `old-${index}`,
+    name: `Tuote ${code}`,
+    ean: code,
+    collected: true,
+    quantity: 1,
+  }));
+}
+
+test("a failed list read cannot make the send overspend (#308 review)", async () => {
+  // The repro, with the real client. Every POST that finds a stale row costs a
+  // PATCH too, and the ledger has to see both — otherwise the planner waves
+  // rows through and the runtime stops the send mid-call.
+  const fake = database();
+  const { items, eans } = reportedList();
+  const rows = staleRows(eans);
+  const { fetch: fetcher, calls } = refusingTheListRead(rows);
+
+  const ledger = budget();
+  const spentBefore = fake.subrequests();
+  const outcome = await sendToSOstoslista(fake.db, 1, metered(fetcher, ledger), items, {
+    budget: ledger,
+    wait: async () => {},
+  });
+
+  const http = calls.length;
+  const d1 = fake.subrequests() - spentBefore;
+  const total = http + d1 + SCREEN_QUERIES_AROUND_THE_SEND;
+
+  assert.ok(
+    total <= SUBREQUEST_CEILING,
+    `a guessed list must not overspend: ${http} fetch + ${d1} D1 + ` +
+      `${SCREEN_QUERIES_AROUND_THE_SEND} for the screen = ${total}, ceiling ${SUBREQUEST_CEILING}`,
+  );
+
+  // The pairs really did happen — this is not passing because the situation
+  // failed to arise.
+  const posts = calls.filter((call) => call === "POST items").length;
+  const patches = calls.filter((call) => call.startsWith("PATCH items/")).length;
+  assert.ok(patches > 0, "stale rows really did need their PATCH");
+  assert.ok(posts > 0);
+
+  // It stops short rather than over-spending, and says so honestly.
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.deepEqual(
+    outcome.status === "partial" ? outcome.failures : null,
+    [],
+    "nothing failed; there was simply not enough allowance",
+  );
+  assert.ok(outcome.sent > 0, "and it does send what it can afford");
+
+  // Every row it did send is on the list, still to be bought, at this week's
+  // count — the budget was not bought by weakening #236/#240.
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    for (const { product, count } of item.chosen) {
+      counts.set(product.ean, (counts.get(product.ean) ?? 0) + count);
+    }
+  }
+  const touched = rows.filter((row) => !row.collected);
+  assert.ok(touched.length > 0, "some stale rows really were put right");
+  for (const row of touched) {
+    assert.equal(row.quantity, counts.get(row.ean ?? ""), `${row.ean} holds this week's count`);
+  }
+});
+
+test("the next press, with the list read working, finishes it (#308 review)", async () => {
+  const fake = database();
+  const { items, eans } = reportedList();
+  const rows = staleRows(eans);
+
+  const blind = refusingTheListRead(rows);
+  const blindLedger = budget();
+  const first = await sendToSOstoslista(fake.db, 1, metered(blind.fetch, blindLedger), items, {
+    budget: blindLedger,
+    wait: async () => {},
+  });
+  assert.equal(first.status, "partial");
+
+  // Second press: the read works, so every row is priced at what it really
+  // costs and the rest goes.
+  let presses = 1;
+  let outcome = first;
+  while (outcome.status === "partial" && presses < 5) {
+    presses += 1;
+    const again = service(rows);
+    const ledger = budget();
+    const spentBefore = fake.subrequests();
+    outcome = await sendToSOstoslista(fake.db, 1, metered(again.fetch, ledger), items, {
+      budget: ledger,
+      wait: async () => {},
+    });
+    const total = again.calls.length + (fake.subrequests() - spentBefore) +
+      SCREEN_QUERIES_AROUND_THE_SEND;
+    assert.ok(total <= SUBREQUEST_CEILING, `press ${presses} spent ${total}`);
+  }
+
+  assert.equal(outcome.status, "sent");
+  assert.equal(outcome.sent, 32);
+  // Idempotent across every press: one row per key, all still to be bought.
+  const keys = rows.map((row) => row.ean ?? row.name);
+  assert.equal(new Set(keys).size, keys.length, "no row on the list twice");
+  assert.equal(rows.every((row) => row.collected === false), true);
 });

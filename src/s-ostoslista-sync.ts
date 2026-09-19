@@ -9,7 +9,11 @@ import {
   sentNotes,
 } from "./s-ostoslista-notes.ts";
 import type { ShoppingItem } from "./shopping.ts";
-import { SUBREQUEST_CEILING, SubrequestBudget } from "./subrequests.ts";
+import {
+  SUBREQUEST_CEILING,
+  SubrequestBudget,
+  SubrequestBudgetSpent,
+} from "./subrequests.ts";
 
 /**
  * The part of the S-ostoslista client the reconciliation workflow needs.
@@ -244,7 +248,8 @@ export async function sendToSOstoslista(
   options: SOstoslistaSendOptions = {},
 ): Promise<SOstoslistaSendOutcome> {
   const wait = options.wait ?? sleep;
-  const budget = options.budget ?? new SubrequestBudget(SUBREQUEST_CEILING);
+  const budget = options.budget ??
+    new SubrequestBudget(SUBREQUEST_CEILING, COMPLETION_TAIL);
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
   const failures: SOstoslistaRowFailure[] = [];
@@ -257,22 +262,20 @@ export async function sendToSOstoslista(
     ceiling: true,
   });
 
-  // The receipts have to be affordable at the end however the middle goes, so
-  // their space is taken out of circulation before anything else is spent.
-  budget.reserve(COMPLETION_TAIL);
-
-  // Reading what this household has out on the list, and what the service is
-  // holding. Neither is optional: without the first a send cannot tell its own
-  // old notes from the household's own rows, and without the second every row
-  // pays full price. If there is no room for them there is no room for the
-  // send.
-  if (!budget.claim(1)) return nothingSent();
+  // Reading what this household has out on the list. Not optional: without it
+  // a send cannot tell its own old notes from rows the household added itself.
+  // D1 is spent here by hand because only the transport meters itself.
+  if (!budget.spend(1)) return nothingSent();
   const outstanding = await sentNotes(db, householdId);
 
-  if (!budget.claim(1)) return nothingSent();
+  // And what the service is holding. This one the transport meters, so it is
+  // only gated here. Whether it worked changes what every later row costs —
+  // see `RowPlanContext.listKnown`.
+  if (!budget.canAfford(1)) return nothingSent();
   const opening = await heldByService(client);
   if (opening.ceiling) return nothingSent();
   const held = opening.held;
+  const listKnown = opening.read;
 
   let retriesLeft = RETRY_BUDGET;
   let ceiling = false;
@@ -285,13 +288,17 @@ export async function sendToSOstoslista(
       addedProducts,
       outstanding,
       held,
+      listKnown,
     });
 
-    // Priced before it is begun. This is the whole of the design: an old-note
-    // DELETE that the budget cannot cover is not started and then explained,
-    // it is not started. A row that does not fit ends the send at a row
-    // boundary, with every row after it untouched rather than half-done.
-    if (!budget.claim(planned.steps.length)) {
+    // Approved before it is begun, against the most it can cost. This is the
+    // whole of the design: an old-note DELETE the budget cannot cover is not
+    // started and then explained, it is not started. A row that does not fit
+    // ends the send at a row boundary, every row after it untouched rather
+    // than half-done. The spending itself happens call by call in the
+    // transport, so an add that turns out to need its PATCH is charged for
+    // both whatever this thought.
+    if (!budget.canAfford(priceOf(planned))) {
       ceiling = true;
       break;
     }
@@ -308,7 +315,7 @@ export async function sendToSOstoslista(
         // wrong. It is never worth repeating — the allowance does not come
         // back inside one invocation — so it ends the row here and, below, the
         // send.
-        if (isCeiling(why)) break;
+        if (isCeiling(why) || why instanceof SubrequestBudgetSpent) break;
         if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(why)) {
           break;
         }
@@ -320,8 +327,9 @@ export async function sendToSOstoslista(
           addedProducts,
           outstanding,
           held,
+          listKnown,
         });
-        if (!budget.claim(planned.steps.length)) break;
+        if (!budget.canAfford(priceOf(planned))) break;
         retriesLeft -= 1;
         await wait(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
       }
@@ -332,9 +340,17 @@ export async function sendToSOstoslista(
       sent += 1;
       continue;
     }
-    if (isCeiling(causeOf(error))) {
-      // The backstop fired: the budget said yes and the runtime said no, so
-      // the accounting is not to be trusted for the tail either.
+    const why = causeOf(error);
+    if (why instanceof SubrequestBudgetSpent) {
+      // The ledger refused a call the row's worst-case price had not covered:
+      // an add that needed its PATCH after all. Nothing was spent on it, so
+      // the tail is still good and the send ends here with what it has.
+      ceiling = true;
+      break;
+    }
+    if (isCeiling(why)) {
+      // The runtime refused where the ledger had not. The accounting is wrong,
+      // so it is not to be trusted for the tail either.
       return {
         status: "partial",
         sent,
@@ -349,7 +365,7 @@ export async function sendToSOstoslista(
   // The reserved tail. A send that stopped at the wall still gets here, which
   // is the point of having reserved it: the rows that went out are written
   // down, so the next press knows about them.
-  if (bookkeeping.length > 0 && budget.claimReserved(COMPLETION_TAIL)) {
+  if (bookkeeping.length > 0 && budget.spendTail(COMPLETION_TAIL)) {
     const lost = await flush(db, bookkeeping);
     if (lost !== null && !isCeiling(lost)) {
       // A lost receipt is this app losing track of a row it did put on the
@@ -361,7 +377,7 @@ export async function sendToSOstoslista(
       ceiling = true;
     }
   } else {
-    budget.release(COMPLETION_TAIL);
+    budget.releaseTail();
   }
 
   if (failures.length > 0 || ceiling) {
@@ -372,7 +388,7 @@ export async function sendToSOstoslista(
   // the phone on its own schedule, so a send with no allowance left for this
   // has still done everything that had to happen — and the screen already has
   // the sentence that says the phone will catch up.
-  if (!budget.claim(1)) {
+  if (!budget.canAfford(1)) {
     return {
       status: "sent",
       sent,
@@ -410,15 +426,20 @@ export async function sendToSOstoslista(
  */
 async function heldByService(
   client: SOstoslistaSyncClient,
-): Promise<{ held: readonly SOstoslistaItem[]; ceiling: boolean }> {
+): Promise<{ held: readonly SOstoslistaItem[]; ceiling: boolean; read: boolean }> {
   try {
-    return { held: await client.list(), ceiling: false };
+    return { held: await client.list(), ceiling: false, read: true };
   } catch (error) {
     // Running out of subrequests is the one failure this cannot shrug off. It
     // does not mean "no shortcut this time", it means there are no calls left
     // — and every row would then spend one proving it.
-    if (isCeiling(error)) return { held: [], ceiling: true };
-    return { held: [], ceiling: false };
+    if (isCeiling(error) || error instanceof SubrequestBudgetSpent) {
+      return { held: [], ceiling: true, read: false };
+    }
+    // Anything else and the send carries on without the shortcut — but `read`
+    // says so, because an empty `held` this app did not verify is a guess, and
+    // rows have to be priced as guesses.
+    return { held: [], ceiling: false, read: false };
   }
 }
 
@@ -480,16 +501,30 @@ interface Receipt {
   statement: D1PreparedStatement;
 }
 
-/** One external call this row needs, and what it is for. */
+/** One piece of a row's reconciliation, and what it may cost. */
 interface PlannedStep {
   operation: SOstoslistaOperation;
+  /**
+   * The most subrequests this step can make.
+   *
+   * Not always one. `SOstoslistaClient.add` is a keyed `POST` and then a
+   * `PATCH` when the answer disagrees with what was asked for — the #236/#240
+   * path — so an add whose outcome this send cannot predict is priced at two.
+   * The ledger is spent by the transport either way; this number only decides
+   * whether the step may begin.
+   */
+  cost: number;
   run: () => Promise<unknown>;
 }
 
-/** A row's whole cost, worked out before any of it is spent. */
+/** A row's whole worst-case cost, worked out before any of it is begun. */
 interface PlannedRow {
   steps: PlannedStep[];
   receipt: Receipt | null;
+}
+
+function priceOf(planned: PlannedRow): number {
+  return planned.steps.reduce((total, step) => total + step.cost, 0);
 }
 
 /** What `planRow` needs to see; deliberately not the bookkeeping. */
@@ -498,6 +533,17 @@ interface RowPlanContext {
   addedProducts: Set<string>;
   outstanding: Map<string, string>;
   held: readonly SOstoslistaItem[];
+  /**
+   * Whether `held` is what the service really has, or a guess.
+   *
+   * It is a guess when the opening list read failed, and the difference is
+   * what a missing row costs. If the read worked, a key that is not in `held`
+   * is genuinely absent, so the keyed `POST` will create it and come back
+   * agreeing — one call. If the read failed, the same `POST` may find last
+   * week's ticked row and need the `PATCH` as well, and pretending otherwise
+   * is how the ledger came to under-count (#308 review).
+   */
+  listKnown: boolean;
 }
 
 /**
@@ -523,7 +569,7 @@ function planRow(
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outstanding, held }: RowPlanContext,
+  { packets, addedProducts, outstanding, held, listKnown }: RowPlanContext,
 ): PlannedRow {
   const previous = outstanding.get(item.key) ?? null;
   const steps: PlannedStep[] = [];
@@ -531,13 +577,18 @@ function planRow(
 
   const removeOldNote = (note: string): PlannedStep => ({
     operation: { kind: "old-note", note },
+    cost: 1,
     run: () => dropRememberedNote(client, note),
   });
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    for (const call of callsFor(client, held, { note }, null)) {
-      steps.push({ operation: { kind: "note", note }, run: call });
+    for (const call of callsFor(client, held, listKnown, { note }, null)) {
+      steps.push({
+        operation: { kind: "note", note },
+        cost: call.cost,
+        run: call.run,
+      });
     }
 
     // Re-sending identical words is the same keyed external row. Removing
@@ -555,7 +606,7 @@ function planRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    const calls = callsFor(client, held, { ean: product.ean }, count);
+    const calls = callsFor(client, held, listKnown, { ean: product.ean }, count);
     // A product the list already holds correctly costs nothing, and is done
     // the moment it is planned.
     if (calls.length === 0) {
@@ -565,10 +616,11 @@ function planRow(
     calls.forEach((call, index) => {
       steps.push({
         operation: { kind: "product", ean: product.ean },
+        cost: call.cost,
         // Marked done only once the last of this product's calls has landed,
         // so a retry does not skip a product it only half-sent.
         run: async () => {
-          const answer = await call();
+          const answer = await call.run();
           if (index === calls.length - 1) addedProducts.add(product.ean);
           return answer;
         },
@@ -632,16 +684,23 @@ async function runRow(planned: PlannedRow): Promise<void> {
 function callsFor(
   client: SOstoslistaSyncClient,
   held: readonly SOstoslistaItem[],
+  listKnown: boolean,
   key: SOstoslistaKey,
   quantity: number | null,
-): Array<() => Promise<unknown>> {
+): Array<{ cost: number; run: () => Promise<unknown> }> {
   const matching = held.filter((row) =>
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
   );
-  if (matching.length === 0) return [() => client.add(key, quantity)];
+  if (matching.length === 0) {
+    // One call when the list read is trustworthy and says this row is absent:
+    // the keyed POST creates it and comes back agreeing, so no PATCH follows.
+    // Two when the read failed, because the POST may land on last week's
+    // ticked row instead and need the PATCH after all.
+    return [{ cost: listKnown ? 1 : 2, run: () => client.add(key, quantity) }];
+  }
   return matching
     .filter((row) => !agrees(row, quantity))
-    .map((row) => () => client.correct(row.id, quantity));
+    .map((row) => ({ cost: 1, run: () => client.correct(row.id, quantity) }));
 }
 
 function agrees(row: SOstoslistaItem, quantity: number | null): boolean {
