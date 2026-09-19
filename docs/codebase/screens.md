@@ -118,6 +118,34 @@ all, which the browser-compatibility rule below asks for. The picker is a
 `<details>` that stays closed unless nothing is selected, and each ingredient
 row is its own `<details>` whose body names the contributing cookings.
 
+Issue #313 adds a third parameter to that same query string: one `pois=<row
+key>` per row the member has taken off *this* list. A row key is what
+`shoppingList` hands out — `12`, or `12:r7` for a row pinned to a dish's
+product — and `src/shopping.ts::isRowKey` is what stops anything else reaching
+a link. The whole toggle is a link to the next URL, so it needs no script, no
+write, and no table; `src/shopping.ts::splitByExcluded` does the split, after
+the cupboard's, and `dev/check-shopping-exclusion.ts` tests both straight.
+
+`shoppingState` then narrows that set to the rows the list it just computed
+actually has (`rowsThatExist`), and everything the screen emits is built from
+the narrowed set. So `pois=999` is never handed back out, and — this is the
+part worth remembering — a key cannot lie dormant and take effect later:
+leaving a row off, unticking the cooking it came from and ticking that cooking
+again gives a row nobody said anything about on this list. Every form carries
+the exclusions as hidden fields, **including the meal picker's own GET form**;
+without them there, submitting **Päivitä lista** would put every left-off row
+back.
+
+The point of it is the distinction, and that is why the two controls are drawn
+apart and worded apart. The cupboard says the household *has* something, is a
+fact about the kitchen, and outlives the trip; **Jätä pois tältä listalta**
+says only that this trip is not buying it, and is forgotten the moment the
+screen is reopened without that parameter. A left-off row keeps its total and
+its breakdown in its own **Jätetty pois tältä listalta** section, is not sent to
+the S-ostoslista, and is offered no product picker — the same treatment a
+cupboard row gets. A cupboard row, in turn, is offered no left-off toggle: it
+is already off the list for a reason that outranks this one.
+
 The arithmetic lives in `src/shopping.ts::shoppingList`, apart from the markup
 and tested directly in `dev/check-shopping.ts`. Three rules the proposal treats
 as fixed: a batch is one cooking however many meals it covers, so it is counted

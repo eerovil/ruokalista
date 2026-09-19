@@ -49,8 +49,10 @@ import {
 } from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
+  isRowKey,
   shoppingLinesFor,
   shoppingList,
+  splitByExcluded,
   type ShoppingItem,
 } from "./shopping.ts";
 
@@ -67,6 +69,13 @@ import {
  * fact about the kitchen, not about this list: adding oregano to the cupboard
  * here is the same act as adding it on the cupboard's own screen, and it
  * outlives this trip. Nothing about a particular trip is stored either way.
+ *
+ * Which is exactly why #313's "leave this one off" is a third query-string
+ * parameter and not a row anywhere. The cupboard already answers "we have
+ * this"; the thing it could not say was "not this time, and don't read
+ * anything more into it". Those are two different sentences about a row, so
+ * they are two different controls, in two different sections, and only one of
+ * them writes.
  *
  * That also keeps the screen server-rendered. The picker is a plain GET form
  * with checkboxes and a submit button, and each cupboard button is a small
@@ -106,6 +115,23 @@ const CHOICE = "ateria";
 const CHOSEN = "valittu";
 
 /**
+ * One row key per appearance: the rows the member has taken off this list.
+ *
+ * It travels the same way the meal selection does, and for the same reason
+ * (#313). Leaving a row off is a fact about this trip only — it says nothing
+ * about the cupboard and nothing that should still be true next week — so it
+ * lives in the query string and nowhere else, exactly like the selection it
+ * sits beside.
+ */
+const EXCLUDED = "pois";
+
+/** What the query string says this list is: which cookings, minus which rows. */
+interface Selection {
+  ids: Set<number>;
+  excluded: Set<string>;
+}
+
+/**
  * `known` is the state the caller has already worked out, and passing it is
  * the difference between one answer and two identical ones.
  *
@@ -127,14 +153,14 @@ export async function shoppingScreen(
 ): Promise<Response> {
   const { env } = ctx;
   const state = known ?? (await shoppingState(ctx, member));
-  const { cookings, selectedIds, selected, buy, atHome } = state;
+  const { cookings, selection, selected, buy, excluded, atHome } = state;
   const external = externalClient(env, member) !== null;
   const heading = headingFor(selected);
 
   return page(
     heading,
     html`<h1>${heading}</h1>
-      ${picker(cookings, selectedIds)}
+      ${picker(cookings, selection)}
       ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
       ${notice === null ? "" : html`<p class="shopping-sent">${notice}</p>`}
       ${cookings.length === 0
@@ -146,8 +172,8 @@ export async function shoppingScreen(
           ? html`<p class="empty">
               Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
             </p>`
-          : html`${externalSendPanel(buy, selectedIds, external)}
-              ${sections(buy, atHome, selectedIds, external)}
+          : html`${externalSendPanel(buy, selection, external)}
+              ${sections(buy, excluded, atHome, selection, external)}
               ${external ? currentListPanel() : ""}`}
       ${external ? html`<script>${raw(shoppingClient)}</script>` : ""}`,
     "shopping",
@@ -158,9 +184,10 @@ export async function shoppingScreen(
 
 interface ShoppingState {
   cookings: PlannedBatch[];
-  selectedIds: Set<number>;
+  selection: Selection;
   selected: PlannedBatch[];
   buy: ShoppingItem[];
+  excluded: ShoppingItem[];
   atHome: ShoppingItem[];
 }
 
@@ -178,20 +205,74 @@ async function shoppingState(
     .filter((batch) => batch.startDate >= from)
     .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id);
 
-  const selectedIds = chosenIds(url, cookings, from);
-  const selected = cookings.filter((batch) => selectedIds.has(batch.id));
+  const ids = chosenIds(url, cookings, from);
+  const selected = cookings.filter((batch) => ids.has(batch.id));
 
   const [lines, inPantry] = await Promise.all([
-    shoppingLinesFor(env.DB, member.householdId, [...selectedIds]),
+    shoppingLinesFor(env.DB, member.householdId, [...ids]),
     pantryIngredientIds(env.DB, member.householdId),
   ]);
+
+  const items = shoppingList(lines);
+
+  // Only keys this list actually has a row for. Everything the screen emits
+  // from here on — every hidden field, every link — is built from this set, so
+  // a key for a row that is not here cannot be carried any further.
+  const selection: Selection = {
+    ids,
+    excluded: rowsThatExist(excludedKeys(url.searchParams.getAll(EXCLUDED)), items),
+  };
 
   // The cupboard is applied after the totals are added up, not before: an
   // ingredient the household already has is still part of what the cooking
   // needs, it is just not part of what the trip has to buy. Both sections keep
   // the amounts and the breakdown #123 worked out (#125).
-  const { buy, atHome } = splitByPantry(shoppingList(lines), inPantry);
-  return { cookings, selectedIds, selected, buy, atHome };
+  const split = splitByPantry(items, inPantry);
+
+  // And the member's own "not this time" is applied after the cupboard, so the
+  // two answers cannot be confused with one another: a row the cupboard covers
+  // stays a cupboard row whatever else the query string says about it (#313).
+  const { buy, excluded } = splitByExcluded(split.buy, selection.excluded);
+  return { cookings, selection, selected, buy, excluded, atHome: split.atHome };
+}
+
+/**
+ * The row keys to leave off, keeping only what could be one.
+ *
+ * Shape alone, because this runs before the list is known. A stale meal id
+ * gets the same lenient reading: the query string is a selection, not a
+ * command, and a link somebody kept should still show a list.
+ */
+function excludedKeys(values: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const value of values) {
+    const key = value.trim();
+    if (isRowKey(key)) keys.add(key);
+  }
+  return keys;
+}
+
+/**
+ * The same set, narrowed to the rows this list actually has.
+ *
+ * Dropping the rest is what keeps `pois=999` from being handed back out on
+ * every link and form on the screen, and it is not only tidiness: a key that
+ * survives can take effect later. Leave a row off, untick the cooking it came
+ * from, and tick that cooking again, and a carried key would silently leave
+ * the row off a list the member never said that about. Rebuilding the set from
+ * the list in front of them makes the two questions independent again.
+ *
+ * It reads the whole list rather than only what is being bought, so a row that
+ * is currently in the cupboard keeps its "not this time" for when it comes
+ * back out. The cupboard answers first either way — the split below sees to
+ * that — so nothing about this decides what a cupboard row does.
+ */
+function rowsThatExist(
+  keys: ReadonlySet<string>,
+  items: ShoppingItem[],
+): Set<string> {
+  const onList = new Set(items.map((item) => item.key));
+  return new Set([...keys].filter((key) => onList.has(key)));
 }
 
 /** `POST /ostoslista/laheta` — only the freshly recomputed `Ostettavat`. */
@@ -563,7 +644,7 @@ export async function productSearchScreen(
   return productPage(
     member,
     item,
-    state.selectedIds,
+    state.selection,
     mode,
     query,
     products,
@@ -614,7 +695,7 @@ export async function saveProductForm(
       : productPage(
           member,
           item,
-          state.selectedIds,
+          state.selection,
           mode,
           query,
           outcome.products,
@@ -637,7 +718,7 @@ export async function saveProductForm(
 
   return new Response(null, {
     status: 303,
-    headers: { Location: listLocation(state.selectedIds, item.ingredientId) },
+    headers: { Location: listLocation(state.selection, item.ingredientId) },
   });
 }
 
@@ -681,7 +762,7 @@ export async function removeProductForm(
 
   return new Response(null, {
     status: 303,
-    headers: { Location: listLocation(state.selectedIds, item.ingredientId) },
+    headers: { Location: listLocation(state.selection, item.ingredientId) },
   });
 }
 
@@ -744,6 +825,9 @@ function selectionQuery(form: FormData): string {
     const id = Number(value);
     if (Number.isSafeInteger(id)) query.append(CHOICE, String(id));
   }
+  for (const key of excludedKeys(form.getAll(EXCLUDED).map(String))) {
+    query.append(EXCLUDED, key);
+  }
   return query.toString();
 }
 
@@ -760,16 +844,26 @@ function productSelectionUrl(form: FormData, base: URL): URL {
   return url;
 }
 
-function selectionQueryFromIds(selectedIds: Set<number>): string {
+function selectionQueryFrom(selection: Selection): string {
   const query = new URLSearchParams({ [CHOSEN]: "1" });
-  for (const id of selectedIds) query.append(CHOICE, String(id));
+  for (const id of selection.ids) query.append(CHOICE, String(id));
+  for (const key of selection.excluded) query.append(EXCLUDED, key);
   return query.toString();
 }
 
-function selectionFields(selectedIds: Set<number>): Raw {
+/**
+ * The whole selection as hidden fields, so any form that leaves the page comes
+ * back to the same list. Every form on this screen carries all of it: a
+ * cupboard button that dropped the exclusions would put rows back on a list the
+ * member had already taken them off.
+ */
+function selectionFields(selection: Selection): Raw {
   return html`<input type="hidden" name="${CHOSEN}" value="1" />
-    ${[...selectedIds].map(
+    ${[...selection.ids].map(
       (id) => html`<input type="hidden" name="${CHOICE}" value="${id}" />`,
+    )}
+    ${[...selection.excluded].map(
+      (key) => html`<input type="hidden" name="${EXCLUDED}" value="${key}" />`,
     )}`;
 }
 
@@ -823,8 +917,16 @@ function headingFor(selected: PlannedBatch[]): string {
  * came here to read, and the summary already says how much of the fortnight is
  * in it. It opens itself when nothing is selected, because then the list has
  * nothing to show and the choice is the only thing to do.
+ *
+ * The one thing it does *not* re-ask is what the member has left off: the
+ * exclusions ride along as hidden fields, exactly as they do on every other
+ * form here. Without them, changing which cookings are on the list would
+ * quietly put every left-off row back — a submit that undoes a decision
+ * nobody revisited. The meal ids stay with the checkboxes, so this adds
+ * nothing to what the member is choosing here.
  */
-function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
+function picker(cookings: PlannedBatch[], selection: Selection): Raw {
+  const selectedIds = selection.ids;
   if (cookings.length === 0) return html``;
 
   return html`<details class="shopping-picker" ${selectedIds.size === 0 ? rawOpen : ""}>
@@ -834,6 +936,9 @@ function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
     </summary>
     <form method="get" action="/ostoslista" class="stacked">
       <input type="hidden" name="${CHOSEN}" value="1" />
+      ${[...selection.excluded].map(
+        (key) => html`<input type="hidden" name="${EXCLUDED}" value="${key}" />`,
+      )}
       <ul class="shopping-meals">
         ${cookings.map(
           (batch) => html`<li>
@@ -875,33 +980,60 @@ const rawDisabled = raw("disabled");
  */
 function sections(
   buy: ShoppingItem[],
+  excluded: ShoppingItem[],
   atHome: ShoppingItem[],
-  selectedIds: Set<number>,
+  selection: Selection,
   external: boolean,
 ): Raw {
-  // The anchor names are handed out once across both lists, so a row that moves
+  // The anchor names are handed out once across every list, so a row that moves
   // between them keeps the same `#aines-…` and every redirect below still lands
   // on it (#200).
   const anchored = new Set<number>();
 
-  // With nothing in the cupboard there is only one list, and a lone
-  // "Ostettavat" heading under a heading that already says Ostoslista is a
-  // word for its own sake.
-  if (atHome.length === 0) {
-    return itemList(buy, selectedIds, false, external, anchored);
+  // With nothing in the cupboard and nothing left off, there is only one list,
+  // and a lone "Ostettavat" heading under a heading that already says
+  // Ostoslista is a word for its own sake.
+  if (atHome.length === 0 && excluded.length === 0) {
+    return itemList(buy, selection, "buy", external, anchored);
   }
 
   return html`<h2 class="shopping-section">Ostettavat</h2>
     ${buy.length === 0
-      ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
-      : itemList(buy, selectedIds, false, external, anchored)}
-    <h2 class="shopping-section">Löytyy</h2>
-    <p class="empty">
-      Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
-      <a href="/kaappi">kaapissa</a>.
-    </p>
-    ${itemList(atHome, selectedIds, true, external, anchored)}`;
+      ? html`<p class="empty">${nothingToBuy(excluded.length, atHome.length)}</p>`
+      : itemList(buy, selection, "buy", external, anchored)}
+    ${excluded.length === 0
+      ? ""
+      : html`<h2 class="shopping-section">Jätetty pois tältä listalta</h2>
+          <p class="empty">
+            Näitä ei lähetetä S-ostoslistaan. Tämä ei kerro mitään
+            <a href="/kaappi">kaapista</a> — ainekset jäävät pois vain tältä
+            listalta, ja seuraava lista laskee ne taas mukaan.
+          </p>
+          ${itemList(excluded, selection, "excluded", external, anchored)}`}
+    ${atHome.length === 0
+      ? ""
+      : html`<h2 class="shopping-section">Löytyy</h2>
+          <p class="empty">
+            Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
+            <a href="/kaappi">kaapissa</a>.
+          </p>
+          ${itemList(atHome, selection, "pantry", external, anchored)}`}`;
 }
+
+/** Why there is nothing to buy — the cupboard, the member, or both. */
+function nothingToBuy(excluded: number, atHome: number): string {
+  if (excluded === 0) return "Kaikki tarvittava löytyy jo kaapista.";
+  if (atHome === 0) return "Kaikki ainekset on jätetty pois tältä listalta.";
+  return "Kaikki ainekset löytyvät kaapista tai on jätetty pois tältä listalta.";
+}
+
+/**
+ * Which list a row is being drawn in. A cupboard row and a left-off row are
+ * both "not being bought", and they are deliberately not the same thing: one
+ * says the household has it, the other says only that this trip is not
+ * fetching it (#313).
+ */
+type RowKind = "buy" | "excluded" | "pantry";
 
 /**
  * One row per ingredient, each one openable to say where its total came from
@@ -913,8 +1045,8 @@ function sections(
  */
 function itemList(
   items: ShoppingItem[],
-  selectedIds: Set<number>,
-  inPantry: boolean,
+  selection: Selection,
+  kind: RowKind,
   external: boolean,
   anchored: Set<number>,
 ): Raw {
@@ -926,7 +1058,9 @@ function itemList(
     ${items.map(
       (item) => html`<li ${rowAnchor(item, anchored)}>
         <details
-          class="shopping-item"
+          class="${kind === "excluded"
+            ? "shopping-item is-excluded"
+            : "shopping-item"}"
           data-product-row
           data-aines="${item.ingredientId}"
           data-rivi="${item.key}"
@@ -960,8 +1094,9 @@ function itemList(
               </li>`,
             )}
           </ul>
-          ${externalProductBlock(item, selectedIds, inPantry, external)}
-          ${pantryButton(item, selectedIds, inPantry)}
+          ${externalProductBlock(item, selection, kind, external)}
+          ${excludeAction(item, selection, kind)}
+          ${pantryButton(item, selection, kind === "pantry")}
         </details>
       </li>`,
     )}
@@ -1000,19 +1135,19 @@ function anchorName(ingredientId: number): string {
  * it was about.
  */
 function listLocation(
-  selectedIds: Set<number>,
+  selection: Selection,
   ingredientId: number | null,
 ): string {
   const anchor =
     ingredientId === null || !Number.isSafeInteger(ingredientId)
       ? ""
       : `#${anchorName(ingredientId)}`;
-  return `/ostoslista?${selectionQueryFromIds(selectedIds)}${anchor}`;
+  return `/ostoslista?${selectionQueryFrom(selection)}${anchor}`;
 }
 
 function externalSendPanel(
   buy: ShoppingItem[],
-  selectedIds: Set<number>,
+  selection: Selection,
   external: boolean,
 ): Raw {
   if (!external) return html``;
@@ -1028,7 +1163,7 @@ function externalSendPanel(
               : ` · ${notes} ${notes === 1 ? "teksti" : "tekstiä"}`}
           </p>
           <form method="post" action="/ostoslista/laheta" class="s-send-form">
-            ${selectionFields(selectedIds)}
+            ${selectionFields(selection)}
             <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
           </form>`}
   </section>`;
@@ -1064,39 +1199,40 @@ function currentListPanel(): Raw {
  */
 function shoppingRoutes(
   item: ShoppingItem,
-  selectedIds: Set<number>,
+  selection: Selection,
 ): PickerRoutes {
   return {
     open: "/ostoslista/tuote",
     save: "/ostoslista/tuote",
     remove: "/ostoslista/tuote/poista",
-    back: listLocation(selectedIds, item.ingredientId),
-    fields: selectionFields(selectedIds),
+    back: listLocation(selection, item.ingredientId),
+    fields: selectionFields(selection),
   };
 }
 
 /**
- * The row's product block, or — for a row the cupboard already covers — only
- * what was chosen for it, with nothing to press. A row that is not being bought
- * has nothing on it to change.
+ * The row's product block, or — for a row that is not being bought, whether
+ * because the cupboard covers it or because the member left it off — only what
+ * was chosen for it, with nothing to press. A row that is not being bought has
+ * nothing on it to change.
  */
 function externalProductBlock(
   item: ShoppingItem,
-  selectedIds: Set<number>,
-  inPantry: boolean,
+  selection: Selection,
+  kind: RowKind,
   external: boolean,
 ): Raw {
   if (!external) return html``;
-  if (inPantry) {
+  if (kind !== "buy") {
     return item.chosen.length > 0 ? productSummary(item) : html``;
   }
-  return productBlock(item, shoppingRoutes(item, selectedIds));
+  return productBlock(item, shoppingRoutes(item, selection));
 }
 
 function productPage(
   member: Member,
   item: ShoppingItem,
-  selectedIds: Set<number>,
+  selection: Selection,
   mode: "replace" | "add",
   query: string,
   products: SOstoslistaProduct[],
@@ -1107,7 +1243,7 @@ function productPage(
     productSearchHeading(item, mode),
     productSearchBody(
       item,
-      shoppingRoutes(item, selectedIds),
+      shoppingRoutes(item, selection),
       mode,
       query,
       products,
@@ -1136,7 +1272,7 @@ function selectedBuyItem(
  */
 function pantryButton(
   item: ShoppingItem,
-  selectedIds: Set<number>,
+  selection: Selection,
   inPantry: boolean,
 ): Raw {
   return html`<form
@@ -1148,11 +1284,44 @@ function pantryButton(
     ${inPantry
       ? html`<input type="hidden" name="toiminto" value="poista" />`
       : ""}
-    ${[...selectedIds].map(
-      (id) => html`<input type="hidden" name="${CHOICE}" value="${id}" />`,
-    )}
+    ${selectionFields(selection)}
     <button type="submit">
       ${inPantry ? "Poista kaapista" : "Löytyy jo kaapista"}
     </button>
   </form>`;
+}
+
+/**
+ * The other thing a row can be told, and the one this change adds: not this
+ * time (#313).
+ *
+ * A link rather than a form, because there is nothing to save. The whole answer
+ * is which row keys the next list URL carries, so the toggle is just that URL —
+ * which means it works with no JavaScript, costs no write, and cannot possibly
+ * touch the cupboard. It sits directly above the cupboard button so the two
+ * readings are side by side and worded apart.
+ *
+ * A cupboard row gets none of it: it is already off the list for a reason that
+ * outranks this one, and offering both would be asking the member to hold two
+ * overlapping states in their head for one ingredient.
+ */
+function excludeAction(
+  item: ShoppingItem,
+  selection: Selection,
+  kind: RowKind,
+): Raw {
+  if (kind === "pantry") return html``;
+
+  const excluded = kind === "excluded";
+  const next = new Set(selection.excluded);
+  if (excluded) next.delete(item.key);
+  else next.add(item.key);
+
+  return html`<p class="exclude-action">
+    <a
+      class="button"
+      href="${listLocation({ ids: selection.ids, excluded: next }, item.ingredientId)}"
+      >${excluded ? "Ota takaisin listalle" : "Jätä pois tältä listalta"}</a
+    >
+  </p>`;
 }
