@@ -45,7 +45,35 @@ export type SOstoslistaSendItem = Pick<
  *   whether the next one will work. `a failed local receipt remains retryable
  *   after the external replacement` is the test that says so.
  */
-export type SOstoslistaFailureKind = "refused" | "unreachable" | "local";
+export type SOstoslistaFailureKind =
+  | "refused"
+  | "unreachable"
+  | "malformed"
+  | "local";
+
+/**
+ * Which part of reconciling a row failed — which is not the same question as
+ * what kind of row it was.
+ *
+ * Putting a product on the list and deleting the text reminder that used to
+ * stand in for it are two calls in one row's reconciliation, and they fail for
+ * different reasons and want different words. Reading the row's own shape to
+ * decide got this wrong in the case that matters most: a product row whose
+ * product the service accepted and whose *old note* was then refused came out
+ * as a refused product, and the member was sent to check a product choice
+ * nothing was wrong with (#308 review).
+ *
+ * - `product`: getting this EAN onto the list at this trip's count.
+ * - `note`: getting these words onto the list.
+ * - `old-note`: removing the words a previous send left there. The row itself
+ *   has already gone through by the time this runs.
+ * - `receipt`: this app writing down what it sent. Nothing external at all.
+ */
+export type SOstoslistaOperation =
+  | { kind: "product"; ean: string }
+  | { kind: "note"; note: string }
+  | { kind: "old-note"; note: string }
+  | { kind: "receipt" };
 
 /**
  * One shopping row that did not make it, in the shape a member message and a
@@ -57,8 +85,8 @@ export type SOstoslistaFailureKind = "refused" | "unreachable" | "local";
 export interface SOstoslistaRowFailure {
   key: string;
   name: string;
-  /** True when the row goes as free text rather than as a product. */
-  note: boolean;
+  /** What this row was in the middle of when it failed. */
+  operation: SOstoslistaOperation;
   kind: SOstoslistaFailureKind;
   status: number | null;
   message: string;
@@ -216,14 +244,15 @@ export async function sendToSOstoslista(
         break;
       } catch (thrown) {
         error = thrown;
+        const why = causeOf(thrown);
         // The ceiling first, because it reaches here looking exactly like a
-        // dropped connection — a status-less client error, which `isTransient`
-        // says to retry. Retrying it is the one thing it must never get: the
-        // budget does not come back inside this invocation, so each further
-        // attempt is another call that cannot succeed and another backoff spent
-        // waiting for nothing.
-        if (isCeiling(thrown)) break;
-        if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(thrown)) {
+        // dropped connection — a transport failure, which `isTransient` says to
+        // retry. Retrying it is the one thing it must never get: the budget
+        // does not come back inside this invocation, so each further attempt is
+        // another call that cannot succeed and another backoff spent waiting
+        // for nothing.
+        if (isCeiling(why)) break;
+        if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(why)) {
           break;
         }
         retriesLeft -= 1;
@@ -238,7 +267,7 @@ export async function sendToSOstoslista(
     // Out of subrequests is the invocation ending, not this row being bad. The
     // rows after it are untouched rather than failed, and there is no point
     // asking for the next one.
-    if (isCeiling(error)) {
+    if (isCeiling(causeOf(error))) {
       ceiling = true;
       break;
     }
@@ -330,6 +359,42 @@ interface RowContext {
   bookkeeping: Receipt[];
 }
 
+/**
+ * An error with the operation that raised it attached.
+ *
+ * The alternative was to guess afterwards from the row's shape, which is
+ * exactly the guess that mis-blamed a product for a note deletion. Tagging at
+ * the call site costs one wrapper and removes the guess.
+ */
+class StepFailure extends Error {
+  // Declared and assigned rather than written as constructor parameter
+  // properties: `npm run check` runs these modules under Node's strip-only
+  // TypeScript, which cannot compile a parameter property and refuses the
+  // whole file with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX. It typechecks and runs
+  // under `tsx` either way, so the only thing that catches it is the check.
+  readonly operation: SOstoslistaOperation;
+  readonly reason: unknown;
+
+  constructor(operation: SOstoslistaOperation, reason: unknown) {
+    super(reason instanceof Error ? reason.message : String(reason));
+    this.name = "StepFailure";
+    this.operation = operation;
+    this.reason = reason;
+  }
+}
+
+/** Run one step of a row's reconciliation, saying what it was. */
+async function step<T>(
+  operation: SOstoslistaOperation,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw error instanceof StepFailure ? error : new StepFailure(operation, error);
+  }
+}
+
 /** One deferred note write, kept beside the row that earned it. */
 interface Receipt {
   item: SOstoslistaSendItem;
@@ -356,12 +421,18 @@ async function reconcileRow(
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    await ensureOnList(client, held, { note }, null);
+    await step({ kind: "note", note }, () =>
+      ensureOnList(client, held, { note }, null),
+    );
 
     // Re-sending identical words is the same keyed external row. Removing
     // `previous` here would delete the row we just made sure exists.
     if (previous !== note) {
-      if (previous !== null) await dropRememberedNote(client, previous);
+      if (previous !== null) {
+        await step({ kind: "old-note", note: previous }, () =>
+          dropRememberedNote(client, previous),
+        );
+      }
       bookkeeping.push({
         item,
         statement: rememberSentNoteStatement(db, householdId, item.key, note),
@@ -373,7 +444,9 @@ async function reconcileRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    await ensureOnList(client, held, { ean: product.ean }, count);
+    await step({ kind: "product", ean: product.ean }, () =>
+      ensureOnList(client, held, { ean: product.ean }, count),
+    );
     addedProducts.add(product.ean);
   }
 
@@ -381,7 +454,9 @@ async function reconcileRow(
   // steps loses its response, repeating the whole send converges on the same
   // state instead of stranding either representation.
   if (previous !== null) {
-    await dropRememberedNote(client, previous);
+    await step({ kind: "old-note", note: previous }, () =>
+      dropRememberedNote(client, previous),
+    );
     bookkeeping.push({
       item,
       statement: forgetSentNoteStatement(db, householdId, item.key),
@@ -458,33 +533,66 @@ function agrees(row: SOstoslistaItem, quantity: number | null): boolean {
  */
 function isTransient(error: unknown): boolean {
   if (!(error instanceof SOstoslistaError)) return false;
-  const { status } = error;
-  if (status === null) return true;
-  return status === 408 || status === 425 || status === 429 || status >= 500;
+  switch (error.cause) {
+    // The request never landed. Nothing was said, so saying it again is the
+    // whole of the remedy.
+    case "transport":
+      return true;
+    // This app refused to send something. It will refuse identically.
+    case "local":
+      return false;
+    // The service answered. Whether that is worth repeating is a question
+    // about the status it answered with, and about nothing else — including
+    // when the body was unreadable, because a gateway's HTML error page at 502
+    // is still a 502, while a broken body on a 200 is a broken body.
+    case "http":
+    case "response": {
+      const { status } = error;
+      if (status === null) return false;
+      return status === 408 || status === 425 || status === 429 || status >= 500;
+    }
+  }
 }
+
+/** The error a step actually failed on, out from under its operation tag. */
+function causeOf(error: unknown): unknown {
+  return error instanceof StepFailure ? error.reason : error;
+}
+
+/** Where a failed step was aimed, for an error that never got tagged. */
+const UNTAGGED: SOstoslistaOperation = { kind: "receipt" };
 
 function describeFailure(
   item: SOstoslistaSendItem,
-  error: unknown,
+  thrown: unknown,
 ): SOstoslistaRowFailure {
-  // Not-retried and refused are different facts, and conflating them told a
-  // member whose D1 receipt write failed to go and check a product choice that
-  // had nothing wrong with it. Only the client's own error can be a refusal,
-  // because only it has been to the service.
-  const fromService = error instanceof SOstoslistaError;
-  const kind: SOstoslistaFailureKind = !fromService
-    ? "local"
-    : isTransient(error)
-      ? "unreachable"
-      : "refused";
+  const operation = thrown instanceof StepFailure ? thrown.operation : UNTAGGED;
+  const error = causeOf(thrown);
   return {
     key: item.key,
     name: item.name,
-    note: item.chosen.length === 0,
-    kind,
-    status: fromService ? error.status : null,
+    operation,
+    kind: kindOf(error),
+    status: error instanceof SOstoslistaError ? error.status : null,
     message: error instanceof Error ? error.message : String(error),
   };
+}
+
+/**
+ * Not-retried and refused are different facts, and so are refused and
+ * answered-with-nonsense.
+ *
+ * Anything that is not the client's own error never reached the service — a
+ * failed D1 write, a bug — so it cannot be a refusal. Beyond that the cause
+ * decides: the service saying no is a refusal, the service saying something
+ * unreadable is its own thing rather than a connection problem to blame on the
+ * network, and this app's own validation is local.
+ */
+function kindOf(error: unknown): SOstoslistaFailureKind {
+  if (!(error instanceof SOstoslistaError)) return "local";
+  if (error.cause === "local") return "local";
+  if (error.cause === "response") return "malformed";
+  return isTransient(error) ? "unreachable" : "refused";
 }
 
 function sleep(ms: number): Promise<void> {

@@ -35,16 +35,40 @@ export interface SOstoslistaProduct {
 
 export type SOstoslistaKey = { ean: string } | { note: string };
 
+/**
+ * What went wrong, as opposed to what it looked like.
+ *
+ * Three unrelated failures used to arrive as "a `SOstoslistaError` with no
+ * status", and a caller deciding whether to try again could not tell them
+ * apart: a connection that never landed, a service that answered perfectly
+ * well with a body this client cannot read, and this app catching its own
+ * arithmetic before sending it. Only the first is worth repeating, and only
+ * the first is a connection problem to tell a member about (#308).
+ *
+ * - `transport`: the request did not complete. Nothing was said either way.
+ * - `http`: the service answered, with a status that says no.
+ * - `response`: the service answered, and the answer is not one this client
+ *   can act on — invalid JSON, or a field missing or of the wrong type. It may
+ *   still carry the status it came with, which is what separates a gateway's
+ *   HTML error page from a malformed 200.
+ * - `local`: this app refused to send something before it left. A second
+ *   identical attempt refuses identically.
+ */
+export type SOstoslistaErrorCause = "transport" | "http" | "response" | "local";
+
 export class SOstoslistaError extends Error {
   readonly status: number | null;
+  readonly cause: SOstoslistaErrorCause;
 
   constructor(
     message: string,
     status: number | null = null,
+    cause: SOstoslistaErrorCause = status === null ? "local" : "http",
   ) {
     super(message);
     this.name = "SOstoslistaError";
     this.status = status;
+    this.cause = cause;
   }
 }
 
@@ -252,6 +276,8 @@ export class SOstoslistaClient {
     } catch (error) {
       throw new SOstoslistaError(
         `S-ostoslista request failed: ${error instanceof Error ? error.message : String(error)}`,
+        null,
+        "transport",
       );
     }
 
@@ -263,6 +289,7 @@ export class SOstoslistaClient {
         throw new SOstoslistaError(
           `S-ostoslista returned invalid JSON (${response.status}).`,
           response.status,
+          "response",
         );
       }
     } else {
@@ -432,5 +459,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function malformed(detail: string): SOstoslistaError {
-  return new SOstoslistaError(`Malformed S-ostoslista response: ${detail}.`);
+  return new SOstoslistaError(
+    `Malformed S-ostoslista response: ${detail}.`,
+    null,
+    "response",
+  );
 }

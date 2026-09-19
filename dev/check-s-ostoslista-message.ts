@@ -19,7 +19,7 @@ function failure(
   return {
     key: "1",
     name: "maito",
-    note: false,
+    operation: { kind: "product", ean: "6415712506032" },
     kind: "refused",
     status: 400,
     message: "unknown product",
@@ -40,7 +40,13 @@ test("a product the service refused is the one case that points at the product",
 test("a refused free-text row is never blamed on a product choice", () => {
   // There is no product on this row to go and look at, so the advice that
   // names one would send the member somewhere that does not exist.
-  const text = message([failure({ note: true, name: "kaneli", status: 422 })]);
+  const text = message([
+    failure({
+      operation: { kind: "note", note: "kaneli — 1 tl" },
+      name: "kaneli",
+      status: 422,
+    }),
+  ]);
   assert.doesNotMatch(text, /tuotevalinta/);
   assert.match(text, /ei hyväksynyt niitä/);
 });
@@ -48,7 +54,7 @@ test("a refused free-text row is never blamed on a product choice", () => {
 test("this app's own bookkeeping failing is a retry, not a refusal", () => {
   const text = message([
     failure({
-      note: true,
+      operation: { kind: "receipt" },
       name: "suola",
       kind: "local",
       status: null,
@@ -92,4 +98,49 @@ test("running out of subrequests blames no row and promises a working retry", ()
   assert.match(text, /28\/32 ainesta lähti perille/);
   assert.match(text, /jo lähetetyt rivit ohitetaan/);
   assert.doesNotMatch(text, /tuotevalinta/);
+});
+
+test("a refused old-note delete never points at the product (#308 review)", () => {
+  // The product was accepted and the row is on the list. What failed was
+  // removing the text reminder the last send left behind, and the member's
+  // move is to lift that off the phone — not to go and re-pick a product the
+  // service took without complaint.
+  const text = message([
+    failure({
+      operation: { kind: "old-note", note: "maito — 800 g" },
+      status: 400,
+    }),
+  ]);
+  assert.doesNotMatch(text, /tuotevalinta/);
+  assert.doesNotMatch(text, /ei ottanut vastaan riviä/);
+  assert.match(text, /vanhaa tekstiriviä ei saatu poistettua/);
+  assert.match(text, /poista ne S-ostoslistalta itse/);
+});
+
+test("a refused product beside a refused old-note stops naming the product", () => {
+  const text = message([
+    failure(),
+    failure({
+      key: "2",
+      name: "juusto",
+      operation: { kind: "old-note", note: "juusto — 200 g" },
+    }),
+  ]);
+  assert.doesNotMatch(text, /tuotevalinta/);
+  assert.match(text, /ei hyväksynyt niitä/);
+});
+
+test("an unreadable answer is not reported as a connection error (#308 review)", () => {
+  const text = message([
+    failure({
+      kind: "malformed",
+      status: null,
+      message: "Malformed S-ostoslista response: add response is missing id or name.",
+    }),
+  ]);
+  assert.doesNotMatch(text, /yhteysvirhe/);
+  assert.doesNotMatch(text, /tuotevalinta/);
+  assert.match(text, /vastasi riviin maito jotain odottamatonta/);
+  // The member cannot fix this one, so what is left is to try it again.
+  assert.match(text, /Yritä uudelleen/);
 });

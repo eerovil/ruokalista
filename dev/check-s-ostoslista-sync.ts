@@ -540,7 +540,7 @@ test("a permanent refusal is recorded and the rows after it still go (#308)", as
     {
       key: "1",
       name: "maito",
-      note: false,
+      operation: { kind: "product", ean: bad.ean },
       kind: "refused",
       status: 400,
       message: "unknown product",
@@ -750,4 +750,176 @@ test("a ceiling partway through keeps what already went (#308 review)", async ()
   // rather than spending the same budget on them again.
   assert.deepEqual([...(await sentNotes(fake.db, 1)).keys()].sort(), ["1", "2"]);
   assert.equal(client.calls.some((call) => call.kind === "sync"), false);
+});
+
+test("a refused old-note delete does not blame the product (#308 review)", async () => {
+  // The product went on the list without complaint. What the service refused
+  // was the DELETE of the text reminder that used to stand in for it. Reading
+  // the row's shape to attribute that called it a refused product, and the
+  // member was sent to check a product choice nothing was wrong with.
+  const fake = database();
+  const client = new FakeClient();
+  const milk = product("6415712506032", "Maito 400 g");
+  await rememberSentNote(fake.db, 1, "1", "maito — 800 g");
+
+  client.fail = (call) =>
+    call.kind === "remove"
+      ? new SOstoslistaError("cannot delete", 400)
+      : null;
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "maito", "800 g", [{ product: milk, count: 2 }]),
+  ]);
+
+  assert.equal(outcome.status, "partial");
+  const failure = outcome.status === "partial" ? outcome.failures[0] : null;
+  assert.deepEqual(failure?.operation, { kind: "old-note", note: "maito — 800 g" });
+  assert.equal(failure?.kind, "refused");
+  assert.equal(failure?.status, 400);
+  // The product really did go out, which is the whole reason blaming it was wrong.
+  assert.deepEqual(
+    client.calls.filter((call) => call.kind === "add"),
+    [{ kind: "add", key: { ean: milk.ean }, quantity: 2 }],
+  );
+  // And the receipt is untouched, so the next send tries the deletion again.
+  assert.equal((await sentNotes(fake.db, 1)).get("1"), "maito — 800 g");
+});
+
+test("a refused old-note delete on a changed text row is the same (#308 review)", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  await rememberSentNote(fake.db, 1, "1", "maito — 1 l");
+
+  client.fail = (call) =>
+    call.kind === "remove" ? new SOstoslistaError("no", 422) : null;
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "maito", "2 l"),
+  ]);
+
+  assert.equal(outcome.status, "partial");
+  const failure = outcome.status === "partial" ? outcome.failures[0] : null;
+  assert.deepEqual(failure?.operation, { kind: "old-note", note: "maito — 1 l" });
+  assert.equal(failure?.status, 422);
+  // The new words were accepted before the old ones were refused, so this is
+  // not "the row was not taken".
+  assert.deepEqual(
+    client.calls.filter((call) => call.kind === "add"),
+    [{ kind: "add", key: { note: "maito — 2 l" }, quantity: null }],
+  );
+});
+
+test("a row the service itself refuses is still attributed to the row (#308 review)", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  const milk = product("6415712506032", "Maito 400 g");
+  client.fail = (call) =>
+    call.kind === "add" ? new SOstoslistaError("unknown product", 400) : null;
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "maito", "800 g", [{ product: milk, count: 2 }]),
+    item("2", "suola", "1 tl"),
+  ]);
+
+  assert.equal(outcome.status, "partial");
+  assert.deepEqual(
+    outcome.status === "partial"
+      ? outcome.failures.map((one) => one.operation)
+      : null,
+    [
+      { kind: "product", ean: milk.ean },
+      { kind: "note", note: "suola — 1 tl" },
+    ],
+  );
+});
+
+test("a malformed answer is not a connection error, and is not retried (#308 review)", async () => {
+  // The service answered, with 200, and the body is not one this client can
+  // act on. Every one of those used to arrive as a status-less error, which
+  // read as a dropped connection: retried twice, two backoffs, the send's
+  // retry budget spent, and the member told the network was at fault.
+  const fake = database();
+  const timing = recordingWait();
+  const malformed = new SOstoslistaError(
+    "Malformed S-ostoslista response: add response is missing id or name.",
+    null,
+    "response",
+  );
+
+  const client = new FakeClient();
+  client.fail = (call) => (call.kind === "add" ? malformed : null);
+
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "1 l"), item("2", "suola", "1 tl")],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "partial");
+  assert.deepEqual(timing.waits, [], "nothing is waited on");
+  assert.equal(
+    client.calls.filter((call) => call.kind === "add").length,
+    2,
+    "one attempt per row, not three",
+  );
+  const kinds = outcome.status === "partial"
+    ? outcome.failures.map((one) => one.kind)
+    : [];
+  assert.deepEqual(kinds, ["malformed", "malformed"]);
+});
+
+test("an unreadable answer from a failing gateway is still transient (#308 review)", async () => {
+  // The body being unreadable does not make a 502 something other than a 502.
+  // Whether to try again is a question about the status, when there is one.
+  const fake = database();
+  const timing = recordingWait();
+  let refusals = 1;
+  const client = new FakeClient();
+  client.fail = (call) => {
+    if (call.kind !== "add" || refusals === 0) return null;
+    refusals -= 1;
+    return new SOstoslistaError(
+      "S-ostoslista returned invalid JSON (502).",
+      502,
+      "response",
+    );
+  };
+
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "1 l")],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "sent");
+  assert.deepEqual(timing.waits, [200]);
+});
+
+test("this app's own validation is local, and is never retried (#308 review)", async () => {
+  const fake = database();
+  const timing = recordingWait();
+  const client = new FakeClient();
+  client.fail = (call) =>
+    call.kind === "add"
+      ? new SOstoslistaError("quantity must be a whole number of at least 1, not 0.")
+      : null;
+
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "1 l")],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "partial");
+  assert.deepEqual(timing.waits, []);
+  assert.equal(
+    outcome.status === "partial" ? outcome.failures[0]?.kind : null,
+    "local",
+  );
 });

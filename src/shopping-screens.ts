@@ -273,7 +273,7 @@ const FAILURES_IN_MESSAGE = 3;
 function logSendFailures(failures: readonly SOstoslistaRowFailure[]): void {
   for (const failure of failures) {
     console.error(
-      `S-ostoslista row failed: key=${failure.key} row=${failure.note ? "note" : "product"} ` +
+      `S-ostoslista row failed: key=${failure.key} step=${failure.operation.kind} ` +
         `kind=${failure.kind} status=${failure.status ?? "none"} ${failure.message}`,
     );
   }
@@ -325,30 +325,44 @@ export function partialSendMessage(outcome: {
 /**
  * The one sentence that says what to do next.
  *
- * Only a row the service actually refused is a row worth going and looking at,
- * and only a refused *product* row is a question about the product. Everything
- * else — a connection that dropped, this app's own note bookkeeping failing —
- * is a send worth pressing again, and telling that member to go and check a
- * product choice sends them after a fault that is not theirs and not there.
+ * Two things have to line up before a member is sent to look at something:
+ * the service has to have actually refused it, and the refusal has to have
+ * been about the thing they would be looking at. A product row whose product
+ * was accepted and whose leftover text reminder was then refused fails neither
+ * test for "check the product choice" — the product is fine, and the row is on
+ * the list. Everything else is a send worth pressing again.
  */
 function advice(failures: readonly SOstoslistaRowFailure[]): string {
   if (!failures.every((failure) => failure.kind === "refused")) {
     return "Yritä uudelleen — sama lähetys ei tee tuplarivejä.";
   }
-  return failures.every((failure) => !failure.note)
-    ? "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta."
-    : "Uudelleen yrittäminen ei auta näihin riveihin: S-ostoslista ei hyväksynyt niitä.";
+  if (failures.every((failure) => failure.operation.kind === "product")) {
+    return "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta.";
+  }
+  if (failures.every((failure) => failure.operation.kind === "old-note")) {
+    // The rows themselves went. What is left behind is last send's wording,
+    // still sitting on the phone, and the member can lift it off there.
+    return "Rivit ovat listalla, mutta vanhoja tekstirivejä ei saatu pois: poista ne S-ostoslistalta itse.";
+  }
+  return "Uudelleen yrittäminen ei auta näihin riveihin: S-ostoslista ei hyväksynyt niitä.";
 }
 
 function failureNote(failure: SOstoslistaRowFailure): string {
   const status = failure.status === null ? "" : ` (${failure.status})`;
-  if (failure.kind === "refused") {
-    return `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`;
-  }
   if (failure.kind === "local") {
     return `Rivin ${failure.name} kirjaaminen epäonnistui täällä päässä.`;
   }
-  return `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
+  if (failure.kind === "malformed") {
+    return `S-ostoslista vastasi riviin ${failure.name} jotain odottamatonta${status}.`;
+  }
+  if (failure.kind === "unreachable") {
+    return `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
+  }
+  // Refused, and by now it matters what was refused.
+  if (failure.operation.kind === "old-note") {
+    return `Rivin ${failure.name} vanhaa tekstiriviä ei saatu poistettua S-ostoslistalta${status}.`;
+  }
+  return `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`;
 }
 
 /**
