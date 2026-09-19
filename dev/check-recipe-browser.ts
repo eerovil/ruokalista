@@ -117,8 +117,27 @@ test("one address carries the search, the category and the order together", () =
 test("the instant search matches a name whatever case it is typed in", () => {
   // Finnish folding, in memory, for the same reason the server's search is:
   // SQLite's case-insensitivity is ASCII-only, and Ä is not ASCII.
-  assert.equal(searchKey(recipe(4, "Öljykastike")), "öljykastike koti");
+  assert.equal(searchKey(recipe(4, "Öljykastike")), "öljykastike");
   assert.ok(searchKey(recipe(5, "KAALI", { householdName: "Naapuri" })).includes("kaali"));
-  // A shared recipe is findable by the household that shared it, too.
-  assert.ok(searchKey(recipe(6, "Uunikala", { householdName: "Naapuri" })).includes("naapuri"));
+});
+
+test("the instant search matches exactly what the server matches", () => {
+  // The name, and nothing the server would not match. A shared recipe is not
+  // findable by the household sharing it, with script or without — the box
+  // says Hae nimellä and `?q=` is the same search one layer down.
+  const shared = recipe(6, "Uunikala", { householdName: "Naapuri" });
+  assert.equal(searchKey(shared), "uunikala");
+  assert.ok(!searchKey(shared).includes("naapuri"));
+
+  // Said as the property it really is: for any query, the rows the browser
+  // leaves showing are the rows the server would have sent.
+  const all = [LASAGNE, KEITTO, UUSI, shared];
+  for (const query of ["naapuri", "kaali", "UUNI", "öljy", "a", ""]) {
+    const needle = query.toLocaleLowerCase("fi");
+    const shown = all.filter((one) => searchKey(one).includes(needle));
+    const served = all.filter((one) =>
+      one.title.toLocaleLowerCase("fi").includes(needle),
+    );
+    assert.deepEqual(titles(shown), titles(served), `query "${query}"`);
+  }
 });

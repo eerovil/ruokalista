@@ -359,6 +359,14 @@ the typed text survives a chip, and how it rides back through a bulk-action post
 hidden `q` those forms carry is the server's state and is empty whenever script
 is running.
 
+**The two searches are one search.** `recipe-browser.ts::searchKey` matches the
+recipe's name and nothing else, because that is what `recipe-read.ts::filterByTitle`
+matches and what the box says (*Hae nimellä*). An enhancement that matched more
+than its fallback would be a second feature wearing the same box: during review
+it also matched the sharing household's name, so `Naapuri` found a shared dish
+with script and nothing without. `tests/recipe-browser.spec.ts` drives the
+picker both ways over the same queries and asserts the same rows.
+
 A row the search hides is unticked as it goes, or a bulk publish would act on a
 recipe nobody can see.
 

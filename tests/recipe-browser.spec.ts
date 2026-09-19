@@ -222,6 +222,66 @@ test("without script the search is still the server's, and still works", async (
 });
 
 /**
+ * The enhancement and the fallback are one search, not two.
+ *
+ * `?q=` is what a browser without script submits, so a query that finds a dish
+ * with script has to find it without. The query that proves it is the reader's
+ * own household name: `Koti` is on every row of the picker as the household
+ * that owns the recipe, and is in none of their names — so a client search that
+ * looked at anything but the name would find three recipes here and the server
+ * would find none.
+ */
+test("the search finds the same recipes with and without JavaScript", async ({
+  browser,
+}) => {
+  const date = inDays(6);
+  const scripted = await browser.newContext();
+  await scripted.addCookies([sessionCookie(1)]);
+  const withScript = await scripted.newPage();
+  await withScript.goto(`/picker?date=${date}&slot=lunch`);
+
+  const plain = await browser.newContext({ javaScriptEnabled: false });
+  await plain.addCookies([sessionCookie(1)]);
+  const withoutScript = await plain.newPage();
+
+  for (const query of ["Koti", "Naapuri", "kaali", "UUNIKALA", "öljy", "pizza"]) {
+    await withoutScript.goto(
+      `/picker?date=${date}&slot=lunch&q=${encodeURIComponent(query)}`,
+    );
+    const served = await withoutScript
+      .locator(".pick li .recipes-title")
+      .allTextContents();
+
+    await withScript.locator(".browse-search input[name=q]").fill(query);
+    await expect(
+      withScript.locator(".pick li:not([hidden]) .recipes-title"),
+      `haku "${query}"`,
+    ).toHaveText(served);
+  }
+
+  // Not vacuously equal: the household's name really is on the screen, and
+  // really is not a recipe name.
+  await expect(withScript.locator(".pick li", { hasText: "Naapurin uunikala" }))
+    .toContainText("Naapuri");
+  await withScript.locator(".browse-search input[name=q]").fill("Koti");
+  await expect(withScript.locator(".browse-none")).toContainText('Haku "Koti"');
+  await captureReview(withScript, "test-results/307-parity-script-koti.png");
+  await withoutScript.goto(`/picker?date=${date}&slot=lunch&q=Koti`);
+  await expect(withoutScript.locator(".nothing")).toContainText('Haku "Koti"');
+  await captureReview(withoutScript, "test-results/307-parity-noscript-koti.png");
+
+  await withScript.locator(".browse-search input[name=q]").fill("Naapuri");
+  await expect(visibleRows(withScript, ".pick")).toHaveCount(1);
+  await captureReview(withScript, "test-results/307-parity-script-naapuri.png");
+  await withoutScript.goto(`/picker?date=${date}&slot=lunch&q=Naapuri`);
+  await expect(withoutScript.locator(".pick li")).toHaveCount(1);
+  await captureReview(withoutScript, "test-results/307-parity-noscript-naapuri.png");
+
+  await scripted.close();
+  await plain.close();
+});
+
+/**
  * Review evidence, in the state a household actually leaves this screen in: a
  * few dishes cooked, one never, and the order chips where a phone shows them.
  * The assertions run in every suite; only the pictures are opt-in.

@@ -294,9 +294,23 @@ export function cookLine(
   return `Kokattu ${record.times}× · viimeksi ${shortDate(record.lastCooked)}`;
 }
 
-/** The lowercased text the browser's instant search matches a row against. */
+/**
+ * The lowercased text the browser's instant search matches a row against.
+ *
+ * The recipe's name and nothing else, because that is exactly what the server
+ * matches in `recipe-read.ts::filterByTitle` and the box says **Hae nimellä**.
+ * The instant search is an enhancement of `?q=`, not a second search with its
+ * own idea of a match: a name that finds a dish with script has to find it
+ * without, or the fallback is a different feature wearing the same box. It
+ * briefly also matched the sharing household's name, which made `Naapuri` a
+ * query that worked one way and not the other.
+ *
+ * Finnish folding in memory, for the same reason the server does it there:
+ * SQLite's case-insensitivity is ASCII-only, and Ä is not ASCII. The browser's
+ * own `toLowerCase` agrees with this for the Finnish alphabet.
+ */
 export function searchKey(recipe: RecipeSummary): string {
-  return `${recipe.title} ${recipe.householdName}`.toLocaleLowerCase("fi");
+  return recipe.title.toLocaleLowerCase("fi");
 }
 
 function availableCategories(recipes: readonly RecipeSummary[]): string[] {
