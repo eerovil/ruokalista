@@ -126,6 +126,16 @@ a link. The whole toggle is a link to the next URL, so it needs no script, no
 write, and no table; `src/shopping.ts::splitByExcluded` does the split, after
 the cupboard's, and `dev/check-shopping-exclusion.ts` tests both straight.
 
+`shoppingState` then narrows that set to the rows the list it just computed
+actually has (`rowsThatExist`), and everything the screen emits is built from
+the narrowed set. So `pois=999` is never handed back out, and — this is the
+part worth remembering — a key cannot lie dormant and take effect later:
+leaving a row off, unticking the cooking it came from and ticking that cooking
+again gives a row nobody said anything about on this list. Every form carries
+the exclusions as hidden fields, **including the meal picker's own GET form**;
+without them there, submitting **Päivitä lista** would put every left-off row
+back.
+
 The point of it is the distinction, and that is why the two controls are drawn
 apart and worded apart. The cupboard says the household *has* something, is a
 fact about the kitchen, and outlives the trip; **Jätä pois tältä listalta**

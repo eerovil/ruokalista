@@ -160,7 +160,7 @@ export async function shoppingScreen(
   return page(
     heading,
     html`<h1>${heading}</h1>
-      ${picker(cookings, selection.ids)}
+      ${picker(cookings, selection)}
       ${refused === null ? "" : html`<p class="refused">${refused}</p>`}
       ${notice === null ? "" : html`<p class="shopping-sent">${notice}</p>`}
       ${cookings.length === 0
@@ -205,22 +205,29 @@ async function shoppingState(
     .filter((batch) => batch.startDate >= from)
     .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id);
 
-  const selection: Selection = {
-    ids: chosenIds(url, cookings, from),
-    excluded: excludedKeys(url.searchParams.getAll(EXCLUDED)),
-  };
-  const selected = cookings.filter((batch) => selection.ids.has(batch.id));
+  const ids = chosenIds(url, cookings, from);
+  const selected = cookings.filter((batch) => ids.has(batch.id));
 
   const [lines, inPantry] = await Promise.all([
-    shoppingLinesFor(env.DB, member.householdId, [...selection.ids]),
+    shoppingLinesFor(env.DB, member.householdId, [...ids]),
     pantryIngredientIds(env.DB, member.householdId),
   ]);
+
+  const items = shoppingList(lines);
+
+  // Only keys this list actually has a row for. Everything the screen emits
+  // from here on — every hidden field, every link — is built from this set, so
+  // a key for a row that is not here cannot be carried any further.
+  const selection: Selection = {
+    ids,
+    excluded: rowsThatExist(excludedKeys(url.searchParams.getAll(EXCLUDED)), items),
+  };
 
   // The cupboard is applied after the totals are added up, not before: an
   // ingredient the household already has is still part of what the cooking
   // needs, it is just not part of what the trip has to buy. Both sections keep
   // the amounts and the breakdown #123 worked out (#125).
-  const split = splitByPantry(shoppingList(lines), inPantry);
+  const split = splitByPantry(items, inPantry);
 
   // And the member's own "not this time" is applied after the cupboard, so the
   // two answers cannot be confused with one another: a row the cupboard covers
@@ -232,10 +239,9 @@ async function shoppingState(
 /**
  * The row keys to leave off, keeping only what could be one.
  *
- * A key belonging to no row on this list is simply never matched, so nothing
- * has to check it against the list itself — the same lenient reading a stale
- * meal id gets, and for the same reason: a link somebody kept is still allowed
- * to show a list.
+ * Shape alone, because this runs before the list is known. A stale meal id
+ * gets the same lenient reading: the query string is a selection, not a
+ * command, and a link somebody kept should still show a list.
  */
 function excludedKeys(values: string[]): Set<string> {
   const keys = new Set<string>();
@@ -244,6 +250,29 @@ function excludedKeys(values: string[]): Set<string> {
     if (isRowKey(key)) keys.add(key);
   }
   return keys;
+}
+
+/**
+ * The same set, narrowed to the rows this list actually has.
+ *
+ * Dropping the rest is what keeps `pois=999` from being handed back out on
+ * every link and form on the screen, and it is not only tidiness: a key that
+ * survives can take effect later. Leave a row off, untick the cooking it came
+ * from, and tick that cooking again, and a carried key would silently leave
+ * the row off a list the member never said that about. Rebuilding the set from
+ * the list in front of them makes the two questions independent again.
+ *
+ * It reads the whole list rather than only what is being bought, so a row that
+ * is currently in the cupboard keeps its "not this time" for when it comes
+ * back out. The cupboard answers first either way — the split below sees to
+ * that — so nothing about this decides what a cupboard row does.
+ */
+function rowsThatExist(
+  keys: ReadonlySet<string>,
+  items: ShoppingItem[],
+): Set<string> {
+  const onList = new Set(items.map((item) => item.key));
+  return new Set([...keys].filter((key) => onList.has(key)));
 }
 
 /** `POST /ostoslista/laheta` — only the freshly recomputed `Ostettavat`. */
@@ -888,8 +917,16 @@ function headingFor(selected: PlannedBatch[]): string {
  * came here to read, and the summary already says how much of the fortnight is
  * in it. It opens itself when nothing is selected, because then the list has
  * nothing to show and the choice is the only thing to do.
+ *
+ * The one thing it does *not* re-ask is what the member has left off: the
+ * exclusions ride along as hidden fields, exactly as they do on every other
+ * form here. Without them, changing which cookings are on the list would
+ * quietly put every left-off row back — a submit that undoes a decision
+ * nobody revisited. The meal ids stay with the checkboxes, so this adds
+ * nothing to what the member is choosing here.
  */
-function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
+function picker(cookings: PlannedBatch[], selection: Selection): Raw {
+  const selectedIds = selection.ids;
   if (cookings.length === 0) return html``;
 
   return html`<details class="shopping-picker" ${selectedIds.size === 0 ? rawOpen : ""}>
@@ -899,6 +936,9 @@ function picker(cookings: PlannedBatch[], selectedIds: Set<number>): Raw {
     </summary>
     <form method="get" action="/ostoslista" class="stacked">
       <input type="hidden" name="${CHOSEN}" value="1" />
+      ${[...selection.excluded].map(
+        (key) => html`<input type="hidden" name="${EXCLUDED}" value="${key}" />`,
+      )}
       <ul class="shopping-meals">
         ${cookings.map(
           (batch) => html`<li>

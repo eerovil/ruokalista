@@ -825,6 +825,67 @@ test("a junk row key on the query string leaves nothing off", async ({ page }) =
   await expect(
     page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
   ).toBeHidden();
+  // And it is not handed back out either: nothing on the screen carries a key
+  // this list has no row for.
+  await expect(carriedKeys(page)).toHaveCount(0);
+});
+
+/** Tick or untick one cooking in the picker and submit it. */
+async function setMealTicked(
+  page: Page,
+  batchId: number,
+  ticked: boolean,
+): Promise<void> {
+  const picker = page.locator(".shopping-picker");
+  if (!(await picker.evaluate((one: HTMLDetailsElement) => one.open))) {
+    await picker.locator("summary").click();
+  }
+  await picker.locator(`input[name="ateria"][value="${batchId}"]`).setChecked(ticked);
+  await picker.getByRole("button", { name: "Päivitä lista" }).click();
+}
+
+/** The exclusions the picker's own form would submit. */
+function carriedKeys(page: Page) {
+  return page.locator('.shopping-picker input[name="pois"]');
+}
+
+test("changing which cookings are on the list keeps the left-off rows off", async ({
+  page,
+}) => {
+  const { lasagne } = await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await leaveOff(page, "vesi");
+  await expect(carriedKeys(page)).toHaveCount(1);
+
+  // The picker is a form of its own, and it used to submit without the
+  // exclusions — so choosing a different set of cookings silently put every
+  // left-off row back.
+  await setMealTicked(page, lasagne, false);
+
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(leftOff(page)).toContainText("vesi");
+  expect(new URL(page.url()).searchParams.getAll("pois")).toHaveLength(1);
+  // The meal ids are still the checkboxes' to decide.
+  expect(await buyRowNames(page)).not.toContain("jauheliha");
+});
+
+test("a left-off row whose cooking is gone stops being carried", async ({
+  page,
+}) => {
+  const { lasagne } = await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  // Jauheliha is the lasagne's alone, so unticking it takes the row away.
+  await leaveOff(page, "jauheliha");
+
+  await setMealTicked(page, lasagne, false);
+  await expect(leftOff(page)).toHaveCount(0);
+  await expect(carriedKeys(page)).toHaveCount(0);
+
+  // And the decision does not come back to life with the cooking: the member
+  // never said anything about this row on this list.
+  await setMealTicked(page, lasagne, true);
+  await expect(leftOff(page)).toHaveCount(0);
+  expect(await buyRowNames(page)).toContain("jauheliha");
 });
 
 test("sending waits for an optimistic product save", async ({ page }) => {
