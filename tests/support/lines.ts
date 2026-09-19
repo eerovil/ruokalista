@@ -1,10 +1,31 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
- * The correction screen and the editor show a line's common fields — how much,
- * of what — and keep the uncommon ones behind a disclosure. A test that wants a
- * range, a second measurement, a source line, a position or the remove box has
- * to open it, exactly as a person does.
+ * The recipe editor's row is one read-only line and a `Muokkaa` button (#315).
+ * Everything editable — the ingredient, the amount, the rarer fields, `Poista`
+ * — is in the modal behind that button, so a test that means to change
+ * something opens it first, exactly as a person does.
+ */
+export async function openLineEditor(line: Locator): Promise<void> {
+  if (!(await line.locator("> input.line-open").isChecked())) {
+    await line.locator("> .line-summary > .line-edit").click();
+  }
+  await expect(line.locator(".line-modal-card")).toBeVisible();
+}
+
+/** And closes it again, so the row underneath can be read or clicked. */
+export async function closeLineEditor(line: Locator): Promise<void> {
+  if (await line.locator("> input.line-open").isChecked()) {
+    await line.locator(".line-done").click();
+  }
+  await expect(line.locator(".line-modal-card")).toBeHidden();
+}
+
+/**
+ * The correction screen shows a line's common fields — how much, of what — and
+ * keeps the uncommon ones behind a disclosure. A test that wants a range, a
+ * second measurement, a source line, a position or the remove box has to open
+ * it, exactly as a person does.
  */
 export async function openMore(line: Locator): Promise<void> {
   const more = line.locator("> details.line-more");

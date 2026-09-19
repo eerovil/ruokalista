@@ -592,14 +592,64 @@ const STYLES = `
   }
   .amounts .qty { flex: 0 0 6rem; }
 
-  /* The editor's compact ingredient row (issue #128): what it is, how much of
-     it, and away with it, all on one line. The picker takes the slack because
-     it is the field holding a word rather than a number. */
-  .line.is-compact { padding: .5rem 0; }
-  .line-main { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
-  .line-main select { flex: 1 1 9rem; min-width: 0; margin: 0; }
-  .line-main .qty { flex: 0 0 5rem; margin: 0; }
-  .line-main .remove { flex: 0 0 auto; }
+  /* The editor's ingredient row (issues #128, #315): one ingredient per line,
+     read only, with everything editable behind Muokkaa. Three controls per row
+     made a ten-ingredient recipe several screens long; a sentence and a button
+     make it a list somebody can actually read. */
+  .line.is-compact { padding: .15rem 0; border-bottom: 1px solid var(--edge); }
+  .line-summary {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem;
+    min-height: var(--tap-compact);
+  }
+  .line-amount { color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* Says nothing when there is nothing to say; the island writes into it. */
+  .line-flag:empty { display: none; }
+  .line-name { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+  /* A row on its way out still reads, but says so. */
+  .line.is-removed .line-name, .line.is-removed .line-amount {
+    text-decoration: line-through; color: var(--muted);
+  }
+  .line-edit {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 0 0 auto; min-height: var(--tap-compact); padding: .2rem .7rem;
+    color: var(--accent); background: var(--surface);
+    border: 1px solid var(--edge); border-radius: var(--radius);
+    font-size: .85rem; font-weight: 600; cursor: pointer;
+  }
+
+  /* The modal. Off screen rather than display:none so the checkbox that drives
+     it stays reachable by keyboard; it carries no name, so it never submits. */
+  .line-open {
+    position: absolute; width: 1px; height: 1px; min-height: 0;
+    margin: 0; opacity: 0; pointer-events: none;
+  }
+  .line-open:focus-visible ~ .line-summary .line-edit {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .line-modal { display: none; }
+  .line-open:checked ~ .line-modal {
+    display: flex; position: fixed; inset: 0; z-index: 30;
+    align-items: center; justify-content: center; padding: 1rem;
+  }
+  .line-modal-back { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+  .line-modal-card {
+    position: relative; width: 100%; max-width: 26rem;
+    max-height: 85vh; overflow-y: auto; padding: 1rem;
+    background: var(--bg); border-radius: var(--radius);
+    box-shadow: 0 .5rem 2rem rgba(0,0,0,.35);
+  }
+  .line-modal-title { margin: 0 0 .75rem; font-size: 1.05rem; font-weight: 700; }
+  .line-modal-hint { margin: .25rem 0 .75rem; color: var(--muted); font-size: .8rem; }
+  .line-modal-actions {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .75rem; margin-top: 1rem;
+  }
+  .line-done {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: var(--tap); padding: .3rem 1.2rem;
+    color: var(--bg); background: var(--accent);
+    border-radius: var(--radius); font-weight: 600; cursor: pointer;
+  }
   .add-line { margin: .75rem 0 1rem; }
   .add-line button {
     min-height: var(--tap); width: 100%;

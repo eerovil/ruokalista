@@ -524,17 +524,52 @@ The split rule is `src/pantry.ts::splitByPantry`, tested directly in
 
 ## The recipe editor's ingredient rows
 
-This pull request proposes reshaping the recipe editor's ingredient rows around
-the four things somebody opens a saved recipe to do (#128): pick the ingredient,
-change the amount's number, remove the line, and add one. Those four are on the
-row itself; everything else — the unit included — moves behind the row's own
-`Lisää asetuksia` disclosure.
+#128 reshaped the recipe editor's ingredient rows around the four things
+somebody opens a saved recipe to do: pick the ingredient, change the amount's
+number, remove the line, and add one. Those four were on the row itself and
+everything else sat behind a `Lisää asetuksia` disclosure.
+
+This pull request proposes going further (#315), because three controls and a
+disclosure summary per row still made a ten-ingredient recipe several screens
+long. The row becomes **one read-only line** — `0,5 dl · öljy` — with a
+`Muokkaa` button beside it, and everything editable moves into a modal behind
+that button: the ingredient, the amount, the unit, the rarer fields, and
+`Poista aines`.
+
+- **The modal needs no JavaScript.** It is a fixed overlay revealed by a
+  checkbox with no `name`, so nothing about it is submitted and nothing about
+  it depends on a script running. The fields inside are still in the one big
+  form, so they post with the save exactly as they did on the row.
+- **A row the member just asked for opens straight into its modal**, because
+  that is the only reason to press `+ Lisää aines`.
+- **A small island keeps the line honest.** `line-form.ts::LINE_SUMMARY_ISLAND`
+  rewrites the row's name, amount and `Uusi`/`Poistetaan` flag as the modal's
+  fields change; without it the summary would be a round trip behind and a
+  rename would read as not having taken. It is enhancement only — every value
+  reaches the server through the form either way.
+
+**The ingredient picker is an autocomplete, not a select (#315).** Each modal's
+`Aines` box is a text input backed by one shared `<datalist>` of the existing
+ingredients, so the list suggests without constraining: a foodstuff the
+dictionary has never seen can be typed straight in and is created on save. The
+server resolves the typed name in `line-form.ts::resolveTypedIngredient` —
+exact name ignoring case and space is that ingredient, anything else non-empty
+is a new one, empty is still an unanswered row the approval gate refuses.
+`ingredient` is a global dictionary since #143, so the same word means the same
+foodstuff in every household.
 
 `lineRow`/`lineRows` in `src/line-form.ts` are shared with the intake correction
-screen, so the change arrives as an option (`LineRowOptions.compact`) that only
+screen, so both changes arrive as an option (`LineRowOptions.compact`) that only
 `src/recipe-editor.ts` passes. Intake keeps the row it has: it is checking a
-whole import line by line against the text it came from, and the unit is part of
-what is being checked. Without the option the markup is unchanged.
+whole import line by line against the text it came from, the unit is part of
+what is being checked, and its approve-a-new-one select is the gate itself.
+Without the option the markup is unchanged.
+
+Resolving a typed name needs the dictionary at save time, so `saveEditForm`
+reads `ingredientsFor` once and hands the same list to `guardRemovals` and
+`readLines`. `lineValuesFromForm` takes it too and is the one place that decides
+what a row's ingredient is; `ingredientFromValues` then reads that decision
+rather than the raw form fields beside it.
 
 Two things follow from making removal a one-tap action:
 

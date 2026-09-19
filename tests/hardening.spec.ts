@@ -3,8 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
 import {
   addIngredientRow,
+  closeLineEditor,
   openDraftEditor,
-  openMore,
+  openLineEditor,
   openSpareLines,
 } from "./support/lines";
 import { reseed } from "./support/seed";
@@ -26,9 +27,10 @@ test("a rejected edit keeps every value the member submitted", async ({ page }) 
 
   await page.locator("#title").fill("Nimi joka ei saa kadota");
   const first = page.locator(".line").first();
+  await openLineEditor(first);
   await first.locator('input[name$=".quantity"]').fill("ei-numero");
-  await openMore(first);
   await first.locator('input[name$=".source"]').fill("oma lähderivi");
+  await closeLineEditor(first);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
@@ -46,11 +48,12 @@ test("an added editor row can create a genuinely new ingredient", async ({ page 
   await addIngredientRow(page);
   const spare = page.locator(".line").nth(4);
   await spare.locator('input[name$=".quantity"]').fill("1");
-  await openMore(spare);
   await spare.getByLabel("Yksikkö", { exact: true }).fill("tl");
-  await spare.getByLabel("Uuden aineksen nimi").fill("sinappi");
   await spare.getByLabel("Lähderivi").fill("1 tl sinappia");
-  await spare.getByLabel("Aines").selectOption("new");
+  // A name the dictionary does not have yet is created, which is the point of
+  // the autocomplete box (#315).
+  await spare.getByLabel("Aines", { exact: true }).fill("sinappi");
+  await closeLineEditor(spare);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
@@ -68,12 +71,16 @@ test("an editor opened before another save cannot overwrite it", async ({ page }
   await newer.goto("/recipes/1/edit");
 
   await newer.locator("#title").fill("Uudempi tallennus");
+  await openLineEditor(newer.locator(".line").first());
   await newer.locator(".line").first().locator('input[name$=".quantity"]').fill("2");
+  await closeLineEditor(newer.locator(".line").first());
   await newer.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(newer).toHaveURL(/\/recipes\/1$/);
 
   await page.locator("#title").fill("Vanhentunut tallennus");
+  await openLineEditor(page.locator(".line").first());
   await page.locator(".line").first().locator('input[name$=".quantity"]').fill("3");
+  await closeLineEditor(page.locator(".line").first());
   const responsePromise = page.waitForResponse(
     (response) => response.url().endsWith("/recipes/1") && response.request().method() === "POST",
   );

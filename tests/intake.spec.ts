@@ -8,7 +8,7 @@ import {
   stubStructuring,
   UNSAVABLE_AMOUNT_DRAFT,
 } from "./support/draft";
-import { openDraftEditor, openMore, openSpareLines } from "./support/lines";
+import { openDraftEditor, openSpareLines } from "./support/lines";
 import { flatPng } from "./support/png";
 import { captureReview } from "./support/review-capture";
 import { executeLocalSql, reseed } from "./support/seed";

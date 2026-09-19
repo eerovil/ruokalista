@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { addIngredientRow, openMore } from "./support/lines";
+import {
+  addIngredientRow,
+  closeLineEditor,
+  openLineEditor,
+} from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -36,19 +40,19 @@ async function addMargarine(
   await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
 
   const oil = page.locator(".line").first();
-  await openMore(oil);
+  await openLineEditor(oil);
   await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill(oilGroup);
+  await closeLineEditor(oil);
 
   await addIngredientRow(page);
   const added = page.locator(".line").nth(4);
-  await added.locator("select").selectOption({ label: "Luo uusi aines" });
+  await added.getByLabel("Aines", { exact: true }).fill("margariini");
   await added.locator("input[name$=quantity]").fill("0,5");
-  await openMore(added);
   await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
-  await added.getByLabel("Uuden aineksen nimi").fill("margariini");
   await added
     .getByLabel("Vaihtoehtoryhmä (sama numero = tai)")
     .fill(margarineGroup);
+  await closeLineEditor(added);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(new RegExp(`/recipes/${KAALILAATIKKO}$`));
@@ -94,7 +98,7 @@ test("a group of one is not a choice, so the save dissolves it", async ({
   // nothing.
   await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
   const oil = page.locator(".line").first();
-  await openMore(oil);
+  await openLineEditor(oil);
   await expect(
     oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)"),
   ).toHaveValue("");
@@ -109,7 +113,7 @@ test("the numbers are renumbered from one, whatever was typed", async ({
 
   await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
   const oil = page.locator(".line").first();
-  await openMore(oil);
+  await openLineEditor(oil);
   await expect(
     oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)"),
   ).toHaveValue("1");
@@ -120,8 +124,9 @@ test("a group number that is not a number is refused, not quietly dropped", asyn
 }) => {
   await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
   const oil = page.locator(".line").first();
-  await openMore(oil);
+  await openLineEditor(oil);
   await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("-1");
+  await closeLineEditor(oil);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText(
@@ -178,21 +183,22 @@ test("a group cannot be split across the cooking sections", async ({ page }) => 
   await page.goto(`/recipes/${LASAGNE}/edit`);
 
   const sheets = page.locator(".line").first();
-  await openMore(sheets);
+  await openLineEditor(sheets);
   await sheets.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await sheets
     .getByLabel("Milloin tämä tehdään?")
     .selectOption("after_parts");
+  await closeLineEditor(sheets);
 
   await addIngredientRow(page);
   const added = page.locator(".line").nth(1);
-  await added.locator("select").first().selectOption({ label: "ananas" });
+  await added.getByLabel("Aines", { exact: true }).fill("ananas");
   await added.locator("input[name$=quantity]").fill("1");
-  await openMore(added);
   await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await added
     .getByLabel("Milloin tämä tehdään?")
     .selectOption("before_parts");
+  await closeLineEditor(added);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
@@ -215,21 +221,22 @@ test("a group inside one section still saves on a multipart dish", async ({
   await page.goto(`/recipes/${LASAGNE}/edit`);
 
   const sheets = page.locator(".line").first();
-  await openMore(sheets);
+  await openLineEditor(sheets);
   await sheets.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await sheets
     .getByLabel("Milloin tämä tehdään?")
     .selectOption("after_parts");
+  await closeLineEditor(sheets);
 
   await addIngredientRow(page);
   const added = page.locator(".line").nth(1);
-  await added.locator("select").first().selectOption({ label: "ananas" });
+  await added.getByLabel("Aines", { exact: true }).fill("ananas");
   await added.locator("input[name$=quantity]").fill("1");
-  await openMore(added);
   await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await added
     .getByLabel("Milloin tämä tehdään?")
     .selectOption("after_parts");
+  await closeLineEditor(added);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(new RegExp(`/recipes/${LASAGNE}$`));
@@ -249,19 +256,19 @@ async function addImportedAlternative(page: Page): Promise<void> {
 
   await page.goto(`/recipes/${KAALILAATIKKO}/edit`);
   const oil = page.locator(".line").first();
-  await openMore(oil);
+  await openLineEditor(oil);
   await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await oil.getByLabel("Lähderivi").fill(sentence);
+  await closeLineEditor(oil);
 
   await addIngredientRow(page);
   const added = page.locator(".line").nth(4);
-  await added.locator("select").selectOption({ label: "Luo uusi aines" });
+  await added.getByLabel("Aines", { exact: true }).fill("voi");
   await added.locator("input[name$=quantity]").fill("0,5");
-  await openMore(added);
   await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
-  await added.getByLabel("Uuden aineksen nimi").fill("voi");
   await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
   await added.getByLabel("Lähderivi").fill(sentence);
+  await closeLineEditor(added);
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(new RegExp(`/recipes/${KAALILAATIKKO}$`));
