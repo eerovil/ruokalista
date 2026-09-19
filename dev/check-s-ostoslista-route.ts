@@ -5,7 +5,7 @@ import { today } from "../src/dates.ts";
 import type { Env } from "../src/env.ts";
 import type { Member } from "../src/members.ts";
 import type { RouteContext } from "../src/router.ts";
-import { sendShoppingListForm } from "../src/shopping-screens.ts";
+import { currentListJson, sendShoppingListForm } from "../src/shopping-screens.ts";
 import { migratedDatabase, type FakeD1 } from "./support/d1.ts";
 
 /**
@@ -292,5 +292,76 @@ test("a legacy product's package-size backfill is on the ledger too (#308 review
   assert.ok(
     legacyCost + legacyService.calls + 1 <= 50,
     `${legacyCost} D1 + ${legacyService.calls} fetch + 1 session must fit in 50`,
+  );
+});
+
+/**
+ * A service that actually keeps what it is given, so a read after a send sees
+ * the send's work. Keyed like the real one.
+ */
+function storingService(): { fetch: typeof fetch; rows: Array<Record<string, unknown>> } {
+  const rows: Array<Record<string, unknown>> = [];
+  let next = 1;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const path = url.pathname.replace(/^\//, "");
+    const method = init?.method ?? "GET";
+    const body = init?.body === undefined
+      ? {}
+      : (JSON.parse(String(init.body)) as Record<string, unknown>);
+
+    if (method === "GET" && path === "items") return Response.json({ items: rows });
+    if (method === "POST" && path === "sync") return new Response(null, { status: 204 });
+    if (method === "POST" && path === "items") {
+      const ean = typeof body["ean"] === "string" ? body["ean"] : null;
+      const note = typeof body["note"] === "string" ? body["note"] : null;
+      const existing = rows.find((row) =>
+        ean !== null ? row["ean"] === ean : row["ean"] === null && row["name"] === note,
+      );
+      if (existing) return Response.json(existing);
+      const created = {
+        id: `item-${next++}`,
+        name: note ?? `Tuote ${ean}`,
+        ean,
+        collected: false,
+        quantity: typeof body["quantity"] === "number" ? body["quantity"] : null,
+      };
+      rows.push(created);
+      return Response.json(created, { status: 201 });
+    }
+    if (method === "PATCH" && path.startsWith("items/")) {
+      const id = decodeURIComponent(path.slice("items/".length));
+      const found = rows.find((row) => row["id"] === id);
+      if (!found) return Response.json({ error: "not found" }, { status: 404 });
+      if (typeof body["collected"] === "boolean") found["collected"] = body["collected"];
+      if (typeof body["quantity"] === "number") found["quantity"] = body["quantity"];
+      return Response.json(found);
+    }
+    if (method === "DELETE" && path === "items") return Response.json({ deleted: [] });
+    return Response.json({ error: "unexpected" }, { status: 400 });
+  }) as typeof fetch;
+  return { fetch: fetcher, rows };
+}
+
+test("the panel can read back what the send just put on the list (#308)", async () => {
+  // The screenshots spec's shape: send, then the browser reads
+  // `/ostoslista/s-lista` and expects the rows it just sent. If that read
+  // refuses or comes back empty, the screen sits on `Luetaan S-ostoslistaa…`
+  // for ever, which is what CI saw.
+  const fake = seeded();
+  const service = storingService();
+
+  const sendAnswer = await sendShoppingListForm(context(fake, service.fetch), member);
+  assert.equal(sendAnswer.status, 200);
+  await sendAnswer.text();
+  assert.ok(service.rows.length > 0, "the send really put rows on the service");
+
+  const listAnswer = await currentListJson(context(fake, service.fetch), member);
+  assert.equal(listAnswer.status, 200, "the panel's read must not refuse");
+  const body = (await listAnswer.json()) as { items: Array<{ name: string }> };
+  assert.equal(
+    body.items.length,
+    service.rows.length,
+    "every row the send put there is still to be bought",
   );
 });
