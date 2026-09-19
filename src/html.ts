@@ -504,6 +504,16 @@ const STYLES = `
   /* The move between the two shopping sections, inside the opened row. */
   .pantry-action { margin: .2rem 0 .6rem; }
   .pantry-action button { width: 100%; }
+  /* Leaving a row off this one list (#313). Deliberately the same plain
+     control as the cupboard's button rather than an accent one: they are peers
+     inside the opened row, and the words are what has to tell them apart. */
+  .exclude-action { margin: .6rem 0 .2rem; }
+  .exclude-action .button {
+    width: 100%; color: inherit; background: var(--surface);
+    border-color: var(--edge); font-weight: 400;
+  }
+  .shopping-item.is-excluded .shopping-name,
+  .shopping-item.is-excluded .shopping-total { color: var(--muted); }
   .shopping-section { margin: 1.6rem 0 .2rem; font-size: 1.05rem; }
   .shopping-section + .empty { margin-top: 0; }
   button.danger {
