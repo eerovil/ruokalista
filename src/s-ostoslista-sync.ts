@@ -1,7 +1,11 @@
-import { SOstoslistaError, type SOstoslistaKey } from "./s-ostoslista.ts";
 import {
-  forgetSentNote,
-  rememberSentNote,
+  SOstoslistaError,
+  type SOstoslistaItem,
+  type SOstoslistaKey,
+} from "./s-ostoslista.ts";
+import {
+  forgetSentNoteStatement,
+  rememberSentNoteStatement,
   sentNotes,
 } from "./s-ostoslista-notes.ts";
 import type { ShoppingItem } from "./shopping.ts";
@@ -13,6 +17,7 @@ import type { ShoppingItem } from "./shopping.ts";
  * while focused tests can supply a tiny fake without knowing HTTP at all.
  */
 export interface SOstoslistaSyncClient {
+  list(): Promise<SOstoslistaItem[]>;
   add(key: SOstoslistaKey, quantity?: number | null): Promise<unknown>;
   remove(key: SOstoslistaKey): Promise<unknown>;
   sync(): Promise<void>;
@@ -25,11 +30,26 @@ export type SOstoslistaSendItem = Pick<
 >;
 
 /**
+ * Why one row did not make it — the three answers that lead a member somewhere
+ * different.
+ *
+ * - `refused`: the service looked at this row and said no, and will say no
+ *   again. Only this one means the row itself is the problem.
+ * - `unreachable`: the service could not answer this time. Press it again.
+ * - `local`: this app's own storage failed, not the service. Also press it
+ *   again — and note that this is not the same as `refused` even though
+ *   neither is retried inside one send. The per-row retry only repeats calls
+ *   that the service's own answer says are worth repeating, so a failed D1
+ *   receipt is left alone here; that is a statement about this send, not about
+ *   whether the next one will work. `a failed local receipt remains retryable
+ *   after the external replacement` is the test that says so.
+ */
+export type SOstoslistaFailureKind = "refused" | "unreachable" | "local";
+
+/**
  * One shopping row that did not make it, in the shape a member message and a
  * log line can both be built from.
  *
- * `permanent` is the whole point of recording these: it is what separates "the
- * shop was busy, press it again" from "this row will never go, look at it".
  * `name` is the ingredient, which is what a member needs to hear; the log line
  * deliberately leaves it out and carries the row key instead.
  */
@@ -38,7 +58,7 @@ export interface SOstoslistaRowFailure {
   name: string;
   /** True when the row goes as free text rather than as a product. */
   note: boolean;
-  permanent: boolean;
+  kind: SOstoslistaFailureKind;
   status: number | null;
   message: string;
 }
@@ -64,6 +84,12 @@ export type SOstoslistaSendOutcome =
       sent: number;
       total: number;
       failures: readonly SOstoslistaRowFailure[];
+      /**
+       * True when the Worker ran out of subrequests rather than the rows
+       * having anything wrong with them. The rows after that point were never
+       * attempted, so they are not failures — see `SUBREQUEST_CEILING`.
+       */
+      ceiling: boolean;
     };
 
 /**
@@ -87,6 +113,30 @@ const BACKOFF_MS = [200, 600];
  * each — so the send still finishes and still reports every row.
  */
 const RETRY_BUDGET = 8;
+
+/**
+ * The runtime refusing to make another call at all, which is what #308 turned
+ * out to be: `Too many subrequests by single Worker invocation`.
+ *
+ * Every outgoing call an invocation makes counts against one budget — the
+ * S-ostoslista calls and every D1 query alike — and on this account's plan
+ * that budget is fifty and cannot be raised from `wrangler.jsonc`. A 32-row
+ * list used to spend two calls per row, so it ran out somewhere in the
+ * twenties, which is where "28/32" came from.
+ *
+ * It is matched on the message because that is the only thing the runtime
+ * gives: the failure arrives as a rejected `fetch`, with no status and no
+ * type of its own. Matching it matters because it is neither of the two
+ * things the rest of this module knows how to do. Retrying it is pointless —
+ * the budget does not come back inside the same invocation — and calling it a
+ * bad row blames thirty rows that were never tried. So the send stops there
+ * and says so, and the next press picks up where this one ran out.
+ */
+const SUBREQUEST_CEILING = /too many subrequests/i;
+
+function isCeiling(error: unknown): boolean {
+  return error instanceof SOstoslistaError && SUBREQUEST_CEILING.test(error.message);
+}
 
 export interface SOstoslistaSendOptions {
   /** Swapped out in tests so a retry path costs no wall-clock. */
@@ -119,6 +169,13 @@ export interface SOstoslistaSendOptions {
  * the add-first ordering above exists: replaying a row converges on the same
  * state, because the external add is keyed and the note delete tolerates a row
  * that has already gone.
+ *
+ * The send opens by reading the list the service already holds, and that one
+ * call is what keeps the whole thing inside the subrequest budget. A row the
+ * list already holds in the state this send wants costs nothing to reconcile,
+ * so a second press after a send that ran out is not the same send over again:
+ * it is only what is left. It also makes an ordinary week's re-send nearly
+ * free. Nothing is skipped on a guess — see `alreadyOnList`.
  */
 export async function sendToSOstoslista(
   db: D1Database,
@@ -131,26 +188,36 @@ export async function sendToSOstoslista(
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
   const outstanding = await sentNotes(db, householdId);
+  const held = await heldByService(client);
+  const bookkeeping: Receipt[] = [];
   const failures: SOstoslistaRowFailure[] = [];
   let retriesLeft = RETRY_BUDGET;
+  let ceiling = false;
   let sent = 0;
 
   for (const item of items) {
-    const attempts = retriesLeft > 0 ? ROW_ATTEMPTS : 1;
     let error: unknown = null;
 
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // The budget is checked immediately before each retry and spent only when
+    // one is actually made. Deciding a row's allowance up front instead let a
+    // row that failed twice take two retries out of a budget with one left in
+    // it, so the eighth retry was followed by a ninth.
+    for (let attempt = 1; attempt <= ROW_ATTEMPTS; attempt += 1) {
       try {
         await reconcileRow(db, householdId, client, item, {
           packets,
           addedProducts,
           outstanding,
+          held,
+          bookkeeping,
         });
         error = null;
         break;
       } catch (thrown) {
         error = thrown;
-        if (attempt === attempts || !isTransient(thrown)) break;
+        if (attempt === ROW_ATTEMPTS || retriesLeft <= 0 || !isTransient(thrown)) {
+          break;
+        }
         retriesLeft -= 1;
         await wait(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
       }
@@ -160,11 +227,27 @@ export async function sendToSOstoslista(
       sent += 1;
       continue;
     }
+    // Out of subrequests is the invocation ending, not this row being bad. The
+    // rows after it are untouched rather than failed, and there is no point
+    // asking for the next one.
+    if (isCeiling(error)) {
+      ceiling = true;
+      break;
+    }
     failures.push(describeFailure(item, error));
   }
 
-  if (failures.length > 0) {
-    return { status: "partial", sent, total: items.length, failures };
+  // A lost receipt is this app losing track of a row it did put on the list,
+  // so it is a `local` failure on each row that earned one — never a refusal,
+  // and never a reason to tell a member to go and look at a product.
+  const lost = await flush(db, bookkeeping);
+  if (lost !== null) {
+    for (const { item } of bookkeeping) failures.push(describeFailure(item, lost));
+    sent -= bookkeeping.length;
+  }
+
+  if (failures.length > 0 || ceiling) {
+    return { status: "partial", sent, total: items.length, failures, ceiling };
   }
 
   try {
@@ -182,11 +265,67 @@ export async function sendToSOstoslista(
   }
 }
 
+/**
+ * What the service is holding right now, or nothing if it would not say.
+ *
+ * A read that fails is not a failed send: it only means this send skips
+ * nothing and reconciles every row the long way, which is what it did before
+ * this read existed. Refusing the whole send over it would trade a slow send
+ * for no send.
+ */
+async function heldByService(
+  client: SOstoslistaSyncClient,
+): Promise<readonly SOstoslistaItem[]> {
+  try {
+    return await client.list();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Put the send's note bookkeeping through in one go.
+ *
+ * One `db.batch` rather than a write per row, because D1 calls come out of the
+ * same subrequest budget as the S-ostoslista calls and a list this size cannot
+ * spare eight of them (#308).
+ *
+ * Deferring the writes to the end is safe for the same reason the per-row
+ * ordering was: every write here is one this send has already earned
+ * externally, and losing them all converges anyway. A row whose new note went
+ * out and whose old note was deleted, but whose receipt never landed, is read
+ * next time as still owing the old note — so the next send deletes a row that
+ * has already gone, which this module has always treated as the wanted state,
+ * and then records the new one.
+ */
+async function flush(
+  db: D1Database,
+  receipts: readonly Receipt[],
+): Promise<unknown | null> {
+  if (receipts.length === 0) return null;
+  try {
+    await db.batch(receipts.map((receipt) => receipt.statement));
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
 /** The state one row's reconciliation shares with the rest of the send. */
 interface RowContext {
   packets: Map<string, number>;
   addedProducts: Set<string>;
   outstanding: Map<string, string>;
+  /** What the service already held when this send started. */
+  held: readonly SOstoslistaItem[];
+  /** Note receipts earned so far, run as one batch when the send ends. */
+  bookkeeping: Receipt[];
+}
+
+/** One deferred note write, kept beside the row that earned it. */
+interface Receipt {
+  item: SOstoslistaSendItem;
+  statement: D1PreparedStatement;
 }
 
 /**
@@ -203,26 +342,32 @@ async function reconcileRow(
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outstanding }: RowContext,
+  { packets, addedProducts, outstanding, held, bookkeeping }: RowContext,
 ): Promise<void> {
   const previous = outstanding.get(item.key) ?? null;
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    await client.add({ note });
+    if (!alreadyOnList(held, { note }, null)) await client.add({ note });
 
     // Re-sending identical words is the same keyed external row. Removing
     // `previous` here would delete the row we just made sure exists.
     if (previous !== note) {
       if (previous !== null) await dropRememberedNote(client, previous);
-      await rememberSentNote(db, householdId, item.key, note);
+      bookkeeping.push({
+        item,
+        statement: rememberSentNoteStatement(db, householdId, item.key, note),
+      });
     }
     return;
   }
 
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
-    await client.add({ ean: product.ean }, packets.get(product.ean) ?? 1);
+    const count = packets.get(product.ean) ?? 1;
+    if (!alreadyOnList(held, { ean: product.ean }, count)) {
+      await client.add({ ean: product.ean }, count);
+    }
     addedProducts.add(product.ean);
   }
 
@@ -231,8 +376,43 @@ async function reconcileRow(
   // state instead of stranding either representation.
   if (previous !== null) {
     await dropRememberedNote(client, previous);
-    await forgetSentNote(db, householdId, item.key);
+    bookkeeping.push({
+      item,
+      statement: forgetSentNoteStatement(db, householdId, item.key),
+    });
   }
+}
+
+/**
+ * Whether the service is already holding this row exactly as this send wants
+ * it, so that adding it again would change nothing.
+ *
+ * Deliberately hard to satisfy. It is not enough for a row with this key to
+ * exist: it has to be one the service has said out loud is still to be bought,
+ * and for a product it has to be holding this trip's packet count as well. A
+ * service that omits the flag has told us nothing, and #236 is exactly the bug
+ * where a row that looked fine was in fact last week's, ticked — so silence
+ * means add, the same answer this returned before the check existed.
+ *
+ * Where the list holds the same key more than once, every copy has to pass:
+ * one ticked duplicate is a row the member would not buy, and the add is what
+ * clears it.
+ */
+function alreadyOnList(
+  held: readonly SOstoslistaItem[],
+  key: SOstoslistaKey,
+  quantity: number | null,
+): boolean {
+  const matching = held.filter((row) =>
+    "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
+  );
+  if (matching.length === 0) return false;
+  return matching.every(
+    (row) =>
+      row.collectedStated &&
+      !row.collected &&
+      (quantity === null || row.quantity === quantity),
+  );
 }
 
 /**
@@ -259,13 +439,22 @@ function describeFailure(
   item: SOstoslistaSendItem,
   error: unknown,
 ): SOstoslistaRowFailure {
-  const status = error instanceof SOstoslistaError ? error.status : null;
+  // Not-retried and refused are different facts, and conflating them told a
+  // member whose D1 receipt write failed to go and check a product choice that
+  // had nothing wrong with it. Only the client's own error can be a refusal,
+  // because only it has been to the service.
+  const fromService = error instanceof SOstoslistaError;
+  const kind: SOstoslistaFailureKind = !fromService
+    ? "local"
+    : isTransient(error)
+      ? "unreachable"
+      : "refused";
   return {
     key: item.key,
     name: item.name,
     note: item.chosen.length === 0,
-    permanent: !isTransient(error),
-    status,
+    kind,
+    status: fromService ? error.status : null,
     message: error instanceof Error ? error.message : String(error),
   };
 }

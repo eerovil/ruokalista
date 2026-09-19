@@ -204,6 +204,11 @@ export async function sendShoppingListForm(
   );
 
   if (outcome.status === "partial") {
+    if (outcome.ceiling) {
+      console.error(
+        `S-ostoslista send ran out of subrequests after ${outcome.sent}/${outcome.total} rows`,
+      );
+    }
     logSendFailures(outcome.failures);
     const message = partialSendMessage(outcome);
     return asJson
@@ -250,14 +255,18 @@ const FAILURES_IN_MESSAGE = 3;
 function logSendFailures(failures: readonly SOstoslistaRowFailure[]): void {
   for (const failure of failures) {
     console.error(
-      `S-ostoslista row failed: key=${failure.key} kind=${failure.note ? "note" : "product"} ` +
-        `status=${failure.status ?? "none"} permanent=${failure.permanent} ${failure.message}`,
+      `S-ostoslista row failed: key=${failure.key} row=${failure.note ? "note" : "product"} ` +
+        `kind=${failure.kind} status=${failure.status ?? "none"} ${failure.message}`,
     );
   }
 }
 
 /**
  * What the member is told when part of the list did not go.
+ *
+ * Exported for `dev/check-s-ostoslista-message.ts`: which of these sentences a
+ * member gets is the whole difference between "press it again" and "go and fix
+ * a product", so it is worth asserting directly rather than through a screen.
  *
  * The old text said only how many rows had been reached before the send gave
  * up, which was the same sentence whatever had gone wrong and pointed at
@@ -266,15 +275,25 @@ function logSendFailures(failures: readonly SOstoslistaRowFailure[]): void {
  * product. Pressing it again is always safe either way — a repeated send is
  * keyed and makes no duplicates — so that is said outright rather than implied.
  */
-function partialSendMessage(outcome: {
+export function partialSendMessage(outcome: {
   sent: number;
   total: number;
   failures: readonly SOstoslistaRowFailure[];
+  ceiling: boolean;
 }): string {
-  const { sent, total, failures } = outcome;
+  const { sent, total, failures, ceiling } = outcome;
   const progress = sent === 0
     ? "Mitään ei lähetetty."
     : `${sent}/${total} ainesta lähti perille.`;
+
+  // Nothing was wrong with the rows, so naming any of them would send the
+  // member looking in the wrong place. Pressing again really does finish it:
+  // the next send reads the list first and skips everything already on it.
+  if (ceiling) {
+    return `Lista oli liian pitkä yhteen lähetykseen. ${progress} ` +
+      "Paina Lähetä uudelleen, niin loput menevät perille — " +
+      "jo lähetetyt rivit ohitetaan eivätkä tule kahteen kertaan.";
+  }
 
   const named = failures.slice(0, FAILURES_IN_MESSAGE).map(failureNote);
   const rest = failures.length - named.length;
@@ -282,18 +301,36 @@ function partialSendMessage(outcome: {
     ? `${named.join(" ")} Lisäksi ${rest} muuta riviä ei mennyt läpi.`
     : named.join(" ");
 
-  const advice = failures.every((failure) => failure.permanent)
-    ? "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta."
-    : "Yritä uudelleen — sama lähetys ei tee tuplarivejä.";
+  return `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress} ${listed} ${advice(failures)}`;
+}
 
-  return `S-ostoslistaan ei saatu lähetettyä kaikkea. ${progress} ${listed} ${advice}`;
+/**
+ * The one sentence that says what to do next.
+ *
+ * Only a row the service actually refused is a row worth going and looking at,
+ * and only a refused *product* row is a question about the product. Everything
+ * else — a connection that dropped, this app's own note bookkeeping failing —
+ * is a send worth pressing again, and telling that member to go and check a
+ * product choice sends them after a fault that is not theirs and not there.
+ */
+function advice(failures: readonly SOstoslistaRowFailure[]): string {
+  if (!failures.every((failure) => failure.kind === "refused")) {
+    return "Yritä uudelleen — sama lähetys ei tee tuplarivejä.";
+  }
+  return failures.every((failure) => !failure.note)
+    ? "Uudelleen yrittäminen ei auta näihin riveihin: tarkista niiden tuotevalinta."
+    : "Uudelleen yrittäminen ei auta näihin riveihin: S-ostoslista ei hyväksynyt niitä.";
 }
 
 function failureNote(failure: SOstoslistaRowFailure): string {
   const status = failure.status === null ? "" : ` (${failure.status})`;
-  return failure.permanent
-    ? `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`
-    : `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
+  if (failure.kind === "refused") {
+    return `S-ostoslista ei ottanut vastaan riviä ${failure.name}${status}.`;
+  }
+  if (failure.kind === "local") {
+    return `Rivin ${failure.name} kirjaaminen epäonnistui täällä päässä.`;
+  }
+  return `Rivi ${failure.name} ei mennyt läpi yhteysvirheen takia${status}.`;
 }
 
 /**

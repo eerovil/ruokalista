@@ -1231,7 +1231,9 @@ test("a partial send does not push the phone's list", async ({ page, request }) 
   await currentListLoaded(page);
   // A refusal the service will give again however often it is asked, so this
   // is one row lost rather than a blip the send rides out (#308).
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400`);
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400&only=POST /items`,
+  );
 
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".refused")).toContainText(
@@ -1250,13 +1252,15 @@ test("a row the service refuses is named, and the rest of the list still goes (#
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400`);
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=400&only=POST /items`,
+  );
 
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   const refusal = page.locator(".s-shopping-send .refused");
   await expect(refusal).toContainText("ei ottanut vastaan riviä");
   await expect(refusal).toContainText("(400)");
-  await expect(refusal).toContainText("tarkista niiden tuotevalinta");
+  await expect(refusal).toContainText("Uudelleen yrittäminen ei auta");
 
   // The whole point: the one bad row no longer takes the rest of the list with
   // it. Everything but that row went, in the one send.
@@ -1274,7 +1278,9 @@ test("a moment's congestion is ridden out rather than reported (#308)", async ({
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
-  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=503&times=2`);
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/fail-next?status=503&times=2&only=POST /items`,
+  );
 
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toContainText(

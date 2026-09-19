@@ -29,7 +29,11 @@ const items: Item[] = [];
  * records it and moves on. A test that wants one of those has to be able to
  * ask for it.
  */
-let failures: { status: number; left: number } = { status: 503, left: 0 };
+let failures: { status: number; left: number; only: string | null } = {
+  status: 503,
+  left: 0,
+  only: null,
+};
 let failSync = false;
 let nextId = 1;
 
@@ -123,7 +127,7 @@ createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname === "/_test/reset") {
     requests.length = 0;
     items.length = 0;
-    failures = { status: 503, left: 0 };
+    failures = { status: 503, left: 0, only: null };
     failSync = false;
     nextId = 1;
     return send(response, 200, { ok: true });
@@ -132,6 +136,9 @@ createServer(async (request, response) => {
     failures = {
       status: Number(url.searchParams.get("status") ?? "503"),
       left: Number(url.searchParams.get("times") ?? "1"),
+      // A send opens by reading the list, so without this the read absorbs the
+      // failure a test meant for an add. `only=POST /items` aims it.
+      only: url.searchParams.get("only"),
     };
     return send(response, 200, { ok: true });
   }
@@ -174,7 +181,11 @@ createServer(async (request, response) => {
   const body = await readBody(request);
   requests.push({ method: request.method ?? "GET", path: url.pathname + url.search, body });
 
-  if (failures.left > 0) {
+  if (
+    failures.left > 0 &&
+    (failures.only === null ||
+      `${request.method ?? "GET"} ${url.pathname}`.startsWith(failures.only))
+  ) {
     failures.left -= 1;
     return send(response, failures.status, { error: "test outage" });
   }
