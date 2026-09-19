@@ -304,19 +304,19 @@ export async function sendToSOstoslista(
     // ends the send at a row boundary, every row after it untouched rather
     // than half-done.
     //
-    // The reservation is what makes the price honest rather than merely
-    // hopeful: the row's calls are spent from it at the real HTTP boundary, so
-    // an add that needs its PATCH is charged for both — and one that does not
-    // hands the spare call straight back when the row ends.
-    let hold = budget.reserve(priceOf(planned));
-    if (hold === null) {
+    // Only the first operation is checked here, because each one reserves its
+    // own worst case as it begins. A row that cannot start at all ends the
+    // send; a row that runs out between its operations stops on a step
+    // boundary, which is a state a repeat converges from — add-first,
+    // delete-second, and an already-missing note is the wanted state.
+    if (!budget.canAfford(planned.steps[0]?.cost ?? 0)) {
       ceiling = true;
       break;
     }
 
     for (let attempt = 1; attempt <= ROW_ATTEMPTS; attempt += 1) {
       try {
-        await budget.within(hold, () => runRow(planned));
+        await runRow(budget, planned);
         error = null;
         break;
       } catch (thrown) {
@@ -339,9 +339,7 @@ export async function sendToSOstoslista(
           outstanding,
           held,
         });
-        const again = budget.reserve(priceOf(planned));
-        if (again === null) break;
-        hold = again;
+        if (!budget.canAfford(planned.steps[0]?.cost ?? 0)) break;
         retriesLeft -= 1;
         await wait(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
       }
@@ -529,15 +527,12 @@ interface PlannedStep {
   run: () => Promise<unknown>;
 }
 
-/** A row's whole worst-case cost, worked out before any of it is begun. */
+/** A row's operations, each priced at what it may cost, before any of it runs. */
 interface PlannedRow {
   steps: PlannedStep[];
   receipt: Receipt | null;
 }
 
-function priceOf(planned: PlannedRow): number {
-  return planned.steps.reduce((total, step) => total + step.cost, 0);
-}
 
 /** What `planRow` needs to see; deliberately not the bookkeeping. */
 interface RowPlanContext {
@@ -648,10 +643,19 @@ function planRow(
  * A product accepted before a note deletion is refused must not read as a
  * refused product, which is what reading the row's own shape afterwards said.
  */
-async function runRow(planned: PlannedRow): Promise<void> {
-  for (const { operation, run } of planned.steps) {
+async function runRow(
+  budget: SubrequestBudget,
+  planned: PlannedRow,
+): Promise<void> {
+  for (const { operation, cost, run } of planned.steps) {
+    // Reserved here, immediately before this operation's first subrequest, and
+    // released by `within` when it ends. A create takes its two atomically; a
+    // create that needed only one hands the other back in time for the delete
+    // after it to fit.
+    const hold = budget.reserve(cost);
+    if (hold === null) throw new StepFailure(operation, new SubrequestBudgetSpent());
     try {
-      await run();
+      await budget.within(hold, run);
     } catch (error) {
       throw error instanceof StepFailure ? error : new StepFailure(operation, error);
     }

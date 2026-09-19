@@ -115,3 +115,43 @@ test("a fetch that would go over never leaves", async () => {
   );
   assert.equal(made, 1, "the second request was never made");
 });
+
+test("an active reservation is a ceiling, not a floor (#308 review)", async () => {
+  // The hole this closes: `spend()` used to fall through to the free pool when
+  // the token ran out, so a `reserve(1)` operation could make two calls
+  // whenever the pool happened to have a spare. A reservation that can be
+  // exceeded is an estimate, and estimates are what the last several rounds
+  // were about.
+  const budget = new SubrequestBudget(5);
+  const hold = budget.reserve(1)!;
+  assert.equal(budget.free, 4, "the pool still has room, which is the point");
+
+  await budget.within(hold, async () => {
+    assert.equal(budget.spend(), true, "the call this operation reserved");
+    assert.equal(budget.spend(), false, "and not one more, pool or no pool");
+    assert.equal(budget.spend(), false);
+  });
+
+  // Exactly one call spent, and the pool is untouched by the refusals.
+  assert.equal(budget.left, 4);
+  assert.equal(budget.free, 4);
+});
+
+test("one operation's reservation cannot be spent by the next (#308 review)", async () => {
+  const budget = new SubrequestBudget(3);
+  const tail = budget.reserve(1)!;
+  const step = budget.reserve(2)!;
+
+  await budget.within(step, async () => {
+    assert.equal(budget.spend(), true);
+    assert.equal(budget.spend(), true);
+    // Two were reserved and two are gone. The tail is not this step's to take.
+    assert.equal(budget.spend(), false);
+  });
+
+  assert.equal(budget.left, 1, "the tail survived the step that ran beside it");
+  await budget.within(tail, async () => {
+    assert.equal(budget.spend(), true);
+  });
+  assert.equal(budget.left, 0);
+});

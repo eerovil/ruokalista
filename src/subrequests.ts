@@ -68,10 +68,20 @@ export class SubrequestBudgetSpent extends Error {
  * An allowance set aside for one operation, and spent by that operation's own
  * calls.
  *
- * This is the single rule the rest of the file exists to keep: work that may
- * cost more than one subrequest reserves its worst case *before* it starts,
- * the real HTTP and D1 boundaries spend from that reservation as the calls
- * actually happen, and whatever was not needed goes back at the end.
+ * This is the single rule the rest of the file exists to keep: one external
+ * operation reserves its worst case *before* it starts, the real HTTP and D1
+ * boundaries spend from that reservation as the calls actually happen, and
+ * whatever was not needed goes back at the end. While it is open, nothing the
+ * operation does may be paid for from anywhere else.
+ *
+ * The unit is the operation, not the piece of work it belongs to. Reserving a
+ * whole shopping row at once was too blunt for the list #308 is about: a text
+ * row whose amount changed is a create that may take two calls and a delete
+ * that takes one, and with two calls free the row was refused outright even
+ * though the create would have used one and handed the other straight to the
+ * delete. Each operation reserving its own worst case costs nothing in safety
+ * — a create still takes its two atomically — and stops the arithmetic being
+ * pessimistic about work it can see the shape of.
  *
  * Two things went wrong without it, and they are the same thing. The receipt
  * batch was charged once by the send and once again by the metered database,
@@ -178,7 +188,13 @@ export class SubrequestBudget {
    * exactly once; outside one it draws on what is free.
    */
   spend(): boolean {
-    if (this.#active !== null && this.#active.take()) {
+    // Inside an operation the reservation is the whole of what may be spent.
+    // Falling through to the free pool when the token ran out would make the
+    // reservation an estimate again: a `reserve(1)` operation could make two
+    // calls whenever the pool happened to have a spare, which is exactly the
+    // drift reservations exist to remove.
+    if (this.#active !== null) {
+      if (!this.#active.take()) return false;
       this.#held -= 1;
       this.#left -= 1;
       return true;
