@@ -671,3 +671,28 @@ test("a household's default is cleared by an empty box, not guessed at", async (
     page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
   ).toHaveValue("1×");
 });
+
+test("a refused move keeps the date that was typed, not the one on file", async ({
+  page,
+}) => {
+  // The one way a *valid* date can still be refused: the cooking is in the
+  // past, so it was never blocking the owner from taking the recipe private,
+  // and moving it forward now needs an access this household no longer has.
+  await publish(page, 1);
+  await plan(page, 2, "2020-01-06", 1);
+  await makePrivate(page, 1);
+
+  await signIn(page, 2);
+  await page.goto("/?week=2020-01-06");
+  await page.locator(".day .batch-edit").first().click();
+  await page.locator("input[name=date]").fill("2099-05-04");
+  await page.getByRole("button", { name: "Siirrä" }).click();
+
+  await expect(page.locator(".refused")).toBeVisible();
+  // The date the member asked for is still in the box — losing it would mean
+  // retyping it to find out what went wrong (#309 review).
+  await expect(page.locator("input[name=date]")).toHaveValue("2099-05-04");
+  // And nothing moved.
+  await page.goto("/?week=2020-01-06");
+  await expect(page.locator(".day .batch-card")).toHaveCount(1);
+});

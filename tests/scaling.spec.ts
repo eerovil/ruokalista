@@ -165,7 +165,6 @@ test("the week carries the batch's multiplier into the recipe", async ({
   await row.getByRole("button", { name: "Lisää" }).click();
 
   await page.locator(".entry a").first().click();
-  await page.getByRole("link", { name: "Avaa resepti" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1\?multiplier=1\.5$/);
   await expect(page.locator(".yield")).toHaveText("1,5×");
@@ -181,11 +180,10 @@ test("changing a batch's multiplier changes what the recipe opens at", async ({
     .getByRole("button", { name: "Lisää" })
     .click();
 
-  await page.locator(".day", { hasText: "2.12." }).locator(".entry a").click();
+  await page.locator(".day", { hasText: "2.12." }).locator(".batch-edit").click();
   await page.locator(".multiplier-choice").getByRole("button", { name: "0,5×" }).click();
 
   await page.locator(".day", { hasText: "2.12." }).locator(".entry a").click();
-  await page.getByRole("link", { name: "Avaa resepti" }).click();
   await expect(page).toHaveURL(/multiplier=0\.5$/);
   // Half of ½ dl is ¼ dl.
   await expect(page.locator(".lines li").first()).toContainText("¼ dl");
@@ -200,12 +198,11 @@ test("a multiplier the chips do not offer can still be typed", async ({
     .getByRole("button", { name: "Lisää" })
     .click();
 
-  await page.locator(".day", { hasText: "3.12." }).locator(".entry a").click();
+  await page.locator(".day", { hasText: "3.12." }).locator(".batch-edit").click();
   // The Finnish comma, the way every other number field in the app takes it.
   await page.locator(".multiplier-choice input").fill("2,5");
   await page.locator(".multiplier-choice").getByRole("button", { name: "Tallenna" }).click();
 
   await page.locator(".day", { hasText: "3.12." }).locator(".entry a").click();
-  await page.getByRole("link", { name: "Avaa resepti" }).click();
   await expect(page.locator(".yield")).toHaveText("2,5×");
 });

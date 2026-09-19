@@ -46,7 +46,7 @@ test("import the sample and cook what it made", async ({ page }) => {
   await expect(page).toHaveURL(/\/\?week=/);
   await page.screenshot({ path: `${SHOTS}/3-week.png`, fullPage: true });
 
-  await page.locator(".day .entry a").first().click();
+  await page.locator(".day .batch-edit").first().click();
   await page.screenshot({ path: `${SHOTS}/4-meal.png`, fullPage: true });
 
   await page.getByRole("link", { name: "Avaa resepti" }).click();

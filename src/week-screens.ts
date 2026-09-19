@@ -18,8 +18,8 @@ import {
   isSlot,
   menuBetween,
   MenuRefused,
+  moveBatchTo,
   removePlannedBatch,
-  replaceOccurrences,
   SLOTS,
   type BatchOccurrence,
   type PlannedBatch,
@@ -275,9 +275,11 @@ function slotOrder(occurrence: BatchOccurrence | null): number {
 }
 
 /**
- * One cooking, as one card. The head is the recipe, the multiplier pill and the
- * way into every batch action; the rows below it are the meals this same pot
- * covers, in order, across days.
+ * One cooking, as one card. The head is the recipe and the multiplier pill, and
+ * tapping it opens the recipe at this batch's amounts — cooking is what the
+ * week screen is for, so it is the plain tap and not a stop on the way (#309).
+ * Changing the plan is the quiet `Muokkaa` beside it. The rows below are the
+ * meals this same pot covers, in order, across days.
  */
 function batchCard(
   batch: PlannedBatch,
@@ -289,7 +291,7 @@ function batchCard(
   const finishesInView = batch.endDate <= rangeEnd;
 
   return html`<article class="batch-card" data-batch-id="${batch.id}">
-    <div class="entry"><a href="/batches/${batch.id}">
+    <div class="entry"><a href="/recipes/${batch.recipeId}?multiplier=${String(batch.multiplier)}">
       <span class="batch-head-main">
         ${recipeImage({ id: batch.recipeId, imageKey: batch.imageKey }, "thumb")}
         <span class="entry-title">${batch.title}</span>
@@ -298,6 +300,9 @@ function batchCard(
         ? html`<span class="batch-start">Kokataan · ${formatMultiplier(batch.multiplier)}</span>`
         : html`<span class="batch-carried">Kokattu ${shortDate(batch.startDate)} · ${formatMultiplier(batch.multiplier)}</span>`}
     </a></div>
+    <a class="batch-edit" href="/batches/${batch.id}" aria-label="Muokkaa: ${batch.title}"
+      >Muokkaa</a
+    >
     ${batch.legacyPortions === null
       ? ""
       : // #165 could not turn this batch's old portion count into a multiplier,
@@ -381,13 +386,17 @@ export async function plannedBatchScreen(
 
 function batchActions(
   batch: PlannedBatch,
-  refusal: { message: string; multiplier: string } | null,
+  refusal: BatchRefusal | null,
   recipes: RecipeSummary[],
   householdId: number,
 ): Raw {
-  // On a refusal the box holds what was typed, not what is stored; otherwise it
-  // holds the batch's own multiplier so the number on screen is the truth.
-  const typed = refusal?.multiplier ??
+  // On a refused multiplier the box holds what was typed, not what is stored;
+  // otherwise — including when it was the day that was refused — it holds the
+  // batch's own multiplier so the number on screen is the truth. The day box
+  // works the same way round: a refused move hands back the date that was
+  // asked for, because that is the thing the member has to look at and fix.
+  const typedMultiplier = refusal?.multiplier ?? null;
+  const typed = typedMultiplier ??
     formatMultiplier(batch.multiplier).slice(0, -1);
   return html`<p class="meta entry-when">
       ${batch.occurrences.length === 1 ? "1 ateria" : `${batch.occurrences.length} ateriaa`} ·
@@ -403,10 +412,19 @@ function batchActions(
       <a class="button" href="/recipes/${batch.recipeId}?multiplier=${String(batch.multiplier)}"
         >Avaa resepti</a
       >
-      <a class="button" href="/batches/${batch.id}/coverage?week=${mondayOf(batch.startDate)}"
-        >Jatkuu…</a
-      >
     </p>
+
+    <form method="post" action="/batches/${batch.id}/day" class="stacked">
+      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
+      <label for="batchDate">Päivä</label>
+      <div class="control-row">
+        <input type="date" id="batchDate" name="date" value="${refusal?.date ?? batch.startDate}" required />
+        <button type="submit">Siirrä</button>
+      </div>
+      ${batch.startDate === batch.endDate
+        ? ""
+        : html`<p class="meta">Koko erä siirtyy, myös sen jatkopäivät.</p>`}
+    </form>
 
     <form method="post" action="/batches/${batch.id}/recipe" class="stacked">
       <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
@@ -425,7 +443,7 @@ function batchActions(
       <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <p class="preference-label" id="batchMultiplierLabel">Koko erän kerroin</p>
       ${multiplierField({
-        current: refusal === null ? batch.multiplier : null,
+        current: typedMultiplier === null ? batch.multiplier : null,
         typed,
         label: "Koko erän kerroin",
         submit: "Tallenna",
@@ -439,71 +457,18 @@ function batchActions(
     <p><a href="/?week=${mondayOf(batch.startDate)}">Takaisin viikkoon</a></p>`;
 }
 
-/** `GET /batches/:id/coverage` — one selector for every continuation shape. */
-export async function coverageScreen(
-  { env, params, url }: RouteContext,
-  member: Member,
-): Promise<Response> {
-  const batch = await findPlannedBatch(
-    env.DB,
-    member.householdId,
-    Number(params["id"]),
-  );
-  if (batch === null) return batchNotFound(member);
-  const asked = url.searchParams.get("week") ?? "";
-  const monday = mondayOf(isDate(asked) ? asked : batch.startDate);
-  return page(batch.title, coverageEditor(batch, monday, null), "week", member);
-}
-
-function coverageEditor(
-  batch: PlannedBatch,
-  monday: string,
-  error: string | null,
-): Raw {
-  const days = weekFrom(monday);
-  const selected = new Set(
-    batch.occurrences.map((item) => occurrenceValue(item)),
-  );
-  const outside = batch.occurrences.filter(
-    (item) => item.date < monday || item.date > days[6]!,
-  );
-
-  return html`<h1>${batch.title} jatkuu</h1>
-    <p>Valitse ateriat, joihin tämä sama erä riittää. Väliin ei voi jäädä kokonaan tyhjää päivää.</p>
-    ${error === null ? "" : html`<p class="refused">${error}</p>`}
-
-    <nav class="weeks coverage-weeks">
-      <a href="/batches/${batch.id}/coverage?week=${addDays(monday, -7)}" rel="prev">← Edellinen</a>
-      <span>${shortDate(monday)}–${shortDate(days[6]!)}</span>
-      <a href="/batches/${batch.id}/coverage?week=${addDays(monday, 7)}" rel="next">Seuraava →</a>
-    </nav>
-
-    <form method="post" action="/batches/${batch.id}/coverage" class="coverage-form">
-      <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
-      <input type="hidden" name="week" value="${monday}" />
-      ${outside.map(
-        (item) => html`<input type="hidden" name="occurrence" value="${occurrenceValue(item)}" />`,
-      )}
-      <div class="coverage-grid">
-        <span></span><strong>Lounas</strong><strong>Päivällinen</strong>
-        ${days.map(
-          (date) => html`<span class="coverage-day">${dayName(date)} <small>${shortDate(date)}</small></span>
-            ${SLOTS.map((slot) => {
-              const value = `${date}:${slot}`;
-              return html`<label class="coverage-cell">
-                <input type="checkbox" name="occurrence" value="${value}" ${selected.has(value) ? rawChecked : ""} />
-                <span class="coverage-choice"><span class="choose">Valitse</span><span class="chosen">Valittu</span></span>
-              </label>`;
-            })}`,
-        )}
-      </div>
-      <button class="primary" type="submit">Tallenna jatkumo</button>
-    </form>
-    <p><a href="/batches/${batch.id}">Takaisin erään</a></p>`;
-}
-
-const rawChecked = raw("checked");
 const rawSelected = raw("selected");
+
+/**
+ * What the member typed on a refused batch action, so the screen can hand it
+ * back rather than replacing it with what is stored (the repo's screen-refusal
+ * rule). Each field is null when that action was not the one refused.
+ */
+interface BatchRefusal {
+  message: string;
+  multiplier: string | null;
+  date: string | null;
+}
 
 function batchNotFound(member: Member): Response {
   return page(
@@ -647,6 +612,7 @@ export async function changeBatchMultiplierForm(
       batchActions(batch, {
         message: error.message,
         multiplier: chosen,
+        date: null,
       }, recipes, member.householdId),
       "week",
       member,
@@ -683,7 +649,13 @@ export async function changeBatchRecipeForm(
   });
 }
 
-export async function coverageForm(
+/**
+ * `POST /batches/:id/day` — the same cooking, another day (#309).
+ *
+ * Landing back on the week the batch moved *to* is the point of the move, so
+ * the redirect follows the dish rather than returning to where it came from.
+ */
+export async function moveBatchDayForm(
   { env, request, params }: RouteContext,
   member: Member,
 ): Promise<Response> {
@@ -691,35 +663,28 @@ export async function coverageForm(
   const batch = await findPlannedBatch(env.DB, member.householdId, Number(params["id"]));
   const instanceKey = String(form.get("instanceKey") ?? "");
   if (batch === null || batch.instanceKey !== instanceKey) return batchNotFound(member);
-  const monday = mondayOf(
-    isDate(String(form.get("week") ?? ""))
-      ? String(form.get("week"))
-      : batch.startDate,
-  );
-  const proposed = form.getAll("occurrence").map(parseOccurrence);
+  const date = String(form.get("date") ?? "");
   try {
-    const changed = await replaceOccurrences(
-      env.DB,
-      member,
-      batch.id,
-      instanceKey,
-      proposed,
-    );
-    if (!changed) return batchNotFound(member);
+    const moved = await moveBatchTo(env.DB, member, batch.id, instanceKey, date);
+    if (!moved) return batchNotFound(member);
   } catch (error) {
     if (!(error instanceof MenuRefused)) throw error;
+    const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
     return page(
       batch.title,
-      coverageEditor({ ...batch, occurrences: proposed }, monday, error.message),
+      batchActions(
+        batch,
+        // The date that was asked for, not the one the batch still sits on.
+        { message: error.message, multiplier: null, date: isDate(date) ? date : null },
+        recipes,
+        member.householdId,
+      ),
       "week",
       member,
       400,
     );
   }
-  return new Response(null, {
-    status: 303,
-    headers: { Location: `/batches/${batch.id}/coverage?week=${monday}` },
-  });
+  return backToWeek(date);
 }
 
 export async function removeBatchForm(
@@ -733,15 +698,6 @@ export async function removeBatchForm(
   const removed = await removePlannedBatch(env.DB, member, batch.id, instanceKey);
   if (!removed) return batchNotFound(member);
   return backToWeek(batch.startDate);
-}
-
-function parseOccurrence(value: FormDataEntryValue): BatchOccurrence {
-  const text = String(value);
-  return { date: text.slice(0, 10), slot: text.slice(11) as Slot };
-}
-
-function occurrenceValue(item: BatchOccurrence): string {
-  return `${item.date}:${item.slot}`;
 }
 
 function backToWeek(date: string): Response {

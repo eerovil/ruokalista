@@ -38,6 +38,11 @@ export function addDays(date: string, days: number): string {
   return toIso(at);
 }
 
+/** How many days from `from` to `to`; negative when `to` is the earlier one. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((toUtc(to).getTime() - toUtc(from).getTime()) / 86_400_000);
+}
+
 /** The Monday of the week `date` falls in. Weeks start on Monday here. */
 export function mondayOf(date: string): string {
   const weekday = toUtc(date).getUTCDay(); // 0 is Sunday

@@ -1,5 +1,5 @@
 import { problem } from "./auth.ts";
-import { addDays, isDate, today } from "./dates.ts";
+import { addDays, daysBetween, isDate, today } from "./dates.ts";
 import type { Member } from "./members.ts";
 import { readableRecipeScope } from "./recipe-publish.ts";
 import type { RouteContext } from "./router.ts";
@@ -270,6 +270,40 @@ export async function replaceOccurrences(
     return false;
   }
   return true;
+}
+
+/**
+ * Move a whole cooking to another day (#309).
+ *
+ * The day is an ordinary property of a planned dish, so it is changed from the
+ * batch's own screen with a date rather than through a week-by-week grid. A
+ * batch that feeds several meals keeps its shape: every occurrence shifts by
+ * the same number of days, so a cooking that ran Monday–Wednesday still runs
+ * three days after it lands, whichever week that is.
+ */
+export async function moveBatchTo(
+  db: D1Database,
+  member: Member,
+  id: number,
+  instanceKey: string,
+  date: string,
+): Promise<boolean> {
+  if (!isDate(date)) throw new MenuRefused("Kelvoton päivä.");
+  const batch = await findPlannedBatch(db, member.householdId, id);
+  if (batch === null || batch.instanceKey !== instanceKey) return false;
+
+  const shift = daysBetween(batch.startDate, date);
+  if (shift === 0) return true;
+  return replaceOccurrences(
+    db,
+    member,
+    id,
+    instanceKey,
+    batch.occurrences.map((occurrence) => ({
+      date: addDays(occurrence.date, shift),
+      slot: occurrence.slot,
+    })),
+  );
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   changeMultiplier,
   changeRecipe,
   MenuRefused,
+  moveBatchTo,
   removePlannedBatch,
   replaceOccurrences,
   type PlannedBatchIdentity,
@@ -222,6 +223,48 @@ test("access lost just before a future replacement rolls the whole write back", 
       replaceOccurrences(fake.db, HOME, original.id, original.instanceKey, [
         { date: addDays(today(), 1), slot: "lunch" },
       ]),
+    MenuRefused,
+  );
+  assert.deepEqual(occurrences(fake, original.id), before);
+});
+
+test("moving a batch to another day carries its whole run with it", async () => {
+  const fake = migratedDatabase();
+  fixtures(fake);
+  const original = await ownBatch(fake, "2026-10-05");
+  await replaceOccurrences(fake.db, HOME, original.id, original.instanceKey, [
+    { date: "2026-10-05", slot: "dinner" },
+    { date: "2026-10-06", slot: "lunch" },
+  ]);
+
+  // Two weeks on, and still a two-day cooking in the same order (#309).
+  assert.equal(
+    await moveBatchTo(fake.db, HOME, original.id, original.instanceKey, "2026-10-19"),
+    true,
+  );
+  assert.deepEqual(occurrences(fake, original.id), [
+    { date: "2026-10-19", slot: "dinner" },
+    { date: "2026-10-20", slot: "lunch" },
+  ]);
+});
+
+test("a move with a stale key or another household's member changes nothing", async () => {
+  const fake = migratedDatabase();
+  fixtures(fake);
+  const original = await ownBatch(fake, "2026-10-05");
+  const before = occurrences(fake, original.id);
+
+  assert.equal(
+    await moveBatchTo(fake.db, HOME, original.id, "not-the-key", "2026-10-12"),
+    false,
+  );
+  const neighbour: Member = { ...HOME, id: 2, householdId: 2 };
+  assert.equal(
+    await moveBatchTo(fake.db, neighbour, original.id, original.instanceKey, "2026-10-12"),
+    false,
+  );
+  await assert.rejects(
+    () => moveBatchTo(fake.db, HOME, original.id, original.instanceKey, "2026-02-31"),
     MenuRefused,
   );
   assert.deepEqual(occurrences(fake, original.id), before);
