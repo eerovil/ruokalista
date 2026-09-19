@@ -386,13 +386,15 @@ export async function plannedBatchScreen(
 
 function batchActions(
   batch: PlannedBatch,
-  refusal: { message: string; multiplier: string | null } | null,
+  refusal: BatchRefusal | null,
   recipes: RecipeSummary[],
   householdId: number,
 ): Raw {
   // On a refused multiplier the box holds what was typed, not what is stored;
   // otherwise — including when it was the day that was refused — it holds the
-  // batch's own multiplier so the number on screen is the truth.
+  // batch's own multiplier so the number on screen is the truth. The day box
+  // works the same way round: a refused move hands back the date that was
+  // asked for, because that is the thing the member has to look at and fix.
   const typedMultiplier = refusal?.multiplier ?? null;
   const typed = typedMultiplier ??
     formatMultiplier(batch.multiplier).slice(0, -1);
@@ -416,7 +418,7 @@ function batchActions(
       <input type="hidden" name="instanceKey" value="${batch.instanceKey}" />
       <label for="batchDate">Päivä</label>
       <div class="control-row">
-        <input type="date" id="batchDate" name="date" value="${batch.startDate}" required />
+        <input type="date" id="batchDate" name="date" value="${refusal?.date ?? batch.startDate}" required />
         <button type="submit">Siirrä</button>
       </div>
       ${batch.startDate === batch.endDate
@@ -456,6 +458,17 @@ function batchActions(
 }
 
 const rawSelected = raw("selected");
+
+/**
+ * What the member typed on a refused batch action, so the screen can hand it
+ * back rather than replacing it with what is stored (the repo's screen-refusal
+ * rule). Each field is null when that action was not the one refused.
+ */
+interface BatchRefusal {
+  message: string;
+  multiplier: string | null;
+  date: string | null;
+}
 
 function batchNotFound(member: Member): Response {
   return page(
@@ -599,6 +612,7 @@ export async function changeBatchMultiplierForm(
       batchActions(batch, {
         message: error.message,
         multiplier: chosen,
+        date: null,
       }, recipes, member.householdId),
       "week",
       member,
@@ -658,7 +672,13 @@ export async function moveBatchDayForm(
     const recipes = await plannableRecipeSummaries(env.DB, member.householdId, "");
     return page(
       batch.title,
-      batchActions(batch, { message: error.message, multiplier: null }, recipes, member.householdId),
+      batchActions(
+        batch,
+        // The date that was asked for, not the one the batch still sits on.
+        { message: error.message, multiplier: null, date: isDate(date) ? date : null },
+        recipes,
+        member.householdId,
+      ),
       "week",
       member,
       400,
