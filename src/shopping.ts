@@ -257,6 +257,55 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
 }
 
 /**
+ * A row key exactly as `shoppingList` hands them out: `12` for an ingredient's
+ * own row, `12:r7` for one pinned to a dish's product.
+ *
+ * It exists so the screen can tell a key apart from anything else that arrives
+ * in a query string. A key the list does not have is dropped rather than
+ * refused — the same reading a stale meal id gets — and checking the shape
+ * first means nothing unrecognised is ever echoed back into a link.
+ */
+const ROW_KEY = /^\d+(?::r\d+)?$/;
+
+export function isRowKey(value: string): boolean {
+  return ROW_KEY.test(value);
+}
+
+export interface ExclusionSplit {
+  /** What the trip is actually buying. */
+  buy: ShoppingItem[];
+  /** What the member has taken off this list, in the order it was listed. */
+  excluded: ShoppingItem[];
+}
+
+/**
+ * The rows the member has left off this particular list (#313).
+ *
+ * This is deliberately not the cupboard. The cupboard says something about the
+ * kitchen and outlives the trip; this says only "not on this list", and the
+ * screen keeps it in the query string so nothing about it is stored at all.
+ * Both splits keep the row, its total and its breakdown — a row that vanished
+ * would be indistinguishable from one the list forgot.
+ *
+ * Keyed by the row rather than the ingredient, because a dish's pinned product
+ * is its own row: leaving the kanapasta's marinated fillet off this trip must
+ * not quietly take the curry's generic chicken with it.
+ */
+export function splitByExcluded(
+  items: ShoppingItem[],
+  excluded: ReadonlySet<string>,
+): ExclusionSplit {
+  const buy: ShoppingItem[] = [];
+  const left: ShoppingItem[] = [];
+
+  for (const item of items) {
+    (excluded.has(item.key) ? left : buy).push(item);
+  }
+
+  return { buy, excluded: left };
+}
+
+/**
  * Which packages this row is buying.
  *
  * The optimisation only happens where all three of its conditions hold: the

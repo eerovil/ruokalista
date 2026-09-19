@@ -700,6 +700,133 @@ test("the cupboard button comes back to the row it was pressed on", async ({
   await expect(page.locator(`#aines-${ingredientId}`)).toContainText("öljy");
 });
 
+/**
+ * Leaving a row off this one list (#313).
+ *
+ * The thing under test is the distinction, not the toggle: the cupboard says
+ * the household has something and outlives the trip, and this says only that
+ * this trip is not buying it. So every assertion below checks both halves —
+ * the row left the list, *and* the cupboard is exactly where it was.
+ */
+async function leaveOff(page: Page, ingredient: string): Promise<void> {
+  const item = row(page, ingredient);
+  await item.locator("summary").click();
+  await item.getByRole("link", { name: "Jätä pois tältä listalta" }).click();
+}
+
+/** The rows the member has taken off, whichever section they ended up in. */
+function leftOff(page: Page) {
+  return page.locator(".shopping-item.is-excluded");
+}
+
+test("a row left off this list is not sent, and the cupboard never hears it", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await leaveOff(page, "vesi");
+
+  await expect(
+    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
+  ).toBeVisible();
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(leftOff(page)).toContainText("vesi");
+  // The amount and the breakdown are still there — a row that vanished would
+  // be indistinguishable from one the list forgot.
+  await expect(leftOff(page)).toContainText("2–3 l");
+
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+
+  const calls = await externalRequests(page);
+  const added = calls.filter(
+    (call) => call.method === "POST" && call.path === "/items",
+  );
+  expect(added.length).toBeGreaterThan(0);
+  expect(
+    added.some((call) => String(call.body?.["note"] ?? "").startsWith("vesi")),
+  ).toBe(false);
+
+  // The other sentence was never said: the cupboard is untouched.
+  await page.goto("/kaappi");
+  await expect(page.locator(".pantry")).toHaveCount(0);
+});
+
+test("a row left off comes back with one tap", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await leaveOff(page, "vesi");
+
+  const back = leftOff(page);
+  await back.locator("summary").click();
+  await back.getByRole("link", { name: "Ota takaisin listalle" }).click();
+
+  await expect(leftOff(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
+  ).toBeHidden();
+  expect(await buyRowNames(page)).toContain("vesi");
+});
+
+test("the cupboard and the left-off list stay two separate answers", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await leaveOff(page, "vesi");
+
+  const oil = row(page, "öljy");
+  await oil.locator("summary").click();
+  await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+
+  // Both sections are drawn, worded apart, and neither took the other's row.
+  await expect(page.getByRole("heading", { name: "Löytyy" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
+  ).toBeVisible();
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(leftOff(page)).toContainText("vesi");
+
+  // A cupboard row is not offered the other toggle: it is already off the list
+  // for a reason that outranks this one.
+  const home = page.locator(".shopping-list > li", { hasText: "öljy" }).first();
+  await home.locator("summary").click();
+  await expect(home.getByRole("link", { name: /Jätä pois|Ota takaisin/ })).toHaveCount(
+    0,
+  );
+});
+
+test("leaving a row off survives a trip through another form", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await leaveOff(page, "vesi");
+
+  // The cupboard button leaves the page; the exclusions ride along as hidden
+  // fields, so the member comes back to the list they were reading.
+  const oil = row(page, "öljy");
+  await oil.locator("summary").click();
+  await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+
+  await expect(leftOff(page)).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.getAll("pois")).toHaveLength(1);
+});
+
+test("a junk row key on the query string leaves nothing off", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista?pois=%3Cscript%3E&pois=999");
+
+  await expect(leftOff(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
+  ).toBeHidden();
+});
+
 test("sending waits for an optimistic product save", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
@@ -1107,6 +1234,17 @@ test.describe("without JavaScript", () => {
     );
     // The panel that needs a browser to fill it stays out of the way entirely.
     await expect(page.locator(".s-current")).toBeHidden();
+  });
+
+  test("a row can still be left off this list", async ({ page }) => {
+    await planTheFortnight(page);
+    await page.goto("/ostoslista");
+    await leaveOff(page, "vesi");
+
+    // Nothing was saved and nothing needed a script: the whole answer is the
+    // URL the link went to.
+    await expect(leftOff(page)).toContainText("vesi");
+    expect(new URL(page.url()).searchParams.getAll("pois")).toHaveLength(1);
   });
 });
 
