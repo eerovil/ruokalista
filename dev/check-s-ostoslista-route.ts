@@ -236,3 +236,61 @@ test("a send that works answers the no-JS form without re-deriving the list (#30
     "the answer is drawn from the state the send already had",
   );
 });
+
+/**
+ * A chosen product from before #147's mapping had a package-size column.
+ *
+ * `shopping.ts::shoppingLinesFor` writes the size down when it meets one, in a
+ * `db.batch` that nothing predicted: this is a statement the request makes
+ * only sometimes, which is why counting the pre-send cost as a constant could
+ * not be right (#308 review).
+ */
+function withLegacyProduct(fake: FakeD1): void {
+  fake.sql.exec(`
+    INSERT INTO ingredient_product
+      (ingredient_id, ean, name, image_url, package_quantity, package_unit)
+      VALUES (1, '6415712506032', 'Kotimaista rasvaton maito 1 l', NULL, NULL, NULL);
+  `);
+}
+
+test("a legacy product's package-size backfill is on the ledger too (#308 review)", async () => {
+  // Same send twice: once without the legacy row, once with it. The second
+  // really does make an extra D1 call, and it is inside the allowance because
+  // the database is metered rather than estimated.
+  const plain = seeded();
+  const plainService = exhausted(Number.MAX_SAFE_INTEGER);
+  const before = plain.subrequests();
+  const plainAnswer = await sendShoppingListForm(context(plain, plainService.fetch), member);
+  assert.equal(plainAnswer.status, 200);
+  await plainAnswer.text();
+  const plainCost = plain.subrequests() - before;
+
+  const legacy = seeded();
+  withLegacyProduct(legacy);
+  const legacyService = exhausted(Number.MAX_SAFE_INTEGER);
+  const legacyBefore = legacy.subrequests();
+  const answer = await sendShoppingListForm(context(legacy, legacyService.fetch), member);
+  assert.equal(answer.status, 200);
+  await answer.text();
+  const legacyCost = legacy.subrequests() - legacyBefore;
+
+  assert.equal(
+    legacyCost,
+    plainCost + 1,
+    "the backfill batch is one more statement than the same send without it",
+  );
+
+  // It really did write the size down, so this is the backfill and not some
+  // other statement.
+  const row = legacy.sql
+    .prepare("SELECT package_quantity, package_unit FROM ingredient_product WHERE ean = ?")
+    .get("6415712506032") as { package_quantity: number | null; package_unit: string | null };
+  assert.equal(row.package_quantity, 1);
+  assert.equal(row.package_unit, "l");
+
+  // And the whole request still fits, session lookup included.
+  assert.ok(
+    legacyCost + legacyService.calls + 1 <= 50,
+    `${legacyCost} D1 + ${legacyService.calls} fetch + 1 session must fit in 50`,
+  );
+});

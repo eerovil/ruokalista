@@ -138,3 +138,73 @@ export function meteredFetch(budget: SubrequestBudget, fetcher: Fetcher): Fetche
     return fetcher(input, init);
   };
 }
+
+/**
+ * The same database, spending the ledger as it goes.
+ *
+ * D1 statements come out of the same per-invocation allowance as `fetch`, so
+ * leaving them to a hand-counted constant was the other half of the ledger
+ * measuring a different unit from the runtime. The constant said six; the real
+ * number moves — `shopping.ts::shoppingLinesFor` runs an extra batch when a
+ * legacy product still needs its package size written down, and
+ * `d1-query.ts::boundedInChunks` runs one statement per chunk when there are
+ * enough ids to need more than one.
+ *
+ * Counted the way the runtime counts: one per statement executed, and one for
+ * a whole `batch` however many statements it holds.
+ *
+ * A statement that would go over is refused here rather than by the runtime,
+ * so nothing is half-done. `prepare` and `bind` cost nothing — they make no
+ * request — which is why only the four executing methods are wrapped.
+ */
+const RAW = Symbol("unmetered statement");
+
+export function meteredDatabase(budget: SubrequestBudget, db: D1Database): D1Database {
+  // Rejected rather than thrown: every method this wraps is async, and a
+  // caller awaiting one should not have to guard a synchronous throw as well.
+  const spend = (run: () => unknown): unknown => {
+    if (!budget.spend(1)) return Promise.reject(new SubrequestBudgetSpent());
+    return run();
+  };
+
+  const wrap = (statement: D1PreparedStatement): D1PreparedStatement => {
+    const real = statement as unknown as Record<string, (...args: unknown[]) => unknown>;
+    return new Proxy(statement, {
+      get(_target, key: string | symbol) {
+        // A batch is one subrequest for the whole set, so the statements
+        // inside it are handed on unmetered: charging them again would count
+        // work the runtime never separates.
+        if (key === RAW) return statement;
+        if (typeof key !== "string") return (real as Record<string, unknown>)[String(key)];
+        if (key === "bind") {
+          return (...args: unknown[]) => wrap(real["bind"]!(...args) as D1PreparedStatement);
+        }
+        if (key === "first" || key === "all" || key === "run" || key === "raw") {
+          return (...args: unknown[]) => spend(() => real[key]!(...args));
+        }
+        return real[key];
+      },
+    });
+  };
+
+  const real = db as unknown as Record<string, (...args: unknown[]) => unknown>;
+  return new Proxy(db, {
+    get(_target, key: string) {
+      if (key === "prepare") {
+        return (text: string) => wrap(real["prepare"]!(text) as D1PreparedStatement);
+      }
+      if (key === "batch") {
+        return (statements: D1PreparedStatement[]) =>
+          spend(() =>
+            real["batch"]!(
+              statements.map((one) => {
+                const inner = (one as unknown as Record<symbol, D1PreparedStatement>)[RAW];
+                return inner ?? one;
+              }),
+            ),
+          );
+      }
+      return real[key];
+    },
+  }) as D1Database;
+}

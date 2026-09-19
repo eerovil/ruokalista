@@ -7,6 +7,8 @@
  * accepted the local change, not when the phone has completed a sync.
  */
 
+import { SubrequestBudgetSpent } from "./subrequests.ts";
+
 export interface SOstoslistaItem {
   id: string;
   name: string;
@@ -274,6 +276,10 @@ export class SOstoslistaClient {
         headers,
       });
     } catch (error) {
+      // The ledger refusing a call is not a transport failure and must not be
+      // dressed as one: the send reads it as "stop here, nothing was spent",
+      // and wrapping it hid that behind a message about the network (#308).
+      if (error instanceof SubrequestBudgetSpent) throw error;
       throw new SOstoslistaError(
         `S-ostoslista request failed: ${error instanceof Error ? error.message : String(error)}`,
         null,

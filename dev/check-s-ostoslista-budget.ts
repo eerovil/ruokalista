@@ -43,24 +43,17 @@ const BASE = "https://private.example/api/";
 const TOKEN = "test-token";
 
 /**
- * The ceiling this has to stay under, and the headroom left for the request's
- * own work before the send begins.
+ * What the rest of the request costs, so these checks measure a whole
+ * invocation rather than the send in isolation.
  *
- * `POST /ostoslista/laheta` has already spent six D1 statements before
- * `sendToSOstoslista` is called at all: the member behind the session cookie
- * (`members.ts`), the fortnight's batches (`menu.ts::menuBetween`), the
- * ingredient lines and then the two product queries that follow them
- * (`shopping.ts::shoppingLinesFor`), and the cupboard
- * (`pantry.ts::pantryIngredientIds`). They come out of the same budget, so
- * this check pays for them rather than pretending the send starts from
- * nothing.
- *
- * *Around*, not merely before: a form post with no JavaScript is answered with
- * the whole screen re-rendered, and that used to re-derive the same list for
- * five more statements — on the ceiling path, after the budget had gone. It is
- * six rather than eleven because the re-render now draws from the state the
- * send already had. `dev/check-s-ostoslista-route.ts` is where that is proved
- * over the real route, end to end.
+ * Six D1 statements on the usual path: the member behind the session cookie,
+ * the fortnight's batches, the ingredient lines and the two product queries
+ * after them, and the cupboard. The route itself no longer counts them — it
+ * meters the database instead, because the real number moves (a legacy
+ * product's package-size backfill adds one, and `boundedInChunks` adds one per
+ * chunk). This constant is the usual case, stated here so the arithmetic below
+ * is a whole-request arithmetic; `dev/check-s-ostoslista-route.ts` is where the
+ * moving part is proved.
  */
 const SCREEN_QUERIES_AROUND_THE_SEND = 6;
 
@@ -670,4 +663,82 @@ test("the next press, with the list read working, finishes it (#308 review)", as
   const keys = rows.map((row) => row.ean ?? row.name);
   assert.equal(new Set(keys).size, keys.length, "no row on the list twice");
   assert.equal(rows.every((row) => row.collected === false), true);
+});
+
+/**
+ * A service that creates the row it is asked for but will not say whether it
+ * is ticked.
+ *
+ * `dev/check-s-ostoslista.ts` covers this as a supported answer, and it is the
+ * case that makes a create two subrequests even when the list read was
+ * trustworthy and said the row was absent: the POST lands, the answer states
+ * nothing, and #236's unconditional clear goes out after it.
+ */
+function silentAboutCollected(): { fetch: typeof fetch; calls: string[] } {
+  const calls: string[] = [];
+  let next = 1;
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    const path = new URL(String(input)).pathname.slice(new URL(BASE).pathname.length);
+    calls.push(`${method} ${path}`);
+    if (method === "GET" && path === "items") return Response.json({ items: [] });
+    if (method === "POST" && path === "items") {
+      // Created, but saying nothing about `collected` or `quantity`.
+      return Response.json({ id: `item-${next++}`, name: "x", ean: null }, { status: 201 });
+    }
+    if (method === "PATCH") {
+      return Response.json({ id: "item-1", name: "x", ean: null, collected: false });
+    }
+    return Response.json({ error: "unexpected" }, { status: 400 });
+  }) as typeof fetch;
+  return { fetch: fetcher, calls };
+}
+
+/** One text row, and a ledger sized so the send has `slots` ordinary calls. */
+async function sendWithSlots(slots: number): Promise<{
+  outcome: Awaited<ReturnType<typeof sendToSOstoslista>>;
+  calls: string[];
+}> {
+  const fake = database();
+  // One for the sent-notes read, one for the list read, one held back for the
+  // receipt batch, and `slots` left for the row itself.
+  const ledger = new SubrequestBudget(slots + 3, 1);
+  const { fetch: fetcher, calls } = silentAboutCollected();
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    metered(fetcher, ledger),
+    [{ key: "1", name: "maito", total: "1 l", chosen: [] }],
+    { budget: ledger, wait: async () => {} },
+  );
+  return { outcome, calls };
+}
+
+test("a create is not begun on one slot when it may need two (#308 review)", async () => {
+  // The row the GET says is absent still costs two: this service does not say
+  // whether what it created is ticked, so #236's clear follows the POST. With
+  // one slot the row must not start at all — starting it would put the row on
+  // the list and then be refused the call that makes it buyable, which is the
+  // half-done state #236 exists to prevent.
+  const { outcome, calls } = await sendWithSlots(1);
+
+  assert.equal(calls.filter((call) => call === "POST items").length, 0, "never begun");
+  assert.deepEqual(calls, ["GET items"]);
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 0);
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+});
+
+test("the same row goes when both of its calls fit (#308 review)", async () => {
+  const { outcome, calls } = await sendWithSlots(2);
+
+  assert.equal(outcome.status, "sent");
+  assert.equal(outcome.sent, 1);
+  assert.equal(calls.filter((call) => call === "POST items").length, 1);
+  assert.equal(
+    calls.filter((call) => call.startsWith("PATCH")).length,
+    1,
+    "the pair this service really needs",
+  );
 });

@@ -37,7 +37,11 @@ import {
   sendToSOstoslista,
   type SOstoslistaRowFailure,
 } from "./s-ostoslista-sync.ts";
-import { SUBREQUEST_CEILING, SubrequestBudget } from "./subrequests.ts";
+import {
+  SUBREQUEST_CEILING,
+  SubrequestBudget,
+  meteredDatabase,
+} from "./subrequests.ts";
 import {
   SOstoslistaError,
   type SOstoslistaKey,
@@ -200,7 +204,7 @@ export async function sendShoppingListForm(
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
   const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    SUBREQUEST_CEILING - SESSION_LOOKUP,
     COMPLETION_TAIL,
   );
   const client = externalClient(ctx.env, member, budget);
@@ -208,7 +212,10 @@ export async function sendShoppingListForm(
 
   const form = await ctx.request.formData();
   const selectedUrl = selectionUrl(form, ctx.url);
-  const stateCtx = { ...ctx, url: selectedUrl };
+  // Everything this handler reads or writes goes through the metered database,
+  // so a statement nobody counted still spends the allowance it really uses.
+  const metered = { ...ctx.env, DB: meteredDatabase(budget, ctx.env.DB) };
+  const stateCtx = { ...ctx, env: metered, url: selectedUrl };
   const asJson = wantsJson(form);
   // Worked out once and then handed to every screen below. The send does not
   // change what this screen shows, and after a send that ran out of
@@ -223,7 +230,7 @@ export async function sendShoppingListForm(
   }
 
   const outcome = await sendToSOstoslista(
-    ctx.env.DB,
+    metered.DB,
     member.householdId,
     client,
     buy,
@@ -272,25 +279,21 @@ export async function sendShoppingListForm(
 const FAILURES_IN_MESSAGE = 3;
 
 /**
- * What this request has already spent by the time the send begins.
+ * The one call this request makes that the ledger cannot see.
  *
- * Six D1 statements: the member behind the session cookie (`members.ts`), the
- * fortnight's batches (`menu.ts::menuBetween`), the ingredient lines and the
- * two product queries that follow them (`shopping.ts::shoppingLinesFor`), and
- * the cupboard (`pantry.ts::pantryIngredientIds`). They come out of the same
- * per-invocation allowance as every S-ostoslista call, so the send is handed
- * what is left rather than the whole ceiling (#308).
+ * `requireMember` looks up the session before the router reaches this handler,
+ * so it is already spent by the time there is a budget to spend it from. It is
+ * exactly one statement and it does not vary, which is what makes it safe to
+ * state as a number; everything after it is metered rather than counted
+ * (#308).
  *
- * Nothing after the send is counted here because nothing after it costs
- * anything: the answer is drawn from the state `shoppingState` already
- * returned, which is what `shoppingScreen`'s `known` parameter is for.
- *
- * Hand-counted, and therefore the one number here that can drift. If
- * `shoppingState` grows a query, this has to grow with it —
- * `dev/check-s-ostoslista-route.ts` asserts the end-to-end total, which is
- * where that would show up.
+ * The six-statement estimate this replaced was not safe in that way.
+ * `shopping.ts::shoppingLinesFor` runs an extra batch when a legacy product
+ * still needs its package size written down, and `d1-query.ts::boundedInChunks`
+ * runs one statement per chunk — so the real number moved and the constant did
+ * not.
  */
-const SPENT_REACHING_THE_SEND = 6;
+const SESSION_LOOKUP = 1;
 
 /**
  * Held back for the send's mandatory finish: one `db.batch` of note receipts.
@@ -501,7 +504,7 @@ export async function removeCurrentItemForm(
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
   const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    SUBREQUEST_CEILING - SESSION_LOOKUP,
     COMPLETION_TAIL,
   );
   const client = externalClient(ctx.env, member, budget);
@@ -591,7 +594,7 @@ export async function saveProductForm(
   // rather than only to the send is what keeps the count in the same unit the
   // runtime counts in: `add` is sometimes two requests (#308).
   const budget = new SubrequestBudget(
-    SUBREQUEST_CEILING - SPENT_REACHING_THE_SEND,
+    SUBREQUEST_CEILING - SESSION_LOOKUP,
     COMPLETION_TAIL,
   );
   const client = externalClient(ctx.env, member, budget);
