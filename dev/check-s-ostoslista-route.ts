@@ -210,10 +210,10 @@ test("nothing is asked of D1 once the budget has gone (#308)", async () => {
 
   assert.notEqual(spentWhenTheCeilingHit, null);
   const after = fake.subrequests();
-  assert.ok(
-    after - spentWhenTheCeilingHit! <= 1,
-    "only the note receipt batch may follow the ceiling, not a re-render: " +
-      `${after - spentWhenTheCeilingHit!} statements went out after it`,
+  assert.equal(
+    after - spentWhenTheCeilingHit!,
+    0,
+    "the ceiling is terminal: no re-render, and no receipt batch either",
   );
 });
 

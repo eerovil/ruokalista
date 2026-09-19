@@ -255,8 +255,11 @@ test("a failed local receipt remains retryable after the external replacement", 
   );
   assert.equal(first.status, "partial");
   if (first.status === "partial") {
-    assert.equal(first.sent, 0);
+    // The row reached the service; it is this app's note of it that was lost.
+    // `sent` says how much got there, so it counts (#308 review).
+    assert.equal(first.sent, 1);
     assert.equal(first.failures.length, 1);
+    assert.equal(first.failures[0]?.kind, "local");
     assert.match(String(first.failures[0]?.message), /receipt write failed/);
   }
   assert.equal((await sentNotes(fake.db, 1)).get("1"), "maito — 1 l");
@@ -717,12 +720,19 @@ test("the subrequest ceiling is never retried or waited on (#308 review)", async
   ], "one attempt at the row that hit it, and nothing after it");
 });
 
-test("a ceiling partway through keeps what already went (#308 review)", async () => {
+test("a ceiling is terminal, and keeps the progress it really made (#308 review)", async () => {
+  // Two text rows go through, each queueing a receipt, and the third hits the
+  // ceiling. What used to happen next: the receipt batch ran anyway into a
+  // budget that was gone, failed, and its failure was charged back against
+  // `sent` — so a send that had put two rows on the list could tell the member
+  // "Mitään ei lähetetty".
   const fake = database();
   const client = new FakeClient();
   const timing = recordingWait();
   const ceiling = new SOstoslistaError(
     "S-ostoslista request failed: Too many subrequests by single Worker invocation.",
+    null,
+    "transport",
   );
 
   client.fail = (call) =>
@@ -730,26 +740,60 @@ test("a ceiling partway through keeps what already went (#308 review)", async ()
       ? ceiling
       : null;
 
-  const outcome = await sendToSOstoslista(
-    fake.db,
-    1,
-    client,
-    [
-      item("1", "maito", "1 l"),
-      item("2", "suola", "1 tl"),
-      item("3", "sokeri", "2 dl"),
-    ],
-    { wait: timing.wait },
-  );
+  const rows = [
+    item("1", "maito", "1 l"),
+    item("2", "suola", "1 tl"),
+    item("3", "sokeri", "2 dl"),
+  ];
+
+  const spentBefore = fake.subrequests();
+  const outcome = await sendToSOstoslista(fake.db, 1, client, rows, {
+    wait: timing.wait,
+  });
 
   assert.equal(outcome.status, "partial");
   assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  // The number the member is shown is the number of rows that got there.
   assert.equal(outcome.sent, 2);
+  assert.equal(outcome.total, 3);
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
   assert.deepEqual(timing.waits, []);
-  // The two rows that did go are written down, so the next press skips them
-  // rather than spending the same budget on them again.
-  assert.deepEqual([...(await sentNotes(fake.db, 1)).keys()].sort(), ["1", "2"]);
+
+  // Nothing at all after the ceiling: no receipt batch, no push.
+  assert.equal(
+    fake.subrequests() - spentBefore,
+    1,
+    "only the read of this household's sent notes, made before the ceiling",
+  );
   assert.equal(client.calls.some((call) => call.kind === "sync"), false);
+  assert.equal(
+    client.calls.at(-1)?.kind,
+    "add",
+    "the send stops on the call that ran out",
+  );
+
+  // The receipts for the two rows that went are not written — deliberately.
+  assert.equal((await sentNotes(fake.db, 1)).size, 0);
+
+  // And that is safe, because the next press re-earns them. The service is now
+  // holding the two rows, so they cost no external call at all, and this time
+  // the batch runs.
+  client.fail = null;
+  client.held = [
+    { id: "a", name: "maito — 1 l", ean: null, collected: false, collectedStated: true, quantity: null },
+    { id: "b", name: "suola — 1 tl", ean: null, collected: false, collectedStated: true, quantity: null },
+  ];
+  client.calls.length = 0;
+
+  const second = await sendToSOstoslista(fake.db, 1, client, rows);
+  assert.equal(second.status, "sent");
+  assert.equal(second.sent, 3);
+  assert.deepEqual(
+    client.calls.filter((call) => call.kind === "add"),
+    [{ kind: "add", key: { note: "sokeri — 2 dl" }, quantity: null }],
+    "only the row the first press never reached",
+  );
+  assert.deepEqual([...(await sentNotes(fake.db, 1)).keys()].sort(), ["1", "2", "3"]);
 });
 
 test("a refused old-note delete does not blame the product (#308 review)", async () => {
@@ -922,4 +966,70 @@ test("this app's own validation is local, and is never retried (#308 review)", a
     outcome.status === "partial" ? outcome.failures[0]?.kind : null,
     "local",
   );
+});
+
+test("a ceiling on the opening list read sends no row calls (#308 review)", async () => {
+  // The list read used to be allowed to fail for any reason at all, on the
+  // grounds that losing it only costs the shortcut. Running out of subrequests
+  // is not that: there is no shortcut *and* no calls left, so every row would
+  // spend one proving it.
+  const fake = database();
+  const client = new FakeClient();
+  const timing = recordingWait();
+  client.fail = (call) =>
+    call.kind === "list"
+      ? new SOstoslistaError(
+          "S-ostoslista request failed: Too many subrequests by single Worker invocation.",
+          null,
+          "transport",
+        )
+      : null;
+
+  const spentBefore = fake.subrequests();
+  const outcome = await sendToSOstoslista(
+    fake.db,
+    1,
+    client,
+    [item("1", "maito", "1 l"), item("2", "suola", "1 tl")],
+    { wait: timing.wait },
+  );
+
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 0);
+  assert.equal(outcome.total, 2);
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+  assert.deepEqual(client.calls, [{ kind: "list" }]);
+  assert.equal(fake.subrequests() - spentBefore, 1, "the sent-notes read, and nothing after");
+  assert.deepEqual(timing.waits, []);
+});
+
+test("a ceiling on the receipt batch itself is the same answer (#308 review)", async () => {
+  // Every row went out, and the call that ran out is the batch. The rows are
+  // on the list, so `sent` says so, and the receipts wait for the next press
+  // rather than being reported as rows that failed.
+  const fake = database();
+  const client = new FakeClient();
+  const ceiling = new Error(
+    "D1_ERROR: Too many subrequests by single Worker invocation.",
+  );
+  const realBatch = fake.db.batch.bind(fake.db);
+  let batches = 0;
+  fake.db.batch = (async (statements: D1PreparedStatement[]) => {
+    batches += 1;
+    throw ceiling;
+    return realBatch(statements);
+  }) as D1Database["batch"];
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "maito", "1 l"),
+    item("2", "suola", "1 tl"),
+  ]);
+
+  assert.equal(batches, 1);
+  assert.equal(outcome.status, "partial");
+  assert.equal(outcome.status === "partial" && outcome.ceiling, true);
+  assert.equal(outcome.sent, 2, "both rows reached the service");
+  assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
+  assert.equal(client.calls.some((call) => call.kind === "sync"), false);
 });

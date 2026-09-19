@@ -31,12 +31,14 @@ export type SOstoslistaSendItem = Pick<
 >;
 
 /**
- * Why one row did not make it — the three answers that lead a member somewhere
+ * Why one row did not make it — the four answers that lead a member somewhere
  * different.
  *
  * - `refused`: the service looked at this row and said no, and will say no
  *   again. Only this one means the row itself is the problem.
  * - `unreachable`: the service could not answer this time. Press it again.
+ * - `malformed`: the service answered, and the answer is not one this client
+ *   can act on. Not a connection problem, and not the row's fault either.
  * - `local`: this app's own storage failed, not the service. Also press it
  *   again — and note that this is not the same as `refused` even though
  *   neither is retried inside one send. The per-row retry only repeats calls
@@ -163,8 +165,13 @@ const RETRY_BUDGET = 8;
  */
 const SUBREQUEST_CEILING = /too many subrequests/i;
 
+/**
+ * Deliberately not narrowed to `SOstoslistaError`. The budget is shared with
+ * D1, so the same failure can arrive from a statement as easily as from a
+ * fetch, and it is the message that identifies it either way.
+ */
 function isCeiling(error: unknown): boolean {
-  return error instanceof SOstoslistaError && SUBREQUEST_CEILING.test(error.message);
+  return error instanceof Error && SUBREQUEST_CEILING.test(error.message);
 }
 
 export interface SOstoslistaSendOptions {
@@ -217,7 +224,20 @@ export async function sendToSOstoslista(
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
   const outstanding = await sentNotes(db, householdId);
-  const held = await heldByService(client);
+  const opening = await heldByService(client);
+  // Out of budget before the first row. Carrying on would mean a row call per
+  // item that cannot land, so there is nothing to do but say so; nothing has
+  // been sent and nothing has been written down.
+  if (opening.ceiling) {
+    return {
+      status: "partial",
+      sent: 0,
+      total: items.length,
+      failures: [],
+      ceiling: true,
+    };
+  }
+  const held = opening.held;
   const bookkeeping: Receipt[] = [];
   const failures: SOstoslistaRowFailure[] = [];
   let retriesLeft = RETRY_BUDGET;
@@ -274,13 +294,29 @@ export async function sendToSOstoslista(
     failures.push(describeFailure(item, error));
   }
 
-  // A lost receipt is this app losing track of a row it did put on the list,
-  // so it is a `local` failure on each row that earned one — never a refusal,
-  // and never a reason to tell a member to go and look at a product.
-  const lost = await flush(db, bookkeeping);
-  if (lost !== null) {
-    for (const { item } of bookkeeping) failures.push(describeFailure(item, lost));
-    sent -= bookkeeping.length;
+  // Nothing follows the ceiling. Not the receipts, not the push — the budget
+  // is gone, so every one of those is a call that cannot succeed, and the
+  // batch failing was being charged back against `sent`, which is how a send
+  // that really did put rows on the list could report "Mitään ei lähetetty".
+  //
+  // The receipts simply stay unwritten. That is safe for the reason the whole
+  // send is safe to repeat: the next press reads the list first, finds those
+  // rows already there, re-earns the same receipts for no external call, and
+  // writes them then.
+  if (!ceiling) {
+    const lost = await flush(db, bookkeeping);
+    if (lost !== null) {
+      // The batch itself can be the call that runs out. Same answer.
+      if (isCeiling(lost)) {
+        ceiling = true;
+      } else {
+        // A lost receipt is this app losing track of a row it did put on the
+        // list — never a refusal, and never a reason to send a member looking
+        // at a product. `sent` is not reduced for it either: the row reached
+        // the service, which is what that number says.
+        for (const { item } of bookkeeping) failures.push(describeFailure(item, lost));
+      }
+    }
   }
 
   if (failures.length > 0 || ceiling) {
@@ -312,11 +348,15 @@ export async function sendToSOstoslista(
  */
 async function heldByService(
   client: SOstoslistaSyncClient,
-): Promise<readonly SOstoslistaItem[]> {
+): Promise<{ held: readonly SOstoslistaItem[]; ceiling: boolean }> {
   try {
-    return await client.list();
-  } catch {
-    return [];
+    return { held: await client.list(), ceiling: false };
+  } catch (error) {
+    // Running out of subrequests is the one failure this cannot shrug off. It
+    // does not mean "no shortcut this time", it means there are no calls left
+    // — and every row would then spend one proving it.
+    if (isCeiling(error)) return { held: [], ceiling: true };
+    return { held: [], ceiling: false };
   }
 }
 
