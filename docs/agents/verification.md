@@ -47,6 +47,7 @@ Which spec covers what, roughly:
 | the S-ostoslista product picker, on either screen | `shopping.spec.ts`, `recipe-products.spec.ts` |
 | the shopping row's own layout on a narrow phone | `shopping-row-213.spec.ts` |
 | the recipe screen, the list, the picker | `recipes.spec.ts` |
+| browsing recipes: the filters, the order, the cooking history, the instant search | `recipe-browser.spec.ts`, `dev/check-recipe-browser.ts` |
 | the editor, the line form | `editor.spec.ts` |
 | removing an ingredient a step still mentions | `editor.spec.ts`, `dev/check-line-removal.ts` |
 | ingredient mentions in a step, tap to reveal an amount | `ingredient-mentions.spec.ts`, `dev/check-ingredient-refs.ts` |

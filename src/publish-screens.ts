@@ -1,4 +1,4 @@
-import { loadVocabulary } from "./categories.ts";
+import { loadVocabulary, type Vocabulary } from "./categories.ts";
 import { html, page } from "./html.ts";
 import type { Member } from "./members.ts";
 import { externalClient } from "./product-picker.ts";
@@ -16,8 +16,8 @@ import {
   type RecipeVisibility,
   type SharingDraft,
 } from "./recipe-publish.ts";
+import { browseState, type BrowseState } from "./recipe-browser.ts";
 import {
-  askedCategory,
   findReadableRecipe,
   ownRecipeList,
   renderRecipe,
@@ -42,8 +42,14 @@ export async function publishForm(
   member: Member,
 ): Promise<Response> {
   const form = await request.formData();
+  const vocabulary = await loadVocabulary(env.DB);
   const action = String(form.get("action") ?? "");
-  const query = String(form.get("q") ?? "");
+  // The list comes back to the same search, category and order it was left in,
+  // so a bulk publish does not silently move the reader somewhere else (#196).
+  const state = browseState(
+    vocabulary,
+    (name) => String(form.get(name) ?? "") || null,
+  );
   const back = returnPath(form.get("palaa"));
   const ids = form.getAll("recipeId").map((value) => Number(String(value)));
 
@@ -54,19 +60,19 @@ export async function publishForm(
       recipientIds: form.getAll("recipientId").map((value) => Number(String(value))),
     };
     if (!isVisibility(visibility) || ids.length !== 1) {
-      return refuse(env, member, back, query, "Tuntematon jakotapa.", draft);
+      return refuse(env, vocabulary, member, back, state, "Tuntematon jakotapa.", draft);
     }
     try {
       await setRecipeSharing(env.DB, member, ids[0]!, draft);
     } catch (error) {
       if (!(error instanceof PublishRefused)) throw error;
-      return refuse(env, member, back, query, error.message, draft);
+      return refuse(env, vocabulary, member, back, state, error.message, draft);
     }
     return seeOther(back ?? `/recipes/${ids[0]}`);
   }
 
   if (action !== "publish" && action !== "unpublish") {
-    return refuse(env, member, back, query, "Tuntematon toiminto.");
+    return refuse(env, vocabulary, member, back, state, "Tuntematon toiminto.");
   }
 
   let outcome: PublishOutcome;
@@ -77,29 +83,25 @@ export async function publishForm(
         : await unpublishRecipes(env.DB, member, ids);
   } catch (error) {
     if (!(error instanceof PublishRefused)) throw error;
-    return refuse(env, member, back, query, error.message);
+    return refuse(env, vocabulary, member, back, state, error.message);
   }
 
   // A partial result is still a refusal: something the member asked for did not
   // happen, and they have to be told which and why.
   if (outcome.blocked.length > 0) {
-    return refuse(env, member, back, query, blockedMessage(outcome.blocked));
+    return refuse(env, vocabulary, member, back, state, blockedMessage(outcome.blocked));
   }
 
   if (back !== null) return seeOther(back);
 
-  const vocabulary = await loadVocabulary(env.DB);
   return page(
     "Reseptit",
     await ownRecipeList(
       env.DB,
       vocabulary,
       member,
-      query,
+      state,
       doneNotice(action, outcome),
-      // The list came back to the same category it was filtered to, so a bulk
-      // publish does not silently move the reader somewhere else (#196).
-      askedCategory(vocabulary, String(form.get("kategoria") ?? "") || null),
     ),
     "recipes",
     member,
@@ -205,9 +207,10 @@ function doneNotice(
  */
 async function refuse(
   env: RouteContext["env"],
+  vocabulary: Vocabulary,
   member: Member,
   back: string | null,
-  query: string,
+  state: BrowseState,
   message: string,
   sharingDraft?: SharingDraft,
 ): Promise<Response> {
@@ -233,13 +236,10 @@ async function refuse(
 
   return page(
     "Reseptit",
-    await ownRecipeList(
-      env.DB,
-      await loadVocabulary(env.DB),
-      member,
-      query,
-      { message, refused: true },
-    ),
+    await ownRecipeList(env.DB, vocabulary, member, state, {
+      message,
+      refused: true,
+    }),
     "recipes",
     member,
     400,

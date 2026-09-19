@@ -128,11 +128,15 @@ export function categoryTags(
  *
  * Links rather than a form: the filter is a place, so it survives the back
  * button, a bookmark and a reload, and it needs no script to apply itself.
+ *
+ * Where each chip leads is the caller's to say (#307). The chips sit on three
+ * screens now, and the picker's links have to keep a day and a meal as well as
+ * the search and the order — so `recipe-browser.ts` builds one address for one
+ * browse state, and this draws it.
  */
 export function categoryFilter(
   vocabulary: Vocabulary,
-  path: string,
-  query: string,
+  href: (slug: string | null) => string,
   current: string | null,
   available: readonly string[],
 ): Raw {
@@ -143,14 +147,6 @@ export function categoryFilter(
     ...(current === null ? [] : [current]),
   ]);
   if (shown.length === 0) return raw("");
-
-  const href = (slug: string | null) => {
-    const params = new URLSearchParams();
-    if (query.trim() !== "") params.set("q", query);
-    if (slug !== null) params.set("kategoria", slug);
-    const search = params.toString();
-    return search === "" ? path : `${path}?${search}`;
-  };
 
   return html`<nav class="category-filter" aria-label="Rajaa kategorialla">
     <a
@@ -175,7 +171,10 @@ export function categoryFilter(
  * shell's stylesheet — `src/html.ts` is the file every screen shares.
  */
 export const CATEGORY_STYLE = html`<style>
-  .category-filter {
+  /* The order chips (#307) are chips too, so the chip itself is styled by its
+     own class and the row by either nav's. */
+  .category-filter,
+  .browse-sort {
     display: flex;
     gap: 0.4rem;
     margin: 0 0 1rem;
@@ -183,7 +182,7 @@ export const CATEGORY_STYLE = html`<style>
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .category-filter .chip {
+  .chip {
     flex: 0 0 auto;
     padding: 0.35rem 0.7rem;
     font-size: 0.85rem;
@@ -194,7 +193,7 @@ export const CATEGORY_STYLE = html`<style>
     border: 1px solid var(--edge);
     border-radius: 999px;
   }
-  .category-filter .chip.is-on {
+  .chip.is-on {
     color: var(--accent);
     border-color: var(--accent);
     font-weight: 600;

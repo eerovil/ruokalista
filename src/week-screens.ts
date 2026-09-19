@@ -25,6 +25,9 @@ import {
   type PlannedBatch,
   type Slot,
 } from "./menu.ts";
+import { loadVocabulary } from "./categories.ts";
+import { cookHistory } from "./cook-history.ts";
+import { browseStateFrom, recipeBrowser } from "./recipe-browser.ts";
 import {
   plannableRecipeSummaries,
   recipeImage,
@@ -515,13 +518,20 @@ function batchNotFound(member: Member): Response {
   );
 }
 
+/**
+ * `GET /picker` — choosing what to cook, which is browsing recipes (#307).
+ *
+ * The same component the recipe screen lists through, so the search, the
+ * category chips and the order are the ones the household already knows; what
+ * this screen adds is the multiplier and the button that plans the batch. The
+ * day and the meal ride along in `carried`, so no chip loses them.
+ */
 export async function pickerScreen(
   { env, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const date = url.searchParams.get("date") ?? "";
   const slot = url.searchParams.get("slot") ?? "";
-  const query = url.searchParams.get("q") ?? "";
   if (!isDate(date) || !isSlot(slot)) {
     return page(
       "Ei löytynyt",
@@ -531,7 +541,12 @@ export async function pickerScreen(
       404,
     );
   }
-  const recipes = await plannableRecipeSummaries(env.DB, member.householdId, query);
+  const vocabulary = await loadVocabulary(env.DB);
+  const state = browseStateFrom(vocabulary, url.searchParams);
+  const [recipes, history] = await Promise.all([
+    plannableRecipeSummaries(env.DB, member.householdId, state.query),
+    cookHistory(env.DB, member.householdId),
+  ]);
   // How much of a recipe this household cooks, which is not what the recipe says
   // and is not what its publisher cooks it at either (#143).
   const preferred = await preferredMultipliers(
@@ -542,30 +557,35 @@ export async function pickerScreen(
   return page(
     "Valitse resepti",
     html`<h1>${SLOT_NAMES[slot]} ${shortDate(date)}</h1>
-      <form method="get" action="/picker">
-        <input type="hidden" name="date" value="${date}" />
-        <input type="hidden" name="slot" value="${slot}" />
-        <input type="search" name="q" value="${query}" placeholder="Hae nimellä" aria-label="Hae nimellä" />
-        <button type="submit">Hae</button>
-      </form>
-      ${recipes.length === 0
-        ? html`<div class="nothing"><p class="empty">${query.trim() === "" ? "Reseptejä ei ole vielä yhtään." : `Haku "${query.trim()}" ei löytänyt yhtään reseptiä.`}</p></div>`
-        : html`<ul class="pick">${recipes.map(
-            (recipe) => html`<li><form method="post" action="/batches" class="inline">
-              <input type="hidden" name="date" value="${date}" />
-              <input type="hidden" name="slot" value="${slot}" />
-              <input type="hidden" name="recipeId" value="${recipe.id}" />
-              ${recipeImage(recipe, "thumb")}
-              <span class="pick-title">${recipe.title}${recipe.householdId === member.householdId ? "" : html` <span class="meta">${recipe.householdName}</span>`}</span>
-              ${multiplierPicker(preferred.get(recipe.id) ?? DEFAULT_MULTIPLIER)}
-              <button type="submit">Lisää</button>
-            </form></li>`,
-          )}</ul>
-          <datalist id="multiplierChoices">
-            ${MULTIPLIER_CHOICES.map(
-              (choice) => html`<option value="${formatMultiplier(choice)}"></option>`,
-            )}
-          </datalist>`}
+      ${recipeBrowser(
+        { path: "/picker", carried: { date, slot } },
+        {
+          state,
+          vocabulary,
+          matching: recipes,
+          history,
+          viewerHouseholdId: member.householdId,
+          emptyAll: "Reseptejä ei ole vielä yhtään.",
+          listClass: "pick",
+          row: (recipe, card) => html`<form
+            method="post"
+            action="/batches"
+            class="inline"
+          >
+            <input type="hidden" name="date" value="${date}" />
+            <input type="hidden" name="slot" value="${slot}" />
+            <input type="hidden" name="recipeId" value="${recipe.id}" />
+            <span class="pick-title">${card}</span>
+            ${multiplierPicker(preferred.get(recipe.id) ?? DEFAULT_MULTIPLIER)}
+            <button type="submit">Lisää</button>
+          </form>`,
+        },
+      )}
+      <datalist id="multiplierChoices">
+        ${MULTIPLIER_CHOICES.map(
+          (choice) => html`<option value="${formatMultiplier(choice)}"></option>`,
+        )}
+      </datalist>
       <p><a href="/?week=${mondayOf(date)}">Takaisin viikkoon</a></p>`,
     "week",
     member,

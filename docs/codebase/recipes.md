@@ -302,6 +302,66 @@ number and each option's own ingredient. It is optional on the wire so an
 AgentDeck bundle written before this still imports. See
 [intake](intake.md).
 
+## Browsing recipes, once (issue #307)
+
+`/recipes`, `/recipes/julkiset` and `/picker` are one browse surface, and that
+surface is `src/recipe-browser.ts::recipeBrowser`. Before #307 the recipe list
+had the search and the category chips while the week picker — the screen a
+member is standing on when they actually want to find a dish — had a search box
+and nothing else, and the two were drifting apart one feature at a time.
+
+- **A screen supplies what a row *does*, not how it looks.** `row(recipe, card)`
+  gets the shared card (thumbnail, name, one meta line) and wraps it: a link and
+  a bulk tick on the recipe list, a multiplier and **Lisää** in the picker. The
+  `<li>` itself is the browser's, so every list can be filtered alike.
+- **The browse state is a place.** `q`, `kategoria` and `jarjestys` are query
+  parameters, and `browseHref` is the one function that builds an address out of
+  them — which is why `categoryFilter` now takes a link builder instead of a
+  path. A screen with something it cannot lose passes it as `carried`; the
+  picker's day and meal ride through every chip that way.
+- **One meta line, not three.** Cooking first, then the household on a shared
+  recipe, then categories. The created date and the member who imported it came
+  off the row: the picker row already carries a thumbnail, a multiplier and a
+  button, and this list is read on a phone.
+
+### What the household has cooked
+
+`src/cook-history.ts` answers "how many times, and when last" without a new
+table. **A planned batch is one cooking** — that is already the model
+(`src/menu.ts`) — so a batch counts once, on the day of its first occurrence,
+and only once that day has come: tomorrow's plan is a plan. It is the reader's
+own household that is counted, never the publisher's, so a shared recipe says
+what *this* kitchen has done with it.
+
+Two consequences worth knowing before trusting the number: deleting a batch is a
+real delete, so a tidied-up week reads as a week nobody cooked; and a recipe with
+no history at all is an ordinary state, not missing data.
+
+That is also why there are three orders rather than one. **Uusimmat** is the
+order the query already returns. **Viimeksi kokatut** puts the most recent
+cooking first and a never-cooked dish last, because there is nothing recent about
+it. **Kauan kokkaamatta** is the one somebody planning a week actually wants, and
+it puts never-cooked first, because nothing has been longer than never. The sort
+is stable, so inside either group the list keeps the order it arrived in.
+
+### The search is the browser's, and the server's
+
+The list is not paginated: every recipe the household may see is rendered. So
+`src/client/recipe-browser.ts` filters the rendered rows on each keystroke — no
+debounce, no request — and `?q=` stays as what a browser without script submits.
+
+The trap that shape invites is filtering a subset: a page that arrived with `?q=`
+does not *hold* the rows the server dropped. So the client replaces such a page
+once, with the same page minus `q`, moving the text into `#haku=`. After that the
+whole list is in the DOM and nothing is fetched again. The fragment is also how
+the typed text survives a chip, and how it rides back through a bulk-action post
+— the form's `action` and each button's `formaction` carry the hash, because the
+hidden `q` those forms carry is the server's state and is empty whenever script
+is running.
+
+A row the search hides is unticked as it goes, or a bulk publish would act on a
+recipe nobody can see.
+
 ## What kind of food a recipe is (issue #196)
 
 Proposed here: a recipe carries any number of categories — *Pasta*, *Keitto*,

@@ -23,6 +23,7 @@ const entries = [
   { name: "intake", target: "es5", description: "The bundled intake client, embedded on the server-rendered intake form." },
   { name: "shopping", target: "es5", description: "The bundled shopping client, embedded on the server-rendered shopping list." },
   { name: "recipe-products", target: "es5", description: "The bundled product picker, embedded on a recipe screen for the S-ostoslista household." },
+  { name: "recipe-browser", target: "es5", description: "The bundled recipe browser, embedded on every screen that lists recipes." },
 ];
 
 for (const entry of entries) {

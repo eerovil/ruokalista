@@ -728,6 +728,21 @@ expressions inside template strings). The editor's image-upload island in
 `src/recipe-editor.ts`, the PWA client in `src/pwa-content.ts`, and the small
 intake-job polling script remain unchanged too.
 
+### The recipe browser's instant search (issue #307)
+
+`src/client/recipe-browser.ts` is the fourth fixed entry in
+`scripts/build-client.mjs`, at **ES5** like the others, and is embedded by
+`src/recipe-browser.ts` on every screen that lists recipes. It filters the rows
+already on the page as they are typed against, hides the now-pointless **Hae**
+button and stops the form submitting. Without it the screen keeps the
+server-side `?q=` search it always had.
+
+Its one subtlety is described in [recipes](recipes.md): a page reached with
+`?q=` holds only what the server matched, so the client replaces it once with
+the whole list and carries the text in `#haku=` — including onto the `action`
+and `formaction` of the list's bulk form, which is how a typed search survives a
+post. Run `npm run generate:client` after editing it.
+
 ### Typed intake client
 
 `src/client/intake.ts` is the single implementation of page preparation and
