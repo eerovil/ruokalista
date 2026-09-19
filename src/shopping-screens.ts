@@ -100,15 +100,28 @@ const CHOICE = "ateria";
  */
 const CHOSEN = "valittu";
 
+/**
+ * `known` is the state the caller has already worked out, and passing it is
+ * the difference between one answer and two identical ones.
+ *
+ * A send changes nothing this screen reads. The list is recomputed from the
+ * week and the cupboard every time it is drawn, and the only thing a send
+ * writes is `s_ostoslista_sent_note`, which no screen reads. So the five
+ * statements this used to spend re-deriving the same list after a send were
+ * bought at full price against a budget shared with the send itself — and on
+ * the one path where that budget has just run out, the re-derivation is what
+ * would fail, taking the message explaining the ceiling down with it (#308).
+ */
 export async function shoppingScreen(
   ctx: RouteContext,
   member: Member,
   refused: string | null = null,
   notice: string | null = null,
   status = refused === null ? 200 : 400,
+  known: ShoppingState | null = null,
 ): Promise<Response> {
-  const { env, url } = ctx;
-  const state = await shoppingState(ctx, member);
+  const { env } = ctx;
+  const state = known ?? (await shoppingState(ctx, member));
   const { cookings, selectedIds, selected, buy, atHome } = state;
   const external = externalClient(env, member) !== null;
   const heading = headingFor(selected);
@@ -188,12 +201,16 @@ export async function sendShoppingListForm(
   const selectedUrl = selectionUrl(form, ctx.url);
   const stateCtx = { ...ctx, url: selectedUrl };
   const asJson = wantsJson(form);
-  const { buy } = await shoppingState(stateCtx, member);
+  // Worked out once and then handed to every screen below. The send does not
+  // change what this screen shows, and after a send that ran out of
+  // subrequests there is nothing left to ask a second time with.
+  const state = await shoppingState(stateCtx, member);
+  const { buy } = state;
   if (buy.length === 0) {
     const empty = "Ostoslistalla ei ole lähetettäviä aineksia.";
     return asJson
       ? problem(400, empty)
-      : shoppingScreen(stateCtx, member, empty);
+      : shoppingScreen(stateCtx, member, empty, null, 400, state);
   }
 
   const outcome = await sendToSOstoslista(
@@ -213,7 +230,7 @@ export async function sendShoppingListForm(
     const message = partialSendMessage(outcome);
     return asJson
       ? problem(502, message)
-      : shoppingScreen(stateCtx, member, message, null, 502);
+      : shoppingScreen(stateCtx, member, message, null, 502, state);
   }
 
   if (!outcome.synced) {
@@ -237,6 +254,7 @@ export async function sendShoppingListForm(
     outcome.synced ? null : notSynced,
     `${outcome.sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
+    state,
   );
 }
 

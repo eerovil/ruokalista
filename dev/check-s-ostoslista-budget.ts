@@ -48,9 +48,16 @@ const TOKEN = "test-token";
  * (`pantry.ts::pantryIngredientIds`). They come out of the same budget, so
  * this check pays for them rather than pretending the send starts from
  * nothing.
+ *
+ * *Around*, not merely before: a form post with no JavaScript is answered with
+ * the whole screen re-rendered, and that used to re-derive the same list for
+ * five more statements — on the ceiling path, after the budget had gone. It is
+ * six rather than eleven because the re-render now draws from the state the
+ * send already had. `dev/check-s-ostoslista-route.ts` is where that is proved
+ * over the real route, end to end.
  */
 const SUBREQUEST_CEILING = 50;
-const SCREEN_QUERIES_BEFORE_THE_SEND = 6;
+const SCREEN_QUERIES_AROUND_THE_SEND = 6;
 
 interface Row {
   id: string;
@@ -223,12 +230,12 @@ test("a re-used 24+8 list stays inside one invocation's subrequest budget (#308)
 
   const http = calls.length;
   const d1 = fake.subrequests();
-  const total = http + d1 + SCREEN_QUERIES_BEFORE_THE_SEND;
+  const total = http + d1 + SCREEN_QUERIES_AROUND_THE_SEND;
 
   assert.ok(
     total <= SUBREQUEST_CEILING,
     `a normal list must fit: ${http} fetch + ${d1} D1 + ` +
-      `${SCREEN_QUERIES_BEFORE_THE_SEND} for the screen = ${total}, ceiling ${SUBREQUEST_CEILING}`,
+      `${SCREEN_QUERIES_AROUND_THE_SEND} for the screen = ${total}, ceiling ${SUBREQUEST_CEILING}`,
   );
   // Written down rather than merely bounded, so a change that eats the
   // headroom has to say so here instead of drifting quietly up to 50. Before
@@ -304,11 +311,11 @@ test("a fresh list is the worst case, and it fits too (#308)", async () => {
   );
 
   assert.equal(outcome.status, "sent");
-  const total = calls.length + fake.subrequests() + SCREEN_QUERIES_BEFORE_THE_SEND;
+  const total = calls.length + fake.subrequests() + SCREEN_QUERIES_AROUND_THE_SEND;
   assert.ok(
     total <= SUBREQUEST_CEILING,
     `a fresh list must fit: ${calls.length} fetch + ${fake.subrequests()} D1 + ` +
-      `${SCREEN_QUERIES_BEFORE_THE_SEND} for the screen = ${total}`,
+      `${SCREEN_QUERIES_AROUND_THE_SEND} for the screen = ${total}`,
   );
   // A row the service creates comes back exactly as asked for, so no PATCH
   // follows it. That is what makes the worst case one call per row.
