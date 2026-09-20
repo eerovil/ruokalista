@@ -671,19 +671,19 @@ test("choosing a product never moves the page under the member", async ({
 /**
  * Where the list is after a round-trip that leaves the page (#323).
  *
- * The three tests below all measure the same thing, because every one of those
+ * The tests below all measure the same thing, because every one of those
  * round-trips makes the same promise: nothing moves under the thumb. They
- * measure it on screen — the viewport Y of a row, and of the list itself —
- * rather than as a document offset. The offset is not the promise: the first
- * tick brings the sentence about ticked rows and the first cupboard move brings
- * the `Ostettavat` heading, and behind an unchanged offset either of those puts
- * every row one paragraph lower than the thumb left it.
+ * measure it as the viewport Y of a named row, which is the only coordinate
+ * that survives what a round-trip does to this screen. A document offset does
+ * not — the first tick brings the sentence about ticked rows, and behind an
+ * unchanged offset that puts every row one paragraph lower than the thumb left
+ * it. Nor does a list's own top: a row leaving that list for the cupboard
+ * pulls every row under it up by one, while the list's top sits still.
  */
 const LEFT_AT = "test.pagehide";
 
 interface WhereItLeft {
   offset: number;
-  list: number | null;
   row: number | null;
 }
 
@@ -695,7 +695,7 @@ interface WhereItLeft {
  */
 async function scrollDownTheList(
   page: Page,
-  rowName: string | null = null,
+  rowName: string,
   roomBelow = 0,
 ): Promise<void> {
   await page.evaluate(
@@ -705,12 +705,11 @@ async function scrollDownTheList(
         document.body.scrollHeight - window.innerHeight - (room as number),
       );
       window.addEventListener("pagehide", () => {
-        const list = document.querySelector(".shopping-list");
         const rows = document.querySelectorAll(".shopping-list > li");
         let row: Element | null = null;
         for (let at = 0; at < rows.length; at += 1) {
           const label = rows[at]!.querySelector(".shopping-name");
-          if (name !== null && (label?.textContent ?? "").trim() === name) {
+          if ((label?.textContent ?? "").trim() === name) {
             row = rows[at]!;
             break;
           }
@@ -719,23 +718,18 @@ async function scrollDownTheList(
           key!,
           JSON.stringify({
             offset: window.pageYOffset,
-            list: list ? Math.round(list.getBoundingClientRect().top) : null,
             row: row ? Math.round(row.getBoundingClientRect().top) : null,
           }),
         );
       });
     },
-    [LEFT_AT, rowName, roomBelow] as [string, string | null, number],
+    [LEFT_AT, rowName, roomBelow] as [string, string, number],
   );
 }
 
-/** Where that same thing is on screen now. */
-async function onScreen(page: Page, rowName: string | null): Promise<number> {
+/** Where that row is on screen now, wherever on the screen it has ended up. */
+async function onScreen(page: Page, rowName: string): Promise<number> {
   return page.evaluate((name) => {
-    if (name === null) {
-      const list = document.querySelector(".shopping-list");
-      return list ? Math.round(list.getBoundingClientRect().top) : NaN;
-    }
     const rows = document.querySelectorAll(".shopping-list > li");
     for (let at = 0; at < rows.length; at += 1) {
       const label = rows[at]!.querySelector(".shopping-name");
@@ -749,14 +743,10 @@ async function onScreen(page: Page, rowName: string | null): Promise<number> {
 
 /**
  * `rowName` is the row that has to be in the same place on screen afterwards:
- * the one that was pressed, where it stays in the list it was in, and the row
- * left behind where the pressed one moves section on purpose. Without a name it
- * is the first list itself, for the round-trip whose pressed row leaves it.
+ * the pressed one where it stays put, and a surviving neighbour where the
+ * pressed one leaves its list on purpose.
  */
-async function stillWhereItLeft(
-  page: Page,
-  rowName: string | null = null,
-): Promise<void> {
+async function stillWhereItLeft(page: Page, rowName: string): Promise<void> {
   // And no anchor left on the address bar, or the next reload — or the back
   // button — would jump to it all over again.
   expect(new URL(page.url()).hash).toBe("");
@@ -770,10 +760,9 @@ async function stillWhereItLeft(
   // taller than the screen for there to be a place to lose.
   expect(left!.offset).toBeGreaterThan(60);
 
-  const before = rowName === null ? left!.list : left!.row;
-  expect(before).not.toBeNull();
+  expect(left!.row).not.toBeNull();
   await expect
-    .poll(async () => Math.abs((await onScreen(page, rowName)) - before!) < 4)
+    .poll(async () => Math.abs((await onScreen(page, rowName)) - left!.row!) < 4)
     .toBe(true);
 }
 
@@ -803,23 +792,38 @@ test("a reload after adding a package size keeps the list where it was", async (
 /**
  * The cupboard button leaves the page too, and it used to leave it somewhere
  * else.
+ *
+ * The cupboard section exists before the press and the row moved is one from
+ * the middle of the list, because that is the case where the list's own top
+ * says nothing: the rows under the one that left all come up by a row while the
+ * top of their list sits exactly where it was. So the assertion is on the
+ * pressed row's surviving neighbour, not on the list.
  */
 test("the cupboard button leaves the list where it was", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
 
-  const oil = row(page, "öljy");
-  await scrollDownTheList(page);
+  const oil = namedRow(page, "öljy");
   await openShoppingRow(oil);
   await Promise.all([
     page.waitForEvent("load"),
     oil.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
   ]);
-
-  await stillWhereItLeft(page);
-  // The row itself did move — to the cupboard section, which is the change
-  // that was asked for. Nothing else did.
   await expect(page.locator(".shopping-list").last()).toContainText("öljy");
+
+  // `sitruunaruoho` is the row directly under `maito` in the list to buy.
+  const milk = namedRow(page, "maito");
+  await scrollDownTheList(page, "sitruunaruoho");
+  await openShoppingRow(milk);
+  await Promise.all([
+    page.waitForEvent("load"),
+    milk.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
+
+  await stillWhereItLeft(page, "sitruunaruoho");
+  // The pressed row itself did move — to the cupboard section, which is the
+  // change that was asked for. Nothing else did.
+  await expect(page.locator(".shopping-list").last()).toContainText("maito");
 });
 
 /**
@@ -889,6 +893,69 @@ test("ticking a row off leaves the list where it was", async ({ page }) => {
   await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
     /is-excluded/,
   );
+});
+
+/**
+ * The case where the list the press was in is not there afterwards at all
+ * (#323).
+ *
+ * One row in the cupboard, and taking it out takes the whole `Löytyy` section
+ * — list, heading and explanation — with it. Any place bound to that list is
+ * unfindable on the page that comes back, and the answer cannot be the top of
+ * the page, because nothing about the rows the member was reading has changed.
+ * Bound to a row instead, the next surviving one along answers it.
+ *
+ * On a shorter screen than the rest of this file, so that "did not fall to the
+ * top" is a statement about hundreds of pixels rather than tens.
+ */
+test.describe("with a screen shorter than the list", () => {
+  test.use({ viewport: { width: 412, height: 500 } });
+
+  test("a cupboard section that empties does not drop the list to the top", async ({
+    page,
+  }) => {
+    await planTheFortnight(page);
+    await page.goto("/ostoslista");
+
+    const oil = namedRow(page, "öljy");
+    await openShoppingRow(oil);
+    await Promise.all([
+      page.waitForEvent("load"),
+      oil.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+    ]);
+    const cupboard = page.locator(".shopping-list").last();
+    await expect(cupboard.locator("> li")).toHaveCount(1);
+
+    // `vesi` is the last row of the list to buy, directly above the cupboard
+    // section that is about to disappear.
+    await scrollDownTheList(page, "vesi");
+    const inCupboard = namedRow(page, "öljy");
+    await openShoppingRow(inCupboard);
+    await Promise.all([
+      page.waitForEvent("load"),
+      inCupboard.getByRole("button", { name: "Poista kaapista" }).click(),
+    ]);
+
+    // The section really is gone, not merely empty.
+    await expect(page.locator(".shopping-list")).toHaveCount(1);
+    await expect(
+      page.getByRole("heading", { name: "Löytyy", exact: true }),
+    ).toHaveCount(0);
+
+    // The page has lost a whole section from its end, so the exact place is
+    // now past the bottom of a shorter document and no scroll can reach it.
+    // What can be asked for is everything short of that: the list did not fall
+    // to the top, it went as far as the page allows, and the row the member was
+    // reading is still on the screen. Bound to the vanished list instead of to
+    // a row, this lands at zero.
+    const where = await page.evaluate(() => ({
+      offset: window.pageYOffset,
+      furthest: document.body.scrollHeight - window.innerHeight,
+    }));
+    expect(where.offset).toBeGreaterThan(60);
+    expect(where.offset).toBeGreaterThan(where.furthest - 4);
+    await expect(namedRow(page, "vesi")).toBeInViewport();
+  });
 });
 
 /**

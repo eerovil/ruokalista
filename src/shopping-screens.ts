@@ -1136,17 +1136,12 @@ type RowKind = "buy" | "pantry";
 /**
  * What each `.shopping-list` on the screen is called, in `data-lista` (#323).
  *
- * `KEEP_PLACE` measures the reading position from the list the member was
- * actually touching, so it has to be able to find that same list again after
- * the round-trip — and "the first list on the page" is not that. Pressing
- * `Poista kaapista` in the cupboard list puts the row back into the buy list
- * *above* it, so a position measured from the buy list moves the cupboard list
- * down by a row; and under `resepteittäin` there is one buy list per dish.
- *
- * A dish's own name rather than its position, because a round-trip can change
- * how many groups there are — a row leaving for the cupboard can empty a group
- * — and the name survives that while an index would quietly slide to the
- * neighbouring dish.
+ * It marks a list as one for `KEEP_PLACE` to work in — a press outside every
+ * one of them keeps nothing — and it says which list a remembered row was in,
+ * which is how that row is told apart from another row of the same key
+ * elsewhere on the screen. A dish's own name rather than its position, because
+ * a round-trip can change how many groups there are and an index would quietly
+ * slide to the neighbouring dish.
  */
 const BUY_LIST = "ostettavat";
 const PANTRY_LIST = "loytyy";
@@ -1273,31 +1268,38 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  *
  * Four things on this screen are real navigations: the row's tick, the cupboard
  * buttons, dropping a package size, and the whole no-JavaScript product flow.
- * They all come back to a list that is one row different from the one the
- * member was reading, so the only thing worth restoring is where they were
- * reading it — not which row they pressed. This remembers how far into the
- * list they were as one of those presses takes the page away, and puts them
- * back there on arrival, then forgets it — so a later visit to `/ostoslista`
- * opens at the top as it always has.
+ * Every one of them comes back to a list that has changed where it was
+ * pressed, so the thing to put back is not a scroll position but a piece of
+ * content: **the rows beside the one that was pressed go back to the screen
+ * position they had.**
  *
- * How far into the *list*, not how far down the page: the answer to a
- * round-trip often adds a line above the list, and a page offset kept across
- * that moves every row down under the thumb. And how far into *that* list —
- * the one the tap was in, by the `data-lista` name it is drawn with — because
- * a screen has several, and what the answer adds can land between them.
+ * So the place is a row, said in a way the next page can look up — its row key,
+ * its ingredient, the list it was in — together with the viewport Y it had.
+ * Written outwards from the pressed row, forwards first, and read back
+ * nearest-first: the first candidate that still exists anywhere on the new page
+ * wins, wherever it now is. Which is why a round-trip may do anything it likes
+ * to the list — add a sentence above it, move the pressed row to the other
+ * section, put a row back in between, empty a dish's group or take the whole
+ * `Löytyy` list away with its last row — and the screen still comes back to the
+ * same rows in the same places. The pressed row itself is the last candidate,
+ * for the case where nothing else on the screen survived.
  *
- * The place is written at the one moment worth writing it: when a press inside
- * a list is about to take the page away. That is a link or a form submit
- * inside a `[data-lista]` list, read in the bubble phase so that anything which
- * cancels the press has already done so, plus the one explicit call the picker
- * client makes before reloading itself. Nothing else writes at all.
+ * Three earlier rounds of #323 each bound the place to a coordinate instead of
+ * to content, and each one broke at the next change of shape: the document
+ * offset moved every row down by the height of the sentence a tick adds; the
+ * first list's top was the wrong list when the press was in the cupboard; that
+ * list's own top still moved when the round-trip added or removed a row inside
+ * it, and vanished outright when the round-trip emptied it. A row that is still
+ * on the page has none of those failure modes, and "which row" is a question
+ * with a fallback: the next one.
  *
- * Earlier rounds of #323 armed on any touch of a list and wrote the place at
- * `pagehide`. That state outlived the touch that set it: opening and closing a
- * row armed it, and then the next departure — the grouping pills, the tab bar,
- * any departure at all — spent it, so a later visit landed on a place nobody
- * had asked to keep. Hence one rule and no arming state: only a press that
- * really leaves writes anything, and arrival spends it.
+ * It is written at the one moment worth writing it, too: when a press inside a
+ * list is about to take the page away. That is a link or a form submit inside a
+ * `[data-lista]` list, read in the bubble phase so that anything which cancels
+ * the press has already done so, plus the one explicit call the picker client
+ * makes before reloading itself. Nothing else writes at all — opening a row,
+ * the grouping pills and the tab bar leave nothing behind, so a later visit to
+ * `/ostoslista` opens at the top as it always has.
  *
  * Like `week-screens.ts::SCROLL_TO_TODAY` it stands down on an explicit anchor
  * and on a position the browser restored itself — both of those are somebody
@@ -1309,7 +1311,11 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  */
 const KEEP_PLACE = raw(`<script>
 (function () {
-  var KEY = "ruokalista.ostoslista.listakohta";
+  var KEY = "ruokalista.ostoslista.rivikohta";
+  // How far either side of the pressed row to write down. Six is well past
+  // any one round-trip's worth of change and still a short string.
+  var NEIGHBOURS = 6;
+
   var store = null;
   try {
     store = window.sessionStorage;
@@ -1317,7 +1323,7 @@ const KEEP_PLACE = raw(`<script>
     // A browser that refuses storage refuses reading it too.
     return;
   }
-  if (!store || !document.addEventListener) return;
+  if (!store || !document.addEventListener || !window.JSON) return;
 
   var saved = null;
   try {
@@ -1327,48 +1333,114 @@ const KEEP_PLACE = raw(`<script>
     saved = null;
   }
 
-  // Both halves are measured from the top of one named list rather than from
-  // the top of the page, because the answer to a round-trip regularly changes
-  // what is above it: the first tick brings the sentence explaining ticked
-  // rows, the first cupboard move brings the "Ostettavat" heading, and
-  // "Poista kaapista" puts a row back into the buy list above the cupboard
-  // list. Kept in document coordinates the list would then sit lower behind an
-  // unchanged offset, and every row would have moved under the thumb — which is
-  // the whole thing this is here to prevent.
-  var mark = readMark(saved);
-  var wanted = mark !== null && !window.location.hash && !window.pageYOffset;
+  var marks = readMarks(saved);
+  var wanted = marks !== null && !window.location.hash && !window.pageYOffset;
   var touched = false;
 
-  function readMark(value) {
-    if (value === null) return null;
-    var at = value.indexOf(":");
-    if (at <= 0) return null;
-    var back = parseInt(value.slice(at + 1), 10);
-    if (back !== back) return null;
-    return { name: value.slice(0, at), back: back };
+  function readMarks(value) {
+    if (!value) return null;
+    var parsed = null;
+    try {
+      parsed = window.JSON.parse(value);
+    } catch (error) {
+      return null;
+    }
+    return parsed && parsed.length ? parsed : null;
   }
 
-  function topOf(list) {
-    if (!list || !list.getBoundingClientRect) return null;
-    return list.getBoundingClientRect().top + window.pageYOffset;
+  function rows() {
+    return document.querySelectorAll(".shopping-list > li");
   }
 
-  function listNamed(name) {
-    if (!document.querySelector) return null;
-    return document.querySelector('[data-lista="' + name + '"]');
+  function listAround(node) {
+    while (node && node !== document.body) {
+      if (node.getAttribute && node.getAttribute("data-lista")) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  // The row element is the list item, not the block inside it: the tick sits
+  // beside that block rather than in it (#318), so a press can be on either
+  // side of it.
+  function rowAround(node) {
+    while (node && node !== document.body) {
+      if (
+        node.tagName === "LI" &&
+        node.parentNode &&
+        node.parentNode.getAttribute &&
+        node.parentNode.getAttribute("data-lista")
+      ) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function itemOf(row) {
+    return row.getAttribute && row.getAttribute("data-rivi")
+      ? row
+      : row.querySelector
+        ? row.querySelector("[data-rivi]")
+        : null;
+  }
+
+  /** One row, said in a way the next page can look up: what it is, and where. */
+  function markOf(row) {
+    var item = itemOf(row);
+    if (!item) return null;
+    var list = listAround(row);
+    return {
+      k: item.getAttribute("data-rivi"),
+      a: item.getAttribute("data-aines"),
+      l: list ? list.getAttribute("data-lista") : "",
+      y: Math.round(row.getBoundingClientRect().top)
+    };
+  }
+
+  /**
+   * The row this mark names, wherever it now is.
+   *
+   * Three readings, narrowest first. The row key in the same list is the same
+   * row for certain. The row key on its own is still that row moved — to the
+   * cupboard, or into a dish's own section. The ingredient is the last
+   * reading, because a product pinned to one dish splits one row into two and
+   * the key goes with the split.
+   */
+  function rowFor(mark) {
+    var all = rows();
+    var inList = null;
+    var byKey = null;
+    var byIngredient = null;
+    for (var index = 0; index < all.length; index += 1) {
+      var row = all[index];
+      var item = itemOf(row);
+      if (!item) continue;
+      if (item.getAttribute("data-rivi") === mark.k) {
+        var list = listAround(row);
+        if (!inList && list && list.getAttribute("data-lista") === mark.l) {
+          inList = row;
+        }
+        if (!byKey) byKey = row;
+      } else if (!byIngredient && item.getAttribute("data-aines") === mark.a) {
+        byIngredient = row;
+      }
+    }
+    return inList || byKey || byIngredient;
   }
 
   function place() {
     if (!wanted || touched) return;
-    // No list of that name any more — removing the last cupboard row takes the
-    // whole Löytyy list with it — and nothing here knows where its contents
-    // went. The top of the list is the honest answer.
-    var top = topOf(listNamed(mark.name));
-    if (top === null) return;
-    var target = top + mark.back;
-    if (target < 0) target = 0;
-    if (Math.abs(window.pageYOffset - target) < 2) return;
-    window.scrollTo(0, target);
+    for (var index = 0; index < marks.length; index += 1) {
+      var row = rowFor(marks[index]);
+      if (!row) continue;
+      var target =
+        window.pageYOffset + (row.getBoundingClientRect().top - marks[index].y);
+      if (target < 0) target = 0;
+      if (Math.abs(window.pageYOffset - target) >= 2) window.scrollTo(0, target);
+      return;
+    }
   }
 
   place();
@@ -1383,14 +1455,6 @@ const KEEP_PLACE = raw(`<script>
   window.addEventListener("wheel", function () { touched = true; }, true);
   window.addEventListener("keydown", function () { touched = true; }, true);
 
-  function listAround(node) {
-    while (node && node !== document.body) {
-      if (node.getAttribute && node.getAttribute("data-lista")) return node;
-      node = node.parentNode;
-    }
-    return null;
-  }
-
   function linkAround(node) {
     while (node && node !== document.body) {
       if (node.tagName === "A" && node.getAttribute("href")) return node;
@@ -1399,20 +1463,45 @@ const KEEP_PLACE = raw(`<script>
     return null;
   }
 
-  // Write the place down, measured from whichever list this node is in.
-  // Nothing else in here writes, and this is only ever called where the page
-  // is leaving.
+  /**
+   * Write down where the rows around the pressed one are on screen. Nothing
+   * else in here writes, and this is only ever called where the page is
+   * leaving.
+   *
+   * Outwards from the pressed row, forwards first: the row under the thumb is
+   * about to change — that is what was pressed — so the anchor is its nearest
+   * surviving neighbour, and the order of this list is the order in which to
+   * try them. The pressed row goes last, as the answer when nothing else on
+   * the screen survived at all.
+   */
   function keep(node) {
-    var list = listAround(node);
-    if (!list) return;
-    var top = topOf(list);
-    if (top === null) return;
+    var acted = rowAround(node);
+    if (!acted || !listAround(acted)) return;
+
+    var all = rows();
+    var at = -1;
+    var index;
+    for (index = 0; index < all.length; index += 1) {
+      if (all[index] === acted) at = index;
+    }
+    if (at < 0) return;
+
+    var found = [];
+    function add(row) {
+      var mark = row ? markOf(row) : null;
+      if (mark) found.push(mark);
+    }
+    for (index = 1; index <= NEIGHBOURS && at + index < all.length; index += 1) {
+      add(all[at + index]);
+    }
+    for (index = 1; index <= NEIGHBOURS && at - index >= 0; index += 1) {
+      add(all[at - index]);
+    }
+    add(acted);
+    if (!found.length) return;
+
     try {
-      store.setItem(
-        KEY,
-        list.getAttribute("data-lista") + ":" +
-          String(Math.round(window.pageYOffset - top))
-      );
+      store.setItem(KEY, window.JSON.stringify(found));
     } catch (error) {
       // Nothing to remember with, so the list opens at the top.
     }
@@ -1420,7 +1509,7 @@ const KEEP_PLACE = raw(`<script>
 
   // The picker client reloads the screen itself when a save changes what the
   // other rows add up to, and by then the submit that started it has been and
-  // gone — there is no press left to read the list off. So it says so here,
+  // gone — there is no press left to read the row off. So it says so here,
   // with the row it was about, immediately before reloading.
   window.ruokalistaKeepPlace = keep;
 
@@ -1463,8 +1552,8 @@ const KEEP_PLACE = raw(`<script>
  * tick moved the list by however far down the screen the row happened to be.
  * The anchor also outlived its one use — it stayed on the address bar, so the
  * next reload, back button or `Päivitä lista` jumped to the same row again.
- * `KEEP_PLACE` below keeps the scroll position instead, which is what #200
- * actually promised.
+ * `KEEP_PLACE` above puts the rows back where they were on screen instead,
+ * which is what #200 actually promised.
  */
 function listLocation(selection: Selection): string {
   return `/ostoslista?${selectionQueryFrom(selection)}`;
