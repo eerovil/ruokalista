@@ -38,7 +38,7 @@ export interface PickedProduct {
 }
 
 export interface PickerRow {
-  /** The `<details>` or `<li>` the server marked with `data-product-row`. */
+  /** The element the server marked with `data-product-row`. */
   container: HTMLElement;
   block: HTMLElement;
   body: HTMLElement;
@@ -812,11 +812,17 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     if (button && before.openLabel !== null) button.innerHTML = before.openLabel;
   }
 
-  /** A `<details>` row shuts itself once its product has saved (#204). */
+  /**
+   * A row that opens shuts itself once its product has saved (#204), so the
+   * next ingredient is one tap away rather than a scroll away.
+   *
+   * On the shopping list that is the checkbox driving the row's modal (#321);
+   * on a recipe the row is a plain `<li>` that never opened, so there is
+   * nothing to shut and this does nothing — which is what it did there before.
+   */
   function closeRow(row: PickerRow): void {
-    if (row.container.tagName === "DETAILS") {
-      (row.container as HTMLDetailsElement).open = false;
-    }
+    var toggle = row.container.querySelector<HTMLInputElement>(".row-open");
+    if (toggle) toggle.checked = false;
   }
 
   function persist(

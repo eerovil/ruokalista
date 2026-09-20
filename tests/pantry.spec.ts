@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { openShoppingRow } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -53,7 +54,7 @@ async function sectionOf(page: Page, name: string): Promise<string> {
 /** Move a row into or out of the cupboard from the list, as a person would. */
 async function useRowButton(page: Page, name: string, label: string) {
   const item = row(page, name);
-  await item.locator("summary").click();
+  await openShoppingRow(item);
   await item.getByRole("button", { name: label }).click();
 }
 
@@ -83,7 +84,7 @@ test("a row in the Löytyy section keeps its total and its breakdown", async ({
 
   const oil = row(page, "öljy");
   await expect(oil.locator(".shopping-total")).toHaveText("½ dl");
-  await oil.locator("summary").click();
+  await openShoppingRow(oil);
   await expect(oil.locator(".shopping-from li")).toHaveCount(1);
   await expect(oil.locator(".shopping-from li").first()).toContainText(
     "Kaalilaatikko",

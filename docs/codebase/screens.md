@@ -116,7 +116,8 @@ which is a thing a member is allowed to mean.
 That encoding is what keeps the screen a plain GET form with no JavaScript at
 all, which the browser-compatibility rule below asks for. The picker is a
 `<details>` that stays closed unless nothing is selected, and each ingredient
-row is its own `<details>` whose body names the contributing cookings.
+row opens into a modal of its own whose body names the contributing cookings —
+see #321 below for why that is a modal rather than a second `<details>`.
 
 Issue #313 adds a third parameter to that same query string: one `pois=<row
 key>` per row the member has taken off *this* list. A row key is what
@@ -146,9 +147,9 @@ treatment a cupboard row gets. A cupboard row, in turn, is offered no left-off
 toggle: it is already off the list for a reason that outranks this one.
 
 Issue #318 changes where that toggle is and what a ticked row does. It is a
-tick box on the row line itself (`shopping-screens.ts::excludeTick`), outside
-the row's own `<details>` so it is one tap without opening anything, and still
-a link rather than an `<input>` — the whole answer is which URL the next list
+tick box on the row line itself (`shopping-screens.ts::excludeTick`), beside
+the row rather than inside it so it is one tap without opening anything, and
+still a link rather than an `<input>` — the whole answer is which URL the next list
 is at, and a real checkbox here would need a script to do anything. The ticked
 row then stays exactly where it was in the list, drawn inactive, instead of
 moving into a section of its own: unticking is the same tap in the same spot
@@ -168,6 +169,21 @@ one thing to buy once, so it goes in a **Useammassa reseptissä** section at the
 end. The sections follow the order the week cooks them. Grouping is the buy area
 only; the cupboard's **Löytyy** stays one flat list, because it is a footnote
 rather than a thing to shop from.
+
+Issue #321 takes the expand away. A row used to be a `<details>` that unfolded
+in place, and everything it held — the breakdown, the product block, the
+cupboard button — went between the row somebody had just tapped and every row
+under it. On the one screen whose job is to be walked down while shopping,
+that rearranged the list under a thumb. Since #321 the row line is a `<label>`
+for a checkbox nobody submits, and the rest is a modal over the list: the same
+`.line-modal` markup and stylesheet block the recipe editor's ingredient rows
+got in #315, driven by `.row-open` instead of `.line-open`. It still needs no
+script — the tick box beside the row, the dimmed backdrop and **Valmis** are
+all labels for that one checkbox — and closing it leaves the list exactly where
+it was. Two consequences worth knowing: the product sheet (`.s-sheet`) sits at
+`z-index: 40`, above the row modal's 30, because it now opens out of one; and
+`tests/support/shopping-rows.ts` is how a test opens a row, since an open row's
+backdrop swallows a tap meant for another.
 
 The arithmetic lives in `src/shopping.ts::shoppingList`, apart from the markup
 and tested directly in `dev/check-shopping.ts`. Three rules the proposal treats
@@ -231,19 +247,19 @@ and two of them are new routes:
 What that buys, and the rules each part follows:
 
 - **The chosen product's picture is on the row itself**, in a
-  `.shopping-thumb` slot inside the summary. It is smaller than the row's
+  `.shopping-thumb` slot on the row line. It is smaller than the row's
   existing `--tap` minimum, so no row grows, and the slot collapses when there
   is no picture (`.shopping-thumb:empty`) rather than leaving an empty box.
 - **A row closes itself once its product has saved** — this is what #204
   proposes. The open row is the tallest thing on the screen at exactly the
   moment there is nothing left to do in it, and what somebody reported was
   finishing one ingredient and having to hunt for where they were. The shopping
-  client sets `details.open = false` in `persist`'s success branch, so the
-  picture is
+  client unchecks the row's own toggle in `persist`'s success branch
+  (`product-picker.ts::closeRow`), so the picture is
   what is left saying the row is done and the next ingredient is on the next
   line. Only on success: a refusal's error and retry are inside the row, so a
-  refused save leaves it open. Collapsing removes only what is below the summary
-  line, so the row's own line and everything above it stay put — #200's promise
+  refused save leaves it open. Closing takes away only the modal over the list,
+  so the row's own line and everything above it stay put — #200's promise
   survives it. The cost is one more tap to reach `Lisää toinen pakkauskoko` or
   `Löytyy jo kaapista`, which is the trade the card asked for.
 - **Product choice is an enhancement, not a navigation.** The current fixed
@@ -468,7 +484,7 @@ restored.
   `.s-product-results img` now state theirs too.
 - **A product picture is asked for at the width it is drawn at, and cropped from
   the top** — this is what #204 proposes. There are three slots (26 px on the
-  row, 40 px in the open row's summary, 80 px in the picker's results) and a
+  row, 40 px in the open row's modal, 80 px in the picker's results) and a
   single `PRODUCT_PICTURE` in `shopping-screens.ts` holds each one's size and the
   width to fetch, handed to the shopping client rather than written twice.
   `s-ostoslista.ts::sProductImageAtWidth` swaps the width into the CDN path at

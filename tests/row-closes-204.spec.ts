@@ -1,5 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import {
+  closeShoppingRow,
+  openShoppingRow,
+} from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -46,7 +50,7 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
     const cheese = row(page, "juusto");
     const next = row(page, "lasagnelevy");
 
-    await cheese.locator("summary").click();
+    await openShoppingRow(cheese);
     await expect(
       cheese.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
     ).toBeVisible();
@@ -79,10 +83,10 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
     // The point of all of it: the next ingredient is on the screen, without
     // scrolling and without hunting for it.
     await expect(next).toBeInViewport();
-    await next.locator("summary").click();
+    await openShoppingRow(next);
     await expect(next.getByRole("button", { name: "Valitse tuote" })).toBeVisible();
     await shot(page, "3-straight-on-to-the-next");
-    await next.locator("summary").click();
+    await closeShoppingRow(next);
 
     // And straight through a second one, to show what the list looks like part
     // way down it. Milk, because its fixture EANs are S-group's own — so this
@@ -94,7 +98,7 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
         response.request().method() === "POST" &&
         response.url().includes("/ostoslista/tuote"),
     );
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
     await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
     await page
@@ -113,6 +117,41 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
       )
       .toBeGreaterThan(0);
     await shot(page, "4-two-done-and-the-list-still-whole");
+  });
+
+  // The other half of the same rule, and the half a modal could quietly lose:
+  // only a save that worked closes the row. A refused one has an error and a
+  // retry in it, and closing the row would carry both off the screen.
+  test("a refused save leaves the row open", async ({ page }) => {
+    await createBatch(page, shiftedFromToday(0), KAALILAATIKKO, 2);
+    await createBatch(page, shiftedFromToday(2), LASAGNE, 1);
+    await page.goto("/ostoslista");
+    await expect(page.locator(".shopping-list > li").first()).toBeVisible();
+
+    await page.route("**/ostoslista/tuote", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Tuotetta ei voitu varmistaa." }),
+      });
+    });
+
+    const cheese = row(page, "juusto");
+    await openShoppingRow(cheese);
+    await cheese.getByRole("button", { name: "Valitse tuote" }).click();
+    await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
+    await page
+      .locator(".s-sheet .s-product-results > li")
+      .filter({ hasText: "Kotimaista juustoraaste" })
+      .getByRole("button", { name: "Valitse" })
+      .click();
+
+    await expect(page.locator(".s-toast")).toContainText(
+      "Tuotetta ei voitu varmistaa",
+    );
+    await expect(cheese.locator("input.row-open")).toBeChecked();
+    await expect(cheese.locator(".line-modal-card")).toBeVisible();
   });
 });
 

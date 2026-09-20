@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -136,7 +137,7 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const milk = page.locator(".shopping-item", { hasText: "maito" });
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await expect(milk.locator(".s-shopping-product-summary")).toContainText(
       "Kotimaista rasvaton maito 1 l",
     );
@@ -182,7 +183,7 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const row = page.locator(".shopping-item", { hasText: "maito" });
-    await row.locator("summary").click();
+    await openShoppingRow(row);
     await expect(row.locator(".s-product-scope")).toContainText(
       "Vain reseptissä Lasagne",
     );
@@ -272,7 +273,7 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const row = page.locator(".shopping-item", { hasText: "maito" });
-    await row.locator("summary").click();
+    await openShoppingRow(row);
     await expect(row.locator(".s-product-scope")).toContainText(
       "Vain reseptissä Lasagne",
     );

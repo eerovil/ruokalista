@@ -18,6 +18,10 @@ import {
   openLineEditor,
 } from "./support/lines";
 import { flatPng, gradientPng } from "./support/png";
+import {
+  closeShoppingRow,
+  openShoppingRow,
+} from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -1128,7 +1132,7 @@ test.describe("signed in", () => {
     // disabled rather than appearing the moment a product is chosen — arriving
     // mid-row, it used to shove every row below it down the screen (#200).
     const water = page.locator(".shopping-item", { hasText: "vesi" }).first();
-    await water.locator("summary").click();
+    await openShoppingRow(water);
     await expect(
       water.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
     ).toBeDisabled();
@@ -1136,10 +1140,10 @@ test.describe("signed in", () => {
       path: `${SHOTS}/83-shopping-unmapped-row.png`,
       fullPage: true,
     });
-    await water.locator("summary").click();
+    await closeShoppingRow(water);
 
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
     const product = page
       .locator(".s-sheet .s-product-results > li")
@@ -1201,23 +1205,19 @@ test.describe("signed in", () => {
 
     // The choice itself, back on the list: the picture on the row, and the
     // S-ostoslista panel saying what the list already holds (#159).
-    await milk.evaluate((details: HTMLDetailsElement) => {
-      details.open = false;
-    });
+    await closeShoppingRow(milk);
     await capture(page, {
       path: `${SHOTS}/58-s-ostoslista-current.png`,
       fullPage: true,
     });
 
-    await milk.evaluate((details: HTMLDetailsElement) => {
-      details.open = true;
-    });
+    // The breakdown, which since #321 is a modal over the list rather than an
+    // expanded row — so this one is the viewport, not the whole page: a fixed
+    // overlay in a full-page shot is drawn once, at the top, over nothing.
     await page.locator(".shopping-picker > summary").click();
+    await openShoppingRow(milk);
     await expect(milk.locator(".shopping-from li").first()).toBeVisible();
-    await capture(page, {
-      path: `${SHOTS}/39-shopping-breakdown.png`,
-      fullPage: true,
-    });
+    await capture(page, { path: `${SHOTS}/39-shopping-breakdown.png` });
 
     // The product chosen above is the same linked product the recipe now shows.
     // Photograph that real path rather than seeding a display-only shortcut.
@@ -1265,7 +1265,7 @@ test.describe("signed in", () => {
     // The panel, with the one question #161 adds to it: how far this reaches.
     // The shopping-list shot above already chose a product for milk and this
     // file reseeds once, so the button may read either way by now.
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
     const product = page
       .locator(".s-sheet .s-product-results > li")
@@ -1287,7 +1287,7 @@ test.describe("signed in", () => {
 
     // 15 dl does not fit in one litre, so the row buys two — and says so.
     const counted = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await counted.locator("summary").click();
+    await openShoppingRow(counted);
     await expect(counted.locator(".s-shopping-product-summary")).toContainText(
       "2 × Kotimaista rasvaton maito 1 l",
     );
@@ -1310,7 +1310,7 @@ test.describe("signed in", () => {
     ]);
 
     const sized = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await sized.locator("summary").click();
+    await openShoppingRow(sized);
     await expect(sized.locator(".s-product-sizes > li")).toHaveCount(2);
     await capture(page, {
       path: `${SHOTS}/62-package-sizes.png`,
@@ -1321,9 +1321,9 @@ test.describe("signed in", () => {
     // the 400 g packet. Sending it used to leave the phone holding one packet
     // of the product and a written line saying "× 3" — so the shot below is of
     // the panel that says what the S-list actually holds afterwards.
-    await sized.locator("summary").click();
+    await closeShoppingRow(sized);
     const mince = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
-    await mince.locator("summary").click();
+    await openShoppingRow(mince);
     await expect(mince.locator(".shopping-total")).toHaveText("1200 g");
     await mince.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
     const packet = page
@@ -1340,7 +1340,7 @@ test.describe("signed in", () => {
     await page.reload();
 
     const counting = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
-    await counting.locator("summary").click();
+    await openShoppingRow(counting);
     await expect(counting.locator(".s-shopping-product-summary")).toContainText(
       "3 × Kotimaista nauta-sikajauheliha 400 g",
     );
@@ -1377,7 +1377,7 @@ test.describe("signed in", () => {
       page.locator(".s-current-items .s-current-note").filter({ hasText: /juusto/i }),
     ).toHaveCount(1);
     const cheese = page.locator(".shopping-item", { hasText: "juusto" }).first();
-    await cheese.locator("summary").click();
+    await openShoppingRow(cheese);
     await cheese.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
     const grated = page
       .locator(".s-sheet .s-product-results > li")
@@ -1432,7 +1432,7 @@ test.describe("signed in", () => {
 
     await page.goto("/ostoslista");
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
     const carton = page
       .locator(".s-sheet .s-product-results > li")
@@ -1579,7 +1579,7 @@ test.describe("signed in", () => {
       const item = page
         .locator(".shopping-item", { hasText: name })
         .first();
-      await item.locator("summary").click();
+      await openShoppingRow(item);
       await item.getByRole("button", { name: "Löytyy jo kaapista" }).click();
     }
 
