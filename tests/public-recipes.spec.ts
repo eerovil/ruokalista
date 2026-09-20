@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { openEditBlock } from "./support/blocks";
 import { onePixelPng } from "./support/png";
+import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -144,7 +145,7 @@ test("selected households can be found, added and safely removed", async ({
   await page.goto("/ostoslista");
   const cabbage = page.locator(".shopping-list > li", { hasText: "valkokaali" });
   await expect(cabbage).toHaveCount(1);
-  await cabbage.locator("summary").click();
+  await openShoppingRow(cabbage);
   await cabbage.getByRole("button", { name: "Löytyy jo kaapista" }).click();
   await page.goto("/kaappi");
   await expect(page.locator("body")).toContainText("valkokaali");
@@ -599,8 +600,8 @@ test("a public recipe feeds the other household's shopping list and cupboard", a
 
   // The cupboard covers it by ingredient id, which is the same id in both
   // households now — that is the whole reason the dictionary went global. The
-  // row is a disclosure, so it opens before its buttons exist to a person.
-  await salt.locator("summary").click();
+  // row opens into a modal, so its buttons exist to a person only after that.
+  await openShoppingRow(salt);
   await salt.getByRole("button", { name: "Löytyy jo kaapista" }).click();
   await page.goto("/kaappi");
   await expect(page.locator("body")).toContainText("naapurin suola");

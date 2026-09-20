@@ -652,13 +652,16 @@ const STYLES = `
 
      Every rule here is shared with .edit-*, the same modal generalised to a
      whole block of a screen (#317) — one set of declarations, so a row's modal
-     and a block's cannot drift apart. */
-  .line-open, .edit-open {
+     and a block's cannot drift apart. Three things open one now: the editor's
+     ingredient row, a block of a screen, and — since #321 — a shopping-list
+     row. They differ only in what opens them. */
+  .line-open, .edit-open, .row-open {
     position: absolute; width: 1px; height: 1px; min-height: 0;
     margin: 0; opacity: 0; pointer-events: none;
   }
   .line-open:focus-visible ~ .line-summary .line-edit,
-  .edit-open:focus-visible ~ .edit-summary .edit-trigger {
+  .edit-open:focus-visible ~ .edit-summary .edit-trigger,
+  .row-open:focus-visible ~ .shopping-summary {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   /* A summary that is its own tap target has no button to paint the focus on,
@@ -677,6 +680,7 @@ const STYLES = `
      beside, and — for a block whose opener is too far away in the document to
      be a sibling of anything — the address bar's own fragment (#317 review). */
   .line-open:checked ~ .line-modal,
+  .row-open:checked ~ .line-modal,
   .edit-open:checked ~ .edit-modal,
   .edit-modal:target {
     display: flex; position: fixed; inset: 0; z-index: 30;
@@ -944,19 +948,18 @@ const STYLES = `
      header is sticky — without this the row it returns to would land under it
      and read as the wrong row (#200). */
   .shopping-list > li[id] { scroll-margin-top: 4.5rem; }
-  .shopping-item > summary {
+  /* The row line: a label for the checkbox that opens the row's modal (#321),
+     drawn exactly as the summary it replaced was. */
+  .shopping-summary {
     display: flex; align-items: baseline; gap: .75rem;
     min-height: var(--tap); padding: .35rem 0; cursor: pointer;
-    list-style: none;
   }
-  .shopping-item > summary::-webkit-details-marker { display: none; }
   /* Nothing else says these rows open, the same problem the ingredient list
-     solved with a chevron. */
-  .shopping-item > summary::after {
+     solved with a chevron. It no longer turns, because nothing unfolds here
+     any more — what it opens covers the list rather than growing inside it. */
+  .shopping-summary::after {
     content: "›"; color: var(--muted); font-size: 1.1rem; line-height: 1;
-    transition: transform .1s;
   }
-  .shopping-item[open] > summary::after { transform: rotate(90deg); }
   /* The chosen product's picture, on the row itself (#159). It is smaller than
      the row's own minimum height, and the slot collapses when there is no
      picture, so no row grows and no row is left holding an empty box. */
@@ -981,7 +984,6 @@ const STYLES = `
      either share the line or the total takes the next one, and neither shrinks
      the other to a column of single letters. */
   .shopping-name { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
-  .shopping-item[open] .shopping-name { font-weight: 600; }
   .shopping-total { flex: 0 1 auto; min-width: 0; margin-left: auto;
     font-weight: 600; font-variant-numeric: tabular-nums;
     text-align: right; }
@@ -1126,7 +1128,7 @@ const STYLES = `
      the list. It is the one place on this screen that says a save failed, and
      it says it without moving what the member was reading (#200). */
   .s-toast {
-    position: fixed; left: .6rem; right: .6rem; z-index: 11;
+    position: fixed; left: .6rem; right: .6rem; z-index: 41;
     bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + .6rem);
     display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
     padding: .6rem .7rem;
@@ -1141,7 +1143,10 @@ const STYLES = `
   /* The product picker: one per screen, fixed to the bottom of the viewport.
      Being outside the list's flow is the whole point — opening and closing it
      moves no row, which is what walking a long list needs (#200). */
-  .s-sheet { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; }
+  /* Above the row's own modal (z-index 30), because since #321 that is what it
+     opens out of: a picker drawn under the row that asked for it is a picker
+     nobody can see. */
+  .s-sheet { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 40; }
   .s-sheet-backdrop {
     position: absolute; top: 0; right: 0; bottom: 0; left: 0;
     background: rgba(0,0,0,.45);

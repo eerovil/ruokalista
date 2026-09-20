@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import { closeOpenShoppingRow, openShoppingRow } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -126,7 +127,7 @@ async function chooseProduct(
   product: string,
 ): Promise<void> {
   const item = row(page, ingredient);
-  await item.locator("summary").click();
+  await openShoppingRow(item);
   await openPanel(page, item);
   const result = results(page).filter({ hasText: product });
   await expect(result).toBeVisible();
@@ -149,7 +150,7 @@ async function chooseProduct(
  * finished row — a second package size, dropping one — are behind reopening it.
  */
 async function reopen(item: ReturnType<typeof row>): Promise<void> {
-  await item.locator("summary").click();
+  await openShoppingRow(item);
   await expect(item.locator(".s-shopping-product-summary")).toBeVisible();
 }
 
@@ -304,7 +305,7 @@ test("an external product can be selected, persisted, and replaced", async ({
   );
 
   const reloadedMilk = row(page, "maito");
-  await reloadedMilk.locator("summary").click();
+  await openShoppingRow(reloadedMilk);
   await openPanel(page, reloadedMilk);
   await page.locator(".s-sheet").getByLabel("Haku").fill("kahvi");
   await page.locator(".s-sheet").getByRole("button", { name: "Hae" }).click();
@@ -342,7 +343,7 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
     "Teksti",
   );
   await expect(page.locator(".s-send-counts")).toContainText(/\d+ teksti(?:ä)?/);
-  const before = await milk.locator("summary").boundingBox();
+  const before = await milk.locator(".shopping-summary").boundingBox();
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   // The count above the send button keeps up with a mapping made in place.
@@ -360,8 +361,8 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
 
   // The row keeps its height: the picture is smaller than the tap target the
   // summary already reserved, and an unmapped row beside it is the same height.
-  const after = await row(page, "maito").locator("summary").boundingBox();
-  const unmapped = await water.locator("summary").boundingBox();
+  const after = await row(page, "maito").locator(".shopping-summary").boundingBox();
+  const unmapped = await water.locator(".shopping-summary").boundingBox();
   expect(after?.height).toBe(before?.height);
   expect(after?.height).toBe(unmapped?.height);
   // An ingredient with no product has no empty box where the picture would be.
@@ -427,7 +428,7 @@ test("a forged product result is refused and never persisted", async ({ page }) 
   }
 
   await page.goto("/ostoslista");
-  await row(page, "maito").locator("summary").click();
+  await openShoppingRow(row(page, "maito"));
   await expect(row(page, "maito").locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
@@ -438,7 +439,7 @@ test("a missing CDN image is hidden without breaking product choice", async ({ p
   await planTheFortnight(page);
   await page.goto("/ostoslista");
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
 
   const result = results(page).first();
@@ -459,7 +460,7 @@ test("the next ingredient's search is fetched while this one is open", async ({
   expect(next).not.toBe("");
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
 
   await expect
@@ -483,7 +484,7 @@ test("a prefetched search is never shown for another ingredient", async ({
   const names = await buyRowNames(page);
   const next = names[names.indexOf("maito") + 1] ?? "";
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
   await expect(results(page).first()).toContainText("Kotimaista rasvaton maito");
 
@@ -491,7 +492,7 @@ test("a prefetched search is never shown for another ingredient", async ({
   // product for it — and not the milk sitting in the cache beside it.
   await closeSheet(page);
   const neighbour = row(page, next);
-  await neighbour.locator("summary").click();
+  await openShoppingRow(neighbour);
   await openPanel(page, neighbour);
   await expect(page.locator(".s-sheet .s-product-panel-state")).toContainText(
     "Haulla ei löytynyt tuotteita",
@@ -517,7 +518,7 @@ test("a choice returns to the list at once and saves behind it", async ({
   });
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
   await results(page)
     .filter({ hasText: "Kotimaista rasvaton maito" })
@@ -569,12 +570,11 @@ test("choosing a product never moves the page under the member", async ({
 
   // Far enough down that a jump to the top would be unmistakable, and on a row
   // that is really being worked on rather than the first one on the screen.
-  // Opened, because the product line is inside the row's own disclosure and a
-  // closed row would hide the growth this is looking for.
+  // Opened, because that is where the buttons this flow presses live.
   const names = await buyRowNames(page);
   const milk = row(page, "maito");
   const following = page.locator(".shopping-list > li").nth(names.indexOf("maito") + 1);
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await milk.evaluate((node) => {
     node.scrollIntoView(true);
   });
@@ -631,32 +631,17 @@ test("choosing a product never moves the page under the member", async ({
   await expect(milk.locator(".s-status .spinner")).toHaveCount(0);
   await page.unroute("**/ostoslista/tuote");
 
-  // Once the save has landed the row does move: it closes itself, because the
-  // ingredient is finished (#204). Two things have to survive that.
-  //
-  // The page never scrolls *further down*. Collapsing a row near the end of the
-  // list can leave the document too short to hold the offset it was at, and the
-  // browser then hands some scroll back — the list comes up the screen. That is
-  // allowed, and on a list that now fits in one screen it is the whole point;
-  // what is not allowed is the page running away from the member.
+  // The row still shuts itself once the ingredient is finished (#204), and
+  // since #321 what it shuts is a modal over the list rather than a fold in
+  // it. So the list it uncovers is the list it covered: not one pixel of this
+  // page moved from the first tap to the last, which is the strongest form of
+  // what #200 asked for.
   await expect(milk.locator(".s-shopping-product-summary")).toBeHidden();
-  const settledScroll = await page.evaluate(() => window.scrollY);
-  expect(settledScroll, "collapsed: never further down").toBeLessThanOrEqual(
-    scrolled,
-  );
-  const settled = await milk.boundingBox();
-  expect(settled!.height, "collapsed: shorter than it was").toBeLessThan(height!);
-  // Measured down the document, not down the screen: when the browser hands
-  // scroll back it does so by exactly what the document lost, so the next
-  // ingredient can end up in the same place on screen while genuinely being
-  // closer to the top of the list.
-  const nextNow = (await following.boundingBox())!.y + settledScroll;
-  expect(nextNow, "collapsed: the next ingredient came closer").toBeLessThan(
-    nextTop! + scrolled,
-  );
+  await still("the save landed and the row closed itself");
 
   // And the member is still looking at the ingredient they were working on,
   // with the next one beside it — which was the point of closing the row.
+  const settled = await milk.boundingBox();
   const view = page.viewportSize();
   expect(settled!.y).toBeGreaterThanOrEqual(0);
   expect(settled!.y).toBeLessThan(view!.height);
@@ -707,7 +692,7 @@ test("the cupboard button comes back to the row it was pressed on", async ({
   const ingredientId = await oil
     .locator(".shopping-item")
     .getAttribute("data-aines");
-  await oil.locator("summary").click();
+  await openShoppingRow(oil);
   await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
 
   expect(new URL(page.url()).hash).toBe(`#aines-${ingredientId}`);
@@ -827,7 +812,7 @@ test("the cupboard and the left-off list stay two separate answers", async ({
   await leaveOff(page, "vesi");
 
   const oil = row(page, "öljy");
-  await oil.locator("summary").click();
+  await openShoppingRow(oil);
   await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
 
   // Both answers are drawn, worded apart, and neither took the other's row.
@@ -854,7 +839,7 @@ test("leaving a row off survives a trip through another form", async ({
   // The cupboard button leaves the page; the exclusions ride along as hidden
   // fields, so the member comes back to the list they were reading.
   const oil = row(page, "öljy");
-  await oil.locator("summary").click();
+  await openShoppingRow(oil);
   await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
 
   await expect(leftOff(page)).toHaveCount(1);
@@ -1023,13 +1008,18 @@ test("sending waits for an optimistic product save", async ({ page }) => {
   });
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
   await results(page)
     .filter({ hasText: "Kotimaista rasvaton maito" })
     .getByRole("button", { name: "Valitse" })
     .click();
   await expect(milk.locator(".s-status .spinner")).toBeVisible();
+
+  // The save is still in flight, so the row has not closed itself (#204) and
+  // its modal is still over the list. Tapping away is how the member gets back
+  // to the send button while a save runs; the save carries on regardless.
+  await closeOpenShoppingRow(page);
 
   const send = page.locator(".s-send-form button");
   await send.click();
@@ -1090,12 +1080,17 @@ test("a failed background save is shown, undone, and retryable", async ({
   });
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanel(page, milk);
   await results(page)
     .filter({ hasText: "Kotimaista rasvaton maito" })
     .getByRole("button", { name: "Valitse" })
     .click();
+
+  // The modal is over the list while the save runs, so getting to the send
+  // button means tapping away first, the way a member would. The save carries
+  // on regardless — that it does is the whole point of this test.
+  await closeOpenShoppingRow(page);
 
   const send = page.locator(".s-send-form button");
   await send.click();
@@ -1112,10 +1107,11 @@ test("a failed background save is shown, undone, and retryable", async ({
     "Lähetystä ei aloitettu",
   );
   expect(sends).toBe(0);
-  // Still open, and it has to be: the refusal and its retry are what the member
-  // needs to see, so a refused save is the one that does not close the row.
-  await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
+  // The row went back to what the server actually holds: no picture on the
+  // line, and the note still inside it.
   await expect(milk.locator(".shopping-thumb img")).toHaveCount(0);
+  await openShoppingRow(milk);
+  await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
 
   failing = false;
   const retried = page.waitForResponse(
@@ -1393,7 +1389,7 @@ test.describe("without JavaScript", () => {
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await openPlainPicker(milk);
     await page
       .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
@@ -1432,7 +1428,7 @@ test("sending uses stored EANs, note fallbacks, and excludes the pantry", async 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   const oil = row(page, "öljy");
-  await oil.locator("summary").click();
+  await openShoppingRow(oil);
   await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
 
   // Keep the local ingredient mapping, but clear the external call log and
@@ -1656,7 +1652,7 @@ test("a failed product search keeps the local ingredient unmapped", async ({ pag
 
   await page.goto("/ostoslista");
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await expect(milk.locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
@@ -1665,7 +1661,7 @@ test("an ingredient opens to say where its total came from", async ({ page }) =>
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
 
   const from = milk.locator(".shopping-from li");
   await expect(from).toHaveCount(2);
@@ -1677,7 +1673,7 @@ test("an ingredient opens to say where its total came from", async ({ page }) =>
   // The wording the source used is kept, which is the whole point for a line
   // that never stated a number.
   const lemongrass = row(page, "sitruunaruoho");
-  await lemongrass.locator("summary").click();
+  await openShoppingRow(lemongrass);
   await expect(lemongrass.locator(".source")).toHaveText(
     "hieman sitruunaruohoa",
   );
@@ -1751,7 +1747,7 @@ test("a cooking that feeds several days is bought for once", async ({ page }) =>
 
   await page.goto("/ostoslista");
   await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1 dl");
-  await row(page, "öljy").locator("summary").click();
+  await openShoppingRow(row(page, "öljy"));
   await expect(row(page, "öljy").locator(".shopping-from li")).toHaveCount(1);
 });
 
@@ -1881,7 +1877,7 @@ test("a package size can be dropped again", async ({ page }) => {
   await chooseAndReload(page, "Valio kevytmaito");
 
   const listed = row(page, "maito");
-  await listed.locator("summary").click();
+  await openShoppingRow(listed);
   await listed
     .locator(".s-product-sizes > li", { hasText: "Valio kevytmaito" })
     .getByRole("button", { name: "Poista" })
@@ -1905,7 +1901,7 @@ test("a recipe's own product is not merged into the generic pile", async ({
   );
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanelWith(page, milk, "Valitse tuote");
   await page
     .locator(".s-sheet .s-product-scope-choice select")
@@ -1925,7 +1921,7 @@ test("a recipe's own product is not merged into the generic pile", async ({
     .locator(".shopping-list > li", { hasText: "maito" })
     .filter({ hasNot: page.locator(".s-product-scope") });
   await expect(generic.locator(".shopping-total")).toHaveText("2 rkl");
-  await generic.locator("summary").click();
+  await openShoppingRow(generic);
   await expect(generic.locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
@@ -1940,7 +1936,7 @@ test("changing a pinned row changes that dish's product, not the ingredient's", 
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanelWith(page, milk, "Valitse tuote");
   await page
     .locator(".s-sheet .s-product-scope-choice select")
@@ -1948,7 +1944,7 @@ test("changing a pinned row changes that dish's product, not the ingredient's", 
   await chooseAndReload(page, "Kotimaista rasvaton maito");
 
   const pinned = page.locator(".shopping-list > li", { hasText: "Vain reseptissä" });
-  await pinned.locator("summary").click();
+  await openShoppingRow(pinned);
   await openPanelWith(page, pinned, "Vaihda tuote");
   // A pinned row has nothing to ask: it is this dish's row.
   await expect(page.locator(".s-sheet .s-product-scope-choice")).toHaveCount(0);
@@ -1964,7 +1960,7 @@ test("changing a pinned row changes that dish's product, not the ingredient's", 
   const generic = page
     .locator(".shopping-list > li", { hasText: "maito" })
     .filter({ hasNot: page.locator(".s-product-scope") });
-  await generic.locator("summary").click();
+  await openShoppingRow(generic);
   await expect(generic.locator(".s-shopping-product.is-note")).toBeVisible();
 });
 
@@ -2299,7 +2295,7 @@ test("an unreadable package size is asked for rather than guessed", async ({
   // this row cannot size. Instead, prove the honest half directly: a product
   // whose name states a size never asks, and the stored size is what shows.
   const milk = row(page, "maito");
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await openPanelWith(page, milk, "Valitse tuote");
   const result = results(page).filter({ hasText: "Kotimaista rasvaton maito" });
   await expect(result.locator(".s-product-size")).toContainText("Pakkaus 1 l");
@@ -2316,7 +2312,7 @@ test.describe("choosing a scope without JavaScript", () => {
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await openPlainPicker(milk);
 
     await page

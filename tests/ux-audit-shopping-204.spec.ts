@@ -1,5 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import {
+  closeShoppingRow,
+  openShoppingRow,
+} from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -49,7 +53,7 @@ test.describe("shopping product picking, as it is (#204)", () => {
 
     // 2. Opening an ingredient that has no product yet.
     const cheese = row(page, "juusto");
-    await cheese.locator("summary").click();
+    await openShoppingRow(cheese);
     await expect(
       cheese.getByRole("button", { name: "Valitse tuote" }),
     ).toBeVisible();
@@ -127,11 +131,13 @@ test.describe("shopping product picking, as it is (#204)", () => {
     // 8. The next ingredient with no product, without scrolling first: this is
     //    the distance between finishing one and starting the next.
     const mince = row(page, "jauheliha");
-    await mince.locator("summary").click();
+    await openShoppingRow(mince);
     await shot(page, "10-next-ingredient-open");
 
-    // Changing a product that is already chosen.
-    await mince.locator("summary").click();
+    // Changing a product that is already chosen. The cheese row shut itself
+    // when its choice saved (#204), so it is opened again to reach it.
+    await closeShoppingRow(mince);
+    await openShoppingRow(cheese);
     await cheese.getByRole("button", { name: "Vaihda tuote" }).click();
     await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
     await shot(page, "11-changing-a-chosen-product");
@@ -153,13 +159,14 @@ test.describe("shopping product picking, as it is (#204)", () => {
       .click();
     await secondSize;
     const cheeseAfter = row(page, "juusto");
+    await openShoppingRow(cheeseAfter);
     await expect(cheeseAfter.locator(".s-product-sizes > li")).toHaveCount(2);
     await shot(page, "13-two-package-sizes");
 
     // Already in the cupboard: the row leaves the buy list for the Löytyy
     // section, through a full page load.
     const oil = row(page, "öljy");
-    await oil.locator("summary").click();
+    await openShoppingRow(oil);
     await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
     await expect(
       page.locator(".shopping-section", { hasText: "Löytyy" }),
@@ -193,7 +200,7 @@ test.describe("shopping product picking, as it is (#204)", () => {
       step += 1;
       const item = row(page, ingredient);
       await pause(page);
-      await item.locator("summary").click();
+      await openShoppingRow(item);
       await shot(page, `seq-${step}a-${slug(ingredient)}-open`);
       await pause(page);
       await item.getByRole("button", { name: "Valitse tuote" }).click();
@@ -216,7 +223,7 @@ test.describe("shopping product picking, as it is (#204)", () => {
       await shot(page, `seq-${step}c-${slug(ingredient)}-chosen`);
       await pause(page);
       // Tidy the row away the way a member would before moving on.
-      await item.locator("summary").click();
+      await closeShoppingRow(item);
     }
 
     await shot(page, "seq-9-four-chosen", { fullPage: true });

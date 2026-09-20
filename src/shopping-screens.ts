@@ -1142,12 +1142,21 @@ function buyArea(
 type RowKind = "buy" | "pantry";
 
 /**
- * One row per ingredient, each one openable to say where its total came from
- * and to move it in or out of the cupboard.
+ * One row per ingredient, each one openable to say where its total came from,
+ * to choose what to buy for it, and to move it in or out of the cupboard.
  *
- * A `<details>` rather than a script: the breakdown is the answer to "why does
- * it say five", and that answer should not depend on the browser being able to
- * run anything.
+ * The row line itself stays one line and the rest opens in a modal (#321). It
+ * used to be a `<details>` that expanded in place, which put an unknown number
+ * of lines — the breakdown, the product block, the cupboard button — between
+ * the row somebody had just tapped and every row under it, on a screen whose
+ * whole job is to be walked down while shopping. A modal covers the list
+ * instead of rearranging it, so closing it leaves the list exactly where it
+ * was, and it is the same shape the recipe editor's ingredient rows got in
+ * #315.
+ *
+ * Still no script: a checkbox nobody submits drives it, the way `line-form.ts`
+ * does it. The breakdown is the answer to "why does it say five", and that
+ * answer should not depend on the browser being able to run anything.
  */
 function itemList(
   items: ShoppingItem[],
@@ -1163,16 +1172,22 @@ function itemList(
   return html`<ul class="shopping-list">
     ${items.map((item) => {
       const excluded = kind === "buy" && selection.excluded.has(item.key);
+      const toggle = rowToggleId(item, kind);
       return html`<li class="shopping-row" ${rowAnchor(item, anchored)}>
         ${excludeTick(item, selection, kind, excluded)}
-        <details
+        <div
           class="${excluded ? "shopping-item is-excluded" : "shopping-item"}"
           data-product-row
           data-aines="${item.ingredientId}"
           data-rivi="${item.key}"
           data-haku="${item.name}"
         >
-          <summary>
+          <!-- No name, so it is never submitted: this is screen state, not
+               data. Kept off screen rather than display:none so the row stays
+               reachable by keyboard. -->
+          <input type="checkbox" class="row-open" id="${toggle}" />
+
+          <label class="shopping-summary" for="${toggle}">
             <span class="shopping-thumb">${productThumbnail(item)}</span>
             <span class="shopping-line">
               <span class="shopping-name">${item.name}</span>
@@ -1182,30 +1197,58 @@ function itemList(
                 >${item.total}</span
               >
             </span>
-          </summary>
-          <ul class="shopping-from">
-            ${item.contributions.map(
-              (one) => html`<li>
-                <span class="shopping-from-what"
-                  >${one.batchTitle}${one.partTitle === null
-                    ? ""
-                    : ` · ${one.partTitle}`}</span
-                >
-                <span class="shopping-from-amount"
-                  >${one.amount === "" ? AMOUNT_IN_RECIPE : one.amount}</span
-                >
-                ${one.sourceLine === ""
-                  ? ""
-                  : html`<span class="source">${one.sourceLine}</span>`}
-              </li>`,
-            )}
-          </ul>
-          ${externalProductBlock(item, selection, excluded, kind, external)}
-          ${pantryButton(item, selection, kind === "pantry")}
-        </details>
+          </label>
+
+          <div class="line-modal">
+            <!-- Tapping the dimmed area closes the row, because that is what a
+                 tapped-away modal does. It is the same label as the summary. -->
+            <label class="line-modal-back" for="${toggle}" aria-hidden="true"></label>
+
+            <div class="line-modal-card" role="group" aria-label="${item.name}">
+              <p class="line-modal-title">
+                ${item.name} <span class="meta">${item.total}</span>
+              </p>
+              <ul class="shopping-from">
+                ${item.contributions.map(
+                  (one) => html`<li>
+                    <span class="shopping-from-what"
+                      >${one.batchTitle}${one.partTitle === null
+                        ? ""
+                        : ` · ${one.partTitle}`}</span
+                    >
+                    <span class="shopping-from-amount"
+                      >${one.amount === "" ? AMOUNT_IN_RECIPE : one.amount}</span
+                    >
+                    ${one.sourceLine === ""
+                      ? ""
+                      : html`<span class="source">${one.sourceLine}</span>`}
+                  </li>`,
+                )}
+              </ul>
+              ${externalProductBlock(item, selection, excluded, kind, external)}
+              <div class="line-modal-actions">
+                ${pantryButton(item, selection, kind === "pantry")}
+                <label class="line-done" for="${toggle}">Valmis</label>
+              </div>
+            </div>
+          </div>
+        </div>
       </li>`;
     })}
   </ul>`;
+}
+
+/**
+ * The id that ties a row's summary, its dimmed backdrop and its `Valmis` to the
+ * one checkbox that opens it.
+ *
+ * A row key can name a dish as well as an ingredient — `12:r7` — and the kind
+ * is in there because the cupboard list is drawn by the same function on the
+ * same screen. The colon goes because an id with one in it is a selector nobody
+ * can write without escaping it.
+ */
+function rowToggleId(item: ShoppingItem, kind: RowKind): string {
+  return `rivi-${kind}-${item.key.split(":").join("-")}`;
 }
 
 /**
@@ -1372,9 +1415,9 @@ function selectedBuyItem(
 
 /**
  * The one thing a shopping-list row can be told: we always have this, or we
- * have run out of it. It sits inside the opened row rather than on the summary
- * line, because the summary is what somebody reads while shopping and a button
- * per line would compete with the amounts.
+ * have run out of it. It sits in the row's modal rather than on the row line,
+ * because the line is what somebody reads while shopping and a button per line
+ * would compete with the amounts.
  */
 function pantryButton(
   item: ShoppingItem,
@@ -1407,10 +1450,10 @@ function pantryButton(
  * with no script, no write, and no chance of touching the cupboard — a real
  * `<input type="checkbox">` here would need a script to do anything at all.
  *
- * It sits outside the row's `<details>` rather than inside it, for two
- * reasons. It has to be reachable without opening the row, which is the whole
- * ask; and a link inside a `<summary>` is a control fighting the thing that
- * opens the row for the same tap.
+ * It sits beside the row rather than inside it, for two reasons. It has to be
+ * reachable without opening the row, which is the whole ask; and the row's own
+ * summary is one label covering the whole line, so a link inside it would be a
+ * control fighting the thing that opens the row for the same tap.
  *
  * A cupboard row gets none of it: it is already off the list for a reason that
  * outranks this one, and offering both would be asking the member to hold two

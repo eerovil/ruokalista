@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { openShoppingRow } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -157,7 +158,7 @@ interface RowShape {
 /** What the row actually drew, in pixels. */
 async function shapeOf(item: Locator): Promise<RowShape> {
   return item.evaluate((li) => {
-    const summary = li.querySelector("summary") as HTMLElement;
+    const summary = li.querySelector(".shopping-summary") as HTMLElement;
     const name = li.querySelector(".shopping-name") as HTMLElement;
     const total = li.querySelector(".shopping-total") as HTMLElement;
     const box = summary.getBoundingClientRect();
@@ -254,7 +255,7 @@ test("a row with a product picture holds the same shape", async ({ page }) => {
     "määrä reseptin mukaan",
   );
 
-  await milk.locator("summary").click();
+  await openShoppingRow(milk);
   await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
   await expect(page.locator(".s-sheet")).toBeVisible();
   await expect(page.locator(".s-sheet .spinner")).toHaveCount(0);

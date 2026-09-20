@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { openShoppingRow } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -50,7 +51,7 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");
-    await milk.locator("summary").click();
+    await openShoppingRow(milk);
     await milk.getByRole("button", { name: "Valitse tuote" }).click();
 
     const results = page.locator(".s-sheet .s-product-results > li");
@@ -77,6 +78,9 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
       "Kotimaista rasvaton maito",
     );
     await expect(milk.locator(".s-status .spinner")).toHaveCount(0);
+    // The row shut itself when the save landed (#204), and since #321 what it
+    // shut is a modal — so the 40 px slot is reopened to be measured.
+    await openShoppingRow(milk);
     await expectPicture(
       milk.locator(".s-shopping-product-one img"),
       SLOTS.summary,
@@ -90,7 +94,7 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
     const reopened = row(page, "maito");
     await expectPicture(reopened.locator(".shopping-thumb img"), SLOTS.row);
     await shot(page, "3-list-with-the-row-closed");
-    await reopened.locator("summary").click();
+    await openShoppingRow(reopened);
     await expectPicture(
       reopened.locator(".s-shopping-product-one img"),
       SLOTS.summary,
