@@ -19,6 +19,7 @@ import {
 } from "./support/lines";
 import { flatPng, gradientPng } from "./support/png";
 import {
+  closeOpenShoppingRow,
   closeShoppingRow,
   openShoppingRow,
 } from "./support/shopping-rows";
@@ -1137,8 +1138,10 @@ test.describe("signed in", () => {
       water.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
     ).toBeDisabled();
     await capture(page, {
+      // Viewport, not the whole page: since #321 this is a modal fixed to the
+      // viewport, and a full-page shot paints it once at the top over blank
+      // page rather than where the member sees it.
       path: `${SHOTS}/83-shopping-unmapped-row.png`,
-      fullPage: true,
     });
     await closeShoppingRow(water);
 
@@ -1171,6 +1174,9 @@ test.describe("signed in", () => {
     await expect(milk.locator(".s-shopping-product-summary")).toContainText(
       "Kotimaista rasvaton maito",
     );
+    // The row's modal is over the list while the save runs, so getting to the
+    // send button means tapping it away first (#321). The held save carries on.
+    await closeOpenShoppingRow(page);
     const send = page.locator(".s-send-form button");
     await send.click();
     await expect(send).toContainText("Tallennetaan valintoja");
@@ -1293,8 +1299,8 @@ test.describe("signed in", () => {
     );
     await expect(counted.locator(".s-package-total")).toContainText("2 l");
     await capture(page, {
+      // Viewport: the row's modal is open, and it is fixed to the viewport.
       path: `${SHOTS}/61-package-count.png`,
-      fullPage: true,
     });
 
     // A second package size, taught from the row itself rather than a settings
@@ -1313,8 +1319,8 @@ test.describe("signed in", () => {
     await openShoppingRow(sized);
     await expect(sized.locator(".s-product-sizes > li")).toHaveCount(2);
     await capture(page, {
+      // Viewport, for the same reason as the shot above.
       path: `${SHOTS}/62-package-sizes.png`,
-      fullPage: true,
     });
 
     // #240: the same fortnight needs 1200 g of jauhelihaa, which is three of
@@ -1351,6 +1357,7 @@ test.describe("signed in", () => {
     expect(
       (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
     ).toBe(true);
+    await closeShoppingRow(counting);
     await page.locator(".s-send-form button").click();
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
