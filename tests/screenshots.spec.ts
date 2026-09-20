@@ -11,7 +11,12 @@ import {
   UNSAVABLE_AMOUNT_DRAFT,
 } from "./support/draft";
 import { KAALILAATIKKO, LASAGNE } from "./support/edit-targets";
-import { addIngredientRow, openDraftEditor, openMore } from "./support/lines";
+import {
+  addIngredientRow,
+  closeLineEditor,
+  openDraftEditor,
+  openLineEditor,
+} from "./support/lines";
 import { flatPng, gradientPng } from "./support/png";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -1022,8 +1027,10 @@ test.describe("signed in", () => {
     // Take the lasagne's one own line away, leaving a dish whose ingredients
     // all sit on its two parts.
     await page.goto("/recipes/3/edit");
-    await page.locator(".line").first().locator("> details.line-more > summary").click();
-    await page.locator(".line").first().locator("input[name$=remove]").check();
+    const sheets = page.locator(".line").first();
+    await openLineEditor(sheets);
+    await sheets.locator("input[name$=remove]").check();
+    await closeLineEditor(sheets);
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(/\/recipes\/3$/);
 
@@ -1051,22 +1058,25 @@ test.describe("signed in", () => {
     // A fifth row asked for by hand, so the shot shows the add button having
     // done its job as well as the row it makes.
     await addIngredientRow(page);
-    await page.locator(".line").nth(4).locator("select").selectOption({
-      label: "ananas",
-    });
-    await page.locator(".line").nth(4).locator("input[name$=quantity]").fill("1");
+    const fifth = page.locator(".line").nth(4);
+    await fifth.getByLabel("Aines", { exact: true }).fill("ananas");
+    await fifth.locator("input[name$=quantity]").fill("1");
+    await closeLineEditor(fifth);
 
     // The saved row is sitruunaruoho. Even if it is repointed on the same
     // submit, removing it is refused because the last step still names the
     // saved ingredient.
     const linked = page.locator(".line").nth(3);
-    await linked.locator("select").selectOption({ label: "valkokaali" });
+    await openLineEditor(linked);
+    await linked.getByLabel("Aines", { exact: true }).fill("valkokaali");
     await linked.locator("input[name$=remove]").check();
+    await closeLineEditor(linked);
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
     await expect(page.locator(".line-conflicts")).toContainText("Vaihe 3");
     await expect(page.locator(".refused")).toContainText("sitruunaruoho");
-    await expect(linked.locator("select")).toHaveValue("3");
+    await expect(linked.getByLabel("Aines", { exact: true }))
+      .toHaveValue("valkokaali");
     await expect(page.getByRole("button", { name: "Poista silti" })).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/47-editor-remove-mentioned.png`,
@@ -2162,22 +2172,22 @@ test.describe("ingredient alternatives", () => {
     // the same group number in the editor.
     await page.goto("/recipes/1/edit");
     const oil = page.locator(".line").first();
-    await openMore(oil);
+    await openLineEditor(oil);
     await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
+    await closeLineEditor(oil);
 
     await addIngredientRow(page);
     const added = page.locator(".line").nth(4);
-    await added.locator("select").selectOption({ label: "Luo uusi aines" });
+    await added.getByLabel("Aines", { exact: true }).fill("margariini");
     await added.locator("input[name$=quantity]").fill("0,5");
-    await openMore(added);
     await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
-    await added.getByLabel("Uuden aineksen nimi").fill("margariini");
     await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
     await capture(page, {
       path: `${SHOTS}/69-alternative-editor.png`,
       fullPage: true,
     });
 
+    await closeLineEditor(added);
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(/\/recipes\/1$/);
 
@@ -2221,19 +2231,19 @@ test.describe("ingredient alternatives", () => {
     const sentence = "½ dl öljyä tai voita";
     await page.goto("/recipes/1/edit");
     const oil = page.locator(".line").first();
-    await openMore(oil);
+    await openLineEditor(oil);
     await oil.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
     await oil.getByLabel("Lähderivi").fill(sentence);
+    await closeLineEditor(oil);
 
     await addIngredientRow(page);
     const added = page.locator(".line").nth(4);
-    await added.locator("select").selectOption({ label: "Luo uusi aines" });
+    await added.getByLabel("Aines", { exact: true }).fill("voi");
     await added.locator("input[name$=quantity]").fill("0,5");
-    await openMore(added);
     await added.getByLabel("Yksikkö", { exact: true }).fill("dl");
-    await added.getByLabel("Uuden aineksen nimi").fill("voi");
     await added.getByLabel("Vaihtoehtoryhmä (sama numero = tai)").fill("1");
     await added.getByLabel("Lähderivi").fill(sentence);
+    await closeLineEditor(added);
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(/\/recipes\/1$/);
 
@@ -2710,7 +2720,10 @@ test.describe("an assisted edit whose part moved underneath it (#215)", () => {
     // Meanwhile, on the juustokastike's own editor: the milk was wrong.
     const other = await context.newPage();
     await other.goto("/recipes/5/edit");
-    await other.locator(".line").first().locator("input[name$=quantity]").fill("7");
+    const milk = other.locator(".line").first();
+    await openLineEditor(milk);
+    await milk.locator("input[name$=quantity]").fill("7");
+    await closeLineEditor(milk);
     await other.locator(".save-bar button").click();
     // A saved part lands on its dish since #231, not on its own page.
     await other.waitForURL(/\/recipes\/3$/);

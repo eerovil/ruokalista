@@ -1,7 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
-import { openDraftEditor } from "./support/lines";
+import {
+  closeLineEditor,
+  openDraftEditor,
+  openLineEditor,
+} from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -149,12 +153,10 @@ test("editing a part changes that part and leaves the other alone (#231)", async
 
   // The three things the card asks to be editable: name, amounts, method.
   await page.locator("#title").fill("Valkokastike");
-  await page
-    .locator(".line")
-    .first()
-    .locator("input[name$=quantity]")
-    .first()
-    .fill("6");
+  const milk = page.locator(".line").first();
+  await openLineEditor(milk);
+  await milk.locator("input[name$=quantity]").first().fill("6");
+  await closeLineEditor(milk);
   await page
     .locator('textarea[name="step.0"]')
     .fill("Kuumenna maito ja vispaa juusto joukkoon.");
@@ -360,9 +362,12 @@ test("the editor preserves and can change parent cooking phases", async ({
 }) => {
   await page.goto("/recipes/3/edit");
 
+  const sheets = page.locator(".line").first();
+  await openLineEditor(sheets);
   const linePhase = page.locator('select[name="line.0.phase"]');
   await expect(linePhase).toHaveValue("after_parts");
   await linePhase.selectOption("before_parts");
+  await closeLineEditor(sheets);
 
   const stepPhases = page.locator('select[name^="step."][name$=".phase"]');
   await expect(stepPhases.nth(0)).toHaveValue("");

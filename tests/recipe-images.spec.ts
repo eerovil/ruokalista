@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { openMore } from "./support/lines";
+import { closeLineEditor, openLineEditor } from "./support/lines";
 import { flatPng as png } from "./support/png";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -381,9 +381,11 @@ test.describe("freshness", () => {
 
     // Change how much of the first ingredient the dish uses.
     await page.goto(`/recipes/${RECIPE}/edit`);
+    await openLineEditor(page.locator(".line").first());
     const amount = page.locator(".line").first().locator("input[name$=quantity]").first();
     const was = await amount.inputValue();
     await amount.fill("3");
+    await closeLineEditor(page.locator(".line").first());
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
 
@@ -395,7 +397,9 @@ test.describe("freshness", () => {
 
     // Putting the amount back is the dish it was, so the picture is right again.
     await page.goto(`/recipes/${RECIPE}/edit`);
+    await openLineEditor(page.locator(".line").first());
     await page.locator(".line").first().locator("input[name$=quantity]").first().fill(was);
+    await closeLineEditor(page.locator(".line").first());
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
 
@@ -415,11 +419,12 @@ test.describe("freshness", () => {
     expect((await (await page.request.get(STATUS_URL)).json()).status).toBe("fresh");
 
     await page.goto(`/recipes/${RECIPE}/edit`);
-    await openMore(page.locator(".line").nth(0));
-    await openMore(page.locator(".line").nth(1));
-    const positions = page.locator(".line input[name$=position]");
-    await positions.nth(0).fill("2");
-    await positions.nth(1).fill("1");
+    for (const [index, position] of [["0", "2"], ["1", "1"]] as const) {
+      const line = page.locator(".line").nth(Number(index));
+      await openLineEditor(line);
+      await line.locator("input[name$=position]").fill(position);
+      await closeLineEditor(line);
+    }
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
 
@@ -443,7 +448,9 @@ test.describe("freshness", () => {
 
     await page.goto(`/recipes/${RECIPE}/edit`);
     await page.locator("#title").fill("Aivan toinen ruoka");
+    await openLineEditor(page.locator(".line").first());
     await page.locator(".line").first().locator("input[name$=quantity]").first().fill("9");
+    await closeLineEditor(page.locator(".line").first());
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(new RegExp(`/recipes/${RECIPE}$`));
 

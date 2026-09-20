@@ -1,10 +1,34 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { addIngredientRow, openMore } from "./support/lines";
+import {
+  addIngredientRow,
+  closeLineEditor,
+  openLineEditor,
+} from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /** Editing a saved recipe, deleting one, and renaming an ingredient. */
+
+/** Tick a row's Poista, which lives in that row's modal since #315. */
+async function tickRemove(page: Page, index: number): Promise<void> {
+  const line = page.locator(".line").nth(index);
+  await openLineEditor(line);
+  await line.locator("input[name$=remove]").check();
+  await closeLineEditor(line);
+}
+
+/** Point a row at another ingredient by typing its name into the box. */
+async function chooseIngredient(
+  page: Page,
+  index: number,
+  name: string,
+): Promise<void> {
+  const line = page.locator(".line").nth(index);
+  await openLineEditor(line);
+  await line.getByLabel("Aines", { exact: true }).fill(name);
+  await closeLineEditor(line);
+}
 
 test.beforeAll(reseed);
 
@@ -30,28 +54,48 @@ test("the editor opens from the recipe with its fields filled in", async ({
   await expect(page.locator(".line")).toHaveCount(4);
 });
 
-test("the ingredient picker is preselected from the stored line", async ({
+test("the ingredient box is filled in from the stored line", async ({
   page,
 }) => {
   await page.goto("/recipes/1/edit");
   const first = page.locator(".line").first();
-  await expect(first.locator("select")).toHaveValue("1"); // öljy
-  // The unit rides down with the rest of the uncommon fields on this screen.
-  await openMore(first);
+
+  await openLineEditor(first);
+  await expect(first.getByLabel("Aines", { exact: true })).toHaveValue("öljy");
   await expect(first.getByLabel("Yksikkö", { exact: true })).toHaveValue("dl");
 });
 
-test("the row shows the ingredient, the amount and removal without opening anything", async ({
+test("the row is one readable line and a button, and nothing else (#315)", async ({
   page,
 }) => {
   await page.goto("/recipes/1/edit");
   const first = page.locator(".line").first();
 
-  await expect(first.locator("select")).toBeVisible();
+  // What it is and how much of it, as a sentence rather than as controls.
+  await expect(first.locator(".line-name")).toHaveText("öljy");
+  // The amount exactly as its own box holds it, so the line and the field it
+  // opens never disagree about what is written down.
+  await expect(first.locator(".line-amount")).toHaveText("0,5 dl");
+  await expect(first.locator(".line-edit")).toHaveText("Muokkaa");
+
+  // Every field is one tap down, and the modal is shut until it is asked for.
+  await expect(first.locator(".line-modal-card")).toBeHidden();
+  await expect(first.locator("input[name$=quantity]")).toBeHidden();
+  await expect(first.locator("input[name$=remove]")).toBeHidden();
+});
+
+test("Muokkaa opens the modal and Valmis closes it again (#315)", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+  const first = page.locator(".line").first();
+
+  await openLineEditor(first);
   await expect(first.locator("input[name$=quantity]")).toBeVisible();
   await expect(first.locator("input[name$=remove]")).toBeVisible();
-  // The unit is not one of the four, so it is behind the disclosure.
-  await expect(first.locator("input[name$=unit]")).toBeHidden();
+
+  await closeLineEditor(first);
+  await expect(first.locator("input[name$=quantity]")).toBeHidden();
 });
 
 test("source text is shown but not editable", async ({ page }) => {
@@ -67,8 +111,10 @@ test("editing a title and a quantity keeps the source text", async ({ page }) =>
   await page.goto("/recipes/1/edit");
 
   await page.locator("#title").fill("Uunikaalilaatikko");
+  await openLineEditor(page.locator(".line").first());
   await page.locator(".line").first().locator("input[name$=quantity]").first()
     .fill("1,5");
+  await closeLineEditor(page.locator(".line").first());
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1$/);
@@ -78,19 +124,19 @@ test("editing a title and a quantity keeps the source text", async ({ page }) =>
   await expect(page.locator(".source-text")).toContainText("½ dl öljyä");
 });
 
-test("changing an amount needs no advanced controls opened", async ({
+test("changing an amount is one tap in and one tap out", async ({
   page,
 }) => {
   await page.goto("/recipes/1/edit");
 
-  // Only the two lines that actually hold something rare are open — the range
-  // and the second measurement. The ordinary ones are folded.
-  await expect(page.locator("details.line-more[open]")).toHaveCount(2);
-  await expect(
-    page.locator(".line").nth(0).locator("details.line-more"),
-  ).not.toHaveAttribute("open", "");
+  // Nothing is open on arrival, however unusual a line is: a modal that showed
+  // itself uninvited would cover the recipe the member came to read.
+  await expect(page.locator(".line-modal-card:visible")).toHaveCount(0);
 
-  await page.locator(".line").first().locator("input[name$=quantity]").fill("2");
+  const first = page.locator(".line").first();
+  await openLineEditor(first);
+  await first.locator("input[name$=quantity]").fill("2");
+  await closeLineEditor(first);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1$/);
@@ -100,13 +146,14 @@ test("changing an amount needs no advanced controls opened", async ({
 test("lines can be reordered by their position boxes", async ({ page }) => {
   await page.goto("/recipes/1/edit");
 
-  // Reordering is a line-management action, so it lives under Lisätiedot.
-  await openMore(page.locator(".line").nth(0));
-  await openMore(page.locator(".line").nth(1));
+  // Reordering is a line-management action, so it lives in the row's modal.
+  await openLineEditor(page.locator(".line").nth(0));
+  await page.locator(".line").nth(0).locator("input[name$=position]").fill("2");
+  await closeLineEditor(page.locator(".line").nth(0));
 
-  const positions = page.locator(".line input[name$=position]");
-  await positions.nth(0).fill("2");
-  await positions.nth(1).fill("1");
+  await openLineEditor(page.locator(".line").nth(1));
+  await page.locator(".line").nth(1).locator("input[name$=position]").fill("1");
+  await closeLineEditor(page.locator(".line").nth(1));
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   const lines = page.locator(".lines li");
@@ -123,7 +170,7 @@ test("a line nothing mentions is removed straight from the row", async ({
   const before = await page.locator(".lines li").count().catch(() => 0);
   expect(before).toBe(0); // we are on the editor, not the recipe
 
-  await page.locator(".line").first().locator("input[name$=remove]").check();
+  await tickRemove(page, 0);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/2$/);
@@ -138,8 +185,8 @@ test("the approval gate applies to the editor too", async ({ page }) => {
   await addIngredientRow(page);
   const added = page.locator(".line").nth(4);
   await added.locator("input[name$=quantity]").fill("2");
-  await openMore(added);
   await added.getByLabel("Yksikkö", { exact: true }).fill("rkl");
+  await closeLineEditor(added);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText(
@@ -161,10 +208,11 @@ test("+ Lisää aines adds exactly one row and keeps what was typed", async ({
   // The cursor lands in the row it just made, so a long form does not send the
   // member back to the top to look for it.
   const added = page.locator(".line").nth(4);
-  await expect(added.locator("select")).toBeFocused();
+  await expect(added.getByLabel("Aines", { exact: true })).toBeFocused();
 
-  await added.locator("select").selectOption({ label: "ananas" });
+  await added.getByLabel("Aines", { exact: true }).fill("ananas");
   await added.locator("input[name$=quantity]").fill("2");
+  await closeLineEditor(added);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1$/);
@@ -176,7 +224,7 @@ test("removing an ingredient a step still mentions is refused, and says where", 
 }) => {
   await page.goto("/recipes/1/edit");
   // Line 3 is sitruunaruoho, which step 3 names as "sitruunaruoholla".
-  await page.locator(".line").nth(3).locator("input[name$=remove]").check();
+  await tickRemove(page, 3);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText("sitruunaruoho");
@@ -194,15 +242,18 @@ test("repointing and removing a linked row still guards its saved ingredient", a
 }) => {
   await page.goto("/recipes/1/edit");
   const linked = page.locator(".line").nth(3);
-  await linked.locator("select").selectOption({ label: "valkokaali" });
+  await openLineEditor(linked);
+  await linked.getByLabel("Aines", { exact: true }).fill("valkokaali");
   await linked.locator("input[name$=remove]").check();
+  await closeLineEditor(linked);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".refused")).toContainText("sitruunaruoho");
   await expect(page.locator(".line-conflicts")).toContainText(
     "Mausta sitruunaruoholla ja tarjoa.",
   );
-  await expect(linked.locator("select")).toHaveValue("3");
+  await expect(linked.getByLabel("Aines", { exact: true }))
+    .toHaveValue("valkokaali");
   await expect(linked.locator("input[name$=remove]")).toBeChecked();
 
   await page.getByRole("button", { name: "Poista silti" }).click();
@@ -218,7 +269,7 @@ test("a removal goes through once the step no longer mentions the ingredient", a
   page,
 }) => {
   await page.goto("/recipes/1/edit");
-  await page.locator(".line").nth(3).locator("input[name$=remove]").check();
+  await tickRemove(page, 3);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".line-conflicts")).toBeVisible();
 
@@ -237,7 +288,7 @@ test("a removal goes through once the step no longer mentions the ingredient", a
 
 test("a removal can be forced past the warning", async ({ page }) => {
   await page.goto("/recipes/1/edit");
-  await page.locator(".line").nth(3).locator("input[name$=remove]").check();
+  await tickRemove(page, 3);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".line-conflicts")).toBeVisible();
 
@@ -259,14 +310,15 @@ test("removing one of two rows for the same ingredient is not refused", async ({
   await page.goto("/recipes/1/edit");
   await addIngredientRow(page);
   const added = page.locator(".line").nth(4);
-  await added.locator("select").selectOption({ label: "sitruunaruoho" });
+  await added.getByLabel("Aines", { exact: true }).fill("sitruunaruoho");
   await added.locator("input[name$=quantity]").fill("1");
+  await closeLineEditor(added);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(/\/recipes\/1$/);
 
   // Now two lines carry it, so the mention keeps something to point at.
   await page.goto("/recipes/1/edit");
-  await page.locator(".line").nth(3).locator("input[name$=remove]").check();
+  await tickRemove(page, 3);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1$/);
@@ -452,8 +504,7 @@ test("a dish whose ingredients all sit on its parts can still be saved", async (
   await page.goto("/recipes/3/edit");
   await expect(page.locator(".line")).toHaveCount(1);
 
-  await openMore(page.locator(".line").first());
-  await page.locator(".line").first().locator("input[name$=remove]").check();
+  await tickRemove(page, 0);
   await page.locator("#title").fill("Lasagne ilman levyjä");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
@@ -485,9 +536,7 @@ test("a recipe with no ingredients left is saved rather than refused", async ({
   // because a recipe saved from its name alone has to stay editable.
   await page.goto("/recipes/2/edit");
   for (const index of [0, 1]) {
-    const line = page.locator(".line").nth(index);
-    await openMore(line);
-    await line.locator("input[name$=remove]").check();
+    await tickRemove(page, index);
   }
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 

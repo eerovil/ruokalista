@@ -79,9 +79,8 @@ export interface LineRowOptions {
   /** Show cooking phase for content belonging to a multipart dish itself. */
   phases?: boolean;
   /**
-   * The recipe editor's row (issue #128): the ingredient, the amount's number,
-   * its unit as read-only context, and the remove box on the row itself. The
-   * unit's editable field and everything else stay one tap down.
+   * The recipe editor's row (issues #128, #315): one ingredient per line, read
+   * only, with a `Muokkaa` button that opens everything editable in a modal.
    *
    * Off by default, so the intake correction screen keeps the row it has. The
    * two screens are asking different questions: intake is checking a whole
@@ -107,16 +106,10 @@ export interface LineRowOptions {
  * of them already carries a value, so a recipe that genuinely uses one is never
  * quietly hiding it — including on a re-render after a refusal.
  *
- * The unit is deliberately not one of them even on a compact row. Its value is
- * visible beside the amount, while its editable field stays behind the
- * disclosure; counting it would open almost every row and there would be
- * nothing compact left.
+ * A compact row (the recipe editor) has no disclosure to open: everything is
+ * in its modal already, so this is the import review's question alone.
  */
-function hasUncommonValues(
-  values: LineFormValues,
-  index: number,
-  compact: boolean,
-): boolean {
+function hasUncommonValues(values: LineFormValues, index: number): boolean {
   return (
     values.quantityMax.trim() !== "" ||
     values.altQuantity.trim() !== "" ||
@@ -124,9 +117,7 @@ function hasUncommonValues(
     values.section.trim() !== "" ||
     values.phase.trim() !== "" ||
     values.alternativeGroup.trim() !== "" ||
-    // A compact row keeps its remove box in the open, so a ticked one is not a
-    // reason to unfold anything.
-    (!compact && values.remove) ||
+    values.remove ||
     // A position that has been moved off its natural place is a decision
     // somebody made, so it shows.
     (values.position.trim() !== "" &&
@@ -143,22 +134,22 @@ export function lineRow(
   const values = isLineFormValues(line)
     ? line
     : lineValuesFromDraft(line, index);
+
+  if (options.compact === true) {
+    return compactRow(values, index, ingredients, options);
+  }
+
   const proposedName = values.newName.trim();
   const needsAnswer =
     values.ingredientChoice === "" && proposedName !== "";
   const isNew = needsAnswer || values.ingredientChoice === "new";
-  const compact = options.compact === true;
-  const expanded = hasUncommonValues(values, index, compact);
+  const expanded = hasUncommonValues(values, index);
   /**
    * The one-tap way out of a wrong match (issue #298). Only a row the model
-   * pointed at an ingredient that already exists has anything to undo, and
-   * only the import review offers it: the compact editor row is about changing
-   * one thing on a recipe that is already right, not about checking an import.
+   * pointed at an ingredient that already exists has anything to undo.
    */
   const offerAsNew =
-    !compact &&
-    values.ingredientChoice !== "" &&
-    values.ingredientChoice !== "new";
+    values.ingredientChoice !== "" && values.ingredientChoice !== "new";
 
   const picker = html`<select
     name="line.${index}.ingredient"
@@ -183,78 +174,57 @@ export function lineRow(
     )}
   </select>`;
 
-  const quantityBox = html`<input
-    name="line.${index}.quantity"
-    inputmode="decimal"
-    value="${values.quantity}"
-    aria-label="Määrä"
-    placeholder="Määrä"
-    class="qty"
-  />`;
-
-  const removeBox = html`<label class="remove">
-    <input
-      type="checkbox"
-      name="line.${index}.remove"
-      ${values.remove ? "checked" : ""}
-    />
-    Poista
-  </label>`;
-
-  return html`<li class="${lineClass(isNew, compact)}">
+  return html`<li class="${lineClass(isNew, false)}">
     ${isNew
       ? html`<span class="badge is-decision"
           >${needsAnswer ? "Vastaa: uusi aines?" : "Uusi aines"}</span
         >`
       : ""}
 
-    ${compact
-      ? // Keep the unit visible as context while leaving unit editing with the
-        // less common fields under the disclosure.
-        html`<div class="line-main">
-          ${picker} ${quantityBox}
-          ${values.unit.trim() === ""
-            ? ""
-            : html`<span class="line-unit">${values.unit}</span>`}
-          ${removeBox}
-        </div>`
-      : // The common path: how much, of what. Everything else is one tap down.
-        html`<div class="amounts">
-            ${quantityBox}
-            <input
-              name="line.${index}.unit"
-              value="${values.unit}"
-              aria-label="Yksikkö"
-              placeholder="Yksikkö"
-              class="unit"
-            />
-          </div>
+    <!-- The common path: how much, of what. Everything else is one tap down. -->
+    <div class="amounts">
+      <input
+        name="line.${index}.quantity"
+        inputmode="decimal"
+        value="${values.quantity}"
+        aria-label="Määrä"
+        placeholder="Määrä"
+        class="qty"
+      />
+      <input
+        name="line.${index}.unit"
+        value="${values.unit}"
+        aria-label="Yksikkö"
+        placeholder="Yksikkö"
+        class="unit"
+      />
+    </div>
 
-          ${picker}
-          <!-- Answering "the model matched this to the wrong thing, it is
-               genuinely new" from the row itself (issue #298). The name it
-               will create is the one the model proposed for this very line,
-               already on the row as newName, so nothing has to be typed; the
-               field beside it is there for when the proposal wants a word
-               changed, and the stylesheet shows it once the box is ticked. -->
-          ${offerAsNew
-            ? html`<div class="as-new">
-                <input
-                  type="checkbox"
-                  class="as-new-toggle"
-                  id="line.${index}.asNew"
-                  name="line.${index}.asNew"
-                />
-                <label for="line.${index}.asNew">Tämä on uusi aines</label>
-                <input
-                  class="as-new-name"
-                  name="line.${index}.newName"
-                  value="${values.newName}"
-                  aria-label="Uuden aineksen nimi"
-                  placeholder="Uuden aineksen nimi"
-                />
-              </div>`
-            : ""}`}
+    ${picker}
+    <!-- Answering "the model matched this to the wrong thing, it is
+         genuinely new" from the row itself (issue #298). The name it
+         will create is the one the model proposed for this very line,
+         already on the row as newName, so nothing has to be typed; the
+         field beside it is there for when the proposal wants a word
+         changed, and the stylesheet shows it once the box is ticked. -->
+    ${offerAsNew
+      ? html`<div class="as-new">
+          <input
+            type="checkbox"
+            class="as-new-toggle"
+            id="line.${index}.asNew"
+            name="line.${index}.asNew"
+          />
+          <label for="line.${index}.asNew">Tämä on uusi aines</label>
+          <input
+            class="as-new-name"
+            name="line.${index}.newName"
+            value="${values.newName}"
+            aria-label="Uuden aineksen nimi"
+            placeholder="Uuden aineksen nimi"
+          />
+        </div>`
+      : ""}
 
     <!-- The proposed name only earns its place while the line is asking to
          create one. Otherwise it rides along below with the rest. -->
@@ -271,7 +241,7 @@ export function lineRow(
       ? ""
       : html`<input type="hidden" name="line.${index}.note" value="${values.note}" />`}
 
-    ${values.sourceLine === "" || compact
+    ${values.sourceLine === ""
       ? ""
       : html`<span class="source">${values.sourceLine}</span>`}
 
@@ -279,49 +249,10 @@ export function lineRow(
          shows no placeholder, so grouping these behind a disclosure without
          labels would leave a column of naked numbers. -->
     <details class="line-more" ${expanded ? "open" : ""}>
-      <summary>${compact ? "Lisää asetuksia" : "Lisätiedot"}</summary>
+      <summary>Lisätiedot</summary>
 
       <div class="more-fields">
-        ${compact
-          ? field(`line.${index}.unit`, "Yksikkö", values.unit)
-          : ""}
-        ${options.reorderable
-          ? field(
-              `line.${index}.position`,
-              "Järjestys",
-              values.position,
-              "numeric",
-            )
-          : ""}
-        ${field(
-          `line.${index}.quantityMax`,
-          "Välin yläpää",
-          values.quantityMax,
-          "decimal",
-        )}
-        ${field(
-          `line.${index}.altQuantity`,
-          "Toinen määrä",
-          values.altQuantity,
-          "decimal",
-        )}
-        ${field(`line.${index}.altUnit`, "Toinen yksikkö", values.altUnit)}
-        ${options.sections
-          ? field(
-              `line.${index}.section`,
-              "Osa (esim. juustokastike)",
-              values.section,
-            )
-          : ""}
-        ${field(
-          `line.${index}.alternativeGroup`,
-          "Vaihtoehtoryhmä (sama numero = tai)",
-          values.alternativeGroup,
-          "numeric",
-        )}
-        ${options.phases && values.section.trim() === ""
-          ? phaseSelect(`line.${index}.phase`, values.phase)
-          : ""}
+        ${moreFields(values, index, options)}
         <!-- One newName field per row and no more: a second one would post a
              second value and the reader only ever sees the first. It is up on
              the row itself when the line is asking to create an ingredient,
@@ -337,18 +268,264 @@ export function lineRow(
         ${field(`line.${index}.source`, "Lähderivi", values.sourceLine)}
       </div>
 
-      ${compact
-        ? ""
-        : html`<label class="remove">
+      <label class="remove">
+        <input
+          type="checkbox"
+          name="line.${index}.remove"
+          ${values.remove ? "checked" : ""}
+        />
+        Poista rivi
+      </label>
+    </details>
+  </li>`;
+}
+
+/**
+ * The editor's row (issues #128, #315): one ingredient per line, read only,
+ * and a `Muokkaa` button beside it.
+ *
+ * A recipe has a dozen of these and the member is changing one thing about a
+ * dish that is already right, so the row's job is to be readable and to get
+ * out of the way — `500 g · Jauheliha`, not three controls and a disclosure
+ * summary stacked four lines deep.
+ *
+ * Everything editable lives in the modal below, which is a plain fixed overlay
+ * shown by a checkbox nobody submits: no JavaScript, and the fields are still
+ * inside the one big form, so they post with the save exactly as before.
+ *
+ * The ingredient itself is a text box backed by a shared `<datalist>` rather
+ * than a `<select>`. A select could only ever offer what already exists, and
+ * "the right ingredient is not on the list" was a dead end (#315). A typed name
+ * that matches nothing is created — see `resolveTypedIngredient`.
+ */
+function compactRow(
+  values: LineFormValues,
+  index: number,
+  ingredients: IngredientSummary[],
+  options: LineRowOptions,
+): Raw {
+  const name = chosenName(values, ingredients);
+  const isNew = values.ingredientChoice === "new" && name !== "";
+  const toggle = `line.${index}.open`;
+  // A row the member just asked for opens straight into its modal: the whole
+  // point of `+ Lisää aines` is to fill one in.
+  const open = options.autofocusRow === index;
+
+  return html`<li class="${lineClass(isNew, true)}${values.remove ? " is-removed" : ""}">
+    <!-- No name, so it is never submitted: this is screen state, not data. Kept
+         off screen rather than display:none so it stays reachable by keyboard. -->
+    <input type="checkbox" class="line-open" id="${toggle}" ${open ? "checked" : ""} />
+
+    <div class="line-summary">
+      <span class="line-amount">${amountText(values)}</span>
+      <span class="line-name">${name === "" ? "— valitse aines —" : name}</span>
+      <!-- Always here, empty when there is nothing to say, so the island below
+           has something to write into. The stylesheet hides an empty one. -->
+      <span class="badge is-decision line-flag"
+        >${values.remove ? "Poistetaan" : isNew ? "Uusi" : ""}</span
+      >
+      <label class="line-edit" for="${toggle}">Muokkaa</label>
+    </div>
+
+    <div class="line-modal">
+      <!-- Tapping the dimmed area closes the modal, because that is what a
+           tapped-away modal does. It is the same label as the button. -->
+      <label class="line-modal-back" for="${toggle}" aria-hidden="true"></label>
+
+      <div class="line-modal-card" role="group" aria-label="Muokkaa ainesta">
+        <p class="line-modal-title">
+          ${name === "" ? "Lisää aines" : "Muokkaa ainesta"}
+        </p>
+
+        <div class="more-field">
+          <label for="line.${index}.ingredientName">Aines</label>
+          <input
+            id="line.${index}.ingredientName"
+            name="line.${index}.ingredientName"
+            value="${name}"
+            list="ingredient-names"
+            autocomplete="off"
+            placeholder="Kirjoita tai valitse"
+            ${options.autofocusRow === index ? "autofocus" : ""}
+          />
+          <p class="line-modal-hint">
+            Jos ainesta ei ole listassa, kirjoita se — se luodaan.
+          </p>
+        </div>
+
+        <div class="more-fields">
+          ${field(`line.${index}.quantity`, "Määrä", values.quantity, "decimal")}
+          ${field(`line.${index}.unit`, "Yksikkö", values.unit)}
+          ${moreFields(values, index, options)}
+          ${field(`line.${index}.source`, "Lähderivi", values.sourceLine)}
+        </div>
+
+        ${values.note === ""
+          ? ""
+          : html`<input type="hidden" name="line.${index}.note" value="${values.note}" />`}
+
+        <div class="line-modal-actions">
+          <label class="remove">
             <input
               type="checkbox"
               name="line.${index}.remove"
               ${values.remove ? "checked" : ""}
             />
-            Poista rivi
-          </label>`}
-    </details>
+            Poista aines
+          </label>
+          <label class="line-done" for="${toggle}">Valmis</label>
+        </div>
+      </div>
+    </div>
   </li>`;
+}
+
+/**
+ * Keep a row's one-line summary saying what its modal now holds (#315).
+ *
+ * Pure enhancement: the summary is server-rendered and correct on arrival, and
+ * every value still reaches the server through the form whatever happens here.
+ * Without it the screen is merely slightly behind — a member who renames an
+ * ingredient and closes the modal would read the old name on the row until the
+ * save came back, which reads as the edit not having taken.
+ *
+ * Which names already exist is read off the `<datalist>` that is on the page
+ * anyway, so this needs no second copy of the dictionary.
+ *
+ * ES5, no regular expressions and no backslashes: this is a template literal
+ * shipped untranspiled, and a backslash is eaten before the browser sees it.
+ */
+const LINE_SUMMARY_ISLAND = `
+(function () {
+  if (!document.querySelectorAll || !window.addEventListener) return;
+
+  var list = document.getElementById('ingredient-names');
+  var rows = document.querySelectorAll('li.line.is-compact');
+  if (!list || !rows.length) return;
+
+  var known = {};
+  var options = list.getElementsByTagName('option');
+  for (var i = 0; i < options.length; i++) {
+    known[options[i].value.toLowerCase()] = true;
+  }
+
+  for (var r = 0; r < rows.length; r++) wire(rows[r]);
+
+  function wire(row) {
+    var name = row.querySelector('.line-name');
+    var amount = row.querySelector('.line-amount');
+    var flag = row.querySelector('.line-flag');
+    var picker = row.querySelector('input[list=ingredient-names]');
+    if (!name || !amount || !flag || !picker) return;
+
+    var quantity = row.querySelector('input[name$=".quantity"]');
+    var upper = row.querySelector('input[name$=".quantityMax"]');
+    var unit = row.querySelector('input[name$=".unit"]');
+    var remove = row.querySelector('input[name$=".remove"]');
+
+    row.addEventListener('input', refresh, false);
+    row.addEventListener('change', refresh, false);
+
+    function refresh() {
+      var typed = value(picker);
+      var removing = !!(remove && remove.checked);
+
+      write(name, typed === '' ? '— valitse aines —' : typed);
+      write(amount, amountText());
+      write(
+        flag,
+        removing ? 'Poistetaan'
+          : typed !== '' && !known[typed.toLowerCase()] ? 'Uusi'
+          : ''
+      );
+      mark(row, removing);
+    }
+
+    function amountText() {
+      var low = value(quantity);
+      var high = value(upper);
+      var measure = value(unit);
+      var span = high === '' ? low : low + '–' + high;
+      if (span === '') return measure;
+      return measure === '' ? span : span + ' ' + measure;
+    }
+  }
+
+  function value(field) {
+    return field && field.value ? field.value.trim() : '';
+  }
+
+  function write(node, text) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+    if (text !== '') node.appendChild(document.createTextNode(text));
+  }
+
+  function mark(row, removing) {
+    var kept = [];
+    var parts = row.className.split(' ');
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] !== '' && parts[i] !== 'is-removed') kept.push(parts[i]);
+    }
+    if (removing) kept.push('is-removed');
+    row.className = kept.join(' ');
+  }
+})();
+`;
+
+/** The rarer fields, shared by both rows so neither can quietly lose one. */
+function moreFields(
+  values: LineFormValues,
+  index: number,
+  options: LineRowOptions,
+): Raw {
+  return html`${options.reorderable
+      ? field(`line.${index}.position`, "Järjestys", values.position, "numeric")
+      : ""}
+    ${field(
+      `line.${index}.quantityMax`,
+      "Välin yläpää",
+      values.quantityMax,
+      "decimal",
+    )}
+    ${field(
+      `line.${index}.altQuantity`,
+      "Toinen määrä",
+      values.altQuantity,
+      "decimal",
+    )}
+    ${field(`line.${index}.altUnit`, "Toinen yksikkö", values.altUnit)}
+    ${options.sections
+      ? field(`line.${index}.section`, "Osa (esim. juustokastike)", values.section)
+      : ""}
+    ${field(
+      `line.${index}.alternativeGroup`,
+      "Vaihtoehtoryhmä (sama numero = tai)",
+      values.alternativeGroup,
+      "numeric",
+    )}
+    ${options.phases && values.section.trim() === ""
+      ? phaseSelect(`line.${index}.phase`, values.phase)
+      : ""}`;
+}
+
+/** What this row's ingredient is called right now, however it was chosen. */
+function chosenName(
+  values: LineFormValues,
+  ingredients: IngredientSummary[],
+): string {
+  const match = ingredients.find(
+    (ingredient) => String(ingredient.id) === values.ingredientChoice,
+  );
+  return match === undefined ? values.newName.trim() : match.name;
+}
+
+/** `500 g`, `1–2 rkl`, `ripaus`-less when the row says no amount at all. */
+function amountText(values: LineFormValues): string {
+  const quantity = values.quantity.trim();
+  const upper = values.quantityMax.trim();
+  const unit = values.unit.trim();
+  const amount = upper === "" ? quantity : `${quantity}–${upper}`;
+  return [amount, unit].filter((part) => part !== "").join(" ");
 }
 
 function lineClass(isNew: boolean, compact: boolean): string {
@@ -408,7 +585,18 @@ export function lineRows(
       </ol>
       <p class="add-line">
         <button type="submit" name="addLine" value="1">+ Lisää aines</button>
-      </p>`;
+      </p>
+      <!-- One list for every row's ingredient box (#315). A datalist is the
+           browser's own autocomplete: it suggests, it does not constrain, so a
+           name nobody has used yet can still be typed straight in. -->
+      <datalist id="ingredient-names">
+        ${ingredients.map(
+          (ingredient) => html`<option value="${ingredient.name}"></option>`,
+        )}
+      </datalist>
+      <script>
+        ${raw(LINE_SUMMARY_ISLAND)}
+      </script>`;
   }
 
   let realCount = 0;
@@ -487,14 +675,72 @@ export function lineValuesFromDraft(
   };
 }
 
+/**
+ * A name somebody typed into the editor's autocomplete box, as a choice.
+ *
+ * An exact name, ignoring case and surrounding space, is that ingredient. Any
+ * other non-empty name is a new one — which is the whole point of #315: the
+ * list suggests, and a foodstuff nobody has used yet is still typeable. Empty
+ * is an unanswered row, exactly as an unchosen select was.
+ *
+ * Case-insensitively rather than exactly, because the browser's own suggestion
+ * list is the thing being matched against and nobody retypes capitals to match
+ * it. `ingredient` is a global dictionary since #143, so the same typed word
+ * means the same foodstuff in every household.
+ */
+function resolveTypedIngredient(
+  typed: string,
+  ingredients: IngredientSummary[],
+): { ingredientChoice: string; newName: string } {
+  const name = typed.trim();
+  if (name === "") return { ingredientChoice: "", newName: "" };
+
+  const folded = name.toLocaleLowerCase("fi");
+  const match = ingredients.find(
+    (ingredient) => ingredient.name.trim().toLocaleLowerCase("fi") === folded,
+  );
+  return match === undefined
+    ? { ingredientChoice: "new", newName: name }
+    : { ingredientChoice: String(match.id), newName: "" };
+}
+
+/**
+ * The submitted row, as values.
+ *
+ * `ingredients` is only consulted by the editor's autocomplete row, which posts
+ * a typed name rather than an id. The import review's select posts the id
+ * itself and needs no list, so the default empty one is not a silent trap.
+ */
 export function lineValuesFromForm(
   form: FormData,
   index: number,
+  ingredients: IngredientSummary[] = [],
 ): LineFormValues {
   // A ticked "Tämä on uusi aines" is normalised away here, so a refused save
   // re-renders as the ordinary create-a-new-one row — badge, name field and
   // all — rather than as a matched row still carrying a hidden contradiction.
   const asNew = form.get(`line.${index}.asNew`) !== null;
+  const typed = form.get(`line.${index}.ingredientName`);
+
+  if (typed !== null) {
+    const chosen = resolveTypedIngredient(String(typed), ingredients);
+    return {
+      position: formField(form, `line.${index}.position`),
+      quantity: formField(form, `line.${index}.quantity`),
+      quantityMax: formField(form, `line.${index}.quantityMax`),
+      unit: formField(form, `line.${index}.unit`),
+      altQuantity: formField(form, `line.${index}.altQuantity`),
+      altUnit: formField(form, `line.${index}.altUnit`),
+      section: formField(form, `line.${index}.section`),
+      phase: formField(form, `line.${index}.phase`),
+      alternativeGroup: formField(form, `line.${index}.alternativeGroup`),
+      ingredientChoice: chosen.ingredientChoice,
+      newName: chosen.newName,
+      sourceLine: formField(form, `line.${index}.source`),
+      note: formField(form, `line.${index}.note`),
+      remove: form.get(`line.${index}.remove`) !== null,
+    };
+  }
 
   return {
     position: formField(form, `line.${index}.position`),
@@ -551,7 +797,11 @@ export function lineCountForRendering(form: FormData): number {
  * nobody filled in is dropped; an unanswered real one is kept, so the gate can
  * refuse it rather than the parser silently losing it.
  */
-export function readLines(form: FormData, lineCount: number): LineToSave[] {
+export function readLines(
+  form: FormData,
+  lineCount: number,
+  ingredients: IngredientSummary[] = [],
+): LineToSave[] {
   if (!Number.isSafeInteger(lineCount) || lineCount < 0 || lineCount > MAX_LINES) {
     throw new FormRefused(`Ainesrivejä voi olla enintään ${MAX_LINES}.`);
   }
@@ -559,7 +809,7 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
   const rows: { position: number; line: LineToSave }[] = [];
 
   for (let i = 0; i < lineCount; i++) {
-    const values = lineValuesFromForm(form, i);
+    const values = lineValuesFromForm(form, i, ingredients);
     if (values.remove) continue;
     if (untouched(values)) continue;
 
@@ -591,7 +841,7 @@ export function readLines(form: FormData, lineCount: number): LineToSave[] {
         unit: readText(values.unit),
         altQuantity,
         altUnit,
-        ingredient: readIngredient(form, i),
+        ingredient: ingredientFromValues(values),
         sourceLine: values.sourceLine.trim(),
         section: readText(values.section),
         phase: readPhase(values.phase),
@@ -775,21 +1025,20 @@ export function expectedPartFields(parts: readonly ExpectedPart[]): Raw {
     )}`;
 }
 
-export function readIngredient(form: FormData, index: number): LineIngredient {
-  const choice = formField(form, `line.${index}.ingredient`);
-
-  // The row's own "Tämä on uusi aines" (issue #298) beats whatever the picker
-  // still says, because the picker is exactly what it is contradicting: the
-  // match the model made is dropped and the name it proposed is approved.
-  if (form.get(`line.${index}.asNew`) !== null) {
-    return { kind: "new", name: formField(form, `line.${index}.newName`) };
+/**
+ * Which ingredient a submitted row means.
+ *
+ * Read off the values rather than the form, so there is one place that decides
+ * it: `lineValuesFromForm` has already folded away the row's own "Tämä on uusi
+ * aines" tick (#298) and resolved the editor's typed name (#315), and both of
+ * those contradict the raw fields still sitting in the form beside them.
+ */
+export function ingredientFromValues(values: LineFormValues): LineIngredient {
+  if (values.ingredientChoice === "new") {
+    return { kind: "new", name: values.newName };
   }
 
-  if (choice === "new") {
-    return { kind: "new", name: formField(form, `line.${index}.newName`) };
-  }
-
-  const id = Number(choice);
+  const id = Number(values.ingredientChoice);
   if (Number.isSafeInteger(id) && id > 0) return { kind: "existing", id };
 
   return { kind: "unanswered" };

@@ -227,7 +227,12 @@ export async function saveEditForm(
   try {
     const expectedRevision = readRevision(form.get("revision"));
     const lineCount = readLineCount(form.get("lineCount"));
-    await guardRemovals(env, member, form, lineCount);
+    // The dictionary, because this screen's rows post a typed ingredient name
+    // rather than an id (#315) and nothing downstream can resolve one without
+    // it. Read once and handed to both readers, so the save still costs one
+    // query for the list however many rows it carries.
+    const ingredients = await ingredientsFor(env.DB, member.householdId);
+    guardRemovals(form, lineCount, ingredients);
     const vocabulary = await loadVocabulary(env.DB);
 
     await editRecipe(
@@ -243,7 +248,7 @@ export async function saveEditForm(
         title: String(form.get("title") ?? ""),
         yieldPortions: readWhole(form.get("yield")),
         steps: readSteps(form),
-        lines: readLines(form, lineCount),
+        lines: readLines(form, lineCount, ingredients),
         // A part shows no category picker, so it submits none and keeps none —
         // the dish is what gets browsed for (#196).
         categories: vocabulary.read(form),
@@ -375,23 +380,21 @@ function readExpectedCategories(form: FormData): string[] {
  * Refuse a removal the preparation steps still contradict, unless the member
  * has deliberately said `Poista silti`.
  *
- * The ingredient list is only read when something is actually being removed, so
- * an ordinary save still costs one query fewer.
+ * The dictionary comes in from the caller, which has to read it anyway to make
+ * sense of a typed ingredient name (#315).
  */
-async function guardRemovals(
-  env: RouteContext["env"],
-  member: Member,
+function guardRemovals(
   form: FormData,
   lineCount: number,
-): Promise<void> {
+  ingredients: IngredientSummary[],
+): void {
   if (form.get("forceRemove") !== null) return;
 
   const rows = Array.from({ length: lineCount }, (_, index) =>
-    lineValuesFromForm(form, index),
+    lineValuesFromForm(form, index, ingredients),
   );
   if (!rows.some((row) => row.remove)) return;
 
-  const ingredients = await ingredientsFor(env.DB, member.householdId);
   const conflicts = removalConflicts(rows, stepValuesFromForm(form), ingredients);
   if (conflicts.length > 0) throw new MentionedRemoval(conflicts);
 }
@@ -555,7 +558,7 @@ export function editorForm(
 ): Raw {
   const rows: Array<DraftLine | LineFormValues> = attempted
     ? Array.from({ length: attempted.lineCount }, (_, index) =>
-        lineValuesFromForm(attempted.form, index),
+        lineValuesFromForm(attempted.form, index, ingredients),
       )
     : // No blank spares: `+ Lisää aines` at the end of the list asks for one
       // row when one is wanted (issue #128).

@@ -6,7 +6,12 @@ import {
   REMOVED_LINE_DRAFT,
   stubStructuring,
 } from "./support/draft";
-import { openDraftEditor, openMore } from "./support/lines";
+import {
+  closeLineEditor,
+  openDraftEditor,
+  openLineEditor,
+  openMore,
+} from "./support/lines";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -308,9 +313,10 @@ test("repointing an ingredient row unlinks its mention, it does not rebind it", 
 
   // The first line is öljy, and the first step says "öljyssä". Point that line
   // at a different ingredient and leave the step's wording exactly as it is.
-  await page.locator('select[name="line.0.ingredient"]').selectOption({
-    label: "jauheliha",
-  });
+  const first = page.locator(".edit-lines .line").first();
+  await openLineEditor(first);
+  await first.getByLabel("Aines", { exact: true }).fill("jauheliha");
+  await closeLineEditor(first);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await page.goto("/recipes/1");
@@ -414,9 +420,10 @@ test("repointing the row a mention was anchored to keeps the mention alive", asy
   // Row 0 is the first öljy line and the one the editor anchors to. Point only
   // that row somewhere else; the 1 dl öljy row is left exactly as it was.
   await page.goto(`${recipe}/edit`);
-  await page.locator('select[name="line.0.ingredient"]').selectOption({
-    label: "jauheliha",
-  });
+  const first = page.locator(".edit-lines .line").first();
+  await openLineEditor(first);
+  await first.getByLabel("Aines", { exact: true }).fill("jauheliha");
+  await closeLineEditor(first);
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
