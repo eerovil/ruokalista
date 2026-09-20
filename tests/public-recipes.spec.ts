@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { openEditBlock } from "./support/blocks";
 import { onePixelPng } from "./support/png";
 import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
@@ -34,6 +35,8 @@ async function signIn(page: Page, memberId: number): Promise<void> {
 async function publish(page: Page, recipeId: number): Promise<void> {
   await signIn(page, 1);
   await page.goto(`/recipes/${recipeId}`);
+  // Sharing is a modal behind Muokkaa since #317.
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".recipe-sharing")).toContainText(
@@ -44,6 +47,7 @@ async function publish(page: Page, recipeId: number): Promise<void> {
 async function makePrivate(page: Page, recipeId: number): Promise<void> {
   await signIn(page, 1);
   await page.goto(`/recipes/${recipeId}`);
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
 }
@@ -55,6 +59,7 @@ async function shareWith(
 ): Promise<void> {
   await signIn(page, 1);
   await page.goto(`/recipes/${recipeId}`);
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Valituille").check();
   const picker = page.locator(".recipient-picker");
   for (const name of householdNames) await picker.getByLabel(name).check();
@@ -100,6 +105,7 @@ test("selected households can be found, added and safely removed", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   const picker = page.locator(".recipient-picker");
   await expect(picker).toContainText("Naapuri");
   await expect(picker).toContainText("Mökki");
@@ -155,6 +161,7 @@ test("selected households can be found, added and safely removed", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await picker.getByLabel("Mökki").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".recipe-sharing")).toContainText("Mökki, Naapuri");
@@ -164,6 +171,7 @@ test("selected households can be found, added and safely removed", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await picker.getByLabel("Naapuri").uncheck();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
@@ -177,6 +185,7 @@ test("selected households can be found, added and safely removed", async ({
      );
     DELETE FROM planned_batch WHERE household_id = 2 AND recipe_id = 1
   `);
+  await openEditBlock(page, "sharing-open");
   await page.getByRole("button", { name: "Tallenna jako" }).click();
 
   await signIn(page, 2);
@@ -266,6 +275,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   );
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Valituille").check();
   const picker = page.locator(".recipient-picker");
   for (const household of households) {
@@ -276,11 +286,15 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
 
   // The exact boundary is a valid save and must also fit D1's 100-parameter
   // statement limit.
+  await openEditBlock(page, "sharing-open");
   await picker.getByLabel(households[50]!.name, { exact: true }).uncheck();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toHaveCount(0);
   await expect(picker.locator('input[name="recipientId"]:checked')).toHaveCount(50);
-  await expect(page.locator(".recipe-sharing > p.empty")).not.toContainText("Talous 51");
+  await openEditBlock(page, "sharing-open");
+  await expect(page.locator(".recipe-sharing .block-value.empty")).not.toContainText(
+    "Talous 51",
+  );
 
   // The checked recipients are preserved after refusal, but are irrelevant to
   // a public target and therefore must not hit D1's binding limit.
@@ -497,6 +511,7 @@ test("unpublishing is refused while another household plans it for a day still t
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
@@ -518,6 +533,7 @@ test("a cooking that already happened does not block unpublishing", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".recipe-sharing")).toContainText(
@@ -625,7 +641,10 @@ test("each household keeps its own default multiplier for the same recipe", asyn
   // Koti always cooks it at twice the recipe.
   await signIn(page, 1);
   await page.goto("/recipes/1");
+  // The default multiplier is a modal behind Muokkaa since #317.
+  await openEditBlock(page, "preference-open");
   await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await openEditBlock(page, "preference-open");
   await expect(
     page.locator(".multiplier-choice button.is-current"),
   ).toHaveText("2×");
@@ -633,6 +652,7 @@ test("each household keeps its own default multiplier for the same recipe", asyn
   // Naapuri is two people, and Koti's habit is not theirs.
   await signIn(page, 2);
   await page.goto("/recipes/1");
+  await openEditBlock(page, "preference-open");
   await expect(page.locator(".multiplier-choice button.is-current")).toHaveCount(0);
   await page
     .locator(".multiplier-choice")
@@ -658,7 +678,9 @@ test("a household's default is cleared by an empty box, not guessed at", async (
   await signIn(page, 1);
 
   await page.goto("/recipes/1");
+  await openEditBlock(page, "preference-open");
   await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await openEditBlock(page, "preference-open");
   await expect(page.locator(".multiplier-choice button.is-current")).toHaveText("2×");
 
   await page.locator(".multiplier-choice input").fill("");

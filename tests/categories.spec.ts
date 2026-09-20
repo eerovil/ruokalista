@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -29,8 +30,11 @@ async function categorise(
   labels: string[],
 ): Promise<void> {
   await page.goto(`/recipes/${recipeId}/edit`);
+  // The ticks are in the block's modal since #317, so open it as a person does.
+  await openEditBlock(page, "categories-open");
   const picker = page.locator(".category-choices");
   for (const label of labels) await picker.getByLabel(label).check();
+  await closeEditBlock(page, "categories-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL(new RegExp(`/recipes/${recipeId}$`));
 }
@@ -71,7 +75,9 @@ test("a category can be taken off again later", async ({ page }) => {
   await categorise(page, 1, ["Uuniruoka", "Lisuke"]);
 
   await page.goto("/recipes/1/edit");
+  await openEditBlock(page, "categories-open");
   await page.locator(".category-choices").getByLabel("Lisuke").uncheck();
+  await closeEditBlock(page, "categories-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page.locator(".category-tags")).toContainText("Uuniruoka");
