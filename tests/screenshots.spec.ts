@@ -1609,6 +1609,59 @@ test.describe("signed in", () => {
     }
   });
 
+  /**
+   * The two things #318 asks of the list: a tick straight on the row, and the
+   * pills that read the same rows by dish instead of by name.
+   */
+  test("ticking a row off in place, and reading the list by dish", async ({
+    page,
+  }) => {
+    const planned = [
+      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
+      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
+    ];
+
+    await page.goto("/ostoslista");
+    for (const name of ["vesi", "juusto"]) {
+      await page
+        .locator(".shopping-row", { hasText: name })
+        .first()
+        .getByRole("link", { name: `Jätä ${name} pois tältä listalta` })
+        .click();
+    }
+
+    // Both rows are ticked, greyed, and exactly where they were: in the same
+    // alphabetical list as everything else.
+    await expect(page.locator(".shopping-item.is-excluded")).toHaveCount(2);
+    await expect(page.locator(".row-tick.is-on")).toHaveCount(2);
+    await expect(page.locator(".shopping-excluded-note")).toBeVisible();
+    await capture(page, {
+      path: `${SHOTS}/125-shopping-ticked-off.png`,
+      fullPage: true,
+    });
+
+    await page
+      .locator(".shopping-grouping")
+      .getByRole("link", { name: "Resepteittäin" })
+      .click();
+    // These two dishes share no ingredient, so there is a section each and no
+    // shared pile; the pile is covered in tests/shopping.spec.ts.
+    await expect(page.locator(".shopping-group")).toHaveText([
+      "Kaalilaatikko",
+      "Lasagne",
+    ]);
+    // The ticks came along: grouping is a reading order, not a new list.
+    await expect(page.locator(".shopping-item.is-excluded")).toHaveCount(2);
+    await capture(page, {
+      path: `${SHOTS}/126-shopping-by-recipe.png`,
+      fullPage: true,
+    });
+
+    for (const id of planned) {
+      await deleteBatch(page, id);
+    }
+  });
+
   test("the ingredient list", async ({ page }) => {
     await page.goto("/ingredients");
     await expect(page.locator(".ingredients li").first()).toBeVisible();
