@@ -690,6 +690,10 @@ const STYLES = `
     color: var(--muted); font-size: .85rem;
   }
   .step-summary li { margin: 0 0 .15rem; }
+  /* Exactly one of the two is on the screen. An empty list left in place is
+     still a flex item wide enough to shove "Ei vaiheita" into the middle of
+     the row, which reads as a layout fault rather than as an empty recipe. */
+  .step-summary:empty { display: none; }
   .step-summary:not(:empty) ~ .step-summary-empty { display: none; }
   .chosen-categories { font-weight: 600; }
   .add-line { margin: .75rem 0 1rem; }
@@ -700,8 +704,13 @@ const STYLES = `
   }
 
   /* Off screen, not display:none — a submit button the browser has thrown away
-     cannot be the one that answers Enter, which is this button's whole job. */
-  .default-submit {
+     cannot be the one that answers Enter, which is this button's whole job.
+
+     .off-screen is the same trick for words a screen has no room to print but
+     a screen reader still needs: the editor's picture is its own tap target
+     (#317), so the only thing naming what tapping it does is the text inside
+     it. display:none would take the name away with the pixels. */
+  .default-submit, .off-screen {
     position: absolute; width: 1px; height: 1px; min-height: 0;
     padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0 0 0 0);
   }

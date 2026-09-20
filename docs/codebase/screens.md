@@ -607,8 +607,11 @@ Five blocks use it:
 
 - **The picture is the tap target** (`recipe-editor.ts::pictureBlock`). The
   heading is gone, the picture is drawn at 7 rem, and tapping it opens the file
-  input, `Vaihda kuva` and `Poista kuva`. There is no separate button, because
-  the card asks for the picture itself to be tapped.
+  input, `Vaihda kuva` and `Poista kuva`. Nothing else is printed beside it —
+  the card asks for the picture itself to be tapped — so the words naming what
+  the tap does are inside the label in an `.off-screen` span. `display: none`
+  would take the accessible name away with the pixels, which on a control whose
+  only other content is an `alt=""` picture leaves it nameless.
 - **The name is the first thing under it.** That is why `partsBlock` moved from
   above the form to below it: on a three-part dish the parts list used to sit
   between the picture and the name. It is still outside the form, because it is
@@ -629,7 +632,11 @@ Five blocks use it:
 list honest while their modals are open — the same bargain
 `LINE_SUMMARY_ISLAND` makes, and enhancement only. The empty-method line is
 hidden by `.step-summary:not(:empty) ~ .step-summary-empty` rather than by the
-island, so it is right in a state no server render saw.
+island, so it is right in a state no server render saw. `:empty` counts a text
+node, and `html.ts::html` keeps a template's whitespace — so the empty list is
+built by `stepSummaryList` with nothing at all between its tags. Written across
+several lines it carried its own indentation, the rule matched, and a recipe
+with no steps said nothing where it should have said `Ei vaiheita`.
 
 `tests/recipe-blocks-317.spec.ts` is the regression, and
 `tests/support/blocks.ts` holds the `openEditBlock`/`closeEditBlock` a test uses

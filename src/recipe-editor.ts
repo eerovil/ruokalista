@@ -775,6 +775,28 @@ function categoryBlock(vocabulary: Vocabulary, selected: readonly string[]): Raw
 }
 
 /**
+ * The method, as the summary reads it — and empty means *empty*.
+ *
+ * `.step-summary:not(:empty) ~ .step-summary-empty` is what hides `Ei vaiheita`
+ * once there is a method to read, and `:empty` counts a text node. Writing the
+ * list across several lines of a template put the indentation between the tags
+ * inside the element, so a recipe with no steps at all rendered a list that was
+ * blank on screen and not `:empty` to the stylesheet — and the screen said
+ * nothing where it should have said `Ei vaiheita`. The island happened to hide
+ * the fault by rebuilding the list from scratch on the first keystroke.
+ *
+ * So the empty list is written with nothing at all between its tags.
+ */
+function stepSummaryList(written: StepFormValues[]): Raw {
+  if (written.length === 0) {
+    return raw(`<ol class="block-value step-summary" id="step-summary"></ol>`);
+  }
+  return html`<ol class="block-value step-summary" id="step-summary">${written.map(
+    (step) => html`<li>${step.text}</li>`,
+  )}</ol>`;
+}
+
+/**
  * The preparation steps: the method as a numbered list, editable behind
  * `Muokkaa` (#317).
  *
@@ -794,9 +816,7 @@ function stepsBlock(
   return editBlock(
     { id: "steps-open", title: "Valmistus", className: "steps-block" },
     html`<p class="block-label">Valmistus</p>
-      <ol class="block-value step-summary" id="step-summary">
-        ${written.map((step) => html`<li>${step.text}</li>`)}
-      </ol>
+      ${stepSummaryList(written)}
       <!-- After the list rather than instead of it, so the stylesheet can hide
            it whenever the list has anything in it — including after the island
            has rewritten the list, which is a state no server render saw. -->
@@ -1009,10 +1029,11 @@ function pictureBlock(recipe: Recipe, hasPicture: boolean): Raw {
           // The picture is the tap target, so there is no second button.
           trigger: null,
         },
-        html`<label class="picture-tap" for="${toggle}">
-          ${recipeImage(recipe)}
-          <span class="edit-trigger">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</span>
-        </label>`,
+        html`<label class="picture-tap" for="${toggle}"
+          >${recipeImage(recipe)}<span class="off-screen"
+            >${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</span
+          ></label
+        >`,
         html`<form
             method="post"
             action="/recipes/${recipe.id}/image"
