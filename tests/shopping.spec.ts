@@ -896,6 +896,49 @@ test("ticking a row off leaves the list where it was", async ({ page }) => {
 });
 
 /**
+ * A cupboard move is not a change to one row: it is a change to every row of
+ * that ingredient (#323).
+ *
+ * `pantry.ts::splitByPantry` moves them all, and a product pinned to one dish
+ * means an ingredient can have two rows sitting next to each other. The sibling
+ * row is still findable after the round-trip — in the cupboard, where it has
+ * just been put — so anchoring on it would drag the screen down into `Löytyy`
+ * behind it. The row that has to hold still is one belonging to an ingredient
+ * this press does not touch at all.
+ */
+test("a cupboard move never anchors on another row of the same ingredient", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  // Pin the lasagne's milk to its own product, which splits the milk into two
+  // rows side by side (#161).
+  const milk = namedRow(page, "maito");
+  await openShoppingRow(milk);
+  await openPanelWith(page, milk, "Valitse tuote");
+  await page
+    .locator(".s-sheet .s-product-scope-choice select")
+    .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+  await chooseAndReload(page, "Kotimaista rasvaton maito");
+  const milkRows = page.locator(".shopping-list > li", { hasText: "maito" });
+  await expect(milkRows).toHaveCount(2);
+
+  // `sitruunaruoho` is the next row along that has nothing to do with milk.
+  await scrollDownTheList(page, "sitruunaruoho");
+  const first = milkRows.first();
+  await openShoppingRow(first);
+  await Promise.all([
+    page.waitForEvent("load"),
+    first.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
+
+  // Both milk rows went, on the one press.
+  await expect(page.locator(".shopping-list").last().locator("> li")).toHaveCount(2);
+  await stillWhereItLeft(page, "sitruunaruoho");
+});
+
+/**
  * The case where the list the press was in is not there afterwards at all
  * (#323).
  *

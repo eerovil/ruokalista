@@ -518,11 +518,21 @@ restored.
   on the address bar for every later reload to jump to again. `listLocation`
   now returns the selection and nothing else, the rows carry no `id`, and
   `shopping-screens.ts::KEEP_PLACE` puts the rows back where they were on
-  screen instead. What it keeps in `sessionStorage` is **a row**, not a
-  coordinate: the rows either side of the one that was pressed, said as their
-  row key, their ingredient and the list they were in, each with the viewport Y
-  it had. On arrival the first of those that still exists anywhere on the page
-  wins, and the screen scrolls so that row is back at its own Y.
+  screen instead. What it keeps in `sessionStorage` is **a row this press does
+  not change**, not a coordinate: the rows either side of the pressed one that
+  belong to *other* ingredients, said as their row key, their ingredient and
+  the list they were in, each with the viewport Y it had. On arrival the first
+  of those that still exists anywhere on the page wins, and the screen scrolls
+  so that row is back at its own Y.
+
+  The change set is the whole ingredient, never the one row, and that is the
+  rule rather than a special case: the cupboard buttons send an ingredient and
+  `pantry.ts::splitByPantry` moves every row of it between the two lists, a
+  chosen product or a package size is stored per ingredient and can split one
+  row into two (#161), and the tick changes one row of an ingredient. A pinned
+  row and the generic pile sit side by side under the same name, so "the next
+  row along" is very often the sibling that just moved to the cupboard on this
+  very press — findable afterwards, and useless as an anchor.
 
   Nothing coordinate-shaped survives what these round-trips do. A document
   offset moves every row down by the height of the sentence a tick adds. A
@@ -559,6 +569,11 @@ fifth takes the whole `Löytyy` section away with its last row and demands the
 list not fall to the top; a sixth asserts the other half of the rule, that
 reading a row and then leaving by the tab bar or the grouping pills leaves
 nothing behind at all.
+
+A sixth pins one dish's milk so the ingredient has two rows side by side,
+moves the first of them to the cupboard, and demands a *different* ingredient's
+row hold still — the sibling row moved on the same press, and anchoring on it
+would follow it into `Löytyy`.
 
 One limit is worth knowing: a round-trip that makes the document shorter can
 put the old place past the end of the new page, and no scroll reaches it. That
@@ -957,11 +972,13 @@ strings reach the browser without transpilation:
 - `src/shopping-screens.ts::KEEP_PLACE` — issue #323, and the reason the list
   no longer carries `#aines-…` anchors. On a bubble-phase `click` on a link, or
   `submit` of a form, inside a `[data-lista]` list and not cancelled by anybody,
-  it writes the rows around the pressed one — outwards, forwards first, the
-  pressed row last — each as `{row key, ingredient, list, viewport Y}`. On
-  arrival it reads that back, removes it, finds the first of those rows that
-  still exists (same key in the same list, else the same key, else the same
-  ingredient) and scrolls it back to its own Y — once at parse time and once
+  it writes the rows around the pressed one that belong to another ingredient
+  — outwards, forwards first, the pressed row last — each as `{row key,
+  ingredient, list, viewport Y}`. It counts the rows it accepts rather than the
+  rows it passes, so a run of same-ingredient rows cannot exhaust the search
+  before it has looked past them. On arrival it reads that back, removes it,
+  finds the first of those rows that still exists (same key in the same list,
+  else the same key, else the same ingredient) and scrolls it back to its own Y — once at parse time and once
   more on `load`, because the first attempt runs while the list is still shorter
   than it will be and a browser clamps a scroll to the height it has. It stands
   down on an explicit `#` anchor, on a position the browser restored itself, and

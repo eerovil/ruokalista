@@ -1275,9 +1275,11 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  *
  * So the place is a row, said in a way the next page can look up — its row key,
  * its ingredient, the list it was in — together with the viewport Y it had.
- * Written outwards from the pressed row, forwards first, and read back
- * nearest-first: the first candidate that still exists anywhere on the new page
- * wins, wherever it now is. Which is why a round-trip may do anything it likes
+ * Not just any row: one this press does not change, which on this screen means
+ * any row of another ingredient, because every one of these presses acts on a
+ * whole ingredient's worth of rows. Written outwards from the pressed row,
+ * forwards first, and read back nearest-first: the first candidate that still
+ * exists anywhere on the new page wins, wherever it now is. Which is why a round-trip may do anything it likes
  * to the list — add a sentence above it, move the pressed row to the other
  * section, put a row back in between, empty a dish's group or take the whole
  * `Löytyy` list away with its last row — and the screen still comes back to the
@@ -1463,16 +1465,31 @@ const KEEP_PLACE = raw(`<script>
     return null;
   }
 
+  function ingredientOf(row) {
+    var item = itemOf(row);
+    return item ? item.getAttribute("data-aines") : null;
+  }
+
   /**
-   * Write down where the rows around the pressed one are on screen. Nothing
-   * else in here writes, and this is only ever called where the page is
-   * leaving.
+   * Write down where the rows this press does *not* change are on screen.
+   * Nothing else in here writes, and this is only ever called where the page
+   * is leaving.
    *
-   * Outwards from the pressed row, forwards first: the row under the thumb is
-   * about to change — that is what was pressed — so the anchor is its nearest
-   * surviving neighbour, and the order of this list is the order in which to
-   * try them. The pressed row goes last, as the answer when nothing else on
-   * the screen survived at all.
+   * What the press changes is the pressed row's whole **ingredient**, never
+   * the one row. The cupboard buttons send an ingredient and
+   * pantry.ts::splitByPantry moves every row of it between the two lists; a
+   * chosen product or a package size is stored per ingredient and can split
+   * one row into two; only the tick is narrower, and one row of an ingredient
+   * is inside its ingredient anyway. So the change set is the ingredient, and
+   * no row of it can be the anchor — a sibling row that moved to the cupboard
+   * on this very press is still findable afterwards, and anchoring on it drags
+   * the screen into the cupboard section behind it.
+   *
+   * What is left is every other ingredient's rows, walked outwards from the
+   * press, forwards first, nearest-first. The count is of rows accepted rather
+   * than rows passed, so a run of same-ingredient rows cannot exhaust the
+   * search before it has looked past them. The pressed row goes last, as the
+   * answer when the screen holds nothing steady at all.
    */
   function keep(node) {
     var acted = rowAround(node);
@@ -1486,18 +1503,27 @@ const KEEP_PLACE = raw(`<script>
     }
     if (at < 0) return;
 
+    var changing = ingredientOf(acted);
     var found = [];
     function add(row) {
-      var mark = row ? markOf(row) : null;
-      if (mark) found.push(mark);
+      if (ingredientOf(row) === changing) return false;
+      var mark = markOf(row);
+      if (!mark) return false;
+      found.push(mark);
+      return true;
     }
-    for (index = 1; index <= NEIGHBOURS && at + index < all.length; index += 1) {
-      add(all[at + index]);
+
+    var taken = 0;
+    for (index = at + 1; index < all.length && taken < NEIGHBOURS; index += 1) {
+      if (add(all[index])) taken += 1;
     }
-    for (index = 1; index <= NEIGHBOURS && at - index >= 0; index += 1) {
-      add(all[at - index]);
+    taken = 0;
+    for (index = at - 1; index >= 0 && taken < NEIGHBOURS; index -= 1) {
+      if (add(all[index])) taken += 1;
     }
-    add(acted);
+
+    var last = markOf(acted);
+    if (last) found.push(last);
     if (!found.length) return;
 
     try {
