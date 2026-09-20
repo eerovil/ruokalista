@@ -509,23 +509,29 @@ restored.
 - **The current-S-ostoslista panel moved below the list.** Its contents are an
   unknown number of lines that arrive after the screen does, and above the list
   every one of them pushed the list down while it was being read.
-- **Every row is anchored and every server round-trip returns to its row.**
-  `itemList` gives the first row of each ingredient `id="aines-<ingredientId>"`,
-  and `listLocation` puts that fragment on the redirects from the cupboard
-  buttons, from dropping a package size, and from the whole no-JavaScript
-  product flow. The ingredient rather than the row key, because those are
-  exactly the round-trips that change a key: pinning a product to one dish
-  splits a row in two, and the cupboard moves a row to the other list.
-- **One save path still reloads, and it lands on the ingredient.** A second
-  package size or a recipe's own product changes what the row adds up to, and
-  that arithmetic is the server's — so the shopping client sets the hash to the
-  row's anchor before reloading rather than drawing a guess.
+- **A round-trip keeps the position, and no longer carries an anchor** (#323).
+  Four things here are real navigations — the row's tick, the cupboard buttons,
+  dropping a package size, and the whole no-JavaScript product flow. They used
+  to come back to `#aines-<ingredientId>`, which landed the row a fixed
+  `scroll-margin-top` below the sticky header instead of where it was under the
+  thumb, jumped to the wrong copy of a duplicated ingredient, and left the hash
+  on the address bar for every later reload to jump to again. `listLocation`
+  now returns the selection and nothing else, the rows carry no `id`, and
+  `shopping-screens.ts::KEEP_PLACE` remembers `pageYOffset` in `sessionStorage`
+  instead. Without JavaScript those round-trips land at the top of the list,
+  which is the trade #323 names.
+- **One save path still reloads, and the reload keeps the position too.** A
+  second package size or a recipe's own product changes what the row adds up
+  to, and that arithmetic is the server's — so `product-picker.ts::reloadOnto`
+  re-reads the screen rather than drawing a guess. It reloads the URL unchanged;
+  writing a hash first is what used to move the list.
 
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
 row deep in the list and demands nothing move after opening the picker,
 searching again, closing it, drawing the optimistic choice and having the save
-land — plus two more that assert the reload and the cupboard button come back to
-the row they were pressed on.
+land — plus three more, one per round-trip that does leave the page, each
+asserting the list came back to the offset it left at and that the address bar
+carries no fragment.
 
 It watches two different things on purpose, because either alone passes while
 the screen still misbehaves. `window.scrollY` catches the page being yanked
@@ -911,6 +917,15 @@ strings reach the browser without transpilation:
   back-forward cache.
 - `src/shopping-screens.ts::SHOPPING_ISLAND` — proposed for issue #159, see
   the shopping list above.
+- `src/shopping-screens.ts::KEEP_PLACE` — issue #323, and the reason the list
+  no longer carries `#aines-…` anchors. It arms on any click or submit inside
+  `.shopping-list`, writes `pageYOffset` to `sessionStorage` on `pagehide`, and
+  puts it back on arrival — once at parse time and once more on `load`, because
+  the first attempt runs while the list is still shorter than it will be and a
+  browser clamps a scroll to the height it has. It stands down on an explicit
+  `#` anchor, on a position the browser restored itself, and on the first touch,
+  wheel or key from the member. It forgets the position as it uses it, so a
+  later visit to `/ostoslista` opens at the top.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
   whenever today falls inside the range on screen, empty or not — fourteen day
   headings and twenty-eight add links already outrun a phone, and an empty

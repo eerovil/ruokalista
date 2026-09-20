@@ -649,11 +649,61 @@ test("choosing a product never moves the page under the member", async ({
 });
 
 /**
- * The one flow that does still reload — a second package size changes what the
- * row adds up to, and that arithmetic is the server's. It has to come back to
- * the ingredient it was about rather than to the top of the list (#200).
+ * Where the list is after a round-trip that leaves the page (#323).
+ *
+ * The three tests below all measure the same thing, because every one of those
+ * round-trips makes the same promise: the list does not move. They read the
+ * offset rather than where the pressed row ended up, because the offset is what
+ * the member's thumb is resting on — a row that lands on screen can still have
+ * moved half a screen to get there, which was exactly the bug.
  */
-test("a reload after adding a package size lands back on the ingredient", async ({
+const LEFT_AT = "test.pagehide";
+
+/**
+ * The list, scrolled down and told to write down where it really was when it
+ * left. Reading the offset from a Playwright call before the tap would measure
+ * the wrong moment: a tap has to be scrolled to, and that scroll is the test's
+ * own, not the member's.
+ */
+async function scrollDownTheList(page: Page): Promise<void> {
+  await page.evaluate(
+    (key) => {
+      window.scrollTo(0, document.body.scrollHeight);
+      window.addEventListener("pagehide", () => {
+        window.sessionStorage.setItem(key, String(window.pageYOffset));
+      });
+    },
+    LEFT_AT,
+  );
+}
+
+async function stillWhereItLeft(page: Page): Promise<void> {
+  // And no anchor left on the address bar, or the next reload — or the back
+  // button — would jump to it all over again.
+  expect(new URL(page.url()).hash).toBe("");
+
+  const left = Number(
+    await page.evaluate((key) => window.sessionStorage.getItem(key), LEFT_AT),
+  );
+  // A list with nowhere to be has nothing to test: the fixture has to be
+  // taller than the screen for there to be a place to lose.
+  expect(left).toBeGreaterThan(60);
+
+  await expect
+    .poll(async () => {
+      const now = await page.evaluate(() => window.pageYOffset);
+      return Math.abs(now - left) < 4;
+    })
+    .toBe(true);
+}
+
+/**
+ * The one flow that does still reload — a second package size changes what the
+ * row adds up to, and that arithmetic is the server's. It used to come back on
+ * `#aines-<id>`, which put the row a fixed distance below the sticky header
+ * rather than where it was under the thumb (#323).
+ */
+test("a reload after adding a package size keeps the list where it was", async ({
   page,
 }) => {
   await planTheFortnight(page);
@@ -661,44 +711,57 @@ test("a reload after adding a package size lands back on the ingredient", async 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   const milk = row(page, "maito");
-  const ingredientId = await milk
-    .locator(".shopping-item")
-    .getAttribute("data-aines");
-  expect(await milk.getAttribute("id")).toBe(`aines-${ingredientId}`);
-
+  await scrollDownTheList(page);
   await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   await chooseAndReload(page, "Valio kevytmaito");
 
-  expect(new URL(page.url()).hash).toBe(`#aines-${ingredientId}`);
-  const landed = row(page, "maito");
-  const where = await landed.boundingBox();
-  const view = page.viewportSize();
-  expect(where).not.toBeNull();
-  expect(where!.y).toBeGreaterThanOrEqual(0);
-  expect(where!.y).toBeLessThan(view!.height);
+  await stillWhereItLeft(page);
+  await expect(row(page, "maito")).toContainText("maito");
 });
 
 /**
- * The cupboard button leaves the page too, and it used to leave it at the top.
+ * The cupboard button leaves the page too, and it used to leave it somewhere
+ * else.
  */
-test("the cupboard button comes back to the row it was pressed on", async ({
-  page,
-}) => {
+test("the cupboard button leaves the list where it was", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
 
   const oil = row(page, "öljy");
-  const ingredientId = await oil
-    .locator(".shopping-item")
-    .getAttribute("data-aines");
+  await scrollDownTheList(page);
   await openShoppingRow(oil);
-  await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+  await Promise.all([
+    page.waitForEvent("load"),
+    oil.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
 
-  expect(new URL(page.url()).hash).toBe(`#aines-${ingredientId}`);
-  // The row moved to the cupboard section and kept its name, so the anchor
-  // still points at it.
-  await expect(page.locator(`#aines-${ingredientId}`)).toContainText("öljy");
+  await stillWhereItLeft(page);
+  // The row itself did move — to the cupboard section, which is the change
+  // that was asked for. Nothing else did.
+  await expect(page.locator(".shopping-list").last()).toContainText("öljy");
+});
+
+/**
+ * The tick is the list's most-pressed button and the one the card is about: one
+ * row changed, by a plain link, and nothing moving under the thumb.
+ */
+test("ticking a row off leaves the list where it was", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await scrollDownTheList(page);
+
+  await tapAndWait(
+    page,
+    row(page, "öljy").getByRole("link", {
+      name: "Jätä öljy pois tältä listalta",
+    }),
+  );
+
+  await stillWhereItLeft(page);
+  await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
+    /is-excluded/,
+  );
 });
 
 /**

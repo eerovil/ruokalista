@@ -681,7 +681,7 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
         hold(group, false);
         if (ok) {
           settled(true);
-          reloadOnto(row);
+          reloadOnto();
           return;
         }
         status(row, null);
@@ -742,10 +742,19 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     }
   }
 
-  function reloadOnto(row: PickerRow): void {
-    if (row.aines !== "") {
-      window.location.hash = "aines-" + row.aines;
-    }
+  /**
+   * The one save this client cannot draw itself: an added package size or a
+   * dish's own product changes what the *other* rows add up to, and that
+   * arithmetic is the server's.
+   *
+   * It used to put `#aines-<id>` on the address bar first, so the reloaded
+   * screen jumped to the row. That jump is what #323 is about: an anchored row
+   * lands a fixed distance below the sticky header rather than where it was
+   * under the thumb, and the hash then stayed on the address bar for every
+   * later reload. A reload of the unchanged URL restores the position on its
+   * own, and the shopping list keeps it explicitly besides.
+   */
+  function reloadOnto(): void {
     window.location.reload();
   }
 
@@ -848,7 +857,7 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
         // server's, so the screen is re-read rather than guessed at.
         if (record && record["reload"] === true) {
           settled(true);
-          reloadOnto(row);
+          reloadOnto();
           return;
         }
         // The confirmed product rather than the chosen one: a re-search may
