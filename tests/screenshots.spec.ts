@@ -1006,7 +1006,10 @@ test.describe("signed in", () => {
     await expect(page.locator(".sharing-shortcut")).toBeInViewport();
     await capture(page, { path: `${SHOTS}/106-sharing-shortcut.png` });
 
-    await page.locator(".sharing-shortcut").getByText("Muuta").click();
+    await page
+      .locator(".sharing-shortcut")
+      .getByRole("link", { name: "Muuta" })
+      .click();
     await page.getByLabel("Julkinen").check();
     await expect(page.getByRole("button", { name: "Tallenna jako" }))
       .toBeInViewport();

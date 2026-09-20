@@ -642,6 +642,9 @@ const STYLES = `
     color: var(--accent); background: var(--surface);
     border: 1px solid var(--edge); border-radius: var(--radius);
     font-size: .85rem; font-weight: 600; cursor: pointer;
+    /* Reads the same whether it is a label or the link a fragment-opened block
+       needs it to be, and the border is already the shape it has. */
+    text-decoration: none;
   }
 
   /* The modal. Off screen rather than display:none so the checkbox that drives
@@ -658,8 +661,24 @@ const STYLES = `
   .edit-open:focus-visible ~ .edit-summary .edit-trigger {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
+  /* A summary that is its own tap target has no button to paint the focus on,
+     so the focus goes round the label that *is* the target — the editor's
+     picture. Without this the checkbox is a tab stop nothing visible answers
+     for, and a sighted keyboard user lands on an invisible control (#317
+     review). */
+  .edit-open:focus-visible ~ .edit-summary.is-self-tapped > label {
+    outline: 2px solid var(--accent); outline-offset: 3px;
+    border-radius: var(--radius);
+  }
+  /* A link opener draws its own focus, and says so in the same colours. */
+  .edit-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .line-modal, .edit-modal { display: none; }
-  .line-open:checked ~ .line-modal, .edit-open:checked ~ .edit-modal {
+  /* Two ways in, one set of declarations: the checkbox a row or a block sits
+     beside, and — for a block whose opener is too far away in the document to
+     be a sibling of anything — the address bar's own fragment (#317 review). */
+  .line-open:checked ~ .line-modal,
+  .edit-open:checked ~ .edit-modal,
+  .edit-modal:target {
     display: flex; position: fixed; inset: 0; z-index: 30;
     align-items: center; justify-content: center; padding: 1rem;
   }
@@ -685,7 +704,9 @@ const STYLES = `
     min-height: var(--tap); padding: .3rem 1.2rem;
     color: var(--bg); background: var(--accent);
     border-radius: var(--radius); font-weight: 600; cursor: pointer;
+    text-decoration: none;
   }
+  .edit-done:focus-visible { outline: 2px solid var(--bg); outline-offset: -4px; }
 
   /* A block's modal has only the one button, and space-between would leave it
      stranded on the left as if something were missing beside it. */
@@ -1275,7 +1296,17 @@ export function multiplierField(
  * block was rendered into, so they post with that form exactly as before.
  *
  * `trigger: null` draws no button, for a summary that is its own tap target —
- * the editor's picture, which the card asks to be tapped directly.
+ * the editor's picture, which the card asks to be tapped directly. The focus
+ * ring then goes round the summary, because there is no button to put it on.
+ *
+ * `openedBy: "fragment"` swaps the checkbox for the address bar. A checkbox can
+ * only be worked by a `<label>`, and a `<label>` is not a keyboard control — so
+ * a second opener somewhere else on the page (the sharing line under a recipe's
+ * title) had to be a label the keyboard skipped entirely. CSS can only reach
+ * the checkbox from a sibling, so moving the label was no fix either. A
+ * fragment has no such reach: every opener is a real `<a>`, focusable and
+ * worked with Enter like any other link, and `Valmis` is the link back out
+ * (#317 review). Still no JavaScript, and still the same modal declarations.
  */
 export function editBlock(
   options: {
@@ -1291,11 +1322,16 @@ export function editBlock(
     open?: boolean;
     /** An extra class on the block, for a screen that needs to reach into it. */
     className?: string;
+    /** How it opens. A checkbox beside it, unless an opener elsewhere needs in. */
+    openedBy?: "checkbox" | "fragment";
   },
   summary: Raw | string,
   body: Raw | string,
 ): Raw {
   const trigger = options.trigger === undefined ? "Muokkaa" : options.trigger;
+  if (options.openedBy === "fragment") {
+    return fragmentBlock(options, trigger, summary, body);
+  }
   return html`<div class="edit-block ${options.className ?? ""}">
     <!-- No name, so it is never submitted: this is screen state, not data. Kept
          off screen rather than display:none so it stays reachable by keyboard. -->
@@ -1306,7 +1342,7 @@ export function editBlock(
       ${options.open === true ? raw("checked") : ""}
     />
 
-    <div class="edit-summary">
+    <div class="edit-summary ${trigger === null ? "is-self-tapped" : ""}">
       ${summary}
       ${trigger === null
         ? ""
@@ -1327,6 +1363,57 @@ export function editBlock(
       </div>
     </div>
   </div>`;
+}
+
+/**
+ * The fragment-opened shape of `editBlock`. The modal answers to `#<id>-auki`,
+ * and closing is a link back to the block's own `#<id>` — so the member lands
+ * on the line they just changed rather than at the top of the screen.
+ */
+function fragmentBlock(
+  options: { id: string; title: string; label?: string; className?: string },
+  trigger: string | null,
+  summary: Raw | string,
+  body: Raw | string,
+): Raw {
+  return html`<div class="edit-block ${options.className ?? ""}" id="${options.id}">
+    <div class="edit-summary ${trigger === null ? "is-self-tapped" : ""}">
+      ${summary}
+      ${trigger === null
+        ? ""
+        : html`<a class="edit-trigger" href="${editBlockOpenHref(options.id)}"
+            >${trigger}</a
+          >`}
+    </div>
+
+    <div class="edit-modal" id="${options.id}-auki">
+      <!-- Tapping the dimmed area closes it, same as Valmis: both are the link
+           back to the block. It is decoration, so it is not in the tab order. -->
+      <a
+        class="edit-modal-back"
+        href="#${options.id}"
+        tabindex="-1"
+        aria-hidden="true"
+      ></a>
+
+      <div class="edit-modal-card" role="group" aria-label="${options.label ?? options.title}">
+        <p class="edit-modal-title">${options.title}</p>
+        ${body}
+        <div class="edit-modal-actions">
+          <a class="edit-done" href="#${options.id}">Valmis</a>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/**
+ * Where an opener for a fragment-opened block points. Exported because the
+ * opener is not always inside the block — the recipe screen's sharing line sits
+ * under the title, a whole screen above the block it opens.
+ */
+export function editBlockOpenHref(id: string): string {
+  return `#${id}-auki`;
 }
 
 /**

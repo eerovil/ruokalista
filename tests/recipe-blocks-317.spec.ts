@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-import { closeEditBlock, openEditBlock } from "./support/blocks";
+import {
+  closeEditBlock,
+  focusRing,
+  openEditBlock,
+  tabTo,
+} from "./support/blocks";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -165,10 +170,79 @@ test("the household's own settings are two lines and two modals", async ({
   await expect(sharing.locator(".preference-value")).toHaveText("2×");
 
   // And the line under the title still opens the sharing modal in one tap.
-  await page.locator(".sharing-shortcut").getByText("Muuta").click();
+  await page
+    .locator(".sharing-shortcut")
+    .getByRole("link", { name: "Muuta" })
+    .click();
   await expect(page.locator(".sharing-form")).toBeVisible();
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(sharing).toContainText("näkyy kaikille kirjautuneille talouksille");
+  await expect(page.locator(".sharing-form")).toBeHidden();
+});
+
+/**
+ * Both modal openers, worked without a pointer (#317 review).
+ *
+ * #317 put two things on screen that open a modal but were not controls: the
+ * editor's picture, whose checkbox had focus but nothing visible drawing it,
+ * and the sharing line's `Muuta`, a `<label>` the tab order skipped outright.
+ * These tests press the keys rather than calling `focus()`, so a launcher that
+ * falls out of the tab order again fails here rather than in somebody's hands.
+ */
+test("the editor's picture takes focus visibly, and opens with a key", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1/edit");
+  await expect(page.locator("#recipe-image")).toBeHidden();
+
+  await tabTo(page, "#recipe-image-open");
+
+  // The focus is on a 1px control, so the picture is what has to show it.
+  expect(await focusRing(page, ".recipe-image-editor label.picture-tap")).toBe(
+    "solid 2px",
+  );
+
+  await page.keyboard.press("Space");
+  await expect(page.locator(".recipe-image-editor .edit-modal-card"))
+    .toBeVisible();
+  await expect(page.locator("#recipe-image")).toBeVisible();
+});
+
+test("the sharing shortcut is in the tab order, and opens with a key", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+  await expect(page.locator(".sharing-form")).toBeHidden();
+
+  const shortcut = ".sharing-shortcut a";
+  // A link, not a label: the thing the keyboard can reach and press.
+  await expect(page.locator(".sharing-shortcut").getByRole("link", { name: "Muuta" }))
+    .toBeVisible();
+  await expect(page.locator(".sharing-shortcut label")).toHaveCount(0);
+
+  await tabTo(page, shortcut);
+  expect(await focusRing(page, shortcut)).not.toBe("none 0px");
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".sharing-form")).toBeVisible();
+  await expect(page.getByLabel("Julkinen")).toBeInViewport();
+
+  // And Valmis takes it away again without a pointer either.
+  await page.locator(".edit-block#sharing-open .edit-done").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".sharing-form")).toBeHidden();
+});
+
+test("the sharing block's own Muokkaa still opens the same modal", async ({
+  page,
+}) => {
+  await page.goto("/recipes/1");
+
+  // Two openers a screen apart, one modal: opening from the block itself has
+  // to keep working now that the shortcut drives it through a fragment.
+  await openEditBlock(page, "sharing-open");
+  await expect(page.locator(".sharing-form")).toBeVisible();
+  await closeEditBlock(page, "sharing-open");
   await expect(page.locator(".sharing-form")).toBeHidden();
 });

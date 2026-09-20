@@ -130,7 +130,9 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
 
   // And one tap puts the control and its save on screen together. Since #317
   // the sharing form is a modal, so Muuta opens it rather than scrolling to it.
-  await shortcut.getByText("Muuta").click();
+  // Still a link, so the keyboard reaches it: locating it by role is what keeps
+  // that true rather than letting any old element wearing the word pass.
+  await shortcut.getByRole("link", { name: "Muuta" }).click();
   const save = page.getByRole("button", { name: "Tallenna jako" });
   await expect(page.getByLabel("Julkinen")).toBeInViewport();
   await expect(save).toBeInViewport();

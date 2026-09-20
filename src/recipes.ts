@@ -24,6 +24,7 @@ import { recipeImage, type Pictured } from "./recipe-picture.ts";
 import recipeProductsClient from "./generated/recipe-products.ts";
 import {
   editBlock,
+  editBlockOpenHref,
   html,
   multiplierField,
   page,
@@ -779,7 +780,13 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
 
     ${view.owned && view.sharing !== null
       ? editBlock(
-          { id: "sharing-open", title: "Jakaminen" },
+          {
+            id: "sharing-open",
+            title: "Jakaminen",
+            // Opened from two places a screen apart — here, and the line under
+            // the recipe's title. Only a fragment reaches both (#317 review).
+            openedBy: "fragment",
+          },
           html`<p class="block-label">Jakaminen</p>
             <p class="block-value empty">${sharingSummary(view.sharing)}</p>`,
           html`<form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
@@ -840,11 +847,13 @@ function sharingShortcut(recipe: Recipe, view: RecipeView): Raw {
         ? "Näkyvyys: valitut taloudet"
         : "Näkyvyys: vain oma talous";
 
-  // A label rather than the `#jakaminen` link it was: since #317 the sharing
-  // form is in a modal, so the thing to do on one tap is open it. Scrolling to
-  // a section whose controls are behind a button would be one tap short.
+  // Still the link it always was, but it now lands on the open sharing modal
+  // rather than on the section heading: since #317 the form is behind a button,
+  // so scrolling to the section would have been one tap short. A label would
+  // have saved the same tap and cost the keyboard the shortcut entirely, which
+  // is what the fragment-opened block exists to avoid (#317 review).
   return html`<p class="meta sharing-shortcut">
-    ${said}<label for="sharing-open">Muuta</label>
+    ${said}<a href="${editBlockOpenHref("sharing-open")}">Muuta</a>
   </p>`;
 }
 
@@ -926,9 +935,9 @@ const PUBLISH_STYLE = html`<style>
   .recipient-list li:last-child { border-bottom: 0; }
   .recipe-sharing .save-bar { background: var(--surface); }
   .sharing-shortcut { margin: .1rem 0 0; }
-  /* A label since #317 — it opens the sharing modal rather than scrolling to a
-     section. Still drawn as the link it reads as. */
-  .sharing-shortcut a, .sharing-shortcut label {
+  /* A link that opens the sharing modal rather than scrolling to the section
+     it is in (#317), and a real one so the keyboard can reach it (#317 review). */
+  .sharing-shortcut a {
     display: inline; margin-left: .4rem; color: var(--accent);
     font-weight: 600; cursor: pointer; text-decoration: underline;
   }

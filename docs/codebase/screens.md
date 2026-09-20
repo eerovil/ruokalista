@@ -647,9 +647,45 @@ Five blocks use it:
 - **The categories read as a line** and the method reads as a numbered list.
 - **A recipe's own settings are two lines** (`recipes.ts::sharingSection`): the
   default multiplier and who the dish is shared with, each one line and its own
-  modal. `.sharing-shortcut`'s `Muuta` became a `<label>` rather than the
-  `#jakaminen` link it was, because scrolling to a section whose controls are
-  behind a button would be one tap short of the thing #217 added it for.
+  modal. `.sharing-shortcut`'s `Muuta` now opens the sharing modal outright
+  rather than scrolling to `#jakaminen` as it used to, because scrolling to a
+  section whose controls are behind a button would be one tap short of the
+  thing #217 added it for.
+
+### Two openers, and why the sharing block is opened by a fragment
+
+A `<label>` works a checkbox, and that is the whole of `editBlock`'s no-script
+promise — but a `<label>` is **not a keyboard control**. It takes no focus and
+answers no key. That is fine while the checkbox is sitting right beside the
+opener, because the checkbox is itself a tab stop in the right place and the
+CSS can paint its focus onto the button next to it. It stops being fine the
+moment the same modal has to open from somewhere else on the page.
+
+Both of those bit this pull request, and the fixes are worth not undoing:
+
+- **The picture has no button to paint focus on.** `pictureBlock` passes
+  `trigger: null`, so the summary *is* the tap target and there is no
+  `.edit-trigger` for `.edit-open:focus-visible ~ …` to reach. A keyboard user
+  landed on a focused 1 px control with nothing on screen saying so. `editBlock`
+  now marks such a summary `is-self-tapped`, and `html.ts` draws the ring round
+  the label inside it — the picture itself.
+- **The sharing line under the title is a screen away from its checkbox.** CSS
+  can only reach a checkbox from a sibling, so no amount of moving the label
+  fixes this; a label there is simply skipped by the keyboard. So the sharing
+  block takes `openedBy: "fragment"`: it renders no checkbox, its modal answers
+  to `#sharing-open-auki`, and every opener is a real `<a href>` —
+  focusable, worked with Enter, and drawing its own focus ring. `Valmis` and the
+  dimmed backdrop are links back to `#sharing-open`, so closing lands the member
+  on the line they just changed. `html.ts::editBlockOpenHref` is what an opener
+  outside the block points at.
+
+Both shapes share one `display: flex` declaration for the open modal
+(`:checked ~ .edit-modal` and `.edit-modal:target` in the same rule), so the
+two cannot drift apart any more than a row's modal and a block's can.
+
+The rule this leaves behind: **if a block can be opened from more than one place
+on the screen, it has to be `openedBy: "fragment"`.** A second `<label>` will
+look right and work under a finger, and it will be invisible to the keyboard.
 
 `recipe-editor.ts::EDITOR_SUMMARY_ISLAND` keeps the category line and the step
 list honest while their modals are open — the same bargain
@@ -663,7 +699,12 @@ with no steps said nothing where it should have said `Ei vaiheita`.
 
 `tests/recipe-blocks-317.spec.ts` is the regression, and
 `tests/support/blocks.ts` holds the `openEditBlock`/`closeEditBlock` a test uses
-to reach a control the way a person does.
+to reach a control the way a person does. Its `tabTo` presses the key rather
+than calling `focus()`, on purpose twice over: an opener that falls out of the
+tab order fails there, and focus that arrived by key is what makes
+`:focus-visible` apply, so the ring itself can be asserted with `focusRing`.
+Locate an opener by its role — `getByRole("link", …)` — rather than by its
+words: `getByText` passed happily when `Muuta` stopped being a control at all.
 
 One thing worth knowing before writing a test against a short recipe screen: the
 sharing section is three lines now instead of a screenful, so a recipe with
