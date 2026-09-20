@@ -652,49 +652,108 @@ test("choosing a product never moves the page under the member", async ({
  * Where the list is after a round-trip that leaves the page (#323).
  *
  * The three tests below all measure the same thing, because every one of those
- * round-trips makes the same promise: the list does not move. They read the
- * offset rather than where the pressed row ended up, because the offset is what
- * the member's thumb is resting on — a row that lands on screen can still have
- * moved half a screen to get there, which was exactly the bug.
+ * round-trips makes the same promise: nothing moves under the thumb. They
+ * measure it on screen — the viewport Y of a row, and of the list itself —
+ * rather than as a document offset. The offset is not the promise: the first
+ * tick brings the sentence about ticked rows and the first cupboard move brings
+ * the `Ostettavat` heading, and behind an unchanged offset either of those puts
+ * every row one paragraph lower than the thumb left it.
  */
 const LEFT_AT = "test.pagehide";
 
+interface WhereItLeft {
+  offset: number;
+  list: number | null;
+  row: number | null;
+}
+
 /**
  * The list, scrolled down and told to write down where it really was when it
- * left. Reading the offset from a Playwright call before the tap would measure
+ * left. Reading any of this from a Playwright call before the tap would measure
  * the wrong moment: a tap has to be scrolled to, and that scroll is the test's
  * own, not the member's.
  */
-async function scrollDownTheList(page: Page): Promise<void> {
+async function scrollDownTheList(
+  page: Page,
+  rowName: string | null = null,
+): Promise<void> {
   await page.evaluate(
-    (key) => {
+    ([key, name]) => {
       window.scrollTo(0, document.body.scrollHeight);
       window.addEventListener("pagehide", () => {
-        window.sessionStorage.setItem(key, String(window.pageYOffset));
+        const list = document.querySelector(".shopping-list");
+        const rows = document.querySelectorAll(".shopping-list > li");
+        let row: Element | null = null;
+        for (let at = 0; at < rows.length; at += 1) {
+          const label = rows[at]!.querySelector(".shopping-name");
+          if (name !== null && (label?.textContent ?? "").trim() === name) {
+            row = rows[at]!;
+            break;
+          }
+        }
+        window.sessionStorage.setItem(
+          key!,
+          JSON.stringify({
+            offset: window.pageYOffset,
+            list: list ? Math.round(list.getBoundingClientRect().top) : null,
+            row: row ? Math.round(row.getBoundingClientRect().top) : null,
+          }),
+        );
       });
     },
-    LEFT_AT,
+    [LEFT_AT, rowName] as [string, string | null],
   );
 }
 
-async function stillWhereItLeft(page: Page): Promise<void> {
+/** Where that same thing is on screen now. */
+async function onScreen(page: Page, rowName: string | null): Promise<number> {
+  return page.evaluate((name) => {
+    if (name === null) {
+      const list = document.querySelector(".shopping-list");
+      return list ? Math.round(list.getBoundingClientRect().top) : NaN;
+    }
+    const rows = document.querySelectorAll(".shopping-list > li");
+    for (let at = 0; at < rows.length; at += 1) {
+      const label = rows[at]!.querySelector(".shopping-name");
+      if ((label?.textContent ?? "").trim() === name) {
+        return Math.round(rows[at]!.getBoundingClientRect().top);
+      }
+    }
+    return NaN;
+  }, rowName);
+}
+
+/**
+ * `rowName` is the row that was pressed, where it is still in the same list
+ * afterwards. The cupboard button's row is not — it moves to the other section
+ * on purpose — so that one is measured by the list it left instead.
+ */
+async function stillWhereItLeft(
+  page: Page,
+  rowName: string | null = null,
+): Promise<void> {
   // And no anchor left on the address bar, or the next reload — or the back
   // button — would jump to it all over again.
   expect(new URL(page.url()).hash).toBe("");
 
-  const left = Number(
-    await page.evaluate((key) => window.sessionStorage.getItem(key), LEFT_AT),
-  );
+  const left = JSON.parse(
+    (await page.evaluate((key) => window.sessionStorage.getItem(key), LEFT_AT)) ??
+      "null",
+  ) as WhereItLeft | null;
+  expect(left).not.toBeNull();
   // A list with nowhere to be has nothing to test: the fixture has to be
   // taller than the screen for there to be a place to lose.
-  expect(left).toBeGreaterThan(60);
+  expect(left!.offset).toBeGreaterThan(60);
 
-  await expect
-    .poll(async () => {
-      const now = await page.evaluate(() => window.pageYOffset);
-      return Math.abs(now - left) < 4;
-    })
-    .toBe(true);
+  for (const [name, before] of [
+    [null, left!.list],
+    [rowName, rowName === null ? null : left!.row],
+  ] as [string | null, number | null][]) {
+    if (before === null) continue;
+    await expect
+      .poll(async () => Math.abs((await onScreen(page, name)) - before) < 4)
+      .toBe(true);
+  }
 }
 
 /**
@@ -711,12 +770,12 @@ test("a reload after adding a package size keeps the list where it was", async (
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   const milk = row(page, "maito");
-  await scrollDownTheList(page);
+  await scrollDownTheList(page, "maito");
   await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   await chooseAndReload(page, "Valio kevytmaito");
 
-  await stillWhereItLeft(page);
+  await stillWhereItLeft(page, "maito");
   await expect(row(page, "maito")).toContainText("maito");
 });
 
@@ -749,7 +808,7 @@ test("the cupboard button leaves the list where it was", async ({ page }) => {
 test("ticking a row off leaves the list where it was", async ({ page }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
-  await scrollDownTheList(page);
+  await scrollDownTheList(page, "öljy");
 
   await tapAndWait(
     page,
@@ -758,7 +817,7 @@ test("ticking a row off leaves the list where it was", async ({ page }) => {
     }),
   );
 
-  await stillWhereItLeft(page);
+  await stillWhereItLeft(page, "öljy");
   await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
     /is-excluded/,
   );

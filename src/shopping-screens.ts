@@ -1249,9 +1249,14 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  * buttons, dropping a package size, and the whole no-JavaScript product flow.
  * They all come back to a list that is one row different from the one the
  * member was reading, so the only thing worth restoring is where they were
- * reading it — not which row they pressed. This remembers the offset when one
- * of those controls is used and puts it back on arrival, then forgets it, so a
- * later visit to `/ostoslista` opens at the top as it always has.
+ * reading it — not which row they pressed. This remembers how far into the
+ * list they were when one of those controls is used and puts them back there on
+ * arrival, then forgets it, so a later visit to `/ostoslista` opens at the top
+ * as it always has.
+ *
+ * How far into the *list*, not how far down the page: the answer to a
+ * round-trip often adds a line above the list, and a page offset kept across
+ * that moves every row down under the thumb.
  *
  * It arms itself on a touch of the list rather than saving on every departure,
  * so that leaving the screen by the tab bar, or changing the grouping, still
@@ -1271,7 +1276,7 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  */
 const KEEP_PLACE = raw(`<script>
 (function () {
-  var KEY = "ruokalista.ostoslista.kohta";
+  var KEY = "ruokalista.ostoslista.listakohta";
   var store = null;
   try {
     store = window.sessionStorage;
@@ -1289,14 +1294,33 @@ const KEEP_PLACE = raw(`<script>
     saved = null;
   }
 
-  var back = saved === null ? 0 : parseInt(saved, 10);
-  var wanted = back > 0 && !window.location.hash && !window.pageYOffset ? back : 0;
+  var back = saved === null ? NaN : parseInt(saved, 10);
+  var wanted = back === back && !window.location.hash && !window.pageYOffset;
   var touched = false;
 
+  // Where the list itself starts, in the document. Everything below is
+  // measured from here rather than from the top of the page, because the
+  // answer to a round-trip regularly adds something above the list: the first
+  // tick brings the sentence explaining ticked rows, and the first cupboard
+  // move brings the "Ostettavat" heading. Kept in document coordinates the
+  // list would then sit one paragraph lower behind an unchanged offset, and
+  // every row would have moved under the thumb — which is the whole thing this
+  // is here to prevent.
+  function listTop() {
+    if (!document.querySelector) return null;
+    var list = document.querySelector(".shopping-list");
+    if (!list || !list.getBoundingClientRect) return null;
+    return list.getBoundingClientRect().top + window.pageYOffset;
+  }
+
   function place() {
-    if (wanted <= 0 || touched) return;
-    if (Math.abs(window.pageYOffset - wanted) < 2) return;
-    window.scrollTo(0, wanted);
+    if (!wanted || touched) return;
+    var top = listTop();
+    if (top === null) return;
+    var target = top + back;
+    if (target < 0) target = 0;
+    if (Math.abs(window.pageYOffset - target) < 2) return;
+    window.scrollTo(0, target);
   }
 
   place();
@@ -1340,8 +1364,10 @@ const KEEP_PLACE = raw(`<script>
 
   window.addEventListener("pagehide", function () {
     if (!leaving) return;
+    var top = listTop();
+    if (top === null) return;
     try {
-      store.setItem(KEY, String(window.pageYOffset));
+      store.setItem(KEY, String(Math.round(window.pageYOffset - top)));
     } catch (error) {
       // Nothing to remember with, so the list opens at the top.
     }
