@@ -1,6 +1,10 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-import { closeOpenShoppingRow, openShoppingRow } from "./support/shopping-rows";
+import {
+  closeOpenShoppingRow,
+  closeShoppingRow,
+  openShoppingRow,
+} from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -112,6 +116,22 @@ async function planTheFortnight(page: Page): Promise<{ lasagne: number }> {
 
 function row(page: Page, name: string) {
   return page.locator(".shopping-list > li", { hasText: name }).first();
+}
+
+/**
+ * The row for exactly this ingredient.
+ *
+ * `row` matches any row whose text contains the name, which is enough for most
+ * of this file but not where a *dish* is named after an ingredient: the rows
+ * `Öljykastike` contributes to carry that title in their breakdown, so
+ * `row(page, "öljy")` can hand back the water. Anything that presses one of the
+ * two cupboard buttons has to be sure which row it is pressing.
+ */
+function namedRow(page: Page, name: string) {
+  return page
+    .locator(".shopping-list > li")
+    .filter({ has: page.locator(".shopping-name", { hasText: new RegExp(`^${name}$`) }) })
+    .first();
 }
 
 /**
@@ -649,11 +669,110 @@ test("choosing a product never moves the page under the member", async ({
 });
 
 /**
- * The one flow that does still reload — a second package size changes what the
- * row adds up to, and that arithmetic is the server's. It has to come back to
- * the ingredient it was about rather than to the top of the list (#200).
+ * Where the list is after a round-trip that leaves the page (#323).
+ *
+ * The tests below all measure the same thing, because every one of those
+ * round-trips makes the same promise: nothing moves under the thumb. They
+ * measure it as the viewport Y of a named row, which is the only coordinate
+ * that survives what a round-trip does to this screen. A document offset does
+ * not — the first tick brings the sentence about ticked rows, and behind an
+ * unchanged offset that puts every row one paragraph lower than the thumb left
+ * it. Nor does a list's own top: a row leaving that list for the cupboard
+ * pulls every row under it up by one, while the list's top sits still.
  */
-test("a reload after adding a package size lands back on the ingredient", async ({
+const LEFT_AT = "test.pagehide";
+
+interface WhereItLeft {
+  offset: number;
+  row: number | null;
+}
+
+/**
+ * The list, scrolled down and told to write down where it really was when it
+ * left. Reading any of this from a Playwright call before the tap would measure
+ * the wrong moment: a tap has to be scrolled to, and that scroll is the test's
+ * own, not the member's.
+ */
+async function scrollDownTheList(
+  page: Page,
+  rowName: string,
+  roomBelow = 0,
+): Promise<void> {
+  await page.evaluate(
+    ([key, name, room]) => {
+      window.scrollTo(
+        0,
+        document.body.scrollHeight - window.innerHeight - (room as number),
+      );
+      window.addEventListener("pagehide", () => {
+        const rows = document.querySelectorAll(".shopping-list > li");
+        let row: Element | null = null;
+        for (let at = 0; at < rows.length; at += 1) {
+          const label = rows[at]!.querySelector(".shopping-name");
+          if ((label?.textContent ?? "").trim() === name) {
+            row = rows[at]!;
+            break;
+          }
+        }
+        window.sessionStorage.setItem(
+          key!,
+          JSON.stringify({
+            offset: window.pageYOffset,
+            row: row ? Math.round(row.getBoundingClientRect().top) : null,
+          }),
+        );
+      });
+    },
+    [LEFT_AT, rowName, roomBelow] as [string, string, number],
+  );
+}
+
+/** Where that row is on screen now, wherever on the screen it has ended up. */
+async function onScreen(page: Page, rowName: string): Promise<number> {
+  return page.evaluate((name) => {
+    const rows = document.querySelectorAll(".shopping-list > li");
+    for (let at = 0; at < rows.length; at += 1) {
+      const label = rows[at]!.querySelector(".shopping-name");
+      if ((label?.textContent ?? "").trim() === name) {
+        return Math.round(rows[at]!.getBoundingClientRect().top);
+      }
+    }
+    return NaN;
+  }, rowName);
+}
+
+/**
+ * `rowName` is the row that has to be in the same place on screen afterwards:
+ * the pressed one where it stays put, and a surviving neighbour where the
+ * pressed one leaves its list on purpose.
+ */
+async function stillWhereItLeft(page: Page, rowName: string): Promise<void> {
+  // And no anchor left on the address bar, or the next reload — or the back
+  // button — would jump to it all over again.
+  expect(new URL(page.url()).hash).toBe("");
+
+  const left = JSON.parse(
+    (await page.evaluate((key) => window.sessionStorage.getItem(key), LEFT_AT)) ??
+      "null",
+  ) as WhereItLeft | null;
+  expect(left).not.toBeNull();
+  // A list with nowhere to be has nothing to test: the fixture has to be
+  // taller than the screen for there to be a place to lose.
+  expect(left!.offset).toBeGreaterThan(60);
+
+  expect(left!.row).not.toBeNull();
+  await expect
+    .poll(async () => Math.abs((await onScreen(page, rowName)) - left!.row!) < 4)
+    .toBe(true);
+}
+
+/**
+ * The one flow that does still reload — a second package size changes what the
+ * row adds up to, and that arithmetic is the server's. It used to come back on
+ * `#aines-<id>`, which put the row a fixed distance below the sticky header
+ * rather than where it was under the thumb (#323).
+ */
+test("a reload after adding a package size keeps the list where it was", async ({
   page,
 }) => {
   await planTheFortnight(page);
@@ -661,44 +780,274 @@ test("a reload after adding a package size lands back on the ingredient", async 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
   const milk = row(page, "maito");
-  const ingredientId = await milk
-    .locator(".shopping-item")
-    .getAttribute("data-aines");
-  expect(await milk.getAttribute("id")).toBe(`aines-${ingredientId}`);
-
+  await scrollDownTheList(page, "maito");
   await reopen(milk);
   await openPanelWith(page, milk, "Lisää toinen pakkauskoko");
   await chooseAndReload(page, "Valio kevytmaito");
 
-  expect(new URL(page.url()).hash).toBe(`#aines-${ingredientId}`);
-  const landed = row(page, "maito");
-  const where = await landed.boundingBox();
-  const view = page.viewportSize();
-  expect(where).not.toBeNull();
-  expect(where!.y).toBeGreaterThanOrEqual(0);
-  expect(where!.y).toBeLessThan(view!.height);
+  await stillWhereItLeft(page, "maito");
+  await expect(row(page, "maito")).toContainText("maito");
 });
 
 /**
- * The cupboard button leaves the page too, and it used to leave it at the top.
+ * The cupboard button leaves the page too, and it used to leave it somewhere
+ * else.
+ *
+ * The cupboard section exists before the press and the row moved is one from
+ * the middle of the list, because that is the case where the list's own top
+ * says nothing: the rows under the one that left all come up by a row while the
+ * top of their list sits exactly where it was. So the assertion is on the
+ * pressed row's surviving neighbour, not on the list.
  */
-test("the cupboard button comes back to the row it was pressed on", async ({
+test("the cupboard button leaves the list where it was", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  const oil = namedRow(page, "öljy");
+  await openShoppingRow(oil);
+  await Promise.all([
+    page.waitForEvent("load"),
+    oil.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
+  await expect(page.locator(".shopping-list").last()).toContainText("öljy");
+
+  // `sitruunaruoho` is the row directly under `maito` in the list to buy.
+  const milk = namedRow(page, "maito");
+  await scrollDownTheList(page, "sitruunaruoho");
+  await openShoppingRow(milk);
+  await Promise.all([
+    page.waitForEvent("load"),
+    milk.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
+
+  await stillWhereItLeft(page, "sitruunaruoho");
+  // The pressed row itself did move — to the cupboard section, which is the
+  // change that was asked for. Nothing else did.
+  await expect(page.locator(".shopping-list").last()).toContainText("maito");
+});
+
+/**
+ * And the way back out of the cupboard, which is the same promise from the
+ * other side (#323).
+ *
+ * This is the direction that caught the first fix out. The row reappears in the
+ * **Ostettavat** list — above the cupboard list the button was pressed in — so
+ * a position measured from the first list on the page holds the buy list still
+ * and pushes everything left in the cupboard down by a row. Hence two rows in
+ * the cupboard: one to press, one to watch.
+ */
+test("removing a row from the cupboard leaves that list where it was", async ({
   page,
 }) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
 
-  const oil = row(page, "öljy");
-  const ingredientId = await oil
-    .locator(".shopping-item")
-    .getAttribute("data-aines");
-  await openShoppingRow(oil);
-  await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+  for (const name of ["öljy", "vesi"]) {
+    const item = namedRow(page, name);
+    await openShoppingRow(item);
+    await Promise.all([
+      page.waitForEvent("load"),
+      item.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+    ]);
+  }
+  const cupboard = page.locator(".shopping-list").last();
+  await expect(cupboard.locator("> li")).toHaveCount(2);
 
-  expect(new URL(page.url()).hash).toBe(`#aines-${ingredientId}`);
-  // The row moved to the cupboard section and kept its name, so the anchor
-  // still points at it.
-  await expect(page.locator(`#aines-${ingredientId}`)).toContainText("öljy");
+  // `öljy` is in the cupboard list now, and pressed from there.
+  const oil = namedRow(page, "öljy");
+  // Stop short of the very bottom: the cupboard list is the last thing on the
+  // page, and holding it still while a row is added above it means scrolling
+  // *further* down, which the bottom of the page has no room for. A member
+  // reading the cupboard section mid-page is the case under test; one already
+  // at the end of the document is asking for something no scroll can do.
+  await scrollDownTheList(page, "vesi", 100);
+  await openShoppingRow(oil);
+  await Promise.all([
+    page.waitForEvent("load"),
+    oil.getByRole("button", { name: "Poista kaapista" }).click(),
+  ]);
+
+  await stillWhereItLeft(page, "vesi");
+  // It really did go back on the list to buy, which is what pushed the row
+  // below it around.
+  await expect(page.locator(".shopping-list").first()).toContainText("öljy");
+});
+
+/**
+ * The tick is the list's most-pressed button and the one the card is about: one
+ * row changed, by a plain link, and nothing moving under the thumb.
+ */
+test("ticking a row off leaves the list where it was", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await scrollDownTheList(page, "öljy");
+
+  await tapAndWait(
+    page,
+    row(page, "öljy").getByRole("link", {
+      name: "Jätä öljy pois tältä listalta",
+    }),
+  );
+
+  await stillWhereItLeft(page, "öljy");
+  await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
+    /is-excluded/,
+  );
+});
+
+/**
+ * A cupboard move is not a change to one row: it is a change to every row of
+ * that ingredient (#323).
+ *
+ * `pantry.ts::splitByPantry` moves them all, and a product pinned to one dish
+ * means an ingredient can have two rows sitting next to each other. The sibling
+ * row is still findable after the round-trip — in the cupboard, where it has
+ * just been put — so anchoring on it would drag the screen down into `Löytyy`
+ * behind it. The row that has to hold still is one belonging to an ingredient
+ * this press does not touch at all.
+ */
+test("a cupboard move never anchors on another row of the same ingredient", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  // Pin the lasagne's milk to its own product, which splits the milk into two
+  // rows side by side (#161).
+  const milk = namedRow(page, "maito");
+  await openShoppingRow(milk);
+  await openPanelWith(page, milk, "Valitse tuote");
+  await page
+    .locator(".s-sheet .s-product-scope-choice select")
+    .selectOption({ label: "Käytä tässä reseptissä: Lasagne" });
+  await chooseAndReload(page, "Kotimaista rasvaton maito");
+  const milkRows = page.locator(".shopping-list > li", { hasText: "maito" });
+  await expect(milkRows).toHaveCount(2);
+
+  // `sitruunaruoho` is the next row along that has nothing to do with milk.
+  await scrollDownTheList(page, "sitruunaruoho");
+  const first = milkRows.first();
+  await openShoppingRow(first);
+  await Promise.all([
+    page.waitForEvent("load"),
+    first.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+  ]);
+
+  // Both milk rows went, on the one press.
+  await expect(page.locator(".shopping-list").last().locator("> li")).toHaveCount(2);
+  await stillWhereItLeft(page, "sitruunaruoho");
+});
+
+/**
+ * The case where the list the press was in is not there afterwards at all
+ * (#323).
+ *
+ * One row in the cupboard, and taking it out takes the whole `Löytyy` section
+ * — list, heading and explanation — with it. Any place bound to that list is
+ * unfindable on the page that comes back, and the answer cannot be the top of
+ * the page, because nothing about the rows the member was reading has changed.
+ * Bound to a row instead, the next surviving one along answers it.
+ *
+ * On a shorter screen than the rest of this file, so that "did not fall to the
+ * top" is a statement about hundreds of pixels rather than tens.
+ */
+test.describe("with a screen shorter than the list", () => {
+  test.use({ viewport: { width: 412, height: 500 } });
+
+  test("a cupboard section that empties does not drop the list to the top", async ({
+    page,
+  }) => {
+    await planTheFortnight(page);
+    await page.goto("/ostoslista");
+
+    const oil = namedRow(page, "öljy");
+    await openShoppingRow(oil);
+    await Promise.all([
+      page.waitForEvent("load"),
+      oil.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+    ]);
+    const cupboard = page.locator(".shopping-list").last();
+    await expect(cupboard.locator("> li")).toHaveCount(1);
+
+    // `vesi` is the last row of the list to buy, directly above the cupboard
+    // section that is about to disappear.
+    await scrollDownTheList(page, "vesi");
+    const inCupboard = namedRow(page, "öljy");
+    await openShoppingRow(inCupboard);
+    await Promise.all([
+      page.waitForEvent("load"),
+      inCupboard.getByRole("button", { name: "Poista kaapista" }).click(),
+    ]);
+
+    // The section really is gone, not merely empty.
+    await expect(page.locator(".shopping-list")).toHaveCount(1);
+    await expect(
+      page.getByRole("heading", { name: "Löytyy", exact: true }),
+    ).toHaveCount(0);
+
+    // The page has lost a whole section from its end, so the exact place is
+    // now past the bottom of a shorter document and no scroll can reach it.
+    // What can be asked for is everything short of that: the list did not fall
+    // to the top, it went as far as the page allows, and the row the member was
+    // reading is still on the screen. Bound to the vanished list instead of to
+    // a row, this lands at zero.
+    const where = await page.evaluate(() => ({
+      offset: window.pageYOffset,
+      furthest: document.body.scrollHeight - window.innerHeight,
+    }));
+    expect(where.offset).toBeGreaterThan(60);
+    expect(where.offset).toBeGreaterThan(where.furthest - 4);
+    await expect(namedRow(page, "vesi")).toBeInViewport();
+  });
+});
+
+/**
+ * And the other half of that promise: nothing that is *not* one of those
+ * round-trips may leave a place behind for a later visit to land on (#323).
+ *
+ * Opening a row to read where its total came from is the most ordinary thing
+ * on this screen and it never leaves the page, so the list somebody opens
+ * afterwards — by the grouping pills, by the tab bar, an hour later — has to
+ * start where a list starts. Two earlier rounds of this card got that wrong in
+ * the same way, by keeping state from the touch rather than from the departure.
+ */
+test("reading a row leaves no place behind for the next visit", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await scrollDownTheList(page);
+
+  const milk = namedRow(page, "maito");
+  await openShoppingRow(milk);
+  await expect(milk.locator(".line-modal-card")).toBeVisible();
+  await closeShoppingRow(milk);
+
+  // Out by the tab bar and back by the tab bar, which is the shape the leak
+  // was reported in: the same list, opened again, must open at the top.
+  const tabs = page.locator(".tabs");
+  await Promise.all([
+    page.waitForEvent("load"),
+    tabs.getByRole("link", { name: "Viikko" }).click(),
+  ]);
+  await expect(
+    page.getByRole("heading", { name: "Viikko", exact: true }),
+  ).toBeVisible();
+  await Promise.all([
+    page.waitForEvent("load"),
+    tabs.getByRole("link", { name: "Ostokset" }).click(),
+  ]);
+  await expect(page.locator(".shopping-list").first()).toBeVisible();
+  expect(await page.evaluate(() => window.pageYOffset)).toBeLessThan(4);
+
+  // And the grouping pills, which are a navigation of their own: a different
+  // cut of the same rows is a fresh read, not a place to be returned to.
+  await scrollDownTheList(page);
+  await openShoppingRow(namedRow(page, "maito"));
+  await closeShoppingRow(namedRow(page, "maito"));
+  await groupBy(page, "Resepteittäin");
+  await expect(groupTitles(page).first()).toBeVisible();
+  expect(await page.evaluate(() => window.pageYOffset)).toBeLessThan(4);
 });
 
 /**
@@ -956,6 +1305,17 @@ test("the pills cut the same rows into one section per dish", async ({ page }) =
   );
   // The same rows, read in a different order: nothing added, nothing lost.
   expect([...(await buyRowNames(page))].sort()).toEqual([...flat].sort());
+
+  // Every list on the grouped screen is named, and named distinctly, because
+  // `KEEP_PLACE` puts the member back into the one they were touching (#323)
+  // and there are several here.
+  const named = await page
+    .locator(".shopping-list")
+    .evaluateAll((lists) =>
+      lists.map((one) => one.getAttribute("data-lista") ?? ""),
+    );
+  expect(named).not.toContain("");
+  expect(new Set(named).size).toBe(named.length);
 
   await groupBy(page, "Aakkosittain");
   await expect(groupTitles(page)).toHaveCount(0);

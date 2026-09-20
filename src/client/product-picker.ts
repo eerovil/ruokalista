@@ -742,9 +742,30 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     }
   }
 
+  /**
+   * The one save this client cannot draw itself: an added package size or a
+   * dish's own product changes what the *other* rows add up to, and that
+   * arithmetic is the server's.
+   *
+   * It used to put `#aines-<id>` on the address bar first, so the reloaded
+   * screen jumped to the row. That jump is what #323 is about: an anchored row
+   * lands a fixed distance below the sticky header rather than where it was
+   * under the thumb, and the hash then stayed on the address bar for every
+   * later reload.
+   *
+   * A screen that wants its reading position kept across this reload has to be
+   * told, because this leaves by itself: the submit that started the save was
+   * cancelled by this client long before, so there is no press for the screen
+   * to read the place off. The shopping list answers with
+   * `shopping-screens.ts::KEEP_PLACE`, which is the whole of that contract; the
+   * recipe screen defines nothing and the call is simply not there.
+   */
   function reloadOnto(row: PickerRow): void {
-    if (row.aines !== "") {
-      window.location.hash = "aines-" + row.aines;
+    var keepPlace = (window as unknown as Record<string, unknown>)[
+      "ruokalistaKeepPlace"
+    ];
+    if (typeof keepPlace === "function") {
+      (keepPlace as (node: Element) => void)(row.container);
     }
     window.location.reload();
   }

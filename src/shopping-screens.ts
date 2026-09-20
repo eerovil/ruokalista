@@ -54,6 +54,7 @@ import {
   shoppingLinesFor,
   shoppingList,
   splitByExcluded,
+  type ShoppingGroup,
   type ShoppingItem,
 } from "./shopping.ts";
 
@@ -189,7 +190,8 @@ export async function shoppingScreen(
           : html`${externalSendPanel(buy, selection, external)}
               ${groupingPills(selection)}
               ${sections(listed, atHome, selected, selection, external)}
-              ${external ? currentListPanel() : ""}`}
+              ${external ? currentListPanel() : ""}
+              ${KEEP_PLACE}`}
       ${external ? html`<script>${raw(shoppingClient)}</script>` : ""}`,
     "shopping",
     member,
@@ -750,7 +752,7 @@ export async function saveProductForm(
 
   return new Response(null, {
     status: 303,
-    headers: { Location: listLocation(state.selection, item.ingredientId) },
+    headers: { Location: listLocation(state.selection) },
   });
 }
 
@@ -794,7 +796,7 @@ export async function removeProductForm(
 
   return new Response(null, {
     status: 303,
-    headers: { Location: listLocation(state.selection, item.ingredientId) },
+    headers: { Location: listLocation(state.selection) },
   });
 }
 
@@ -838,13 +840,8 @@ export async function shoppingPantryForm(
 
   return new Response(null, {
     status: 303,
-    headers: { Location: `/ostoslista?${selectionQuery(form)}${pantryAnchor(ingredientId)}` },
+    headers: { Location: `/ostoslista?${selectionQuery(form)}` },
   });
-}
-
-/** The row the cupboard button was pressed on, so the redirect lands on it. */
-function pantryAnchor(ingredientId: number): string {
-  return Number.isSafeInteger(ingredientId) ? `#${anchorName(ingredientId)}` : "";
 }
 
 /**
@@ -1066,30 +1063,26 @@ function sections(
   selection: Selection,
   external: boolean,
 ): Raw {
-  // The anchor names are handed out once across every list, so a row that moves
-  // between them keeps the same `#aines-…` and every redirect below still lands
-  // on it (#200).
-  const anchored = new Set<number>();
   const note = selection.excluded.size === 0 ? html`` : excludedNote();
 
   // With nothing in the cupboard there is only one list, and a lone
   // "Ostettavat" heading under a heading that already says Ostoslista is a
   // word for its own sake.
   if (atHome.length === 0) {
-    return html`${note}${buyArea(listed, selected, selection, external, anchored)}`;
+    return html`${note}${buyArea(listed, selected, selection, external)}`;
   }
 
   return html`<h2 class="shopping-section">Ostettavat</h2>
     ${note}
     ${listed.length === 0
       ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
-      : buyArea(listed, selected, selection, external, anchored)}
+      : buyArea(listed, selected, selection, external)}
     <h2 class="shopping-section">Löytyy</h2>
     <p class="empty">
       Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
       <a href="/kaappi">kaapissa</a>.
     </p>
-    ${itemList(atHome, selection, "pantry", external, anchored)}`;
+    ${itemList(atHome, selection, "pantry", external, PANTRY_LIST)}`;
 }
 
 /**
@@ -1114,10 +1107,9 @@ function buyArea(
   selected: PlannedBatch[],
   selection: Selection,
   external: boolean,
-  anchored: Set<number>,
 ): Raw {
   if (!selection.byRecipe) {
-    return itemList(listed, selection, "buy", external, anchored);
+    return itemList(listed, selection, "buy", external, BUY_LIST);
   }
 
   const groups = groupByRecipe(
@@ -1125,12 +1117,12 @@ function buyArea(
     selected.map((batch) => batch.recipeId),
   );
   if (groups.length === 0) {
-    return itemList(listed, selection, "buy", external, anchored);
+    return itemList(listed, selection, "buy", external, BUY_LIST);
   }
 
   return html`${groups.map(
     (group) => html`<h3 class="shopping-group">${group.title}</h3>
-      ${itemList(group.items, selection, "buy", external, anchored)}`,
+      ${itemList(group.items, selection, "buy", external, groupList(group))}`,
   )}`;
 }
 
@@ -1140,6 +1132,25 @@ function buyArea(
  * fact about the kitchen rather than about this list (#125, #313).
  */
 type RowKind = "buy" | "pantry";
+
+/**
+ * What each `.shopping-list` on the screen is called, in `data-lista` (#323).
+ *
+ * It marks a list as one for `KEEP_PLACE` to work in — a press outside every
+ * one of them keeps nothing — and it says which list a remembered row was in,
+ * which is how that row is told apart from another row of the same key
+ * elsewhere on the screen. A dish's own name rather than its position, because
+ * a round-trip can change how many groups there are and an index would quietly
+ * slide to the neighbouring dish.
+ */
+const BUY_LIST = "ostettavat";
+const PANTRY_LIST = "loytyy";
+
+function groupList(group: ShoppingGroup): string {
+  return group.recipeId === null
+    ? "ostettavat-yhteiset"
+    : `resepti-${group.recipeId}`;
+}
 
 /**
  * One row per ingredient, each one openable to say where its total came from,
@@ -1163,17 +1174,17 @@ function itemList(
   selection: Selection,
   kind: RowKind,
   external: boolean,
-  anchored: Set<number>,
+  listName: string,
 ): Raw {
   if (items.length === 0) {
     return html`<p class="empty">Valituissa aterioissa ei ole aineksia.</p>`;
   }
 
-  return html`<ul class="shopping-list">
+  return html`<ul class="shopping-list" data-lista="${listName}">
     ${items.map((item) => {
       const excluded = kind === "buy" && selection.excluded.has(item.key);
       const toggle = rowToggleId(item, kind);
-      return html`<li class="shopping-row" ${rowAnchor(item, anchored)}>
+      return html`<li class="shopping-row">
         ${excludeTick(item, selection, kind, excluded)}
         <div
           class="${excluded ? "shopping-item is-excluded" : "shopping-item"}"
@@ -1252,45 +1263,326 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
 }
 
 /**
- * Where a form that has to leave the page sends the member back to (#200).
+ * Keeps the list exactly where it was across a round-trip that leaves the page
+ * (#323).
  *
- * Every server round-trip on this screen — the cupboard buttons, dropping a
- * package size, and the whole no-JavaScript product flow — used to redirect to
- * `/ostoslista` with nothing but the meal selection, which drops somebody who
- * was twenty rows down back at the top of a list they then have to find their
- * place in again. An id per ingredient is enough to land them back on the row
- * they acted on.
+ * Four things on this screen are real navigations: the row's tick, the cupboard
+ * buttons, dropping a package size, and the whole no-JavaScript product flow.
+ * Every one of them comes back to a list that has changed where it was
+ * pressed, so the thing to put back is not a scroll position but a piece of
+ * content: **the rows beside the one that was pressed go back to the screen
+ * position they had.**
  *
- * It is the *ingredient* rather than the row key because those two round-trips
- * are exactly the ones that can change a row's key: a product pinned to one
- * dish splits `12` into `12` and `12:r7`, and moving a row to the cupboard
- * moves it to the other list entirely. The ingredient survives both. Where an
- * ingredient does have two rows the first one gets the name, because a
- * duplicate id is not an anchor at all.
+ * So the place is a row, said in a way the next page can look up — its row key,
+ * its ingredient, the list it was in — together with the viewport Y it had.
+ * Not just any row: one this press does not change, which on this screen means
+ * any row of another ingredient, because every one of these presses acts on a
+ * whole ingredient's worth of rows. Written outwards from the pressed row,
+ * forwards first, and read back nearest-first: the first candidate that still
+ * exists anywhere on the new page wins, wherever it now is. Which is why a round-trip may do anything it likes
+ * to the list — add a sentence above it, move the pressed row to the other
+ * section, put a row back in between, empty a dish's group or take the whole
+ * `Löytyy` list away with its last row — and the screen still comes back to the
+ * same rows in the same places. The pressed row itself is the last candidate,
+ * for the case where nothing else on the screen survived.
+ *
+ * Three earlier rounds of #323 each bound the place to a coordinate instead of
+ * to content, and each one broke at the next change of shape: the document
+ * offset moved every row down by the height of the sentence a tick adds; the
+ * first list's top was the wrong list when the press was in the cupboard; that
+ * list's own top still moved when the round-trip added or removed a row inside
+ * it, and vanished outright when the round-trip emptied it. A row that is still
+ * on the page has none of those failure modes, and "which row" is a question
+ * with a fallback: the next one.
+ *
+ * It is written at the one moment worth writing it, too: when a press inside a
+ * list is about to take the page away. That is a link or a form submit inside a
+ * `[data-lista]` list, read in the bubble phase so that anything which cancels
+ * the press has already done so, plus the one explicit call the picker client
+ * makes before reloading itself. Nothing else writes at all — opening a row,
+ * the grouping pills and the tab bar leave nothing behind, so a later visit to
+ * `/ostoslista` opens at the top as it always has.
+ *
+ * Like `week-screens.ts::SCROLL_TO_TODAY` it stands down on an explicit anchor
+ * and on a position the browser restored itself — both of those are somebody
+ * else's answer to the same question. A browser with no `sessionStorage`, or
+ * none of this at all, lands at the top of the list, which is where every one
+ * of these round-trips landed before #200.
+ *
+ * ES5 on purpose — inline scripts ship untranspiled.
  */
-function rowAnchor(item: ShoppingItem, anchored: Set<number>): Raw {
-  if (anchored.has(item.ingredientId)) return html``;
-  anchored.add(item.ingredientId);
-  return raw(`id="${anchorName(item.ingredientId)}"`);
-}
+const KEEP_PLACE = raw(`<script>
+(function () {
+  var KEY = "ruokalista.ostoslista.rivikohta";
+  // How far either side of the pressed row to write down. Six is well past
+  // any one round-trip's worth of change and still a short string.
+  var NEIGHBOURS = 6;
 
-function anchorName(ingredientId: number): string {
-  return `aines-${ingredientId}`;
-}
+  var store = null;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    // A browser that refuses storage refuses reading it too.
+    return;
+  }
+  if (!store || !document.addEventListener || !window.JSON) return;
+
+  var saved = null;
+  try {
+    saved = store.getItem(KEY);
+    store.removeItem(KEY);
+  } catch (error) {
+    saved = null;
+  }
+
+  var marks = readMarks(saved);
+  var wanted = marks !== null && !window.location.hash && !window.pageYOffset;
+  var touched = false;
+
+  function readMarks(value) {
+    if (!value) return null;
+    var parsed = null;
+    try {
+      parsed = window.JSON.parse(value);
+    } catch (error) {
+      return null;
+    }
+    return parsed && parsed.length ? parsed : null;
+  }
+
+  function rows() {
+    return document.querySelectorAll(".shopping-list > li");
+  }
+
+  function listAround(node) {
+    while (node && node !== document.body) {
+      if (node.getAttribute && node.getAttribute("data-lista")) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  // The row element is the list item, not the block inside it: the tick sits
+  // beside that block rather than in it (#318), so a press can be on either
+  // side of it.
+  function rowAround(node) {
+    while (node && node !== document.body) {
+      if (
+        node.tagName === "LI" &&
+        node.parentNode &&
+        node.parentNode.getAttribute &&
+        node.parentNode.getAttribute("data-lista")
+      ) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function itemOf(row) {
+    return row.getAttribute && row.getAttribute("data-rivi")
+      ? row
+      : row.querySelector
+        ? row.querySelector("[data-rivi]")
+        : null;
+  }
+
+  /** One row, said in a way the next page can look up: what it is, and where. */
+  function markOf(row) {
+    var item = itemOf(row);
+    if (!item) return null;
+    var list = listAround(row);
+    return {
+      k: item.getAttribute("data-rivi"),
+      a: item.getAttribute("data-aines"),
+      l: list ? list.getAttribute("data-lista") : "",
+      y: Math.round(row.getBoundingClientRect().top)
+    };
+  }
+
+  /**
+   * The row this mark names, wherever it now is.
+   *
+   * Three readings, narrowest first. The row key in the same list is the same
+   * row for certain. The row key on its own is still that row moved — to the
+   * cupboard, or into a dish's own section. The ingredient is the last
+   * reading, because a product pinned to one dish splits one row into two and
+   * the key goes with the split.
+   */
+  function rowFor(mark) {
+    var all = rows();
+    var inList = null;
+    var byKey = null;
+    var byIngredient = null;
+    for (var index = 0; index < all.length; index += 1) {
+      var row = all[index];
+      var item = itemOf(row);
+      if (!item) continue;
+      if (item.getAttribute("data-rivi") === mark.k) {
+        var list = listAround(row);
+        if (!inList && list && list.getAttribute("data-lista") === mark.l) {
+          inList = row;
+        }
+        if (!byKey) byKey = row;
+      } else if (!byIngredient && item.getAttribute("data-aines") === mark.a) {
+        byIngredient = row;
+      }
+    }
+    return inList || byKey || byIngredient;
+  }
+
+  function place() {
+    if (!wanted || touched) return;
+    for (var index = 0; index < marks.length; index += 1) {
+      var row = rowFor(marks[index]);
+      if (!row) continue;
+      var target =
+        window.pageYOffset + (row.getBoundingClientRect().top - marks[index].y);
+      if (target < 0) target = 0;
+      if (Math.abs(window.pageYOffset - target) >= 2) window.scrollTo(0, target);
+      return;
+    }
+  }
+
+  place();
+  // Once more when the page has stopped growing. The first attempt runs while
+  // the list is still shorter than it will be — a product picture and the
+  // S-ostoslista panel both arrive later — and a browser clamps a scroll to the
+  // height it has, so the first attempt lands short by however much is still
+  // missing. It stands down the moment the member does anything themselves,
+  // because from then on the position is theirs and not ours.
+  window.addEventListener("load", place);
+  window.addEventListener("touchstart", function () { touched = true; }, true);
+  window.addEventListener("wheel", function () { touched = true; }, true);
+  window.addEventListener("keydown", function () { touched = true; }, true);
+
+  function linkAround(node) {
+    while (node && node !== document.body) {
+      if (node.tagName === "A" && node.getAttribute("href")) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function ingredientOf(row) {
+    var item = itemOf(row);
+    return item ? item.getAttribute("data-aines") : null;
+  }
+
+  /**
+   * Write down where the rows this press does *not* change are on screen.
+   * Nothing else in here writes, and this is only ever called where the page
+   * is leaving.
+   *
+   * What the press changes is the pressed row's whole **ingredient**, never
+   * the one row. The cupboard buttons send an ingredient and
+   * pantry.ts::splitByPantry moves every row of it between the two lists; a
+   * chosen product or a package size is stored per ingredient and can split
+   * one row into two; only the tick is narrower, and one row of an ingredient
+   * is inside its ingredient anyway. So the change set is the ingredient, and
+   * no row of it can be the anchor — a sibling row that moved to the cupboard
+   * on this very press is still findable afterwards, and anchoring on it drags
+   * the screen into the cupboard section behind it.
+   *
+   * What is left is every other ingredient's rows, walked outwards from the
+   * press, forwards first, nearest-first. The count is of rows accepted rather
+   * than rows passed, so a run of same-ingredient rows cannot exhaust the
+   * search before it has looked past them. The pressed row goes last, as the
+   * answer when the screen holds nothing steady at all.
+   */
+  function keep(node) {
+    var acted = rowAround(node);
+    if (!acted || !listAround(acted)) return;
+
+    var all = rows();
+    var at = -1;
+    var index;
+    for (index = 0; index < all.length; index += 1) {
+      if (all[index] === acted) at = index;
+    }
+    if (at < 0) return;
+
+    var changing = ingredientOf(acted);
+    var found = [];
+    function add(row) {
+      if (ingredientOf(row) === changing) return false;
+      var mark = markOf(row);
+      if (!mark) return false;
+      found.push(mark);
+      return true;
+    }
+
+    var taken = 0;
+    for (index = at + 1; index < all.length && taken < NEIGHBOURS; index += 1) {
+      if (add(all[index])) taken += 1;
+    }
+    taken = 0;
+    for (index = at - 1; index >= 0 && taken < NEIGHBOURS; index -= 1) {
+      if (add(all[index])) taken += 1;
+    }
+
+    var last = markOf(acted);
+    if (last) found.push(last);
+    if (!found.length) return;
+
+    try {
+      store.setItem(KEY, window.JSON.stringify(found));
+    } catch (error) {
+      // Nothing to remember with, so the list opens at the top.
+    }
+  }
+
+  // The picker client reloads the screen itself when a save changes what the
+  // other rows add up to, and by then the submit that started it has been and
+  // gone — there is no press left to read the row off. So it says so here,
+  // with the row it was about, immediately before reloading.
+  window.ruokalistaKeepPlace = keep;
+
+  // A plain left-button activation, rather than the ones the browser answers
+  // without leaving: a new tab, a middle click, a cancelled press.
+  function plainPress(event) {
+    if (event.defaultPrevented) return false;
+    if (event.button) return false;
+    return !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
+  }
+
+  // Both of these listen in the bubble phase on purpose. That is after every
+  // handler that might cancel the press has run, so defaultPrevented answers
+  // the only question worth asking: is the browser about to leave this page
+  // because of it? A row opening is a label and never reaches here, the
+  // grouping pills and the tab bar are outside every list, and the picker
+  // client's own submit has cancelled itself by now. None of them leave a
+  // place behind for some later visit to land on.
+  document.addEventListener("click", function (event) {
+    if (!plainPress(event)) return;
+    var link = linkAround(event.target);
+    if (link) keep(link);
+  });
+
+  document.addEventListener("submit", function (event) {
+    if (!plainPress(event)) return;
+    keep(event.target);
+  });
+})();
+</script>`);
 
 /**
- * The list URL a form redirects to: the selection it was carrying, and the row
- * it was about.
+ * The list URL a form redirects to: the selection it was carrying, and nothing
+ * else.
+ *
+ * It used to carry `#aines-<id>` as well, so that a round-trip landed on the
+ * row it was about rather than at the top of the list (#200). That anchor is
+ * gone (#323): the browser puts the row `scroll-margin-top` below the sticky
+ * header, which is almost never where the row was under the thumb, so every
+ * tick moved the list by however far down the screen the row happened to be.
+ * The anchor also outlived its one use — it stayed on the address bar, so the
+ * next reload, back button or `Päivitä lista` jumped to the same row again.
+ * `KEEP_PLACE` above puts the rows back where they were on screen instead,
+ * which is what #200 actually promised.
  */
-function listLocation(
-  selection: Selection,
-  ingredientId: number | null,
-): string {
-  const anchor =
-    ingredientId === null || !Number.isSafeInteger(ingredientId)
-      ? ""
-      : `#${anchorName(ingredientId)}`;
-  return `/ostoslista?${selectionQueryFrom(selection)}${anchor}`;
+function listLocation(selection: Selection): string {
+  return `/ostoslista?${selectionQueryFrom(selection)}`;
 }
 
 function externalSendPanel(
@@ -1345,15 +1637,12 @@ function currentListPanel(): Raw {
  * product is the shared component in `product-picker.ts`, driven here by the
  * same browser module a recipe's ingredient row uses (#302).
  */
-function shoppingRoutes(
-  item: ShoppingItem,
-  selection: Selection,
-): PickerRoutes {
+function shoppingRoutes(selection: Selection): PickerRoutes {
   return {
     open: "/ostoslista/tuote",
     save: "/ostoslista/tuote",
     remove: "/ostoslista/tuote/poista",
-    back: listLocation(selection, item.ingredientId),
+    back: listLocation(selection),
     fields: selectionFields(selection),
   };
 }
@@ -1375,7 +1664,7 @@ function externalProductBlock(
   if (kind !== "buy" || excluded) {
     return item.chosen.length > 0 ? productSummary(item) : html``;
   }
-  return productBlock(item, shoppingRoutes(item, selection));
+  return productBlock(item, shoppingRoutes(selection));
 }
 
 function productPage(
@@ -1392,7 +1681,7 @@ function productPage(
     productSearchHeading(item, mode),
     productSearchBody(
       item,
-      shoppingRoutes(item, selection),
+      shoppingRoutes(selection),
       mode,
       query,
       products,
@@ -1478,10 +1767,7 @@ function excludeTick(
 
   return html`<a
     class="${excluded ? "row-tick is-on" : "row-tick"}"
-    href="${listLocation(
-      { ...selection, excluded: next },
-      item.ingredientId,
-    )}"
+    href="${listLocation({ ...selection, excluded: next })}"
     aria-label="${label}"
     title="${label}"
   ></a>`;

@@ -944,10 +944,6 @@ const STYLES = `
      every tap inside itself. */
   .shopping-row { display: flex; align-items: flex-start; gap: .2rem; }
   .shopping-row > .shopping-item { flex: 1 1 auto; min-width: 0; }
-  /* Every form that has to leave the page comes back to #aines-<id>, and the
-     header is sticky — without this the row it returns to would land under it
-     and read as the wrong row (#200). */
-  .shopping-list > li[id] { scroll-margin-top: 4.5rem; }
   /* The row line: a label for the checkbox that opens the row's modal (#321),
      drawn exactly as the summary it replaced was. */
   .shopping-summary {

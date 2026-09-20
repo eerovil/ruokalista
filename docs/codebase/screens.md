@@ -509,23 +509,81 @@ restored.
 - **The current-S-ostoslista panel moved below the list.** Its contents are an
   unknown number of lines that arrive after the screen does, and above the list
   every one of them pushed the list down while it was being read.
-- **Every row is anchored and every server round-trip returns to its row.**
-  `itemList` gives the first row of each ingredient `id="aines-<ingredientId>"`,
-  and `listLocation` puts that fragment on the redirects from the cupboard
-  buttons, from dropping a package size, and from the whole no-JavaScript
-  product flow. The ingredient rather than the row key, because those are
-  exactly the round-trips that change a key: pinning a product to one dish
-  splits a row in two, and the cupboard moves a row to the other list.
-- **One save path still reloads, and it lands on the ingredient.** A second
-  package size or a recipe's own product changes what the row adds up to, and
-  that arithmetic is the server's — so the shopping client sets the hash to the
-  row's anchor before reloading rather than drawing a guess.
+- **A round-trip keeps the position, and no longer carries an anchor** (#323).
+  Four things here are real navigations — the row's tick, the cupboard buttons,
+  dropping a package size, and the whole no-JavaScript product flow. They used
+  to come back to `#aines-<ingredientId>`, which landed the row a fixed
+  `scroll-margin-top` below the sticky header instead of where it was under the
+  thumb, jumped to the wrong copy of a duplicated ingredient, and left the hash
+  on the address bar for every later reload to jump to again. `listLocation`
+  now returns the selection and nothing else, the rows carry no `id`, and
+  `shopping-screens.ts::KEEP_PLACE` puts the rows back where they were on
+  screen instead. What it keeps in `sessionStorage` is **a row this press does
+  not change**, not a coordinate: the rows either side of the pressed one that
+  belong to *other* ingredients, said as their row key, their ingredient and
+  the list they were in, each with the viewport Y it had. On arrival the first
+  of those that still exists anywhere on the page wins, and the screen scrolls
+  so that row is back at its own Y.
+
+  The change set is the whole ingredient, never the one row, and that is the
+  rule rather than a special case: the cupboard buttons send an ingredient and
+  `pantry.ts::splitByPantry` moves every row of it between the two lists, a
+  chosen product or a package size is stored per ingredient and can split one
+  row into two (#161), and the tick changes one row of an ingredient. A pinned
+  row and the generic pile sit side by side under the same name, so "the next
+  row along" is very often the sibling that just moved to the cupboard on this
+  very press — findable afterwards, and useless as an anchor.
+
+  Nothing coordinate-shaped survives what these round-trips do. A document
+  offset moves every row down by the height of the sentence a tick adds. A
+  list's top is the wrong list when the press was in the cupboard, still moves
+  when the answer adds or removes a row inside that list, and is not there at
+  all when the answer empties it — the last `Löytyy` row leaving takes the
+  whole section with it, and the only row of a `resepti-<id>` group takes the
+  group. A row is findable through every one of those, and "which row" has an
+  answer that degrades: the next one along, and the pressed row itself as the
+  last resort.
+
+  The place is written at exactly one moment: when a press inside a
+  `[data-lista]` list is about to take the page away — a link or a form submit,
+  read in the bubble phase so `defaultPrevented` can say whether the browser is
+  really leaving — plus the one explicit call the picker client makes before it
+  reloads itself. Opening a row, the grouping pills and the tab bar write
+  nothing, so the next visit to `/ostoslista` is an ordinary one. Without
+  JavaScript those round-trips land at the top of the list, which is the trade
+  #323 names.
+- **One save path still reloads, and the reload keeps the position too.** A
+  second package size or a recipe's own product changes what the row adds up
+  to, and that arithmetic is the server's — so `product-picker.ts::reloadOnto`
+  re-reads the screen rather than drawing a guess. It reloads the URL unchanged;
+  writing a hash first is what used to move the list.
 
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
 row deep in the list and demands nothing move after opening the picker,
 searching again, closing it, drawing the optimistic choice and having the save
-land — plus two more that assert the reload and the cupboard button come back to
-the row they were pressed on.
+land — plus four more, one per round-trip that does leave the page, each
+asserting that the row that stays (the pressed one, or a surviving neighbour
+where the pressed one changes section on purpose) is at the same viewport Y it
+was at when the page left, and that the address bar carries no fragment. A
+fifth takes the whole `Löytyy` section away with its last row and demands the
+list not fall to the top; a sixth asserts the other half of the rule, that
+reading a row and then leaving by the tab bar or the grouping pills leaves
+nothing behind at all.
+
+A sixth pins one dish's milk so the ingredient has two rows side by side,
+moves the first of them to the cupboard, and demands a *different* ingredient's
+row hold still — the sibling row moved on the same press, and anchoring on it
+would follow it into `Löytyy`.
+
+One limit is worth knowing: a round-trip that makes the document shorter can
+put the old place past the end of the new page, and no scroll reaches it. That
+is why the vanishing-section test asks for "as far as the page allows" rather
+than the exact Y. The
+`Poista kaapista` one stops short of the very bottom of the page on purpose:
+holding the last list still while a row is added above it means scrolling
+further down, and the end of the document has nowhere further to go. They measure that
+from the page's own `pagehide`, because a tap Playwright has to scroll to moves
+the list before the thing under test ever gets the chance to.
 
 It watches two different things on purpose, because either alone passes while
 the screen still misbehaves. `window.scrollY` catches the page being yanked
@@ -911,6 +969,29 @@ strings reach the browser without transpilation:
   back-forward cache.
 - `src/shopping-screens.ts::SHOPPING_ISLAND` — proposed for issue #159, see
   the shopping list above.
+- `src/shopping-screens.ts::KEEP_PLACE` — issue #323, and the reason the list
+  no longer carries `#aines-…` anchors. On a bubble-phase `click` on a link, or
+  `submit` of a form, inside a `[data-lista]` list and not cancelled by anybody,
+  it writes the rows around the pressed one that belong to another ingredient
+  — outwards, forwards first, the pressed row last — each as `{row key,
+  ingredient, list, viewport Y}`. It counts the rows it accepts rather than the
+  rows it passes, so a run of same-ingredient rows cannot exhaust the search
+  before it has looked past them. On arrival it reads that back, removes it,
+  finds the first of those rows that still exists (same key in the same list,
+  else the same key, else the same ingredient) and scrolls it back to its own Y — once at parse time and once
+  more on `load`, because the first attempt runs while the list is still shorter
+  than it will be and a browser clamps a scroll to the height it has. It stands
+  down on an explicit `#` anchor, on a position the browser restored itself, and
+  on the first touch, wheel or key from the member.
+
+  Nothing else writes, which is the point: two earlier rounds of #323 kept
+  state from the *touch* (any click inside a list) and spent it at `pagehide`,
+  so reading a row and then leaving by the tab bar left a place behind for a
+  later visit to land on. It also exposes `window.ruokalistaKeepPlace(node)` —
+  the one explicit hook — because `product-picker.ts::reloadOnto` leaves by
+  itself long after the submit that started the save was cancelled, and there
+  is no press left for the screen to read the row off. The recipe screen
+  defines no such function, so the same client call is a no-op there.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
   whenever today falls inside the range on screen, empty or not — fourteen day
   headings and twenty-eight add links already outrun a phone, and an empty
