@@ -504,16 +504,43 @@ const STYLES = `
   /* The move between the two shopping sections, inside the opened row. */
   .pantry-action { margin: .2rem 0 .6rem; }
   .pantry-action button { width: 100%; }
-  /* Leaving a row off this one list (#313). Deliberately the same plain
-     control as the cupboard's button rather than an accent one: they are peers
-     inside the opened row, and the words are what has to tell them apart. */
-  .exclude-action { margin: .6rem 0 .2rem; }
-  .exclude-action .button {
-    width: 100%; color: inherit; background: var(--surface);
-    border-color: var(--edge); font-weight: 400;
+  /* A row left off this one list (#313), ticked straight on the row (#318).
+     The link is a whole tap target tall and the box is drawn inside it, so a
+     thumb hits it without the box having to be finger-sized and shout. */
+  .row-tick {
+    flex: none; display: flex; align-items: center; justify-content: center;
+    width: 2rem; min-height: var(--tap); text-decoration: none;
   }
+  .row-tick::before {
+    content: ""; display: flex; align-items: center; justify-content: center;
+    width: 1.25rem; height: 1.25rem; font-size: .85rem; line-height: 1;
+    border: 1px solid var(--edge); border-radius: .25rem;
+    background: var(--surface);
+  }
+  .row-tick.is-on::before {
+    content: "✓"; color: var(--accent-fg);
+    background: var(--accent); border-color: var(--accent);
+  }
+  /* The cupboard's rows are offered no tick and still have to line up with
+     the rows above them. */
+  .row-tick.is-absent::before { content: none; }
   .shopping-item.is-excluded .shopping-name,
   .shopping-item.is-excluded .shopping-total { color: var(--muted); }
+  .shopping-item.is-excluded .shopping-thumb img { opacity: .45; }
+  .shopping-excluded-note { margin: .2rem 0 .6rem; }
+  /* By ingredient name or by dish (#318) — the same rows, read two ways. */
+  .shopping-grouping { display: flex; gap: .4rem; margin: 0 0 .6rem; }
+  .shopping-grouping .button {
+    flex: 1; padding: .4rem .6rem; text-align: center;
+    color: inherit; background: var(--surface);
+    border-color: var(--edge); font-weight: 400;
+  }
+  .shopping-grouping .button.is-current {
+    color: var(--accent-fg); background: var(--accent);
+    border-color: var(--accent); font-weight: 600;
+  }
+  .shopping-group { margin: 1.1rem 0 .1rem; font-size: .95rem;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .shopping-section { margin: 1.6rem 0 .2rem; font-size: 1.05rem; }
   .shopping-section + .empty { margin-top: 0; }
   button.danger {
@@ -887,6 +914,11 @@ const STYLES = `
   .shopping-meal-title { font-weight: 600; }
 
   .shopping-list > li { border-bottom: 1px solid var(--edge); }
+  /* The tick sits beside the whole row rather than inside it (#318): it has to
+     be one tap without opening the row, and the row's own summary already owns
+     every tap inside itself. */
+  .shopping-row { display: flex; align-items: flex-start; gap: .2rem; }
+  .shopping-row > .shopping-item { flex: 1 1 auto; min-width: 0; }
   /* Every form that has to leave the page comes back to #aines-<id>, and the
      header is sticky — without this the row it returns to would land under it
      and read as the wrong row (#200). */

@@ -138,13 +138,36 @@ back.
 
 The point of it is the distinction, and that is why the two controls are drawn
 apart and worded apart. The cupboard says the household *has* something, is a
-fact about the kitchen, and outlives the trip; **Jätä pois tältä listalta**
-says only that this trip is not buying it, and is forgotten the moment the
-screen is reopened without that parameter. A left-off row keeps its total and
-its breakdown in its own **Jätetty pois tältä listalta** section, is not sent to
-the S-ostoslista, and is offered no product picker — the same treatment a
-cupboard row gets. A cupboard row, in turn, is offered no left-off toggle: it
-is already off the list for a reason that outranks this one.
+fact about the kitchen, and outlives the trip; leaving a row off says only that
+this trip is not buying it, and is forgotten the moment the screen is reopened
+without that parameter. A left-off row keeps its total and its breakdown, is
+not sent to the S-ostoslista, and is offered no product picker — the same
+treatment a cupboard row gets. A cupboard row, in turn, is offered no left-off
+toggle: it is already off the list for a reason that outranks this one.
+
+Issue #318 changes where that toggle is and what a ticked row does. It is a
+tick box on the row line itself (`shopping-screens.ts::excludeTick`), outside
+the row's own `<details>` so it is one tap without opening anything, and still
+a link rather than an `<input>` — the whole answer is which URL the next list
+is at, and a real checkbox here would need a script to do anything. The ticked
+row then stays exactly where it was in the list, drawn inactive, instead of
+moving into a section of its own: unticking is the same tap in the same spot
+rather than a hunt down the page. What the old section carried that a greyed
+row cannot say for itself — that this is not the cupboard — is one line above
+the list, drawn only while something is ticked. So `shoppingState` now hands
+the screen two lists that used to be one: `listed` is every row the buy area
+draws, ticked ones in place, and `buy` is what the send and the product picker
+work from.
+
+The same issue adds a fourth query-string parameter, `ryhma=resepti`, and two
+pills above the list. Either pill draws the same rows: by ingredient name, which
+is the order to read in a shop and stays the default, or one section per dish
+(`shopping.ts::groupByRecipe`, tested in `dev/check-shopping-grouping.ts`). A
+row more than one selected dish wants is not repeated under each of them — it is
+one thing to buy once, so it goes in a **Useammassa reseptissä** section at the
+end. The sections follow the order the week cooks them. Grouping is the buy area
+only; the cupboard's **Löytyy** stays one flat list, because it is a footnote
+rather than a thing to shop from.
 
 The arithmetic lives in `src/shopping.ts::shoppingList`, apart from the markup
 and tested directly in `dev/check-shopping.ts`. Three rules the proposal treats
