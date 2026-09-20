@@ -529,8 +529,14 @@ restored.
   measured from the buy list holds it still and pushes the rest of the cupboard
   down by a row. If the named list is gone entirely — removing the last cupboard
   row takes the whole `Löytyy` list with it — nothing is restored and the list
-  opens at the top. Without JavaScript those round-trips land at the top of the
-  list too, which is the trade #323 names.
+  opens at the top. The place is written at exactly one moment: when a press
+  inside a list is about to take the page away — a link or a form submit,
+  read in the bubble phase so `defaultPrevented` can say whether the browser is
+  really leaving — plus the one explicit call the picker client makes before it
+  reloads itself. Opening a row, the grouping pills and the tab bar write
+  nothing, so the next visit to `/ostoslista` is an ordinary one. Without
+  JavaScript those round-trips land at the top of the list too, which is the
+  trade #323 names.
 - **One save path still reloads, and the reload keeps the position too.** A
   second package size or a recipe's own product changes what the row adds up
   to, and that arithmetic is the server's — so `product-picker.ts::reloadOnto`
@@ -543,7 +549,10 @@ searching again, closing it, drawing the optimistic choice and having the save
 land — plus four more, one per round-trip that does leave the page, each
 asserting that the row that stays (the pressed one, or the row left behind when
 the pressed one changes section on purpose) is at the same viewport Y it was at
-when the page left, and that the address bar carries no fragment. The
+when the page left, and that the address bar carries no fragment. A fifth
+asserts the other half of it: reading a row and then leaving by the tab bar or
+the grouping pills leaves nothing behind, and the list opens at the top next
+time. The
 `Poista kaapista` one stops short of the very bottom of the page on purpose:
 holding the last list still while a row is added above it means scrolling
 further down, and the end of the document has nowhere further to go. They measure that
@@ -935,15 +944,24 @@ strings reach the browser without transpilation:
 - `src/shopping-screens.ts::SHOPPING_ISLAND` — proposed for issue #159, see
   the shopping list above.
 - `src/shopping-screens.ts::KEEP_PLACE` — issue #323, and the reason the list
-  no longer carries `#aines-…` anchors. It arms on any click or submit inside
-  a `[data-lista]` list, writes that list's name and `pageYOffset` minus its own
-  document top to `sessionStorage` on `pagehide`, and scrolls back to that
-  distance into the list of that name on arrival — once at parse time and once more on `load`, because the
-  first attempt runs while the list is still shorter than it will be and a
-  browser clamps a scroll to the height it has. It stands down on an explicit
-  `#` anchor, on a position the browser restored itself, and on the first touch,
-  wheel or key from the member. It forgets the position as it uses it, so a
-  later visit to `/ostoslista` opens at the top.
+  no longer carries `#aines-…` anchors. On a bubble-phase `click` on a link, or
+  `submit` of a form, inside a `[data-lista]` list and not cancelled by anybody,
+  it writes that list's name and `pageYOffset` minus the list's own document top
+  to `sessionStorage`; on arrival it reads that back, removes it, and scrolls to
+  the same distance into the list of that name — once at parse time and once
+  more on `load`, because the first attempt runs while the list is still shorter
+  than it will be and a browser clamps a scroll to the height it has. It stands
+  down on an explicit `#` anchor, on a position the browser restored itself, and
+  on the first touch, wheel or key from the member.
+
+  Nothing else writes, which is the point: two earlier rounds of #323 kept
+  state from the *touch* (any click inside a list) and spent it at `pagehide`,
+  so reading a row and then leaving by the tab bar left a place behind for a
+  later visit to land on. It also exposes `window.ruokalistaKeepPlace(node)` —
+  the one explicit hook — because `product-picker.ts::reloadOnto` leaves by
+  itself long after the submit that started the save was cancelled, and there
+  is no press left for the screen to read the list off. The recipe screen
+  defines no such function, so the same client call is a no-op there.
 - `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
   whenever today falls inside the range on screen, empty or not — fourteen day
   headings and twenty-eight add links already outrun a phone, and an empty

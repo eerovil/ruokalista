@@ -1,6 +1,10 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-import { closeOpenShoppingRow, openShoppingRow } from "./support/shopping-rows";
+import {
+  closeOpenShoppingRow,
+  closeShoppingRow,
+  openShoppingRow,
+} from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -885,6 +889,55 @@ test("ticking a row off leaves the list where it was", async ({ page }) => {
   await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
     /is-excluded/,
   );
+});
+
+/**
+ * And the other half of that promise: nothing that is *not* one of those
+ * round-trips may leave a place behind for a later visit to land on (#323).
+ *
+ * Opening a row to read where its total came from is the most ordinary thing
+ * on this screen and it never leaves the page, so the list somebody opens
+ * afterwards — by the grouping pills, by the tab bar, an hour later — has to
+ * start where a list starts. Two earlier rounds of this card got that wrong in
+ * the same way, by keeping state from the touch rather than from the departure.
+ */
+test("reading a row leaves no place behind for the next visit", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await scrollDownTheList(page);
+
+  const milk = namedRow(page, "maito");
+  await openShoppingRow(milk);
+  await expect(milk.locator(".line-modal-card")).toBeVisible();
+  await closeShoppingRow(milk);
+
+  // Out by the tab bar and back by the tab bar, which is the shape the leak
+  // was reported in: the same list, opened again, must open at the top.
+  const tabs = page.locator(".tabs");
+  await Promise.all([
+    page.waitForEvent("load"),
+    tabs.getByRole("link", { name: "Viikko" }).click(),
+  ]);
+  await expect(
+    page.getByRole("heading", { name: "Viikko", exact: true }),
+  ).toBeVisible();
+  await Promise.all([
+    page.waitForEvent("load"),
+    tabs.getByRole("link", { name: "Ostokset" }).click(),
+  ]);
+  await expect(page.locator(".shopping-list").first()).toBeVisible();
+  expect(await page.evaluate(() => window.pageYOffset)).toBeLessThan(4);
+
+  // And the grouping pills, which are a navigation of their own: a different
+  // cut of the same rows is a fresh read, not a place to be returned to.
+  await scrollDownTheList(page);
+  await openShoppingRow(namedRow(page, "maito"));
+  await closeShoppingRow(namedRow(page, "maito"));
+  await groupBy(page, "Resepteittäin");
+  await expect(groupTitles(page).first()).toBeVisible();
+  expect(await page.evaluate(() => window.pageYOffset)).toBeLessThan(4);
 });
 
 /**

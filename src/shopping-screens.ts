@@ -1276,9 +1276,9 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  * They all come back to a list that is one row different from the one the
  * member was reading, so the only thing worth restoring is where they were
  * reading it — not which row they pressed. This remembers how far into the
- * list they were when one of those controls is used and puts them back there on
- * arrival, then forgets it, so a later visit to `/ostoslista` opens at the top
- * as it always has.
+ * list they were as one of those presses takes the page away, and puts them
+ * back there on arrival, then forgets it — so a later visit to `/ostoslista`
+ * opens at the top as it always has.
  *
  * How far into the *list*, not how far down the page: the answer to a
  * round-trip often adds a line above the list, and a page offset kept across
@@ -1286,13 +1286,18 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  * the one the tap was in, by the `data-lista` name it is drawn with — because
  * a screen has several, and what the answer adds can land between them.
  *
- * It arms itself on a touch of a list rather than saving on every departure,
- * so that leaving the screen by the tab bar, or changing the grouping, still
- * opens the next list where a list opens. Anything inside a `[data-lista]`
- * list arms it, opening a row included: the picker client's own reload happens two
- * taps after a row was opened and several elements away from it, and a rule
- * that tried to name only the controls that leave the page would have to be
- * re-checked every time one is added.
+ * The place is written at the one moment worth writing it: when a press inside
+ * a list is about to take the page away. That is a link or a form submit
+ * inside a `[data-lista]` list, read in the bubble phase so that anything which
+ * cancels the press has already done so, plus the one explicit call the picker
+ * client makes before reloading itself. Nothing else writes at all.
+ *
+ * Earlier rounds of #323 armed on any touch of a list and wrote the place at
+ * `pagehide`. That state outlived the touch that set it: opening and closing a
+ * row armed it, and then the next departure — the grouping pills, the tab bar,
+ * any departure at all — spent it, so a later visit landed on a place nobody
+ * had asked to keep. Hence one rule and no arming state: only a press that
+ * really leaves writes anything, and arrival spends it.
  *
  * Like `week-screens.ts::SCROLL_TO_TODAY` it stands down on an explicit anchor
  * and on a position the browser restored itself — both of those are somebody
@@ -1378,10 +1383,6 @@ const KEEP_PLACE = raw(`<script>
   window.addEventListener("wheel", function () { touched = true; }, true);
   window.addEventListener("keydown", function () { touched = true; }, true);
 
-  // The list the departing interaction happened in, which is the one the
-  // member was reading.
-  var leaving = null;
-
   function listAround(node) {
     while (node && node !== document.body) {
       if (node.getAttribute && node.getAttribute("data-lista")) return node;
@@ -1390,24 +1391,63 @@ const KEEP_PLACE = raw(`<script>
     return null;
   }
 
-  function arm(event) {
-    var list = listAround(event.target);
-    if (list) leaving = list;
+  function linkAround(node) {
+    while (node && node !== document.body) {
+      if (node.tagName === "A" && node.getAttribute("href")) return node;
+      node = node.parentNode;
+    }
+    return null;
   }
 
-  document.addEventListener("click", arm, true);
-  document.addEventListener("submit", arm, true);
-
-  window.addEventListener("pagehide", function () {
-    if (!leaving) return;
-    var top = topOf(leaving);
+  // Write the place down, measured from whichever list this node is in.
+  // Nothing else in here writes, and this is only ever called where the page
+  // is leaving.
+  function keep(node) {
+    var list = listAround(node);
+    if (!list) return;
+    var top = topOf(list);
     if (top === null) return;
-    var name = leaving.getAttribute("data-lista");
     try {
-      store.setItem(KEY, name + ":" + String(Math.round(window.pageYOffset - top)));
+      store.setItem(
+        KEY,
+        list.getAttribute("data-lista") + ":" +
+          String(Math.round(window.pageYOffset - top))
+      );
     } catch (error) {
       // Nothing to remember with, so the list opens at the top.
     }
+  }
+
+  // The picker client reloads the screen itself when a save changes what the
+  // other rows add up to, and by then the submit that started it has been and
+  // gone — there is no press left to read the list off. So it says so here,
+  // with the row it was about, immediately before reloading.
+  window.ruokalistaKeepPlace = keep;
+
+  // A plain left-button activation, rather than the ones the browser answers
+  // without leaving: a new tab, a middle click, a cancelled press.
+  function plainPress(event) {
+    if (event.defaultPrevented) return false;
+    if (event.button) return false;
+    return !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
+  }
+
+  // Both of these listen in the bubble phase on purpose. That is after every
+  // handler that might cancel the press has run, so defaultPrevented answers
+  // the only question worth asking: is the browser about to leave this page
+  // because of it? A row opening is a label and never reaches here, the
+  // grouping pills and the tab bar are outside every list, and the picker
+  // client's own submit has cancelled itself by now. None of them leave a
+  // place behind for some later visit to land on.
+  document.addEventListener("click", function (event) {
+    if (!plainPress(event)) return;
+    var link = linkAround(event.target);
+    if (link) keep(link);
+  });
+
+  document.addEventListener("submit", function (event) {
+    if (!plainPress(event)) return;
+    keep(event.target);
   });
 })();
 </script>`);
