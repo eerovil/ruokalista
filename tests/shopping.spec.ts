@@ -164,6 +164,22 @@ function results(page: Page) {
   return page.locator(".s-sheet .s-product-results > li");
 }
 
+/**
+ * Leave for the plain product screen from an opened row, with no script to
+ * help.
+ *
+ * The scroll is about reaching the button, not about what it does. The bottom
+ * tab bar is fixed over the last few rem of the viewport and the minimal
+ * scroll a click does can land an element exactly under it, so a row far
+ * enough down the page has an unclickable button until something puts it in
+ * the middle. It is still the real button and everything after it is unchanged.
+ */
+async function openPlainPicker(item: ReturnType<typeof row>): Promise<void> {
+  const open = item.getByRole("button", { name: "Valitse tuote" });
+  await open.evaluate((one) => one.scrollIntoView({ block: "center" }));
+  await open.click();
+}
+
 /** Open one row's product sheet and wait for its first results to arrive. */
 async function openPanel(
   page: Page,
@@ -709,12 +725,36 @@ test("the cupboard button comes back to the row it was pressed on", async ({
  * the row left the list, *and* the cupboard is exactly where it was.
  */
 async function leaveOff(page: Page, ingredient: string): Promise<void> {
-  const item = row(page, ingredient);
-  await item.locator("summary").click();
-  await item.getByRole("link", { name: "Jätä pois tältä listalta" }).click();
+  // One tap on the row's own tick, without opening it: that is the whole point
+  // of #318, so the helper every assertion below runs through does it that way.
+  await tapAndWait(
+    page,
+    row(page, ingredient).getByRole("link", {
+      name: `Jätä ${ingredient} pois tältä listalta`,
+    }),
+  );
 }
 
-/** The rows the member has taken off, whichever section they ended up in. */
+/**
+ * Follow a control that reloads the list, and wait until the new list is the
+ * one on the screen.
+ *
+ * Every toggle here is a plain link or a GET form, so the click only *starts*
+ * a navigation. Without this the next assertion can read the old page — and
+ * the ones that count rows read an empty one mid-swap, which looks like a
+ * missing row rather than like a race.
+ */
+async function tapAndWait(
+  page: Page,
+  control: ReturnType<typeof row>,
+): Promise<void> {
+  const before = page.url();
+  await control.click();
+  await page.waitForURL((url) => url.href !== before);
+  await expect(page.locator(".shopping-list").first()).toBeAttached();
+}
+
+/** The rows the member has taken off, wherever they sit in the list. */
 function leftOff(page: Page) {
   return page.locator(".shopping-item.is-excluded");
 }
@@ -727,9 +767,7 @@ test("a row left off this list is not sent, and the cupboard never hears it", as
   await page.goto("/ostoslista");
   await leaveOff(page, "vesi");
 
-  await expect(
-    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
-  ).toBeVisible();
+  await expect(page.locator(".shopping-excluded-note")).toBeVisible();
   await expect(leftOff(page)).toHaveCount(1);
   await expect(leftOff(page)).toContainText("vesi");
   // The amount and the breakdown are still there — a row that vanished would
@@ -756,20 +794,29 @@ test("a row left off this list is not sent, and the cupboard never hears it", as
   await expect(page.locator(".pantry")).toHaveCount(0);
 });
 
-test("a row left off comes back with one tap", async ({ page }) => {
+test("a row left off stays where it was and comes back with one tap", async ({
+  page,
+}) => {
   await planTheFortnight(page);
   await page.goto("/ostoslista");
+  const before = await buyRowNames(page);
+
   await leaveOff(page, "vesi");
 
-  const back = leftOff(page);
-  await back.locator("summary").click();
-  await back.getByRole("link", { name: "Ota takaisin listalle" }).click();
+  // #318's whole point: the row did not move into a section of its own, so
+  // untick is the same tap in the same spot rather than a hunt down the page.
+  expect(await buyRowNames(page)).toEqual(before);
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(leftOff(page)).toContainText("vesi");
+
+  await tapAndWait(
+    page,
+    row(page, "vesi").getByRole("link", { name: "Ota vesi takaisin listalle" }),
+  );
 
   await expect(leftOff(page)).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
-  ).toBeHidden();
-  expect(await buyRowNames(page)).toContain("vesi");
+  await expect(page.locator(".shopping-excluded-note")).toBeHidden();
+  expect(await buyRowNames(page)).toEqual(before);
 });
 
 test("the cupboard and the left-off list stay two separate answers", async ({
@@ -783,19 +830,16 @@ test("the cupboard and the left-off list stay two separate answers", async ({
   await oil.locator("summary").click();
   await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
 
-  // Both sections are drawn, worded apart, and neither took the other's row.
+  // Both answers are drawn, worded apart, and neither took the other's row.
   await expect(page.getByRole("heading", { name: "Löytyy" })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
-  ).toBeVisible();
+  await expect(page.locator(".shopping-excluded-note")).toBeVisible();
   await expect(leftOff(page)).toHaveCount(1);
   await expect(leftOff(page)).toContainText("vesi");
 
   // A cupboard row is not offered the other toggle: it is already off the list
   // for a reason that outranks this one.
   const home = page.locator(".shopping-list > li", { hasText: "öljy" }).first();
-  await home.locator("summary").click();
-  await expect(home.getByRole("link", { name: /Jätä pois|Ota takaisin/ })).toHaveCount(
+  await expect(home.getByRole("link", { name: /Jätä öljy|Ota öljy/ })).toHaveCount(
     0,
   );
 });
@@ -822,9 +866,7 @@ test("a junk row key on the query string leaves nothing off", async ({ page }) =
   await page.goto("/ostoslista?pois=%3Cscript%3E&pois=999");
 
   await expect(leftOff(page)).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "Jätetty pois tältä listalta" }),
-  ).toBeHidden();
+  await expect(page.locator(".shopping-excluded-note")).toBeHidden();
   // And it is not handed back out either: nothing on the screen carries a key
   // this list has no row for.
   await expect(carriedKeys(page)).toHaveCount(0);
@@ -841,7 +883,7 @@ async function setMealTicked(
     await picker.locator("summary").click();
   }
   await picker.locator(`input[name="ateria"][value="${batchId}"]`).setChecked(ticked);
-  await picker.getByRole("button", { name: "Päivitä lista" }).click();
+  await tapAndWait(page, picker.getByRole("button", { name: "Päivitä lista" }));
 }
 
 /** The exclusions the picker's own form would submit. */
@@ -886,6 +928,78 @@ test("a left-off row whose cooking is gone stops being carried", async ({
   await setMealTicked(page, lasagne, true);
   await expect(leftOff(page)).toHaveCount(0);
   expect(await buyRowNames(page)).toContain("jauheliha");
+});
+
+/**
+ * Reading the same list by dish instead of by ingredient name (#318).
+ *
+ * It is a reading order and nothing else, so every assertion here is about
+ * what moved where — never about what the trip buys, which must be the same
+ * list either way.
+ */
+async function groupBy(page: Page, label: string): Promise<void> {
+  await tapAndWait(
+    page,
+    page.locator(".shopping-grouping").getByRole("link", { name: label }),
+  );
+}
+
+/** The section headings the by-dish view drew, in order. */
+function groupTitles(page: Page) {
+  return page.locator(".shopping-group");
+}
+
+test("the pills cut the same rows into one section per dish", async ({ page }) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  const flat = await buyRowNames(page);
+  await expect(groupTitles(page)).toHaveCount(0);
+
+  await groupBy(page, "Resepteittäin");
+
+  // A section per dish, in the order the week cooks them, and the rows more
+  // than one of them wants as one pile at the end rather than repeated under
+  // each. The maitokastike has no section: its only ingredient is the milk the
+  // lasagne also wants, so its one row is in that pile.
+  await expect(groupTitles(page)).toContainText([
+    "Kaalilaatikko",
+    "Lasagne",
+    "Useammassa reseptissä",
+  ]);
+  await expect(page.locator(".shopping-group").last()).toHaveText(
+    "Useammassa reseptissä",
+  );
+  // The same rows, read in a different order: nothing added, nothing lost.
+  expect([...(await buyRowNames(page))].sort()).toEqual([...flat].sort());
+
+  await groupBy(page, "Aakkosittain");
+  await expect(groupTitles(page)).toHaveCount(0);
+  expect(await buyRowNames(page)).toEqual(flat);
+});
+
+test("the grouping rides along with everything else the list carries", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await groupBy(page, "Resepteittäin");
+  await leaveOff(page, "vesi");
+
+  // A left-off row is still left off, and still in its own dish's section.
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(groupTitles(page).first()).toBeVisible();
+
+  // And the meal picker's own form keeps it too, exactly as it keeps the
+  // exclusions: submitting it must not silently drop back to the flat list.
+  await page.locator(".shopping-picker summary").click();
+  await tapAndWait(
+    page,
+    page.locator(".shopping-picker").getByRole("button", { name: "Päivitä lista" }),
+  );
+
+  expect(new URL(page.url()).searchParams.get("ryhma")).toBe("resepti");
+  await expect(groupTitles(page).first()).toBeVisible();
+  await expect(leftOff(page)).toHaveCount(1);
 });
 
 test("sending waits for an optimistic product save", async ({ page }) => {
@@ -1280,7 +1394,7 @@ test.describe("without JavaScript", () => {
 
     const milk = row(page, "maito");
     await milk.locator("summary").click();
-    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+    await openPlainPicker(milk);
     await page
       .locator(".s-product-results > li", { hasText: "Kotimaista rasvaton maito" })
       .getByRole("button", { name: "Valitse" })
@@ -2203,7 +2317,7 @@ test.describe("choosing a scope without JavaScript", () => {
 
     const milk = row(page, "maito");
     await milk.locator("summary").click();
-    await milk.getByRole("button", { name: "Valitse tuote" }).click();
+    await openPlainPicker(milk);
 
     await page
       .locator("select[name='laajuus']")

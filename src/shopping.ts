@@ -305,6 +305,71 @@ export function splitByExcluded(
   return { buy, excluded: left };
 }
 
+/** The heading over the rows more than one selected dish wants (#318). */
+export const SHARED_GROUP_TITLE = "Useammassa reseptissä";
+
+/** One section of the list when it is grouped by dish rather than by name. */
+export interface ShoppingGroup {
+  /** The dish these rows belong to, or null for the shared pile. */
+  recipeId: number | null;
+  title: string;
+  items: ShoppingItem[];
+}
+
+/**
+ * The same rows, cut into one section per dish (#318).
+ *
+ * The list's own order is by ingredient name, which is the order to read in a
+ * shop; this is the other question somebody asks of it — what does *this* dish
+ * need. A row only one dish wants goes under that dish. A row two or three of
+ * them want is not repeated under each: it is one thing to buy once, so it
+ * goes in its own section at the end, where the amount reads as the sum it is
+ * rather than as a share of somebody's dish.
+ *
+ * `recipeOrder` is the dishes as the member has them planned, so the sections
+ * come in the order the week does rather than in whatever order the rows
+ * happened to mention them. A dish it does not name still gets its section
+ * — losing one would lose its rows with it.
+ */
+export function groupByRecipe(
+  items: ShoppingItem[],
+  recipeOrder: readonly number[],
+): ShoppingGroup[] {
+  const own = new Map<number, ShoppingGroup>();
+  const shared: ShoppingItem[] = [];
+
+  for (const item of items) {
+    const [recipe] = item.recipes;
+    if (recipe === undefined || item.recipes.length > 1) {
+      shared.push(item);
+      continue;
+    }
+    let group = own.get(recipe.id);
+    if (group === undefined) {
+      group = { recipeId: recipe.id, title: recipe.title, items: [] };
+      own.set(recipe.id, group);
+    }
+    group.items.push(item);
+  }
+
+  const ordered: ShoppingGroup[] = [];
+  const placed = new Set<number>();
+  for (const id of recipeOrder) {
+    if (placed.has(id)) continue;
+    placed.add(id);
+    const group = own.get(id);
+    if (group !== undefined) ordered.push(group);
+  }
+  for (const [id, group] of own) {
+    if (!placed.has(id)) ordered.push(group);
+  }
+
+  if (shared.length > 0) {
+    ordered.push({ recipeId: null, title: SHARED_GROUP_TITLE, items: shared });
+  }
+  return ordered;
+}
+
 /**
  * Which packages this row is buying.
  *

@@ -49,6 +49,7 @@ import {
 } from "./s-ostoslista.ts";
 import {
   AMOUNT_IN_RECIPE,
+  groupByRecipe,
   isRowKey,
   shoppingLinesFor,
   shoppingList,
@@ -125,10 +126,23 @@ const CHOSEN = "valittu";
  */
 const EXCLUDED = "pois";
 
+/**
+ * How the list is cut up, as a fourth parameter beside the other three (#318).
+ *
+ * Only one value means anything — `resepti`, for the by-dish sections — and
+ * its absence is the list by ingredient name, which is what the screen has
+ * always drawn and stays the default. Writing "by name" down as a value as
+ * well would give the same view two URLs for no gain.
+ */
+const GROUPING = "ryhma";
+const BY_RECIPE = "resepti";
+
 /** What the query string says this list is: which cookings, minus which rows. */
 interface Selection {
   ids: Set<number>;
   excluded: Set<string>;
+  /** Sections per dish rather than one list in ingredient order (#318). */
+  byRecipe: boolean;
 }
 
 /**
@@ -153,7 +167,7 @@ export async function shoppingScreen(
 ): Promise<Response> {
   const { env } = ctx;
   const state = known ?? (await shoppingState(ctx, member));
-  const { cookings, selection, selected, buy, excluded, atHome } = state;
+  const { cookings, selection, selected, listed, buy, atHome } = state;
   const external = externalClient(env, member) !== null;
   const heading = headingFor(selected);
 
@@ -173,7 +187,8 @@ export async function shoppingScreen(
               Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
             </p>`
           : html`${externalSendPanel(buy, selection, external)}
-              ${sections(buy, excluded, atHome, selection, external)}
+              ${groupingPills(selection)}
+              ${sections(listed, atHome, selected, selection, external)}
               ${external ? currentListPanel() : ""}`}
       ${external ? html`<script>${raw(shoppingClient)}</script>` : ""}`,
     "shopping",
@@ -186,8 +201,13 @@ interface ShoppingState {
   cookings: PlannedBatch[];
   selection: Selection;
   selected: PlannedBatch[];
+  /**
+   * Every row the trip's list draws, left-off ones among them and in their own
+   * place (#318). A ticked row is not a row that went somewhere else, so this
+   * is what the screen renders from; `buy` is what the trip actually buys.
+   */
+  listed: ShoppingItem[];
   buy: ShoppingItem[];
-  excluded: ShoppingItem[];
   atHome: ShoppingItem[];
 }
 
@@ -221,6 +241,7 @@ async function shoppingState(
   const selection: Selection = {
     ids,
     excluded: rowsThatExist(excludedKeys(url.searchParams.getAll(EXCLUDED)), items),
+    byRecipe: url.searchParams.get(GROUPING) === BY_RECIPE,
   };
 
   // The cupboard is applied after the totals are added up, not before: an
@@ -232,8 +253,19 @@ async function shoppingState(
   // And the member's own "not this time" is applied after the cupboard, so the
   // two answers cannot be confused with one another: a row the cupboard covers
   // stays a cupboard row whatever else the query string says about it (#313).
-  const { buy, excluded } = splitByExcluded(split.buy, selection.excluded);
-  return { cookings, selection, selected, buy, excluded, atHome: split.atHome };
+  //
+  // The split is what the *send* reads, not what the screen draws. Since #318
+  // a left-off row stays where it was in the list, drawn inactive, so the two
+  // have parted company: `listed` is the list, `buy` is what is on the trip.
+  const { buy } = splitByExcluded(split.buy, selection.excluded);
+  return {
+    cookings,
+    selection,
+    selected,
+    listed: split.buy,
+    buy,
+    atHome: split.atHome,
+  };
 }
 
 /**
@@ -828,6 +860,9 @@ function selectionQuery(form: FormData): string {
   for (const key of excludedKeys(form.getAll(EXCLUDED).map(String))) {
     query.append(EXCLUDED, key);
   }
+  if (String(form.get(GROUPING) ?? "") === BY_RECIPE) {
+    query.set(GROUPING, BY_RECIPE);
+  }
   return query.toString();
 }
 
@@ -848,6 +883,7 @@ function selectionQueryFrom(selection: Selection): string {
   const query = new URLSearchParams({ [CHOSEN]: "1" });
   for (const id of selection.ids) query.append(CHOICE, String(id));
   for (const key of selection.excluded) query.append(EXCLUDED, key);
+  if (selection.byRecipe) query.set(GROUPING, BY_RECIPE);
   return query.toString();
 }
 
@@ -864,7 +900,10 @@ function selectionFields(selection: Selection): Raw {
     )}
     ${[...selection.excluded].map(
       (key) => html`<input type="hidden" name="${EXCLUDED}" value="${key}" />`,
-    )}`;
+    )}
+    ${selection.byRecipe
+      ? html`<input type="hidden" name="${GROUPING}" value="${BY_RECIPE}" />`
+      : ""}`;
 }
 
 /**
@@ -939,6 +978,9 @@ function picker(cookings: PlannedBatch[], selection: Selection): Raw {
       ${[...selection.excluded].map(
         (key) => html`<input type="hidden" name="${EXCLUDED}" value="${key}" />`,
       )}
+      ${selection.byRecipe
+        ? html`<input type="hidden" name="${GROUPING}" value="${BY_RECIPE}" />`
+        : ""}
       <ul class="shopping-meals">
         ${cookings.map(
           (batch) => html`<li>
@@ -967,7 +1009,41 @@ function picker(cookings: PlannedBatch[], selection: Selection): Raw {
 
 const rawOpen = raw("open");
 const rawChecked = raw("checked");
+const rawCurrent = raw('aria-current="page"');
 const rawDisabled = raw("disabled");
+
+/**
+ * How the list is cut up, as two pills above it (#318).
+ *
+ * The same rows either way — this is a reading order, not a filter, and
+ * nothing about it changes what the trip buys or what gets sent. Links rather
+ * than a form for the reason the left-off tick is a link: the whole answer is
+ * which URL the next list is at, so it needs no script and writes nothing.
+ *
+ * By ingredient name is the one on the left and the one a fresh list opens on.
+ * It is the order to read while pushing a trolley — everything of the same
+ * name in one place, bought once — and the by-dish sections are the other
+ * question somebody asks the list, not a better default for it.
+ */
+function groupingPills(selection: Selection): Raw {
+  const url = (byRecipe: boolean) =>
+    `/ostoslista?${selectionQueryFrom({ ...selection, byRecipe })}`;
+
+  return html`<nav class="shopping-grouping" aria-label="Listan ryhmittely">
+    <a
+      class="${selection.byRecipe ? "button" : "button is-current"}"
+      href="${url(false)}"
+      ${selection.byRecipe ? "" : rawCurrent}
+      >Aakkosittain</a
+    >
+    <a
+      class="${selection.byRecipe ? "button is-current" : "button"}"
+      href="${url(true)}"
+      ${selection.byRecipe ? rawCurrent : ""}
+      >Resepteittäin</a
+    >
+  </nav>`;
+}
 
 /**
  * The list in two parts: what to buy, then what the cupboard already covers.
@@ -977,11 +1053,16 @@ const rawDisabled = raw("disabled");
  * It only answers a different question: this one you have (#125). A list that
  * silently dropped them would be indistinguishable from one that forgot them,
  * and the household would find out at the hob.
+ *
+ * The rows the member has ticked off are not a third part any more (#318).
+ * They stay in the first one, in the place they were already in, drawn
+ * inactive — so unticking is the same tap in the same spot rather than a hunt
+ * down the page for where the row went.
  */
 function sections(
-  buy: ShoppingItem[],
-  excluded: ShoppingItem[],
+  listed: ShoppingItem[],
   atHome: ShoppingItem[],
+  selected: PlannedBatch[],
   selection: Selection,
   external: boolean,
 ): Raw {
@@ -989,51 +1070,76 @@ function sections(
   // between them keeps the same `#aines-…` and every redirect below still lands
   // on it (#200).
   const anchored = new Set<number>();
+  const note = selection.excluded.size === 0 ? html`` : excludedNote();
 
-  // With nothing in the cupboard and nothing left off, there is only one list,
-  // and a lone "Ostettavat" heading under a heading that already says
-  // Ostoslista is a word for its own sake.
-  if (atHome.length === 0 && excluded.length === 0) {
-    return itemList(buy, selection, "buy", external, anchored);
+  // With nothing in the cupboard there is only one list, and a lone
+  // "Ostettavat" heading under a heading that already says Ostoslista is a
+  // word for its own sake.
+  if (atHome.length === 0) {
+    return html`${note}${buyArea(listed, selected, selection, external, anchored)}`;
   }
 
   return html`<h2 class="shopping-section">Ostettavat</h2>
-    ${buy.length === 0
-      ? html`<p class="empty">${nothingToBuy(excluded.length, atHome.length)}</p>`
-      : itemList(buy, selection, "buy", external, anchored)}
-    ${excluded.length === 0
-      ? ""
-      : html`<h2 class="shopping-section">Jätetty pois tältä listalta</h2>
-          <p class="empty">
-            Näitä ei lähetetä S-ostoslistaan. Tämä ei kerro mitään
-            <a href="/kaappi">kaapista</a> — ainekset jäävät pois vain tältä
-            listalta, ja seuraava lista laskee ne taas mukaan.
-          </p>
-          ${itemList(excluded, selection, "excluded", external, anchored)}`}
-    ${atHome.length === 0
-      ? ""
-      : html`<h2 class="shopping-section">Löytyy</h2>
-          <p class="empty">
-            Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
-            <a href="/kaappi">kaapissa</a>.
-          </p>
-          ${itemList(atHome, selection, "pantry", external, anchored)}`}`;
-}
-
-/** Why there is nothing to buy — the cupboard, the member, or both. */
-function nothingToBuy(excluded: number, atHome: number): string {
-  if (excluded === 0) return "Kaikki tarvittava löytyy jo kaapista.";
-  if (atHome === 0) return "Kaikki ainekset on jätetty pois tältä listalta.";
-  return "Kaikki ainekset löytyvät kaapista tai on jätetty pois tältä listalta.";
+    ${note}
+    ${listed.length === 0
+      ? html`<p class="empty">Kaikki tarvittava löytyy jo kaapista.</p>`
+      : buyArea(listed, selected, selection, external, anchored)}
+    <h2 class="shopping-section">Löytyy</h2>
+    <p class="empty">
+      Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
+      <a href="/kaappi">kaapissa</a>.
+    </p>
+    ${itemList(atHome, selection, "pantry", external, anchored)}`;
 }
 
 /**
- * Which list a row is being drawn in. A cupboard row and a left-off row are
- * both "not being bought", and they are deliberately not the same thing: one
- * says the household has it, the other says only that this trip is not
- * fetching it (#313).
+ * What a ticked row means, said once above the list rather than once per row.
+ *
+ * It is the sentence the old **Jätetty pois tältä listalta** section carried,
+ * and it still has to be said somewhere: the whole point of the control is
+ * that it is *not* the cupboard, and a greyed-out row on its own does not say
+ * which of the two sentences it is.
  */
-type RowKind = "buy" | "excluded" | "pantry";
+function excludedNote(): Raw {
+  return html`<p class="empty shopping-excluded-note">
+    Rastitut rivit jäävät pois tältä listalta eikä niitä lähetetä
+    S-ostoslistaan. Tämä ei kerro mitään <a href="/kaappi">kaapista</a>, ja
+    seuraava lista laskee ne taas mukaan.
+  </p>`;
+}
+
+/** The rows to buy: one list by ingredient name, or a section per dish. */
+function buyArea(
+  listed: ShoppingItem[],
+  selected: PlannedBatch[],
+  selection: Selection,
+  external: boolean,
+  anchored: Set<number>,
+): Raw {
+  if (!selection.byRecipe) {
+    return itemList(listed, selection, "buy", external, anchored);
+  }
+
+  const groups = groupByRecipe(
+    listed,
+    selected.map((batch) => batch.recipeId),
+  );
+  if (groups.length === 0) {
+    return itemList(listed, selection, "buy", external, anchored);
+  }
+
+  return html`${groups.map(
+    (group) => html`<h3 class="shopping-group">${group.title}</h3>
+      ${itemList(group.items, selection, "buy", external, anchored)}`,
+  )}`;
+}
+
+/**
+ * Which list a row is being drawn in. A cupboard row is the one kind that is
+ * not on the trip for a reason of its own: the household has it, which is a
+ * fact about the kitchen rather than about this list (#125, #313).
+ */
+type RowKind = "buy" | "pantry";
 
 /**
  * One row per ingredient, each one openable to say where its total came from
@@ -1055,12 +1161,12 @@ function itemList(
   }
 
   return html`<ul class="shopping-list">
-    ${items.map(
-      (item) => html`<li ${rowAnchor(item, anchored)}>
+    ${items.map((item) => {
+      const excluded = kind === "buy" && selection.excluded.has(item.key);
+      return html`<li class="shopping-row" ${rowAnchor(item, anchored)}>
+        ${excludeTick(item, selection, kind, excluded)}
         <details
-          class="${kind === "excluded"
-            ? "shopping-item is-excluded"
-            : "shopping-item"}"
+          class="${excluded ? "shopping-item is-excluded" : "shopping-item"}"
           data-product-row
           data-aines="${item.ingredientId}"
           data-rivi="${item.key}"
@@ -1094,12 +1200,11 @@ function itemList(
               </li>`,
             )}
           </ul>
-          ${externalProductBlock(item, selection, kind, external)}
-          ${excludeAction(item, selection, kind)}
+          ${externalProductBlock(item, selection, excluded, kind, external)}
           ${pantryButton(item, selection, kind === "pantry")}
         </details>
-      </li>`,
-    )}
+      </li>`;
+    })}
   </ul>`;
 }
 
@@ -1219,11 +1324,12 @@ function shoppingRoutes(
 function externalProductBlock(
   item: ShoppingItem,
   selection: Selection,
+  excluded: boolean,
   kind: RowKind,
   external: boolean,
 ): Raw {
   if (!external) return html``;
-  if (kind !== "buy") {
+  if (kind !== "buy" || excluded) {
     return item.chosen.length > 0 ? productSummary(item) : html``;
   }
   return productBlock(item, shoppingRoutes(item, selection));
@@ -1292,36 +1398,48 @@ function pantryButton(
 }
 
 /**
- * The other thing a row can be told, and the one this change adds: not this
- * time (#313).
+ * The other thing a row can be told: not this time (#313), now as a tick box
+ * on the row line itself (#318).
  *
- * A link rather than a form, because there is nothing to save. The whole answer
- * is which row keys the next list URL carries, so the toggle is just that URL —
- * which means it works with no JavaScript, costs no write, and cannot possibly
- * touch the cupboard. It sits directly above the cupboard button so the two
- * readings are side by side and worded apart.
+ * A link rather than a form or a real checkbox, because there is nothing to
+ * save and nothing to submit: the whole answer is which row keys the next list
+ * URL carries, so the toggle is just that URL. That is what lets it be one tap
+ * with no script, no write, and no chance of touching the cupboard — a real
+ * `<input type="checkbox">` here would need a script to do anything at all.
+ *
+ * It sits outside the row's `<details>` rather than inside it, for two
+ * reasons. It has to be reachable without opening the row, which is the whole
+ * ask; and a link inside a `<summary>` is a control fighting the thing that
+ * opens the row for the same tap.
  *
  * A cupboard row gets none of it: it is already off the list for a reason that
  * outranks this one, and offering both would be asking the member to hold two
- * overlapping states in their head for one ingredient.
+ * overlapping states in their head for one ingredient. The gap it leaves keeps
+ * that section's rows lined up with the rest.
  */
-function excludeAction(
+function excludeTick(
   item: ShoppingItem,
   selection: Selection,
   kind: RowKind,
+  excluded: boolean,
 ): Raw {
-  if (kind === "pantry") return html``;
+  if (kind === "pantry") return html`<span class="row-tick is-absent"></span>`;
 
-  const excluded = kind === "excluded";
   const next = new Set(selection.excluded);
   if (excluded) next.delete(item.key);
   else next.add(item.key);
 
-  return html`<p class="exclude-action">
-    <a
-      class="button"
-      href="${listLocation({ ids: selection.ids, excluded: next }, item.ingredientId)}"
-      >${excluded ? "Ota takaisin listalle" : "Jätä pois tältä listalta"}</a
-    >
-  </p>`;
+  const label = excluded
+    ? `Ota ${item.name} takaisin listalle`
+    : `Jätä ${item.name} pois tältä listalta`;
+
+  return html`<a
+    class="${excluded ? "row-tick is-on" : "row-tick"}"
+    href="${listLocation(
+      { ...selection, excluded: next },
+      item.ingredientId,
+    )}"
+    aria-label="${label}"
+    title="${label}"
+  ></a>`;
 }
