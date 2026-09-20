@@ -5,7 +5,7 @@ import {
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
-import { html, page, raw, type Raw, saveBar } from "./html.ts";
+import { editBlock, html, page, raw, type Raw, saveBar } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import type { DraftLine } from "./intake.ts";
@@ -662,7 +662,6 @@ export function editorForm(
   return html`<h1>Muokkaa reseptiä</h1>
     ${belongsTo(recipe)}
     ${attempted?.withoutPicture === true ? "" : pictureBlock(recipe, hasPicture)}
-    ${withSections ? "" : partsBlock(recipe)}
 
     <form method="post" action="/recipes/${recipe.id}" class="stacked">
       <!-- The browser submits a form through its *first* submit button when
@@ -691,19 +690,16 @@ export function editorForm(
       <input id="title" name="title" value="${title}" required />
 
       <!-- What the source said the recipe makes. Since #165 this is metadata
-           and nothing scales by it, so the label says whose claim it is. -->
-      <label for="yield">Annoksia lähteen mukaan</label>
-      <input
-        id="yield"
-        name="yield"
-        inputmode="numeric"
-        value="${yieldValue}"
-        placeholder="Tyhjä, jos teksti ei kerro"
-      />
+           and nothing scales by it — nothing on any screen reads it but the
+           recipe's own "Lähteessä N annosta" line — so #317 takes the box off
+           the editor. It stays in the form as a hidden field, because a form
+           that submits no yield is a form that erases the one the import read.
+           The import review still asks for it, where it is being checked. -->
+      <input type="hidden" id="yield" name="yield" value="${yieldValue}" />
 
       <!-- Only a dish carries categories. A part is a recipe row (ADR-0002),
            but nobody browses the store for a juustokastike. -->
-      ${recipe.parentId === null ? categoryChoices(vocabulary, categories) : ""}
+      ${recipe.parentId === null ? categoryBlock(vocabulary, categories) : ""}
 
       <h2>Ainekset</h2>
       ${lineRows(rows, ingredients, {
@@ -717,40 +713,7 @@ export function editorForm(
       })}
       ${mentionedRemovals(attempted?.conflicts ?? [])}
 
-      <h2>Valmistus</h2>
-      <ol class="edit-steps">
-        ${steps.map(
-          (step) => html`<li class="${recipe.parts.length > 0 ? "has-phase" : ""}">
-            <input
-              name="step.${step.index}.position"
-              inputmode="numeric"
-              value="${step.position}"
-              aria-label="Järjestys"
-              class="position"
-            />
-            <!-- Which part this step belongs to, worded exactly as the
-                 correction screen words it. Only a prompt edit's review shows
-                 it; without it a step the model put in a part would submit no
-                 section and land back on the dish. -->
-            ${withSections
-              ? html`<input
-                  name="step.${step.index}.section"
-                  value="${step.section}"
-                  aria-label="Osa"
-                  placeholder="Osa"
-                  class="section"
-                />`
-              : ""}
-            <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
-            <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
-              >${step.text}</textarea
-            >
-            ${recipe.parts.length > 0 && step.section.trim() === ""
-              ? phaseSelect(`step.${step.index}.phase`, step.phase)
-              : ""}
-          </li>`,
-        )}
-      </ol>
+      ${stepsBlock(steps, recipe, withSections)}
 
       <!-- Sticky rather than at the end of the form: the editor is long enough
            that on a phone the save button used to be several screens below
@@ -761,11 +724,14 @@ export function editorForm(
       ${saveBar({ submit: "Tallenna muutokset", pinned: true })}
     </form>
 
+    ${withSections ? "" : partsBlock(recipe)}
+
     <!-- Outside the form above on purpose: a link, so nothing typed into the
          editor is carried into a prompt edit and quietly proposed away (#208). -->
     <p class="recipe-prompt-edit">
       <a href="/intake?recipe=${recipe.id}">Täydennä AI:lla</a>
     </p>
+    ${raw(`<script>${EDITOR_SUMMARY_ISLAND}</script>`)}
 
     <h2>Alkuperäinen teksti</h2>
     <p class="empty">Tätä ei muokata — se on tallenne siitä, mitä saapui.</p>
@@ -780,6 +746,177 @@ export function editorForm(
 }
 
 /**
+ * The recipe's categories: the chosen ones read as a line, the ticks behind
+ * `Muokkaa` (#317).
+ *
+ * Eleven checkboxes for a decision that is made once and is then only glanced
+ * at took a third of a phone screen between the recipe's name and its
+ * ingredients. What somebody wants from this block while editing anything else
+ * is to read that it still says `Salaatti`.
+ */
+function categoryBlock(vocabulary: Vocabulary, selected: readonly string[]): Raw | string {
+  if (vocabulary.categories.length === 0) return "";
+
+  const chosen = vocabulary.categories
+    .filter((category) => selected.includes(category.slug))
+    .map((category) => category.label);
+
+  return editBlock(
+    { id: "categories-open", title: "Kategoriat", className: "category-block" },
+    html`<p class="block-label">Kategoriat</p>
+      <!-- The island below rewrites this as the ticks change; without it the
+           line would go on naming the old categories until the save came back,
+           which reads as the change not having taken. -->
+      <p class="block-value chosen-categories" id="chosen-categories">
+        ${chosen.length === 0 ? "Ei kategoriaa" : chosen.join(", ")}
+      </p>`,
+    categoryChoices(vocabulary, selected),
+  );
+}
+
+/**
+ * The preparation steps: the method as a numbered list, editable behind
+ * `Muokkaa` (#317).
+ *
+ * A textarea, a position box and sometimes a phase select per step is the
+ * tallest thing on the editor by a distance, and a recipe's method is mostly
+ * read rather than rewritten. So the block reads as the method and opens as the
+ * form it always was — the same fields, the same names, still inside the one
+ * big form, so the save is unchanged.
+ */
+function stepsBlock(
+  steps: StepFormValues[],
+  recipe: Recipe,
+  withSections: boolean,
+): Raw {
+  const written = steps.filter((step) => step.text.trim() !== "");
+
+  return editBlock(
+    { id: "steps-open", title: "Valmistus", className: "steps-block" },
+    html`<p class="block-label">Valmistus</p>
+      <ol class="block-value step-summary" id="step-summary">
+        ${written.map((step) => html`<li>${step.text}</li>`)}
+      </ol>
+      <!-- After the list rather than instead of it, so the stylesheet can hide
+           it whenever the list has anything in it — including after the island
+           has rewritten the list, which is a state no server render saw. -->
+      <p class="block-value empty step-summary-empty">Ei vaiheita</p>`,
+    html`<ol class="edit-steps">
+      ${steps.map(
+        (step) => html`<li class="${recipe.parts.length > 0 ? "has-phase" : ""}">
+          <input
+            name="step.${step.index}.position"
+            inputmode="numeric"
+            value="${step.position}"
+            aria-label="Järjestys"
+            class="position"
+          />
+          <!-- Which part this step belongs to, worded exactly as the
+               correction screen words it. Only a prompt edit's review shows
+               it; without it a step the model put in a part would submit no
+               section and land back on the dish. -->
+          ${withSections
+            ? html`<input
+                name="step.${step.index}.section"
+                value="${step.section}"
+                aria-label="Osa"
+                placeholder="Osa"
+                class="section"
+              />`
+            : ""}
+          <input type="hidden" name="step.${step.index}.refs" value="${step.refs}" />
+          <textarea name="step.${step.index}" rows="2" placeholder="Uusi vaihe"
+            >${step.text}</textarea
+          >
+          ${recipe.parts.length > 0 && step.section.trim() === ""
+            ? phaseSelect(`step.${step.index}.phase`, step.phase)
+            : ""}
+        </li>`,
+      )}
+    </ol>`,
+  );
+}
+
+/**
+ * Keep the two summaries honest while their modals are open (#317).
+ *
+ * Exactly the bargain `line-form.ts::LINE_SUMMARY_ISLAND` makes for an
+ * ingredient row: the summary is server-rendered and correct on arrival, every
+ * value reaches the server through the form whatever happens here, and without
+ * this the line is merely one round trip behind — which reads as the edit not
+ * having taken.
+ *
+ * ES5, no regular expressions and no backslashes: this is a template literal
+ * shipped untranspiled, and a backslash is eaten before the browser sees it.
+ */
+const EDITOR_SUMMARY_ISLAND = `
+(function () {
+  if (!document.querySelectorAll || !window.addEventListener) return;
+
+  wireCategories();
+  wireSteps();
+
+  function wireCategories() {
+    var summary = document.getElementById('chosen-categories');
+    var picker = document.querySelector('.category-block .category-choices');
+    if (!summary || !picker) return;
+
+    picker.addEventListener('change', refresh, false);
+
+    function refresh() {
+      var boxes = picker.querySelectorAll('input[type=checkbox]');
+      var names = [];
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].checked) {
+          var label = boxes[i].parentNode;
+          names.push(trim(label.textContent || ''));
+        }
+      }
+      write(summary, names.length === 0 ? 'Ei kategoriaa' : names.join(', '));
+    }
+  }
+
+  function wireSteps() {
+    var list = document.getElementById('step-summary');
+    var fields = document.querySelectorAll('.steps-block .edit-steps textarea');
+    if (!list || !fields.length) return;
+
+    for (var i = 0; i < fields.length; i++) {
+      fields[i].addEventListener('input', refresh, false);
+      fields[i].addEventListener('change', refresh, false);
+    }
+
+    function refresh() {
+      var written = [];
+      for (var i = 0; i < fields.length; i++) {
+        var text = trim(fields[i].value || '');
+        if (text !== '') written.push(text);
+      }
+
+      while (list.firstChild) list.removeChild(list.firstChild);
+      for (var j = 0; j < written.length; j++) {
+        var item = document.createElement('li');
+        item.appendChild(document.createTextNode(written[j]));
+        list.appendChild(item);
+      }
+    }
+  }
+
+  // String.prototype.trim is ES5, which is this app's browser floor — and a
+  // regular expression cannot be written here anyway, because this string
+  // reaches the browser untranspiled and loses its backslashes on the way.
+  function trim(value) {
+    return value.trim ? value.trim() : value;
+  }
+
+  function write(node, text) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+    node.appendChild(document.createTextNode(text));
+  }
+})();
+`;
+
+/**
  * The dish's parts, each with the way into its own editor (#231).
  *
  * A part has always been editable — it is a recipe row of its own with its own
@@ -787,10 +924,13 @@ export function editorForm(
  * list and out of the picker, so unless you already knew a part's id there was
  * no way in, and a dish's own editor never mentioned that its parts existed.
  *
- * It sits above the form rather than inside it. A part opens on its own screen,
- * so this is a way *out* of this form, and putting it before anything editable
- * means it is read before there is anything typed here to lose. The counts are
- * there so several parts can be told apart at a glance without opening each.
+ * It sits outside the form rather than inside it, because a part opens on its
+ * own screen and this is a way *out* of this form. It used to sit above the
+ * form as well, so that it was read before there was anything typed here to
+ * lose; #317 moves it below, because the card asks for the recipe's name to be
+ * the first thing under the picture and on a three-part dish the parts list was
+ * between them. The counts are there so several parts can be told apart at a
+ * glance without opening each.
  *
  * Left out of a prompt edit's review (`withSections`), where the parts are
  * being changed inside this very form and a link away from an unsaved proposal
@@ -850,37 +990,56 @@ function belongsTo(recipe: Recipe): Raw | string {
   </p>`;
 }
 
-/** The picture and its upload, which is the only upload control anywhere. */
+/**
+ * The picture and its upload, which is the only upload control anywhere.
+ *
+ * Since #317 the screen shows the picture and nothing else: small, and tapping
+ * it is what opens the file input, `Vaihda kuva` and `Poista kuva`. Those three
+ * controls took most of a phone screen between the heading and the recipe's own
+ * name, for a thing that is chosen once and then only looked at.
+ */
 function pictureBlock(recipe: Recipe, hasPicture: boolean): Raw {
+  const toggle = "recipe-image-open";
   return html`<section class="recipe-image-editor">
-      <h2>Kuva</h2>
-      ${recipeImage(recipe)}
-      <form
-        method="post"
-        action="/recipes/${recipe.id}/image"
-        enctype="multipart/form-data"
-        class="stacked"
-        id="recipe-image-form"
-        data-editor="/recipes/${recipe.id}/edit"
-      >
-        <label for="recipe-image">
-          ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
-        </label>
-        <input
-          id="recipe-image"
-          name="image"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          required
-        />
-        <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
-        <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
-      </form>
-      ${hasPicture
-        ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
-            <button type="submit" class="danger">Poista kuva</button>
-          </form>`
-        : ""}
+      ${editBlock(
+        {
+          id: toggle,
+          title: hasPicture ? "Vaihda kuva" : "Lisää kuva",
+          label: "Reseptin kuva",
+          // The picture is the tap target, so there is no second button.
+          trigger: null,
+        },
+        html`<label class="picture-tap" for="${toggle}">
+          ${recipeImage(recipe)}
+          <span class="edit-trigger">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</span>
+        </label>`,
+        html`<form
+            method="post"
+            action="/recipes/${recipe.id}/image"
+            enctype="multipart/form-data"
+            class="stacked"
+            id="recipe-image-form"
+            data-editor="/recipes/${recipe.id}/edit"
+          >
+            <label for="recipe-image">
+              ${hasPicture ? "Valitse uusi kuva" : "Valitse kuva"}
+            </label>
+            <input
+              id="recipe-image"
+              name="image"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              required
+            />
+            <p class="empty">JPEG, PNG tai WebP. Iso kuva pienennetään ennen lähetystä.</p>
+            <button type="submit">${hasPicture ? "Vaihda kuva" : "Lisää kuva"}</button>
+          </form>
+          ${hasPicture
+            ? html`<form method="post" action="/recipes/${recipe.id}/image/delete">
+                <button type="submit" class="danger">Poista kuva</button>
+              </form>`
+            : ""}`,
+      )}
     </section>
     ${raw(`<script>${SHRINK_ISLAND}</script>`)}`;
 }

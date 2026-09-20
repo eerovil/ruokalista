@@ -609,7 +609,7 @@ const STYLES = `
   .line.is-removed .line-name, .line.is-removed .line-amount {
     text-decoration: line-through; color: var(--muted);
   }
-  .line-edit {
+  .line-edit, .edit-trigger {
     display: inline-flex; align-items: center; justify-content: center;
     flex: 0 0 auto; min-height: var(--tap-compact); padding: .2rem .7rem;
     color: var(--accent); background: var(--surface);
@@ -618,38 +618,80 @@ const STYLES = `
   }
 
   /* The modal. Off screen rather than display:none so the checkbox that drives
-     it stays reachable by keyboard; it carries no name, so it never submits. */
-  .line-open {
+     it stays reachable by keyboard; it carries no name, so it never submits.
+
+     Every rule here is shared with .edit-*, the same modal generalised to a
+     whole block of a screen (#317) — one set of declarations, so a row's modal
+     and a block's cannot drift apart. */
+  .line-open, .edit-open {
     position: absolute; width: 1px; height: 1px; min-height: 0;
     margin: 0; opacity: 0; pointer-events: none;
   }
-  .line-open:focus-visible ~ .line-summary .line-edit {
+  .line-open:focus-visible ~ .line-summary .line-edit,
+  .edit-open:focus-visible ~ .edit-summary .edit-trigger {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
-  .line-modal { display: none; }
-  .line-open:checked ~ .line-modal {
+  .line-modal, .edit-modal { display: none; }
+  .line-open:checked ~ .line-modal, .edit-open:checked ~ .edit-modal {
     display: flex; position: fixed; inset: 0; z-index: 30;
     align-items: center; justify-content: center; padding: 1rem;
   }
-  .line-modal-back { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
-  .line-modal-card {
+  .line-modal-back, .edit-modal-back {
+    position: absolute; inset: 0; background: rgba(0,0,0,.45);
+  }
+  .line-modal-card, .edit-modal-card {
     position: relative; width: 100%; max-width: 26rem;
     max-height: 85vh; overflow-y: auto; padding: 1rem;
     background: var(--bg); border-radius: var(--radius);
     box-shadow: 0 .5rem 2rem rgba(0,0,0,.35);
   }
-  .line-modal-title { margin: 0 0 .75rem; font-size: 1.05rem; font-weight: 700; }
+  .line-modal-title, .edit-modal-title {
+    margin: 0 0 .75rem; font-size: 1.05rem; font-weight: 700;
+  }
   .line-modal-hint { margin: .25rem 0 .75rem; color: var(--muted); font-size: .8rem; }
-  .line-modal-actions {
+  .line-modal-actions, .edit-modal-actions {
     display: flex; align-items: center; justify-content: space-between;
     gap: .75rem; margin-top: 1rem;
   }
-  .line-done {
+  .line-done, .edit-done {
     display: inline-flex; align-items: center; justify-content: center;
     min-height: var(--tap); padding: .3rem 1.2rem;
     color: var(--bg); background: var(--accent);
     border-radius: var(--radius); font-weight: 600; cursor: pointer;
   }
+
+  /* A block's modal has only the one button, and space-between would leave it
+     stranded on the left as if something were missing beside it. */
+  .edit-modal-actions { justify-content: flex-end; }
+
+  /* A block shown as one read-only line with Muokkaa beside it (#317). The
+     summary is a row that wraps, so a long list of categories or a long step
+     pushes the button onto its own line rather than off the screen. */
+  .edit-block { margin: 0 0 1.25rem; }
+  .edit-summary {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem;
+    min-height: var(--tap-compact);
+  }
+  .edit-summary > .block-label {
+    flex: 1 1 100%; margin: 0;
+    color: var(--muted); font-size: .75rem; font-weight: 600;
+  }
+  .edit-summary > .block-value { flex: 1 1 auto; min-width: 0; margin: 0; }
+  .edit-summary .empty { font-size: inherit; }
+  /* The modal's card holds a whole form, so its own fields stack the way a
+     stacked form's do rather than inheriting the summary row's baseline. */
+  .edit-modal-card form.stacked { margin: 0; }
+  .edit-modal-card .save-bar-slot { margin-bottom: 0; }
+  /* The method, read rather than edited (#317). Numbered, because a step's
+     number is how a cook refers to it, and clamped so a ten-step recipe is
+     still a block somebody can see past. */
+  .step-summary {
+    margin: 0; padding-left: 1.2rem;
+    color: var(--muted); font-size: .85rem;
+  }
+  .step-summary li { margin: 0 0 .15rem; }
+  .step-summary:not(:empty) ~ .step-summary-empty { display: none; }
+  .chosen-categories { font-weight: 600; }
   .add-line { margin: .75rem 0 1rem; }
   .add-line button {
     min-height: var(--tap); width: 100%;
@@ -792,8 +834,20 @@ const STYLES = `
   .recipe-image.is-thumb {
     flex: none; width: 3rem; height: 3rem; margin: 0; align-self: center;
   }
-  .recipe-image-editor { margin: 0 0 1.5rem; }
-  .recipe-image-editor h2 { margin: 0 0 .5rem; }
+  .recipe-image-editor { margin: 0 0 1.25rem; }
+  /* The editor's picture is a tap target, not the screen's hero (#317): small
+     enough that the recipe's name is the next thing on the screen, big enough
+     to tell two dishes apart. Tapping it is what opens the picture's controls,
+     so the whole thing is inside the label. */
+  .recipe-image-editor .edit-summary { align-items: center; }
+  .recipe-image-editor .picture-tap {
+    display: inline-flex; align-items: center; gap: .6rem;
+    margin: 0; font-weight: 400; cursor: pointer;
+  }
+  .recipe-image-editor .picture-tap .recipe-image.is-hero {
+    width: 7rem; height: 7rem; margin: 0; flex: none;
+  }
+  .recipe-image-editor .picture-tap .recipe-image.is-hero.is-empty { height: 7rem; }
   /* ------------------------------------------------------ the shopping list */
 
   /* Which meals are in the list, folded away: the list itself is what somebody
@@ -1161,6 +1215,76 @@ export function multiplierField(
         : raw(`aria-describedby="${escape(options.describedBy)}"`)}
     />
     <button type="submit">${options.submit}</button>
+  </div>`;
+}
+
+/**
+ * A block of a screen shown as one read-only line, with everything editable
+ * behind `Muokkaa` in a modal (issue #317).
+ *
+ * This is #315's ingredient-row modal, generalised. The recipe editor and the
+ * recipe screen were both a long column of controls for things somebody changes
+ * once and then reads for months — the picture's file input, the category ticks,
+ * the preparation steps, the default multiplier, who the dish is shared with. A
+ * summary and a button each is what makes the screen readable again.
+ *
+ * Same promise as the row's: no JavaScript anywhere in it. A checkbox with no
+ * `name` reveals a fixed overlay, so nothing about it is submitted and nothing
+ * depends on a script running — and fields inside stay in whatever form the
+ * block was rendered into, so they post with that form exactly as before.
+ *
+ * `trigger: null` draws no button, for a summary that is its own tap target —
+ * the editor's picture, which the card asks to be tapped directly.
+ */
+export function editBlock(
+  options: {
+    /** Id of the checkbox that opens it; the summary's label points here. */
+    id: string;
+    /** The modal's own heading. */
+    title: string;
+    /** Accessible name for the card. The title, unless something else reads better. */
+    label?: string;
+    /** The opener's words, or `null` when the summary carries its own. */
+    trigger?: string | null;
+    /** Open on arrival. */
+    open?: boolean;
+    /** An extra class on the block, for a screen that needs to reach into it. */
+    className?: string;
+  },
+  summary: Raw | string,
+  body: Raw | string,
+): Raw {
+  const trigger = options.trigger === undefined ? "Muokkaa" : options.trigger;
+  return html`<div class="edit-block ${options.className ?? ""}">
+    <!-- No name, so it is never submitted: this is screen state, not data. Kept
+         off screen rather than display:none so it stays reachable by keyboard. -->
+    <input
+      type="checkbox"
+      class="edit-open"
+      id="${options.id}"
+      ${options.open === true ? raw("checked") : ""}
+    />
+
+    <div class="edit-summary">
+      ${summary}
+      ${trigger === null
+        ? ""
+        : html`<label class="edit-trigger" for="${options.id}">${trigger}</label>`}
+    </div>
+
+    <div class="edit-modal">
+      <!-- Tapping the dimmed area closes it, because that is what a tapped-away
+           modal does. It is the same label as the button. -->
+      <label class="edit-modal-back" for="${options.id}" aria-hidden="true"></label>
+
+      <div class="edit-modal-card" role="group" aria-label="${options.label ?? options.title}">
+        <p class="edit-modal-title">${options.title}</p>
+        ${body}
+        <div class="edit-modal-actions">
+          <label class="edit-done" for="${options.id}">Valmis</label>
+        </div>
+      </div>
+    </div>
   </div>`;
 }
 

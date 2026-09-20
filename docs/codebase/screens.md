@@ -590,6 +590,57 @@ Two things follow from making removal a one-tap action:
   that forces it through. The rule is pure and tested in
   `dev/check-line-removal.ts`.
 
+## The rest of the editor, and a recipe's own settings (issue #317)
+
+This pull request proposes finishing what #315 started. The ingredient rows had
+become one readable line each while everything around them was still a column of
+controls, so the editor read as a form with a list buried in it.
+
+`html.ts::editBlock` is #315's row modal generalised: a checkbox with no `name`,
+a read-only summary with `Muokkaa` beside it, and a fixed overlay holding
+whatever was there before. Its CSS shares one set of declarations with
+`.line-*`, so a row's modal and a block's cannot drift apart, and the promise is
+the same — no JavaScript, and the fields stay inside whatever form the block was
+rendered into, so every save posts exactly as it did.
+
+Five blocks use it:
+
+- **The picture is the tap target** (`recipe-editor.ts::pictureBlock`). The
+  heading is gone, the picture is drawn at 7 rem, and tapping it opens the file
+  input, `Vaihda kuva` and `Poista kuva`. There is no separate button, because
+  the card asks for the picture itself to be tapped.
+- **The name is the first thing under it.** That is why `partsBlock` moved from
+  above the form to below it: on a three-part dish the parts list used to sit
+  between the picture and the name. It is still outside the form, because it is
+  still a way *out* of one.
+- **`Annoksia lähteen mukaan` is off the editor** and stays in the form as a
+  hidden field. Nothing has scaled by it since #165 — the recipe's own
+  `Lähteessä N annosta` line is the only thing that reads it — but a form that
+  submits no yield is a form that erases what the import read. The import
+  review still asks for it, where it is being checked.
+- **The categories read as a line** and the method reads as a numbered list.
+- **A recipe's own settings are two lines** (`recipes.ts::sharingSection`): the
+  default multiplier and who the dish is shared with, each one line and its own
+  modal. `.sharing-shortcut`'s `Muuta` became a `<label>` rather than the
+  `#jakaminen` link it was, because scrolling to a section whose controls are
+  behind a button would be one tap short of the thing #217 added it for.
+
+`recipe-editor.ts::EDITOR_SUMMARY_ISLAND` keeps the category line and the step
+list honest while their modals are open — the same bargain
+`LINE_SUMMARY_ISLAND` makes, and enhancement only. The empty-method line is
+hidden by `.step-summary:not(:empty) ~ .step-summary-empty` rather than by the
+island, so it is right in a state no server render saw.
+
+`tests/recipe-blocks-317.spec.ts` is the regression, and
+`tests/support/blocks.ts` holds the `openEditBlock`/`closeEditBlock` a test uses
+to reach a control the way a person does.
+
+One thing worth knowing before writing a test against a short recipe screen: the
+sharing section is three lines now instead of a screenful, so a recipe with
+nothing in it is barely taller than the phone, and its last line starts out
+under the fixed tab strip until the page is scrolled. `tests/intake.spec.ts`
+scrolls before tapping `Muokkaa reseptiä` for exactly that reason.
+
 ## Saving a recipe, in every screen that writes one (issue #217)
 
 This pull request proposes one save action with one shape, because there were

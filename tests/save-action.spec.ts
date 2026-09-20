@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { openEditBlock } from "./support/blocks";
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
 import { openDraftEditor } from "./support/lines";
 import { reseed } from "./support/seed";
@@ -127,8 +128,9 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
   await expect(shortcut).toBeInViewport();
   await expect(shortcut).toContainText("Näkyvyys: vain oma talous");
 
-  // And one tap puts the control and its save on screen together.
-  await shortcut.getByRole("link", { name: "Muuta" }).click();
+  // And one tap puts the control and its save on screen together. Since #317
+  // the sharing form is a modal, so Muuta opens it rather than scrolling to it.
+  await shortcut.getByText("Muuta").click();
   const save = page.getByRole("button", { name: "Tallenna jako" });
   await expect(page.getByLabel("Julkinen")).toBeInViewport();
   await expect(save).toBeInViewport();
@@ -146,6 +148,7 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
   await expect(page.locator(".sharing-shortcut"))
     .toContainText("Näkyvyys: kaikki taloudet");
 
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".sharing-shortcut"))
@@ -160,6 +163,7 @@ test("B. searching the household list is not an unsaved change", async ({
   // unsaved state, announcing changes that could not be saved because there
   // were none.
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   const bar = page.locator(".recipe-sharing .save-bar");
   const households = page.locator(".recipient-list li");
 
@@ -234,6 +238,7 @@ test("the save bar's button still carries its own value", async ({ page }) => {
   // button once the save is on its way, and a button disabled a moment too
   // early would take that value out of the post.
   await page.goto("/recipes/1");
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Julkinen").check();
 
   const posted = page.waitForRequest(
@@ -246,6 +251,7 @@ test("the save bar's button still carries its own value", async ({ page }) => {
   await expect(page.locator(".recipe-sharing")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
+  await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
 });

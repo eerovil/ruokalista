@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import {
   ANCHOR_REPOINT_DRAFT,
   DUPLICATE_AMOUNT_DRAFT,
@@ -468,9 +469,11 @@ test("mentions survive an edit that moves the text along", async ({ page }) => {
 
   // Put a clause in front of the linked words. Every character position after
   // it moves, which is exactly what a stored start/end offset could not take.
+  await openEditBlock(page, "steps-open");
   const step = page.locator('textarea[name="step.0"]');
   await expect(step).toHaveValue("Kuullota kaali öljyssä.");
   await step.fill("Kun pannu on kuuma, kuullota kaali öljyssä.");
+  await closeEditBlock(page, "steps-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await page.goto("/recipes/1");

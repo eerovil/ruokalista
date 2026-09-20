@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import { DRAFT_FIXTURE, stubStructuring } from "./support/draft";
 import {
   closeLineEditor,
@@ -157,9 +158,11 @@ test("editing a part changes that part and leaves the other alone (#231)", async
   await openLineEditor(milk);
   await milk.locator("input[name$=quantity]").first().fill("6");
   await closeLineEditor(milk);
+  await openEditBlock(page, "steps-open");
   await page
     .locator('textarea[name="step.0"]')
     .fill("Kuumenna maito ja vispaa juusto joukkoon.");
+  await closeEditBlock(page, "steps-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   // A saved part lands back on its dish, where the change reads in context.
@@ -369,11 +372,13 @@ test("the editor preserves and can change parent cooking phases", async ({
   await linePhase.selectOption("before_parts");
   await closeLineEditor(sheets);
 
+  await openEditBlock(page, "steps-open");
   const stepPhases = page.locator('select[name^="step."][name$=".phase"]');
   await expect(stepPhases.nth(0)).toHaveValue("");
   await expect(stepPhases.nth(1)).toHaveValue("before_parts");
   await expect(stepPhases.nth(2)).toHaveValue("after_parts");
   await stepPhases.nth(1).selectOption("after_parts");
+  await closeEditBlock(page, "steps-open");
 
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page).toHaveURL("/recipes/3");
