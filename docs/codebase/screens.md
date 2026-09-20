@@ -518,13 +518,19 @@ restored.
   on the address bar for every later reload to jump to again. `listLocation`
   now returns the selection and nothing else, the rows carry no `id`, and
   `shopping-screens.ts::KEEP_PLACE` keeps the reading position in
-  `sessionStorage` instead — measured from the top of `.shopping-list`, not from
-  the top of the document, because the answer to a round-trip regularly adds a
-  line above the list (the first tick brings the sentence about ticked rows, the
-  first cupboard move brings the `Ostettavat` heading) and behind an unchanged
-  page offset either one puts every row a paragraph lower than the thumb left
-  it. Without JavaScript those round-trips land at the top of the list, which is
-  the trade #323 names.
+  `sessionStorage` instead — measured from the top of *the list the tap was in*,
+  found again afterwards by the `data-lista` name that list is drawn with
+  (`ostettavat`, `loytyy`, `resepti-<id>` and `ostettavat-yhteiset` per group
+  under `resepteittäin`). Neither the document nor the first list on the page
+  will do: the answer to a round-trip regularly adds a line above the list (the
+  first tick brings the sentence about ticked rows, the first cupboard move
+  brings the `Ostettavat` heading), and `Poista kaapista` puts the row back into
+  the buy list *above* the cupboard list the button was in, so a position
+  measured from the buy list holds it still and pushes the rest of the cupboard
+  down by a row. If the named list is gone entirely — removing the last cupboard
+  row takes the whole `Löytyy` list with it — nothing is restored and the list
+  opens at the top. Without JavaScript those round-trips land at the top of the
+  list too, which is the trade #323 names.
 - **One save path still reloads, and the reload keeps the position too.** A
   second package size or a recipe's own product changes what the row adds up
   to, and that arithmetic is the server's — so `product-picker.ts::reloadOnto`
@@ -534,10 +540,13 @@ restored.
 `tests/shopping.spec.ts` has the regression the issue asks for: it scrolls to a
 row deep in the list and demands nothing move after opening the picker,
 searching again, closing it, drawing the optimistic choice and having the save
-land — plus three more, one per round-trip that does leave the page, each
-asserting that the pressed row (or, for the cupboard button, whose row moves
-section on purpose, the list it left) is at the same viewport Y it was at when
-the page left, and that the address bar carries no fragment. They measure that
+land — plus four more, one per round-trip that does leave the page, each
+asserting that the row that stays (the pressed one, or the row left behind when
+the pressed one changes section on purpose) is at the same viewport Y it was at
+when the page left, and that the address bar carries no fragment. The
+`Poista kaapista` one stops short of the very bottom of the page on purpose:
+holding the last list still while a row is added above it means scrolling
+further down, and the end of the document has nowhere further to go. They measure that
 from the page's own `pagehide`, because a tap Playwright has to scroll to moves
 the list before the thing under test ever gets the chance to.
 
@@ -927,9 +936,9 @@ strings reach the browser without transpilation:
   the shopping list above.
 - `src/shopping-screens.ts::KEEP_PLACE` — issue #323, and the reason the list
   no longer carries `#aines-…` anchors. It arms on any click or submit inside
-  `.shopping-list`, writes `pageYOffset` minus the list's own document top to
-  `sessionStorage` on `pagehide`, and scrolls back to that distance into the
-  list on arrival — once at parse time and once more on `load`, because the
+  a `[data-lista]` list, writes that list's name and `pageYOffset` minus its own
+  document top to `sessionStorage` on `pagehide`, and scrolls back to that
+  distance into the list of that name on arrival — once at parse time and once more on `load`, because the
   first attempt runs while the list is still shorter than it will be and a
   browser clamps a scroll to the height it has. It stands down on an explicit
   `#` anchor, on a position the browser restored itself, and on the first touch,

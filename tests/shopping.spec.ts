@@ -115,6 +115,22 @@ function row(page: Page, name: string) {
 }
 
 /**
+ * The row for exactly this ingredient.
+ *
+ * `row` matches any row whose text contains the name, which is enough for most
+ * of this file but not where a *dish* is named after an ingredient: the rows
+ * `Öljykastike` contributes to carry that title in their breakdown, so
+ * `row(page, "öljy")` can hand back the water. Anything that presses one of the
+ * two cupboard buttons has to be sure which row it is pressing.
+ */
+function namedRow(page: Page, name: string) {
+  return page
+    .locator(".shopping-list > li")
+    .filter({ has: page.locator(".shopping-name", { hasText: new RegExp(`^${name}$`) }) })
+    .first();
+}
+
+/**
  * Choosing a product the way a member with JavaScript does it (#159, reshaped
  * by #200): the search happens in one sheet fixed over the screen, and the
  * choice returns to the list immediately while the save runs in the background.
@@ -676,10 +692,14 @@ interface WhereItLeft {
 async function scrollDownTheList(
   page: Page,
   rowName: string | null = null,
+  roomBelow = 0,
 ): Promise<void> {
   await page.evaluate(
-    ([key, name]) => {
-      window.scrollTo(0, document.body.scrollHeight);
+    ([key, name, room]) => {
+      window.scrollTo(
+        0,
+        document.body.scrollHeight - window.innerHeight - (room as number),
+      );
       window.addEventListener("pagehide", () => {
         const list = document.querySelector(".shopping-list");
         const rows = document.querySelectorAll(".shopping-list > li");
@@ -701,7 +721,7 @@ async function scrollDownTheList(
         );
       });
     },
-    [LEFT_AT, rowName] as [string, string | null],
+    [LEFT_AT, rowName, roomBelow] as [string, string | null, number],
   );
 }
 
@@ -724,9 +744,10 @@ async function onScreen(page: Page, rowName: string | null): Promise<number> {
 }
 
 /**
- * `rowName` is the row that was pressed, where it is still in the same list
- * afterwards. The cupboard button's row is not — it moves to the other section
- * on purpose — so that one is measured by the list it left instead.
+ * `rowName` is the row that has to be in the same place on screen afterwards:
+ * the one that was pressed, where it stays in the list it was in, and the row
+ * left behind where the pressed one moves section on purpose. Without a name it
+ * is the first list itself, for the round-trip whose pressed row leaves it.
  */
 async function stillWhereItLeft(
   page: Page,
@@ -745,15 +766,11 @@ async function stillWhereItLeft(
   // taller than the screen for there to be a place to lose.
   expect(left!.offset).toBeGreaterThan(60);
 
-  for (const [name, before] of [
-    [null, left!.list],
-    [rowName, rowName === null ? null : left!.row],
-  ] as [string | null, number | null][]) {
-    if (before === null) continue;
-    await expect
-      .poll(async () => Math.abs((await onScreen(page, name)) - before) < 4)
-      .toBe(true);
-  }
+  const before = rowName === null ? left!.list : left!.row;
+  expect(before).not.toBeNull();
+  await expect
+    .poll(async () => Math.abs((await onScreen(page, rowName)) - before!) < 4)
+    .toBe(true);
 }
 
 /**
@@ -799,6 +816,53 @@ test("the cupboard button leaves the list where it was", async ({ page }) => {
   // The row itself did move — to the cupboard section, which is the change
   // that was asked for. Nothing else did.
   await expect(page.locator(".shopping-list").last()).toContainText("öljy");
+});
+
+/**
+ * And the way back out of the cupboard, which is the same promise from the
+ * other side (#323).
+ *
+ * This is the direction that caught the first fix out. The row reappears in the
+ * **Ostettavat** list — above the cupboard list the button was pressed in — so
+ * a position measured from the first list on the page holds the buy list still
+ * and pushes everything left in the cupboard down by a row. Hence two rows in
+ * the cupboard: one to press, one to watch.
+ */
+test("removing a row from the cupboard leaves that list where it was", async ({
+  page,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+
+  for (const name of ["öljy", "vesi"]) {
+    const item = namedRow(page, name);
+    await openShoppingRow(item);
+    await Promise.all([
+      page.waitForEvent("load"),
+      item.getByRole("button", { name: "Löytyy jo kaapista" }).click(),
+    ]);
+  }
+  const cupboard = page.locator(".shopping-list").last();
+  await expect(cupboard.locator("> li")).toHaveCount(2);
+
+  // `öljy` is in the cupboard list now, and pressed from there.
+  const oil = namedRow(page, "öljy");
+  // Stop short of the very bottom: the cupboard list is the last thing on the
+  // page, and holding it still while a row is added above it means scrolling
+  // *further* down, which the bottom of the page has no room for. A member
+  // reading the cupboard section mid-page is the case under test; one already
+  // at the end of the document is asking for something no scroll can do.
+  await scrollDownTheList(page, "vesi", 100);
+  await openShoppingRow(oil);
+  await Promise.all([
+    page.waitForEvent("load"),
+    oil.getByRole("button", { name: "Poista kaapista" }).click(),
+  ]);
+
+  await stillWhereItLeft(page, "vesi");
+  // It really did go back on the list to buy, which is what pushed the row
+  // below it around.
+  await expect(page.locator(".shopping-list").first()).toContainText("öljy");
 });
 
 /**
@@ -1078,6 +1142,17 @@ test("the pills cut the same rows into one section per dish", async ({ page }) =
   );
   // The same rows, read in a different order: nothing added, nothing lost.
   expect([...(await buyRowNames(page))].sort()).toEqual([...flat].sort());
+
+  // Every list on the grouped screen is named, and named distinctly, because
+  // `KEEP_PLACE` puts the member back into the one they were touching (#323)
+  // and there are several here.
+  const named = await page
+    .locator(".shopping-list")
+    .evaluateAll((lists) =>
+      lists.map((one) => one.getAttribute("data-lista") ?? ""),
+    );
+  expect(named).not.toContain("");
+  expect(new Set(named).size).toBe(named.length);
 
   await groupBy(page, "Aakkosittain");
   await expect(groupTitles(page)).toHaveCount(0);

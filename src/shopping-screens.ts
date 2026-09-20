@@ -54,6 +54,7 @@ import {
   shoppingLinesFor,
   shoppingList,
   splitByExcluded,
+  type ShoppingGroup,
   type ShoppingItem,
 } from "./shopping.ts";
 
@@ -1081,7 +1082,7 @@ function sections(
       Näitä valitut ateriat tarvitsevat, mutta ne ovat jo
       <a href="/kaappi">kaapissa</a>.
     </p>
-    ${itemList(atHome, selection, "pantry", external)}`;
+    ${itemList(atHome, selection, "pantry", external, PANTRY_LIST)}`;
 }
 
 /**
@@ -1108,7 +1109,7 @@ function buyArea(
   external: boolean,
 ): Raw {
   if (!selection.byRecipe) {
-    return itemList(listed, selection, "buy", external);
+    return itemList(listed, selection, "buy", external, BUY_LIST);
   }
 
   const groups = groupByRecipe(
@@ -1116,12 +1117,12 @@ function buyArea(
     selected.map((batch) => batch.recipeId),
   );
   if (groups.length === 0) {
-    return itemList(listed, selection, "buy", external);
+    return itemList(listed, selection, "buy", external, BUY_LIST);
   }
 
   return html`${groups.map(
     (group) => html`<h3 class="shopping-group">${group.title}</h3>
-      ${itemList(group.items, selection, "buy", external)}`,
+      ${itemList(group.items, selection, "buy", external, groupList(group))}`,
   )}`;
 }
 
@@ -1131,6 +1132,30 @@ function buyArea(
  * fact about the kitchen rather than about this list (#125, #313).
  */
 type RowKind = "buy" | "pantry";
+
+/**
+ * What each `.shopping-list` on the screen is called, in `data-lista` (#323).
+ *
+ * `KEEP_PLACE` measures the reading position from the list the member was
+ * actually touching, so it has to be able to find that same list again after
+ * the round-trip — and "the first list on the page" is not that. Pressing
+ * `Poista kaapista` in the cupboard list puts the row back into the buy list
+ * *above* it, so a position measured from the buy list moves the cupboard list
+ * down by a row; and under `resepteittäin` there is one buy list per dish.
+ *
+ * A dish's own name rather than its position, because a round-trip can change
+ * how many groups there are — a row leaving for the cupboard can empty a group
+ * — and the name survives that while an index would quietly slide to the
+ * neighbouring dish.
+ */
+const BUY_LIST = "ostettavat";
+const PANTRY_LIST = "loytyy";
+
+function groupList(group: ShoppingGroup): string {
+  return group.recipeId === null
+    ? "ostettavat-yhteiset"
+    : `resepti-${group.recipeId}`;
+}
 
 /**
  * One row per ingredient, each one openable to say where its total came from,
@@ -1154,12 +1179,13 @@ function itemList(
   selection: Selection,
   kind: RowKind,
   external: boolean,
+  listName: string,
 ): Raw {
   if (items.length === 0) {
     return html`<p class="empty">Valituissa aterioissa ei ole aineksia.</p>`;
   }
 
-  return html`<ul class="shopping-list">
+  return html`<ul class="shopping-list" data-lista="${listName}">
     ${items.map((item) => {
       const excluded = kind === "buy" && selection.excluded.has(item.key);
       const toggle = rowToggleId(item, kind);
@@ -1256,12 +1282,14 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  *
  * How far into the *list*, not how far down the page: the answer to a
  * round-trip often adds a line above the list, and a page offset kept across
- * that moves every row down under the thumb.
+ * that moves every row down under the thumb. And how far into *that* list —
+ * the one the tap was in, by the `data-lista` name it is drawn with — because
+ * a screen has several, and what the answer adds can land between them.
  *
- * It arms itself on a touch of the list rather than saving on every departure,
+ * It arms itself on a touch of a list rather than saving on every departure,
  * so that leaving the screen by the tab bar, or changing the grouping, still
- * opens the next list where a list opens. Anything inside `.shopping-list`
- * arms it, opening a row included: the picker client's own reload happens two
+ * opens the next list where a list opens. Anything inside a `[data-lista]`
+ * list arms it, opening a row included: the picker client's own reload happens two
  * taps after a row was opened and several elements away from it, and a rule
  * that tried to name only the controls that leave the page would have to be
  * re-checked every time one is added.
@@ -1294,30 +1322,45 @@ const KEEP_PLACE = raw(`<script>
     saved = null;
   }
 
-  var back = saved === null ? NaN : parseInt(saved, 10);
-  var wanted = back === back && !window.location.hash && !window.pageYOffset;
+  // Both halves are measured from the top of one named list rather than from
+  // the top of the page, because the answer to a round-trip regularly changes
+  // what is above it: the first tick brings the sentence explaining ticked
+  // rows, the first cupboard move brings the "Ostettavat" heading, and
+  // "Poista kaapista" puts a row back into the buy list above the cupboard
+  // list. Kept in document coordinates the list would then sit lower behind an
+  // unchanged offset, and every row would have moved under the thumb — which is
+  // the whole thing this is here to prevent.
+  var mark = readMark(saved);
+  var wanted = mark !== null && !window.location.hash && !window.pageYOffset;
   var touched = false;
 
-  // Where the list itself starts, in the document. Everything below is
-  // measured from here rather than from the top of the page, because the
-  // answer to a round-trip regularly adds something above the list: the first
-  // tick brings the sentence explaining ticked rows, and the first cupboard
-  // move brings the "Ostettavat" heading. Kept in document coordinates the
-  // list would then sit one paragraph lower behind an unchanged offset, and
-  // every row would have moved under the thumb — which is the whole thing this
-  // is here to prevent.
-  function listTop() {
-    if (!document.querySelector) return null;
-    var list = document.querySelector(".shopping-list");
+  function readMark(value) {
+    if (value === null) return null;
+    var at = value.indexOf(":");
+    if (at <= 0) return null;
+    var back = parseInt(value.slice(at + 1), 10);
+    if (back !== back) return null;
+    return { name: value.slice(0, at), back: back };
+  }
+
+  function topOf(list) {
     if (!list || !list.getBoundingClientRect) return null;
     return list.getBoundingClientRect().top + window.pageYOffset;
   }
 
+  function listNamed(name) {
+    if (!document.querySelector) return null;
+    return document.querySelector('[data-lista="' + name + '"]');
+  }
+
   function place() {
     if (!wanted || touched) return;
-    var top = listTop();
+    // No list of that name any more — removing the last cupboard row takes the
+    // whole Löytyy list with it — and nothing here knows where its contents
+    // went. The top of the list is the honest answer.
+    var top = topOf(listNamed(mark.name));
     if (top === null) return;
-    var target = top + back;
+    var target = top + mark.back;
     if (target < 0) target = 0;
     if (Math.abs(window.pageYOffset - target) < 2) return;
     window.scrollTo(0, target);
@@ -1335,39 +1378,33 @@ const KEEP_PLACE = raw(`<script>
   window.addEventListener("wheel", function () { touched = true; }, true);
   window.addEventListener("keydown", function () { touched = true; }, true);
 
-  var leaving = false;
+  // The list the departing interaction happened in, which is the one the
+  // member was reading.
+  var leaving = null;
 
-  function withinList(node) {
+  function listAround(node) {
     while (node && node !== document.body) {
-      var names = node.className ? String(node.className) : "";
-      if (names.indexOf("shopping-list") !== -1) return true;
+      if (node.getAttribute && node.getAttribute("data-lista")) return node;
       node = node.parentNode;
     }
-    return false;
+    return null;
   }
 
-  document.addEventListener(
-    "click",
-    function (event) {
-      if (withinList(event.target)) leaving = true;
-    },
-    true
-  );
+  function arm(event) {
+    var list = listAround(event.target);
+    if (list) leaving = list;
+  }
 
-  document.addEventListener(
-    "submit",
-    function (event) {
-      if (withinList(event.target)) leaving = true;
-    },
-    true
-  );
+  document.addEventListener("click", arm, true);
+  document.addEventListener("submit", arm, true);
 
   window.addEventListener("pagehide", function () {
     if (!leaving) return;
-    var top = listTop();
+    var top = topOf(leaving);
     if (top === null) return;
+    var name = leaving.getAttribute("data-lista");
     try {
-      store.setItem(KEY, String(Math.round(window.pageYOffset - top)));
+      store.setItem(KEY, name + ":" + String(Math.round(window.pageYOffset - top)));
     } catch (error) {
       // Nothing to remember with, so the list opens at the top.
     }
