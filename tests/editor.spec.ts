@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import {
   addIngredientRow,
   closeLineEditor,
@@ -278,7 +279,9 @@ test("a removal goes through once the step no longer mentions the ingredient", a
   await expect(
     page.locator(".line").nth(3).locator("input[name$=remove]"),
   ).toBeChecked();
+  await openEditBlock(page, "steps-open");
   await page.locator('textarea[name="step.2"]').fill("Tarjoa.");
+  await closeEditBlock(page, "steps-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1$/);

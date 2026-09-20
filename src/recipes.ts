@@ -22,7 +22,16 @@ import {
 } from "./recipe-browser.ts";
 import { recipeImage, type Pictured } from "./recipe-picture.ts";
 import recipeProductsClient from "./generated/recipe-products.ts";
-import { html, multiplierField, page, raw, type Raw, saveBar } from "./html.ts";
+import {
+  editBlock,
+  editBlockOpenHref,
+  html,
+  multiplierField,
+  page,
+  raw,
+  type Raw,
+  saveBar,
+} from "./html.ts";
 import { resolveMentions } from "./ingredient-refs.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
@@ -741,65 +750,86 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
   return html`<section class="recipe-sharing" id="jakaminen">
     <h2>Tämä resepti taloudessamme</h2>
 
-    <form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
-      <p class="preference-label" id="preferredMultiplierLabel">Oletuskerroin</p>
-      ${multiplierField({
-        current: preference,
-        typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
-        label: "Oletuskerroin",
-        describedBy: "preferredMultiplierHelp",
-        submit: "Tallenna",
-      })}
-      <p class="empty" id="preferredMultiplierHelp">
-        Millä kertoimella ruokalista aloittaa, kun tämä resepti lisätään
-        viikolle. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
-        reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
-      </p>
-    </form>
+    <!-- Both of these are settings: chosen once, then read for months. Since
+         #317 each is one line and a Muokkaa, with its form in a modal behind
+         it — the same checkbox-driven overlay the editor's ingredient rows use,
+         and the same promise that none of it needs a script. -->
+    ${editBlock(
+      { id: "preference-open", title: "Oletuskerroin" },
+      html`<p class="block-label" id="preferredMultiplierLabel">Oletuskerroin</p>
+        <p class="block-value preference-value">
+          ${preference === null
+            ? "Resepti sellaisenaan"
+            : formatMultiplier(preference)}
+        </p>`,
+      html`<form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
+        ${multiplierField({
+          current: preference,
+          typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
+          label: "Oletuskerroin",
+          describedBy: "preferredMultiplierHelp",
+          submit: "Tallenna",
+        })}
+        <p class="empty" id="preferredMultiplierHelp">
+          Millä kertoimella ruokalista aloittaa, kun tämä resepti lisätään
+          viikolle. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
+          reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
+        </p>
+      </form>`,
+    )}
 
     ${view.owned && view.sharing !== null
-      ? html`<h2>Jakaminen</h2>
-          <p class="empty">${sharingSummary(view.sharing)}</p>
-          <form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
-            <input type="hidden" name="recipeId" value="${recipe.id}" />
-            <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
-            <fieldset class="visibility-choices">
-              <legend>Näkyvyys</legend>
-              ${visibilityChoice("private", "Oma", view.sharing.visibility)}
-              ${visibilityChoice("selected", "Valituille", view.sharing.visibility)}
-              ${visibilityChoice("public", "Julkinen", view.sharing.visibility)}
-            </fieldset>
-            <div class="recipient-picker">
-              <label for="recipient-search">Hae vastaanottavaa taloutta</label>
-              <input
-                type="search"
-                id="recipient-search"
-                placeholder="Talouden nimi"
-                autocomplete="off"
-              />
-              <p class="empty">
-                Valitse vähintään yksi talous, kun näkyvyys on Valituille.
-                Jäsenien nimiä tai sähköposteja ei näytetä.
-              </p>
-              <ul class="recipient-list" id="recipient-list">
-                ${view.sharing.recipients.map(
-                  (recipient) => html`<li data-household-name="${recipient.name}">
-                    <label>
-                      <input
-                        type="checkbox"
-                        name="recipientId"
-                        value="${recipient.id}"
-                        ${recipient.selected ? raw("checked") : ""}
-                      />
-                      ${recipient.name}
-                    </label>
-                  </li>`,
-                )}
-              </ul>
-            </div>
-            ${saveBar({ submit: "Tallenna jako", name: "action", value: "save" })}
-          </form>
-          <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`
+      ? editBlock(
+          {
+            id: "sharing-open",
+            title: "Jakaminen",
+            // Opened from two places a screen apart — here, and the line under
+            // the recipe's title. Only a fragment reaches both (#317 review).
+            openedBy: "fragment",
+          },
+          html`<p class="block-label">Jakaminen</p>
+            <p class="block-value empty">${sharingSummary(view.sharing)}</p>`,
+          html`<form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
+              <input type="hidden" name="recipeId" value="${recipe.id}" />
+              <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
+              <fieldset class="visibility-choices">
+                <legend>Näkyvyys</legend>
+                ${visibilityChoice("private", "Oma", view.sharing.visibility)}
+                ${visibilityChoice("selected", "Valituille", view.sharing.visibility)}
+                ${visibilityChoice("public", "Julkinen", view.sharing.visibility)}
+              </fieldset>
+              <div class="recipient-picker">
+                <label for="recipient-search">Hae vastaanottavaa taloutta</label>
+                <input
+                  type="search"
+                  id="recipient-search"
+                  placeholder="Talouden nimi"
+                  autocomplete="off"
+                />
+                <p class="empty">
+                  Valitse vähintään yksi talous, kun näkyvyys on Valituille.
+                  Jäsenien nimiä tai sähköposteja ei näytetä.
+                </p>
+                <ul class="recipient-list" id="recipient-list">
+                  ${view.sharing.recipients.map(
+                    (recipient) => html`<li data-household-name="${recipient.name}">
+                      <label>
+                        <input
+                          type="checkbox"
+                          name="recipientId"
+                          value="${recipient.id}"
+                          ${recipient.selected ? raw("checked") : ""}
+                        />
+                        ${recipient.name}
+                      </label>
+                    </li>`,
+                  )}
+                </ul>
+              </div>
+              ${saveBar({ submit: "Tallenna jako", name: "action", value: "save" })}
+            </form>
+            <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`,
+        )
       : ""}
   </section>`;
 }
@@ -817,8 +847,13 @@ function sharingShortcut(recipe: Recipe, view: RecipeView): Raw {
         ? "Näkyvyys: valitut taloudet"
         : "Näkyvyys: vain oma talous";
 
+  // Still the link it always was, but it now lands on the open sharing modal
+  // rather than on the section heading: since #317 the form is behind a button,
+  // so scrolling to the section would have been one tap short. A label would
+  // have saved the same tap and cost the keyboard the shortcut entirely, which
+  // is what the fragment-opened block exists to avoid (#317 review).
   return html`<p class="meta sharing-shortcut">
-    ${said}<a href="#jakaminen">Muuta</a>
+    ${said}<a href="${editBlockOpenHref("sharing-open")}">Muuta</a>
   </p>`;
 }
 
@@ -900,9 +935,16 @@ const PUBLISH_STYLE = html`<style>
   .recipient-list li:last-child { border-bottom: 0; }
   .recipe-sharing .save-bar { background: var(--surface); }
   .sharing-shortcut { margin: .1rem 0 0; }
-  .sharing-shortcut a { margin-left: .4rem; color: var(--accent);
-    font-weight: 600; }
+  /* A link that opens the sharing modal rather than scrolling to the section
+     it is in (#317), and a real one so the keyboard can reach it (#317 review). */
+  .sharing-shortcut a {
+    display: inline; margin-left: .4rem; color: var(--accent);
+    font-weight: 600; cursor: pointer; text-decoration: underline;
+  }
   .preference-label { margin: 0 0 .4rem; font-weight: 600; }
+  .recipe-sharing .edit-block:last-child { margin-bottom: 0; }
+  .recipe-sharing .block-value { font-weight: 600; }
+  .recipe-sharing .block-value.empty { font-weight: 400; }
   .source-yield { margin: .1rem 0 0; }
 </style>`;
 

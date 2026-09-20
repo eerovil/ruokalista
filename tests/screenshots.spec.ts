@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AGENTDECK_BATCH } from "./support/batch";
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import {
   DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
@@ -1005,7 +1006,9 @@ test.describe("signed in", () => {
     await expect(page.locator(".sharing-shortcut")).toBeInViewport();
     await capture(page, { path: `${SHOTS}/106-sharing-shortcut.png` });
 
-    await page.locator(".sharing-shortcut").getByRole("link", { name: "Muuta" })
+    await page
+      .locator(".sharing-shortcut")
+      .getByRole("link", { name: "Muuta" })
       .click();
     await page.getByLabel("Julkinen").check();
     await expect(page.getByRole("button", { name: "Tallenna jako" }))
@@ -1015,6 +1018,7 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/107-sharing-save-bar.png` });
 
     // Left as it was found: this file seeds once for the whole run.
+    await openEditBlock(page, "sharing-open");
     await page.getByLabel("Oma").check();
     await page.getByRole("button", { name: "Tallenna jako" }).click();
     await expect(page.locator(".sharing-shortcut"))
@@ -2108,13 +2112,17 @@ test.describe("public recipes", () => {
     // The owner's own view of a published recipe: the publish control, and the
     // household's own default multiplier beside it.
     await page.goto("/recipes/1");
+    await openEditBlock(page, "preference-open");
     await page
       .locator(".multiplier-choice")
       .getByRole("button", { name: "1,5×" })
       .click();
+    await openEditBlock(page, "preference-open");
     await expect(
       page.locator(".multiplier-choice button.is-current"),
     ).toHaveText("1,5×");
+    await closeEditBlock(page, "preference-open");
+    await openEditBlock(page, "sharing-open");
     await expect(
       page.getByLabel("Julkinen"),
     ).toBeChecked();
@@ -2131,6 +2139,7 @@ test.describe("public recipes", () => {
     await expect(page.locator(".recipe-sharing")).toContainText(
       "Tämä resepti on jaettu: Naapuri.",
     );
+    await openEditBlock(page, "sharing-open");
     const sharing = page.locator(".recipe-sharing");
     const search = sharing.getByLabel("Hae vastaanottavaa taloutta");
     const recipient = sharing.getByLabel("Naapuri");
@@ -2200,6 +2209,7 @@ test.describe("public recipes", () => {
     await context.clearCookies();
     await context.addCookies([sessionCookie(1)]);
     await page.goto("/recipes/1");
+    await openEditBlock(page, "sharing-open");
     await page.getByLabel("Oma").check();
     await page.getByRole("button", { name: "Tallenna jako" }).click();
     await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
@@ -2322,6 +2332,7 @@ test.describe("categories (#196)", () => {
     // The picker as it sits in the editor: one tap per category, no heavier
     // than the fields around it.
     await page.goto("/recipes/1/edit");
+    await openEditBlock(page, "categories-open");
     const picker = page.locator(".category-choices");
     await picker.getByLabel("Uuniruoka").check();
     await picker.getByLabel("Lisuke").check();
@@ -2329,6 +2340,7 @@ test.describe("categories (#196)", () => {
       path: `${SHOTS}/75-recipe-category-editor.png`,
       fullPage: true,
     });
+    await closeEditBlock(page, "categories-open");
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(/\/recipes\/1$/);
 
@@ -2344,7 +2356,9 @@ test.describe("categories (#196)", () => {
     // A second dish in one of them, so the filter has something to choose
     // between rather than a single chip standing on its own.
     await page.goto("/recipes/3/edit");
+    await openEditBlock(page, "categories-open");
     await page.locator(".category-choices").getByLabel("Uuniruoka").check();
+    await closeEditBlock(page, "categories-open");
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page).toHaveURL(/\/recipes\/3$/);
 
@@ -2874,9 +2888,11 @@ test.describe("editing a part from the dish's editor (#231)", () => {
       page.getByRole("link", { name: "← Osa ruokalajia Lasagne" }),
     ).toBeVisible();
     await page.locator("#title").fill("Valkokastike");
+    await openEditBlock(page, "steps-open");
     await page
       .locator('textarea[name="step.0"]')
       .fill("Kuumenna maito ja vispaa juusto joukkoon.");
+    await closeEditBlock(page, "steps-open");
     await capture(page, { path: `${SHOTS}/102-part-editor.png`, fullPage: true });
 
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();

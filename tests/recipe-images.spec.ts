@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { openEditBlock } from "./support/blocks";
 import { closeLineEditor, openLineEditor } from "./support/lines";
 import { flatPng as png } from "./support/png";
 import { reseed } from "./support/seed";
@@ -28,9 +29,12 @@ test.describe("the editor", () => {
 
   test("a picture can be added, replaced and removed", async ({ page }) => {
     await page.goto(`/recipes/${RECIPE}/edit`);
+    // The picture is what is on the editor since #317; its controls are behind
+    // a tap on it.
     await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
     await expect(page.locator(".recipe-image img")).toHaveCount(0);
 
+    await openEditBlock(page, "recipe-image-open");
     await page.setInputFiles("#recipe-image", {
       name: "kaalilaatikko.png",
       mimeType: "image/png",
@@ -47,6 +51,7 @@ test.describe("the editor", () => {
     await expect(shown).toHaveJSProperty("naturalWidth", 900);
 
     // Replacing swaps the picture rather than adding a second one.
+    await openEditBlock(page, "recipe-image-open");
     await page.setInputFiles("#recipe-image", {
       name: "toinen.png",
       mimeType: "image/png",
@@ -61,6 +66,7 @@ test.describe("the editor", () => {
     // of racing a navigation that cancels it.
     await expect(shown).toHaveJSProperty("naturalWidth", 400);
 
+    await openEditBlock(page, "recipe-image-open");
     await page.locator(".recipe-image-editor button.danger").click();
     await expect(page.locator(".recipe-image.is-empty")).toBeVisible();
     await expect(page.locator(".recipe-image img")).toHaveCount(0);
@@ -70,6 +76,7 @@ test.describe("the editor", () => {
     page,
   }) => {
     await page.goto(`/recipes/${RECIPE}/edit`);
+    await openEditBlock(page, "recipe-image-open");
     await page.setInputFiles("#recipe-image", {
       name: "kuva.png",
       mimeType: "image/png",

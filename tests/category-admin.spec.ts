@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { closeEditBlock, openEditBlock } from "./support/blocks";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -63,7 +64,9 @@ test("an admin adds a category and a member can use it at once", async ({
 
   await signIn(page, 1);
   await page.goto("/recipes/1/edit");
+  await openEditBlock(page, "categories-open");
   await page.locator(".category-choices").getByLabel("Wokki").check();
+  await closeEditBlock(page, "categories-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".category-tags")).toContainText("Wokki");
 
@@ -102,7 +105,9 @@ test("renaming changes the word everywhere and no recipe row", async ({
 }) => {
   await signIn(page, 1);
   await page.goto("/recipes/1/edit");
+  await openEditBlock(page, "categories-open");
   await page.locator(".category-choices").getByLabel("Uuniruoka").check();
+  await closeEditBlock(page, "categories-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
   await expect(page.locator(".category-tags")).toContainText("Uuniruoka");
 
@@ -146,7 +151,9 @@ test("removing a category says which recipes it will change, then does it", asyn
 }) => {
   await signIn(page, 1);
   await page.goto("/recipes/1/edit");
+  await openEditBlock(page, "categories-open");
   await page.locator(".category-choices").getByLabel("Keitto").check();
+  await closeEditBlock(page, "categories-open");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
 
   await signIn(page, 3);
