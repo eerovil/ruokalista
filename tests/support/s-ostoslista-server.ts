@@ -116,6 +116,16 @@ const products = {
       available: true,
     },
   ],
+  sekoitus: [
+    {
+      ean: "6410405212345",
+      sokId: "100325002",
+      name: "Pirkka peruna-sipulisekoitus 500 g",
+      price: 1.49,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
   oljy: [
     {
       ean: "6414893000019",
@@ -268,6 +278,8 @@ createServer(async (request, response) => {
             ? products.juusto
             : query.includes("tonnikala")
               ? products.tonnikala
+              : query.includes("sekoitus")
+              ? products.sekoitus
               : query.includes("öljy") || query.includes("oljy")
                 ? products.oljy
                 : [];

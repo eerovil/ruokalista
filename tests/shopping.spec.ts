@@ -388,6 +388,57 @@ test("a recipe's two tins of tuna buy two tins, not one (#325)", async ({ page }
   ).toHaveText("2 × Rainbow tonnikalapala öljyssä 185 g");
 });
 
+test("a bag stated in kilos too is bought by its kilos (#325)", async ({ page }) => {
+  const response = await page.request.post("/recipes", {
+    maxRedirects: 0,
+    form: {
+      title: "Pyttipannu",
+      yield: "4",
+      sourceText: "Pyttipannu\n1 pss (1 kg) peruna-sipulisekoitusta",
+      sourceRoute: "pasted",
+      structuredBy: "test",
+      lineCount: "1",
+      "line.0.quantity": "1",
+      "line.0.quantityMax": "",
+      "line.0.unit": "pss",
+      "line.0.altQuantity": "1",
+      "line.0.altUnit": "kg",
+      "line.0.section": "",
+      "line.0.position": "1",
+      "line.0.ingredient": "new",
+      "line.0.newName": "peruna-sipulisekoitus",
+      "line.0.sourceLine": "1 pss (1 kg) peruna-sipulisekoitusta",
+    },
+  });
+  expect(response.status()).toBe(302);
+  const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
+  await createBatch(page, today(), recipe, 2);
+  await page.goto("/ostoslista");
+
+  const mix = namedRow(page, "peruna-sipulisekoitus");
+  // The row still reads the recipe's own unit; only the packets use the kilos.
+  await expect(mix.locator(".shopping-total")).toHaveText("2 pss");
+  await chooseProduct(page, "peruna-sipulisekoitus", "Pirkka peruna-sipulisekoitus");
+  await page.reload();
+  await reopen(namedRow(page, "peruna-sipulisekoitus"));
+  const summary = namedRow(page, "peruna-sipulisekoitus").locator(
+    ".s-shopping-product-summary",
+  );
+  await expect(summary.locator("strong")).toHaveText(
+    "4 × Pirkka peruna-sipulisekoitus 500 g",
+  );
+  await expect(summary.locator(".s-package-total")).toHaveText(
+    "Pakkauksissa yhteensä 2 kg",
+  );
+  await closeOpenShoppingRow(page);
+
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  expect(quantityFor(await externalRequests(page), "6410405212345")).toBe(4);
+});
+
 test("the chosen product's picture is on the row, and the row is no taller", async ({
   page,
 }) => {

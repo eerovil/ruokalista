@@ -381,6 +381,63 @@ test("packet counts add up, scale, round up and cover a range at its top", () =>
   ]);
 });
 
+test("a bag also stated in kilos is covered by its kilos (#325)", () => {
+  const MIX = product("1", "Peruna-sipulisekoitus 500 g", 500, "g");
+  const item = shoppingList([
+    line({
+      ingredientName: "peruna-sipulisekoitus",
+      quantity: 1,
+      unit: "pss",
+      altQuantity: 1,
+      altUnit: "kg",
+      multiplier: 2,
+      products: [MIX],
+    }),
+  ])[0]!;
+  // The row reads the recipe's own unit, and the kilos are not added on top.
+  assert.equal(item.total, "2 pss");
+  assert.deepEqual(bought(item), ["4 × Peruna-sipulisekoitus 500 g"]);
+  assert.equal(item.packageTotal, "2 kg");
+});
+
+test("a second measurement is used per line, and only where it is needed", () => {
+  const MIX = product("1", "Peruna-sipulisekoitus 500 g", 500, "g");
+  const mixed = shoppingList([
+    line({ ingredientName: "sekoitus", quantity: 1, unit: "pss", altQuantity: 1, altUnit: "kg", products: [MIX] }),
+    line({ batchId: 2, ingredientName: "sekoitus", quantity: 600, unit: "g", products: [MIX] }),
+  ])[0]!;
+  assert.equal(mixed.total, "1 pss + 600 g");
+  assert.deepEqual(bought(mixed), ["4 × Peruna-sipulisekoitus 500 g"]);
+  assert.equal(mixed.packageTotal, "2 kg");
+
+  // A convertible primary measurement wins over the second one.
+  const primary = shoppingList([
+    line({ ingredientName: "sekoitus", quantity: 400, unit: "g", altQuantity: 2, altUnit: "kg", products: [MIX] }),
+  ])[0]!;
+  assert.deepEqual(bought(primary), ["1 × Peruna-sipulisekoitus 500 g"]);
+
+  // One line with neither measurement convertible leaves the whole row unplanned.
+  const unknown = shoppingList([
+    line({ ingredientName: "sekoitus", quantity: 1, unit: "pss", altQuantity: 1, altUnit: "kg", products: [MIX] }),
+    line({ batchId: 2, ingredientName: "sekoitus", quantity: 2, unit: "rkl", products: [MIX] }),
+  ])[0]!;
+  assert.equal(unknown.packageTotal, null);
+});
+
+test("a tin with no second measurement still buys the tins it says (#325)", () => {
+  const TUNA = product("1", "Tonnikala 185 g", 185, "g");
+  const item = shoppingList([
+    line({ ingredientName: "tonnikala", quantity: 2, unit: "prk", products: [TUNA] }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["2 × Tonnikala 185 g"]);
+
+  const weighed = shoppingList([
+    line({ ingredientName: "tonnikala", quantity: 2, unit: "prk", altQuantity: 370, altUnit: "g", products: [TUNA] }),
+  ])[0]!;
+  assert.deepEqual(bought(weighed), ["2 × Tonnikala 185 g"]);
+  assert.equal(weighed.packageTotal, "370 g");
+});
+
 test("a packet unit mixed with another amount keeps the single-packet fallback", () => {
   const TIN = product("1", "Tonnikala 185 g", 185, "g");
   const item = shoppingList([
