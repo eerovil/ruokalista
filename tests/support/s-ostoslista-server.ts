@@ -116,6 +116,16 @@ const products = {
       available: true,
     },
   ],
+  peruna: [
+    {
+      ean: "6410405170153",
+      sokId: "100327001",
+      name: "Apetit peruna-sipulisekoitus 500 g",
+      price: 2.29,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
   oljy: [
     {
       ean: "6414893000019",
@@ -268,9 +278,11 @@ createServer(async (request, response) => {
             ? products.juusto
             : query.includes("tonnikala")
               ? products.tonnikala
-              : query.includes("öljy") || query.includes("oljy")
-                ? products.oljy
-                : [];
+              : query.includes("peruna")
+                ? products.peruna
+                : query.includes("öljy") || query.includes("oljy")
+                  ? products.oljy
+                  : [];
     return send(response, 200, { query, results: found });
   }
   return send(response, 404, { error: "not found" });

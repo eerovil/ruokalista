@@ -381,6 +381,80 @@ test("packet counts add up, scale, round up and cover a range at its top", () =>
   ]);
 });
 
+test("a packet line's second amount plans the packets it can (#327)", () => {
+  const BAG = product("1", "Apetit peruna-sipulisekoitus 500 g", 500, "g");
+  const item = shoppingList([
+    line({
+      ingredientName: "peruna-sipulisekoitus",
+      quantity: 1,
+      unit: "pss",
+      altQuantity: 1,
+      altUnit: "kg",
+      multiplier: 2,
+      products: [BAG],
+    }),
+  ])[0]!;
+  // The total still reads as the recipe wrote it; only the count uses the kilo.
+  assert.equal(item.total, "2 pss");
+  assert.deepEqual(bought(item), ["4 × Apetit peruna-sipulisekoitus 500 g"]);
+  assert.equal(item.packageTotal, "2 kg");
+});
+
+test("a first amount that plans is used, and its second is not added (#327)", () => {
+  const MINCE = product("1", "Jauheliha 400 g", 400, "g");
+  const item = shoppingList([
+    line({
+      ingredientName: "jauheliha",
+      quantity: 400,
+      unit: "g",
+      altQuantity: 1,
+      altUnit: "kg",
+      products: [MINCE],
+    }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["1 × Jauheliha 400 g"]);
+  assert.equal(item.packageTotal, "400 g");
+});
+
+test("a second amount stands in only when every line had one (#327)", () => {
+  const BAG = product("1", "Peruna-sipulisekoitus 500 g", 500, "g");
+  const item = shoppingList([
+    line({
+      ingredientName: "peruna-sipulisekoitus",
+      quantity: 1,
+      unit: "pss",
+      altQuantity: 1,
+      altUnit: "kg",
+      products: [BAG],
+    }),
+    line({
+      batchId: 2,
+      ingredientName: "peruna-sipulisekoitus",
+      quantity: 1,
+      unit: "pss",
+      products: [BAG],
+    }),
+  ])[0]!;
+  // Half the need has no kilo to add, so the packets the recipe wrote win.
+  assert.deepEqual(bought(item), ["2 × Peruna-sipulisekoitus 500 g"]);
+  assert.equal(item.packageTotal, null);
+});
+
+test("a packet line's second amount with no sized product keeps the packet count", () => {
+  const BAG = product("1", "Peruna-sipulisekoitus");
+  const item = shoppingList([
+    line({
+      ingredientName: "peruna-sipulisekoitus",
+      quantity: 2,
+      unit: "pss",
+      altQuantity: 2,
+      altUnit: "kg",
+      products: [BAG],
+    }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["2 × Peruna-sipulisekoitus"]);
+});
+
 test("a packet unit mixed with another amount keeps the single-packet fallback", () => {
   const TIN = product("1", "Tonnikala 185 g", 185, "g");
   const item = shoppingList([
