@@ -41,14 +41,10 @@ test("an empty current week still opens on today", async ({ page }) => {
   expect(box!.y).toBeGreaterThanOrEqual(-1);
   expect(box!.y).toBeLessThan(viewport.height);
 
-  // Monday is above the fold unless today is Monday.
-  const offset = await page.evaluate(() => window.pageYOffset);
-  const isMonday = await page
-    .locator(".day")
-    .first()
-    .evaluate((element) => element.classList.contains("is-today"));
-  if (isMonday) expect(offset).toBe(0);
-  else expect(offset).toBeGreaterThan(0);
+  // Today's heading is scrolled to the top, past the screen's own headings,
+  // on every day of the week. Monday is no exception: its heading still sits
+  // below the page title and the week heading.
+  expect(await page.evaluate(() => window.pageYOffset)).toBeGreaterThan(0);
 });
 
 test("a batch spanning three days is one card with three occurrence rows", async ({

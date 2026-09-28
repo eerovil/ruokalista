@@ -352,6 +352,45 @@ test("a need this app cannot convert is left alone rather than guessed", () => {
   assert.equal(item.packageTotal, null);
 });
 
+test("a total stated in tins buys that many tins (#325)", () => {
+  const TUNA = product("6417700050107", "Tonnikalapala öljyssä 185 g", 185, "g");
+  const item = shoppingList([
+    line({ ingredientName: "tonnikala", quantity: 2, unit: "prk", products: [TUNA] }),
+  ])[0]!;
+  assert.equal(item.total, "2 prk");
+  assert.deepEqual(bought(item), ["2 × Tonnikalapala öljyssä 185 g"]);
+  assert.equal(item.packageTotal, null);
+});
+
+test("packet counts add up, scale, round up and cover a range at its top", () => {
+  const TIN = product("1", "Tomaattimurska 400 g");
+  const one = (overrides: Partial<ShoppingLine>) =>
+    shoppingList([line({ ingredientName: "tomaattimurska", products: [TIN], ...overrides })])[0]!;
+
+  const summed = shoppingList([
+    line({ ingredientName: "tomaattimurska", quantity: 1, unit: "tlk", products: [TIN] }),
+    line({ batchId: 2, ingredientName: "tomaattimurska", quantity: 2, unit: "tlk", products: [TIN] }),
+  ])[0]!;
+  assert.deepEqual(bought(summed), ["3 × Tomaattimurska 400 g"]);
+  assert.deepEqual(bought(one({ quantity: 1, unit: "prk", multiplier: 2 })), [
+    "2 × Tomaattimurska 400 g",
+  ]);
+  assert.deepEqual(bought(one({ quantity: 0.5, unit: "prk" })), ["1 × Tomaattimurska 400 g"]);
+  assert.deepEqual(bought(one({ quantity: 1, quantityMax: 2, unit: "Pss" })), [
+    "2 × Tomaattimurska 400 g",
+  ]);
+});
+
+test("a packet unit mixed with another amount keeps the single-packet fallback", () => {
+  const TIN = product("1", "Tonnikala 185 g", 185, "g");
+  const item = shoppingList([
+    line({ ingredientName: "tonnikala", quantity: 2, unit: "prk", products: [TIN] }),
+    line({ batchId: 2, ingredientName: "tonnikala", quantity: 100, unit: "g", products: [TIN] }),
+  ])[0]!;
+  assert.equal(item.total, "2 prk + 100 g");
+  assert.deepEqual(bought(item), ["1 × Tonnikala 185 g"]);
+});
+
 test("a package in another family is not used to cover the need", () => {
   const item = shoppingList([
     line({

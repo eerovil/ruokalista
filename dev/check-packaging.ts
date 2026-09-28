@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   baseAmount,
   formatBaseAmount,
+  isPacketUnit,
   packageSizeFromName,
   planPackages,
   type PackageOption,
@@ -26,6 +27,15 @@ test("a unit converts only inside its own family", () => {
 test("a unit this app does not know has no base amount at all", () => {
   for (const unit of ["rkl", "tl", "pss", "prk", "nippu", "", null]) {
     assert.equal(baseAmount(2, unit), null, `${unit} should stay unknown`);
+  }
+});
+
+test("a packet unit is known as a packet, not as an amount", () => {
+  for (const unit of ["prk", "tlk", "pkt", "pss", "rs", "pll", " PRK ", "prk."]) {
+    assert.equal(isPacketUnit(unit), true, `${unit} should be a packet`);
+  }
+  for (const unit of ["kpl", "g", "rkl", "nippu", "", null]) {
+    assert.equal(isPacketUnit(unit), false, `${unit} should not be a packet`);
   }
 });
 

@@ -303,7 +303,10 @@ test.describe("signed in", () => {
   test("an empty current week opens on today", async ({ page }) => {
     await page.goto("/");
     const today = page.locator(".day.is-today");
-    await expect(page.locator(".batch-card")).toHaveCount(0);
+    // Only this week is empty: the screen shows a fortnight, and "the week"
+    // above plants a batch on a fixed date that can fall in the second one.
+    const thisWeek = page.locator(".week-block").filter({ has: today });
+    await expect(thisWeek.locator(".batch-card")).toHaveCount(0);
     await expect(today).toBeInViewport();
     await capture(page, { path: `${SHOTS}/36-week-empty-today.png` });
   });

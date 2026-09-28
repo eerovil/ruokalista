@@ -106,6 +106,16 @@ const products = {
       available: true,
     },
   ],
+  tonnikala: [
+    {
+      ean: "6417700050107",
+      sokId: "100325001",
+      name: "Rainbow tonnikalapala öljyssä 185 g",
+      price: 1.89,
+      priceUnit: "KPL",
+      available: true,
+    },
+  ],
   oljy: [
     {
       ean: "6414893000019",
@@ -256,9 +266,11 @@ createServer(async (request, response) => {
           ? products.jauheliha
           : query.includes("juusto")
             ? products.juusto
-            : query.includes("öljy") || query.includes("oljy")
-              ? products.oljy
-              : [];
+            : query.includes("tonnikala")
+              ? products.tonnikala
+              : query.includes("öljy") || query.includes("oljy")
+                ? products.oljy
+                : [];
     return send(response, 200, { query, results: found });
   }
   return send(response, 404, { error: "not found" });

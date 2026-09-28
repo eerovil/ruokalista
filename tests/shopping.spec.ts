@@ -351,6 +351,43 @@ test("an external product can be selected, persisted, and replaced", async ({
   );
 });
 
+test("a recipe's two tins of tuna buy two tins, not one (#325)", async ({ page }) => {
+  const response = await page.request.post("/recipes", {
+    maxRedirects: 0,
+    form: {
+      title: "Tonnikalapasta",
+      yield: "4",
+      sourceText: "Tonnikalapasta\n2 prk tonnikalaa",
+      sourceRoute: "pasted",
+      structuredBy: "test",
+      lineCount: "1",
+      "line.0.quantity": "2",
+      "line.0.quantityMax": "",
+      "line.0.unit": "prk",
+      "line.0.altQuantity": "",
+      "line.0.altUnit": "",
+      "line.0.section": "",
+      "line.0.position": "1",
+      "line.0.ingredient": "new",
+      "line.0.newName": "tonnikala",
+      "line.0.sourceLine": "2 prk tonnikalaa",
+    },
+  });
+  expect(response.status()).toBe(302);
+  const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
+  await createBatch(page, today(), recipe, 1);
+  await page.goto("/ostoslista");
+
+  const tuna = namedRow(page, "tonnikala");
+  await expect(tuna.locator(".shopping-total")).toHaveText("2 prk");
+  await chooseProduct(page, "tonnikala", "Rainbow tonnikalapala");
+  await page.reload();
+  await reopen(namedRow(page, "tonnikala"));
+  await expect(
+    namedRow(page, "tonnikala").locator(".s-shopping-product-summary strong"),
+  ).toHaveText("2 × Rainbow tonnikalapala öljyssä 185 g");
+});
+
 test("the chosen product's picture is on the row, and the row is no taller", async ({
   page,
 }) => {

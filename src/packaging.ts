@@ -90,6 +90,20 @@ function decimal(value: number): string {
   return String(Number(value.toFixed(2))).replace(".", ",");
 }
 
+/**
+ * Units that are themselves a shop packet: `2 prk tonnikalaa` is two tins,
+ * whatever each tin weighs (#325).
+ *
+ * They still have no base amount — a purkki is no particular number of grams —
+ * so nothing here plans them against a package size. They only say that the
+ * stated number *is* the number of packets to buy.
+ */
+const PACKET_UNITS = new Set(["prk", "tlk", "pkt", "pss", "rs", "pll"]);
+
+export function isPacketUnit(unit: string | null): boolean {
+  return PACKET_UNITS.has(normaliseUnit(unit));
+}
+
 // ------------------------------------------------------ reading a size off a name
 
 /**
