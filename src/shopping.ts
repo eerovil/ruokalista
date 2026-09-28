@@ -15,6 +15,7 @@ import { boundedInChunks } from "./d1-query.ts";
 import {
   baseAmount,
   formatBaseAmount,
+  isPacketUnit,
   planPackages,
   type BaseAmount,
 } from "./packaging.ts";
@@ -378,7 +379,9 @@ export function groupByRecipe(
  * `5 dl + 2 rkl`, and not spoons), and at least one of its products has a
  * package size in that same family. Otherwise the row falls back to what it has
  * always done — the chosen product, once, with no count claimed — because a
- * count worked out from a size nobody knows is worse than none (#161).
+ * count worked out from a size nobody knows is worse than none (#161). The one
+ * count that needs no size is a total the recipe already wrote in packets —
+ * `2 prk` buys two of the chosen product (#325).
  */
 function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | null } {
   if (item.products.length === 0) return { chosen: [], packageTotal: null };
@@ -389,7 +392,14 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
   };
 
   const need = neededAmount(item);
-  if (need === null) return fallback;
+  if (need === null) {
+    const packets = packetsStated(item);
+    if (packets === null) return fallback;
+    return {
+      chosen: [{ product: item.products[0]!, count: packets }],
+      packageTotal: null,
+    };
+  }
 
   const sized = new Map<string, ProductChoice>();
   const options = [];
@@ -438,6 +448,23 @@ function neededAmount(item: Building): BaseAmount | null {
   }
 
   return need;
+}
+
+/**
+ * The packet count the row's total already says, or null when it says none.
+ *
+ * `2 prk` is two of whatever tin was chosen, and buying one would leave the
+ * cook a tin short (#325). Only a total that is a single packet unit counts: a
+ * `1 prk + 200 g` row is two different kinds of amount and keeps the no-count
+ * fallback. A range is covered at its top and a fraction rounds up, because a
+ * shop sells no half tins.
+ */
+function packetsStated(item: Building): number | null {
+  if (item.units.size !== 1) return null;
+  const [running] = item.units.values();
+  if (!isPacketUnit(running!.unit)) return null;
+  const packets = Math.ceil(running!.ranged ? running!.quantityMax : running!.quantity);
+  return Number.isSafeInteger(packets) && packets >= 1 ? packets : null;
 }
 
 interface RunningUnit {
