@@ -189,6 +189,7 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
         products: line.override !== null ? [line.override] : line.products,
         recipes: [],
         units: new Map(),
+        measured: [],
         contributions: [],
       };
       items.set(rowKey, item);
@@ -212,6 +213,7 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
     });
 
     if (scaled.quantity === null) continue;
+    item.measured.push(measuredAmount(scaled));
 
     // Only the primary measurement is added up. A line written "½ kpl (500 g)"
     // states one amount twice (ADR-0001), so counting both would double it —
@@ -381,7 +383,8 @@ export function groupByRecipe(
  * always done — the chosen product, once, with no count claimed — because a
  * count worked out from a size nobody knows is worse than none (#161). The one
  * count that needs no size is a total the recipe already wrote in packets —
- * `2 prk` buys two of the chosen product (#325).
+ * `2 prk` buys two of the chosen product (#325) — and it is only the answer
+ * when no line gave a second measurement that could be planned instead.
  */
 function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | null } {
   if (item.products.length === 0) return { chosen: [], packageTotal: null };
@@ -429,15 +432,15 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
  * buying for the bottom of the range is how somebody ends up short at the hob.
  * A row with an unstated contribution still counts what *is* stated — the row
  * goes on saying `+ määrä reseptin mukaan` beside it, so nothing is hidden.
+ *
+ * Each stated line counts once, in whichever of its two measurements this app
+ * can convert (`measuredAmount`), so the need can be `2 kg` while the row goes
+ * on reading `2 pss`.
  */
 function neededAmount(item: Building): BaseAmount | null {
   let need: BaseAmount | null = null;
 
-  for (const running of item.units.values()) {
-    const base = baseAmount(
-      running.ranged ? running.quantityMax : running.quantity,
-      running.unit,
-    );
+  for (const base of item.measured) {
     if (base === null) return null;
     if (need === null) {
       need = base;
@@ -448,6 +451,20 @@ function neededAmount(item: Building): BaseAmount | null {
   }
 
   return need;
+}
+
+/**
+ * One scaled line as an amount the packet arithmetic can use, or null.
+ *
+ * The primary measurement comes first. Where it has no base amount — `1 pss`,
+ * `2 rkl` — the line's second measurement is used instead when it has one:
+ * `1 pss (1 kg)` is one kilo to cover, not an unknown (#325). It is the same
+ * amount said twice (ADR-0001), so it replaces the primary one and is never
+ * added to it.
+ */
+function measuredAmount(scaled: Measurement): BaseAmount | null {
+  const primary = baseAmount(scaled.quantityMax ?? scaled.quantity, scaled.unit);
+  return primary ?? baseAmount(scaled.altQuantity, scaled.altUnit);
 }
 
 /**
@@ -483,6 +500,8 @@ interface Building {
   products: ProductChoice[];
   recipes: Array<{ id: number; title: string }>;
   units: Map<string, RunningUnit>;
+  /** Each stated line's amount for the packet arithmetic, or null (#325). */
+  measured: Array<BaseAmount | null>;
   contributions: ShoppingContribution[];
 }
 
