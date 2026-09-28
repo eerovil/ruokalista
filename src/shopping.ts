@@ -189,6 +189,8 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
         products: line.override !== null ? [line.override] : line.products,
         recipes: [],
         units: new Map(),
+        alternate: new Map(),
+        alternateWhole: true,
         contributions: [],
       };
       items.set(rowKey, item);
@@ -216,19 +218,15 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
     // Only the primary measurement is added up. A line written "½ kpl (500 g)"
     // states one amount twice (ADR-0001), so counting both would double it —
     // the second one stays visible in the breakdown instead.
-    const key = unitKey(scaled.unit);
-    const running = item.units.get(key);
-    if (running === undefined) {
-      item.units.set(key, {
-        unit: scaled.unit,
-        quantity: scaled.quantity,
-        quantityMax: scaled.quantityMax ?? scaled.quantity,
-        ranged: scaled.quantityMax !== null,
-      });
+    addTo(item.units, scaled.unit, scaled.quantity, scaled.quantityMax);
+
+    // The second measurement is kept on the side, never shown as a total: it
+    // is only for packets when the first cannot be planned (#327). It stands
+    // for the row only while every stated line had one.
+    if (scaled.altQuantity === null) {
+      item.alternateWhole = false;
     } else {
-      running.quantity += scaled.quantity;
-      running.quantityMax += scaled.quantityMax ?? scaled.quantity;
-      running.ranged = running.ranged || scaled.quantityMax !== null;
+      addTo(item.alternate, scaled.altUnit, scaled.altQuantity, null);
     }
   }
 
@@ -382,6 +380,11 @@ export function groupByRecipe(
  * count worked out from a size nobody knows is worse than none (#161). The one
  * count that needs no size is a total the recipe already wrote in packets —
  * `2 prk` buys two of the chosen product (#325).
+ *
+ * When the total cannot be planned but its lines also said the same amount a
+ * second way — `2 pss (2 kg)` against a 500 g bag — that second amount is
+ * planned instead (#327). It is the same food said twice (ADR-0001), so it
+ * replaces the first for this sum and is never added to it.
  */
 function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | null } {
   if (item.products.length === 0) return { chosen: [], packageTotal: null };
@@ -391,15 +394,25 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
     packageTotal: null,
   };
 
-  const need = neededAmount(item);
-  if (need === null) {
-    const packets = packetsStated(item);
-    if (packets === null) return fallback;
-    return {
-      chosen: [{ product: item.products[0]!, count: packets }],
-      packageTotal: null,
-    };
-  }
+  const planned =
+    planFor(item, neededAmount(item.units)) ??
+    (item.alternateWhole ? planFor(item, neededAmount(item.alternate)) : null);
+  if (planned !== null) return planned;
+
+  const packets = packetsStated(item);
+  if (packets === null) return fallback;
+  return {
+    chosen: [{ product: item.products[0]!, count: packets }],
+    packageTotal: null,
+  };
+}
+
+/** The sized products that cover one need, or null when they cannot. */
+function planFor(
+  item: Building,
+  need: BaseAmount | null,
+): { chosen: ChosenPackage[]; packageTotal: string } | null {
+  if (need === null) return null;
 
   const sized = new Map<string, ProductChoice>();
   const options = [];
@@ -411,7 +424,7 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
   }
 
   const plan = planPackages(need, options);
-  if (plan === null) return fallback;
+  if (plan === null) return null;
 
   return {
     chosen: plan.picks.map((pick) => ({
@@ -430,10 +443,10 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
  * A row with an unstated contribution still counts what *is* stated — the row
  * goes on saying `+ määrä reseptin mukaan` beside it, so nothing is hidden.
  */
-function neededAmount(item: Building): BaseAmount | null {
+function neededAmount(units: Map<string, RunningUnit>): BaseAmount | null {
   let need: BaseAmount | null = null;
 
-  for (const running of item.units.values()) {
+  for (const running of units.values()) {
     const base = baseAmount(
       running.ranged ? running.quantityMax : running.quantity,
       running.unit,
@@ -467,6 +480,28 @@ function packetsStated(item: Building): number | null {
   return Number.isSafeInteger(packets) && packets >= 1 ? packets : null;
 }
 
+function addTo(
+  units: Map<string, RunningUnit>,
+  unit: string | null,
+  quantity: number,
+  quantityMax: number | null,
+): void {
+  const key = unitKey(unit);
+  const running = units.get(key);
+  if (running === undefined) {
+    units.set(key, {
+      unit,
+      quantity,
+      quantityMax: quantityMax ?? quantity,
+      ranged: quantityMax !== null,
+    });
+  } else {
+    running.quantity += quantity;
+    running.quantityMax += quantityMax ?? quantity;
+    running.ranged = running.ranged || quantityMax !== null;
+  }
+}
+
 interface RunningUnit {
   unit: string | null;
   quantity: number;
@@ -483,6 +518,10 @@ interface Building {
   products: ProductChoice[];
   recipes: Array<{ id: number; title: string }>;
   units: Map<string, RunningUnit>;
+  /** The same lines' second measurements — `1 kg` of `1 pss (1 kg)` (#327). */
+  alternate: Map<string, RunningUnit>;
+  /** False once a stated line had no second measurement to add here. */
+  alternateWhole: boolean;
   contributions: ShoppingContribution[];
 }
 

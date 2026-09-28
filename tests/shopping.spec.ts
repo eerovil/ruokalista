@@ -388,6 +388,56 @@ test("a recipe's two tins of tuna buy two tins, not one (#325)", async ({ page }
   ).toHaveText("2 × Rainbow tonnikalapala öljyssä 185 g");
 });
 
+test("a bag also written in kilos buys enough 500 g bags, and sends that count (#327)", async ({
+  page,
+}) => {
+  const response = await page.request.post("/recipes", {
+    maxRedirects: 0,
+    form: {
+      title: "Uunimakkara",
+      yield: "4",
+      sourceText: "Uunimakkara\n1 pss (1 kg) peruna-sipulisekoitusta",
+      sourceRoute: "pasted",
+      structuredBy: "test",
+      lineCount: "1",
+      "line.0.quantity": "1",
+      "line.0.quantityMax": "",
+      "line.0.unit": "pss",
+      "line.0.altQuantity": "1",
+      "line.0.altUnit": "kg",
+      "line.0.section": "",
+      "line.0.position": "1",
+      "line.0.ingredient": "new",
+      "line.0.newName": "peruna-sipulisekoitus",
+      "line.0.sourceLine": "1 pss (1 kg) peruna-sipulisekoitusta",
+    },
+  });
+  expect(response.status()).toBe(302);
+  const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
+  await createBatch(page, today(), recipe, 2);
+  await page.goto("/ostoslista");
+
+  const bag = namedRow(page, "peruna-sipulisekoitus");
+  await expect(bag.locator(".shopping-total")).toHaveText("2 pss");
+  await chooseProduct(page, "peruna-sipulisekoitus", "Apetit peruna-sipulisekoitus");
+  await page.reload();
+  await reopen(namedRow(page, "peruna-sipulisekoitus"));
+  await expect(
+    namedRow(page, "peruna-sipulisekoitus").locator(".s-shopping-product-summary strong"),
+  ).toHaveText("4 × Apetit peruna-sipulisekoitus 500 g");
+  await expect(
+    namedRow(page, "peruna-sipulisekoitus").locator(".s-package-total"),
+  ).toContainText("2 kg");
+
+  // The opened row covers the send button; a fresh list has every row closed.
+  await page.reload();
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  expect(quantityFor(await externalRequests(page), "6410405170153")).toBe(4);
+});
+
 test("the chosen product's picture is on the row, and the row is no taller", async ({
   page,
 }) => {
