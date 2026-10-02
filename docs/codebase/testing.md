@@ -201,6 +201,8 @@ which is what makes keeping it in a public repository's secrets safe. It finishe
 by curling the live site, because a deploy reporting success is not the same as
 the app answering.
 
+**Never pin a spec to a real calendar date or today's weekday.** A spec that names a near-future date (a meal on a fixed day, a week URL) or assumes what weekday it runs on turns the suite red on the day that date arrives, and the fix then lands in whatever unrelated pull request is open. Build dates relative to now, and reseed what an earlier step added. Before coding a follow-up to a fixed issue, read `git log origin/main` for merges touching the same function and run the new cases against `origin/main` first.
+
 ## Test-writing gotchas
 
 - Prefer a specific locator over a shared label once more than one field can
