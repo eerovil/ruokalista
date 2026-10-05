@@ -8,6 +8,7 @@ import {
   rememberSentNoteStatement,
   sentNotes,
 } from "./s-ostoslista-notes.ts";
+import { markProductOutdatedStatements } from "./ingredient-products.ts";
 import type { ShoppingItem } from "./shopping.ts";
 import {
   SUBREQUEST_CEILING,
@@ -23,7 +24,15 @@ import {
  */
 export interface SOstoslistaSyncClient {
   list(): Promise<SOstoslistaItem[]>;
-  add(key: SOstoslistaKey, quantity?: number | null): Promise<unknown>;
+  /**
+   * `productName` is sent with an EAN only. The answer's `productFound` is
+   * read when there is one; a client that answers nothing has said nothing.
+   */
+  add(
+    key: SOstoslistaKey,
+    quantity?: number | null,
+    productName?: string | null,
+  ): Promise<{ productFound?: boolean | null } | void>;
   correct(id: string, quantity?: number | null): Promise<unknown>;
   remove(key: SOstoslistaKey): Promise<unknown>;
   sync(): Promise<void>;
@@ -251,6 +260,7 @@ export async function sendToSOstoslista(
   const budget = options.budget ?? new SubrequestBudget(SUBREQUEST_CEILING);
   const packets = packetCounts(items);
   const addedProducts = new Set<string>();
+  const outdated = new Set<string>();
   const failures: SOstoslistaRowFailure[] = [];
   const bookkeeping: Receipt[] = [];
   const nothingSent = (): SOstoslistaSendOutcome => ({
@@ -294,6 +304,7 @@ export async function sendToSOstoslista(
     let planned = planRow(db, householdId, client, item, {
       packets,
       addedProducts,
+      outdated,
       outstanding,
       held,
     });
@@ -336,6 +347,7 @@ export async function sendToSOstoslista(
         planned = planRow(db, householdId, client, item, {
           packets,
           addedProducts,
+          outdated,
           outstanding,
           held,
         });
@@ -372,11 +384,18 @@ export async function sendToSOstoslista(
     failures.push(describeFailure(item, error));
   }
 
+  // A product the shop said it no longer knows is written down in the same
+  // batch, and shown as such on the screen this send renders (#333).
+  const outdatedWrites = markOutdated(db, householdId, items, outdated);
+
   // The reserved tail, spent by the batch itself. A send that stopped at the
   // wall still gets here, which is the point of having held it: the rows that
   // went out are written down, so the next press knows about them.
-  if (bookkeeping.length > 0) {
-    const lost = await budget.within(tail, () => flush(db, bookkeeping));
+  if (bookkeeping.length > 0 || outdatedWrites.length > 0) {
+    const lost = await budget.within(
+      tail,
+      () => flush(db, [...bookkeeping.map((receipt) => receipt.statement), ...outdatedWrites]),
+    );
     if (lost !== null && !isCeiling(lost) && !(lost instanceof SubrequestBudgetSpent)) {
       // A lost receipt is this app losing track of a row it did put on the
       // list — never a refusal, and never a reason to send a member looking at
@@ -470,11 +489,11 @@ async function heldByService(
  */
 async function flush(
   db: D1Database,
-  receipts: readonly Receipt[],
+  statements: readonly D1PreparedStatement[],
 ): Promise<unknown | null> {
-  if (receipts.length === 0) return null;
+  if (statements.length === 0) return null;
   try {
-    await db.batch(receipts.map((receipt) => receipt.statement));
+    await db.batch([...statements]);
     return null;
   } catch (error) {
     return error;
@@ -538,6 +557,8 @@ interface PlannedRow {
 interface RowPlanContext {
   packets: Map<string, number>;
   addedProducts: Set<string>;
+  /** EANs whose add the service answered with `productFound: false`. */
+  outdated: Set<string>;
   outstanding: Map<string, string>;
   held: readonly SOstoslistaItem[];
 }
@@ -565,7 +586,7 @@ function planRow(
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outstanding, held }: RowPlanContext,
+  { packets, addedProducts, outdated, outstanding, held }: RowPlanContext,
 ): PlannedRow {
   const previous = outstanding.get(item.key) ?? null;
   const steps: PlannedStep[] = [];
@@ -602,7 +623,7 @@ function planRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    const calls = callsFor(client, held, { ean: product.ean }, count);
+    const calls = callsFor(client, held, { ean: product.ean }, count, product.name);
     // A product the list already holds correctly costs nothing, and is done
     // the moment it is planned.
     if (calls.length === 0) {
@@ -617,6 +638,11 @@ function planRow(
         // so a retry does not skip a product it only half-sent.
         run: async () => {
           const answer = await call.run();
+          // Only a plain `false` is the shop not knowing it. `null` is
+          // nothing answered, and a choice is not doubted on silence.
+          if (isRecord(answer) && answer["productFound"] === false) {
+            outdated.add(product.ean);
+          }
           if (index === calls.length - 1) addedProducts.add(product.ean);
           return answer;
         },
@@ -691,6 +717,7 @@ function callsFor(
   held: readonly SOstoslistaItem[],
   key: SOstoslistaKey,
   quantity: number | null,
+  productName: string | null = null,
 ): Array<{ cost: number; run: () => Promise<unknown> }> {
   const matching = held.filter((row) =>
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
@@ -706,7 +733,7 @@ function callsFor(
     // needs the pair — looked like one that never does. Reserving the worst
     // case and handing back the spare call needs no such inference, and the
     // reservation makes the spare call free to give back.
-    return [{ cost: 2, run: () => client.add(key, quantity) }];
+    return [{ cost: 2, run: () => client.add(key, quantity, productName) }];
   }
   return matching
     .filter((row) => !agrees(row, quantity))
@@ -818,6 +845,36 @@ async function dropRememberedNote(
     if (error instanceof SOstoslistaError && error.status === 404) return;
     throw error;
   }
+}
+
+/**
+ * The writes that flag each EAN the shop did not know, and the same flag on
+ * the products this send's rows carry, so the screen drawn from them after the
+ * send asks for a new pick straight away rather than on the next load.
+ *
+ * Only a POST can hear it: a product the list already holds is corrected by
+ * id, and the service answered for it when it was first added.
+ */
+function markOutdated(
+  db: D1Database,
+  householdId: number,
+  items: readonly SOstoslistaSendItem[],
+  outdated: ReadonlySet<string>,
+): D1PreparedStatement[] {
+  if (outdated.size === 0) return [];
+  for (const item of items) {
+    for (const { product } of item.chosen) {
+      if (outdated.has(product.ean)) product.outdated = true;
+    }
+  }
+  const at = new Date().toISOString();
+  return [...outdated].flatMap((ean) =>
+    markProductOutdatedStatements(db, householdId, ean, at),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** One external product row, one packet count across every local shopping row. */

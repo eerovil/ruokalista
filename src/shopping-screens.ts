@@ -369,22 +369,48 @@ export async function sendShoppingListForm(
   const notSynced =
     "Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä. Ainekset ovat listalla ja päivittyvät viimeistään seuraavassa synkronoinnissa.";
 
+  // The send flags the products it carries when the shop says it no longer
+  // knows one (#333), so this reads the answer straight off the rows it sent.
+  const outdatedRows = buy.filter((item) =>
+    item.chosen.some(({ product }) => product.outdated),
+  );
+  const outdated = outdatedMessage(outdatedRows.map((item) => item.name));
+  const warning = [outcome.synced ? null : notSynced, outdated]
+    .filter((line) => line !== null)
+    .join(" ");
+
   if (asJson) {
     return Response.json({
       sent: outcome.sent,
       total: outcome.total,
       synced: outcome.synced,
       ...(outcome.synced ? {} : { warning: notSynced }),
+      ...(outdated === null
+        ? {}
+        : { outdated, outdatedRows: outdatedRows.map((item) => item.key) }),
     });
   }
   return shoppingScreen(
     stateCtx,
     member,
-    outcome.synced ? null : notSynced,
+    warning === "" ? null : warning,
     `${outcome.sent} ainesta lähetettiin S-ostoslistaan.`,
     200,
     state,
   );
+}
+
+/**
+ * What a member is told when the shop no longer knows a product a row was
+ * sent as (#333). The row still went — under the product's name rather than
+ * its digits — so this is a request for a new pick, not a failed send.
+ *
+ * Exported for `dev/check-s-ostoslista-message.ts`.
+ */
+export function outdatedMessage(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  return `Kauppa ei enää tunne valittua tuotetta: ${names.join(", ")}. ` +
+    "Rivi lähti tuotteen nimellä — valitse sille uusi tuote.";
 }
 
 /** Beyond this many named rows the refusal stops listing them one by one. */

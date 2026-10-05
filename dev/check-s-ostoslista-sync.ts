@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProductChoice } from "../src/ingredient-products.ts";
+import {
+  productsForIngredients,
+  saveIngredientProduct,
+  saveRecipeProduct,
+  type ProductChoice,
+} from "../src/ingredient-products.ts";
 import {
   sendToSOstoslista,
   type SOstoslistaSendItem,
@@ -27,6 +32,10 @@ class FakeClient implements SOstoslistaSyncClient {
   fail: ((call: Call) => unknown | null) | null = null;
   /** What the service is already holding when a send opens. */
   held: SOstoslistaItem[] = [];
+  /** The product name each add carried, beside `calls` so they stay as they were. */
+  readonly productNames: Array<string | null> = [];
+  /** What an EAN add answers as `productFound`; left out, nothing is answered. */
+  found = new Map<string, boolean | null>();
 
   async list(): Promise<SOstoslistaItem[]> {
     const call: Call = { kind: "list" };
@@ -35,10 +44,16 @@ class FakeClient implements SOstoslistaSyncClient {
     return this.held;
   }
 
-  async add(key: SOstoslistaKey, quantity: number | null = null): Promise<void> {
+  async add(
+    key: SOstoslistaKey,
+    quantity: number | null = null,
+    productName: string | null = null,
+  ): Promise<{ productFound: boolean | null }> {
     const call: Call = { kind: "add", key, quantity };
     this.calls.push(call);
+    this.productNames.push(productName);
     this.maybeFail(call);
+    return { productFound: "ean" in key ? this.found.get(key.ean) ?? null : null };
   }
 
   async correct(id: string, quantity: number | null = null): Promise<void> {
@@ -78,6 +93,7 @@ function product(ean: string, name = "Tuote"): ProductChoice {
     imageUrl: null,
     packageQuantity: 400,
     packageUnit: "g",
+    outdated: false,
   };
 }
 
@@ -1032,4 +1048,93 @@ test("a ceiling on the receipt batch itself is the same answer (#308 review)", a
   assert.equal(outcome.sent, 2, "both rows reached the service");
   assert.deepEqual(outcome.status === "partial" ? outcome.failures : null, []);
   assert.equal(client.calls.some((call) => call.kind === "sync"), false);
+});
+
+/** Two households, one cucumber, chosen both as the ingredient's product and as a dish's own. */
+function cucumberDatabase(): FakeD1 {
+  const fake = database();
+  fake.sql.exec(`
+    INSERT INTO household (id, name) VALUES (2, 'Naapuri');
+    INSERT INTO member (id, household_id, google_sub, display_name)
+      VALUES (1, 1, 'sub-1', 'Eero'), (2, 2, 'sub-2', 'Naapuri');
+    INSERT INTO ingredient (id, name, created_by) VALUES (1, 'kurkku', 1), (2, 'maito', 1);
+    INSERT INTO recipe (id, household_id, title, source_text, source_route,
+                        structured_by, created_by, updated_by)
+      VALUES (1, 1, 'Salaatti', 'Salaatti', 'pasted', 'test', 1, 1);
+    INSERT INTO ingredient_product (ingredient_id, ean, name)
+      VALUES (1, '2000638700004', 'Kotimainen kurkku'), (2, '6415712506032', 'Maito');
+    INSERT INTO recipe_ingredient_product (household_id, recipe_id, ingredient_id, ean, name)
+      VALUES (1, 1, 1, '2000638700004', 'Kotimainen kurkku'),
+             (2, 1, 1, '2000638700004', 'Kotimainen kurkku');
+  `);
+  return fake;
+}
+
+function outdatedRows(fake: FakeD1): string[] {
+  const rows = fake.sql
+    .prepare(
+      `SELECT 'i' || ingredient_id AS row FROM ingredient_product WHERE outdated_at IS NOT NULL
+       UNION ALL
+       SELECT 'h' || household_id || 'r' || recipe_id FROM recipe_ingredient_product
+        WHERE outdated_at IS NOT NULL
+       ORDER BY 1`,
+    )
+    .all() as Array<{ row: string }>;
+  return rows.map((one) => one.row);
+}
+
+test("an EAN goes out with its saved name, and one the shop does not know is flagged (#333)", async () => {
+  const fake = cucumberDatabase();
+  const client = new FakeClient();
+  client.found.set("2000638700004", false);
+  client.found.set("6415712506032", true);
+  const cucumber = product("2000638700004", "Kotimainen kurkku");
+  const milk = product("6415712506032", "Maito");
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "kurkku", "1 kpl", [{ product: cucumber, count: 1 }]),
+    item("2", "maito", "1 l", [{ product: milk, count: 1 }]),
+  ]);
+
+  assert.equal(outcome.status, "sent");
+  assert.deepEqual(client.productNames, ["Kotimainen kurkku", "Maito"]);
+  // Both of this household's choices of the code, and not the neighbour's own.
+  assert.deepEqual(outdatedRows(fake), ["h1r1", "i1"]);
+  // And the rows this send drew from say so, for the screen it renders next.
+  assert.equal(cucumber.outdated, true);
+  assert.equal(milk.outdated, false);
+});
+
+test("nothing answered is not the shop saying no (#333)", async () => {
+  const fake = cucumberDatabase();
+  const client = new FakeClient();
+  const cucumber = product("2000638700004", "Kotimainen kurkku");
+
+  const outcome = await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "kurkku", "1 kpl", [{ product: cucumber, count: 1 }]),
+  ]);
+
+  assert.equal(outcome.status, "sent");
+  assert.deepEqual(outdatedRows(fake), []);
+  assert.equal(cucumber.outdated, false);
+});
+
+test("choosing the product again clears the flag (#333)", async () => {
+  const fake = cucumberDatabase();
+  fake.sql.exec("UPDATE ingredient_product SET outdated_at = '2026-10-05T00:00:00Z' WHERE ingredient_id = 1");
+  fake.sql.exec("UPDATE recipe_ingredient_product SET outdated_at = '2026-10-05T00:00:00Z'");
+  const again = {
+    ean: "2000638700004",
+    name: "Kotimainen kurkku",
+    imageUrl: "https://cdn.example/kurkku.jpg",
+    packageQuantity: null,
+    packageUnit: null,
+  };
+
+  await saveIngredientProduct(fake.db, 1, again, "add");
+  await saveRecipeProduct(fake.db, 1, 1, 1, again);
+
+  assert.deepEqual(outdatedRows(fake), ["h2r1"]);
+  const read = await productsForIngredients(fake.db, [1]);
+  assert.equal(read.get(1)?.[0]?.outdated, false);
 });

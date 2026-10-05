@@ -30,6 +30,12 @@ export interface ProductChoice {
   /** Null together when the package size is not known — never half-known. */
   packageQuantity: number | null;
   packageUnit: string | null;
+  /**
+   * The shop said it no longer knows this EAN the last time it was sent
+   * (#333), so the screen asks for a new pick. Still sent until then — with
+   * its name, which is what the list shows in place of the digits.
+   */
+  outdated: boolean;
 }
 
 /** The chosen product's package size as an amount the solver can use. */
@@ -44,6 +50,7 @@ interface ProductRow {
   image_url: string | null;
   package_quantity: number | null;
   package_unit: string | null;
+  outdated_at: string | null;
 }
 
 interface OverrideRow extends ProductRow {
@@ -60,7 +67,8 @@ export async function productsForIngredients(
     const placeholders = ingredientChunk.map(() => "?").join(", ");
     const { results } = await db
       .prepare(
-        `SELECT ingredient_id, ean, name, image_url, package_quantity, package_unit
+        `SELECT ingredient_id, ean, name, image_url, package_quantity, package_unit,
+                outdated_at
            FROM ingredient_product
           WHERE ingredient_id IN (${placeholders})
           ORDER BY ingredient_id, position, id`,
@@ -89,7 +97,7 @@ export async function overridesForRecipes(
     const { results } = await db
       .prepare(
         `SELECT recipe_id, ingredient_id, ean, name, image_url,
-                package_quantity, package_unit
+                package_quantity, package_unit, outdated_at
            FROM recipe_ingredient_product
           WHERE household_id = ?
             AND recipe_id IN (${placeholders})`,
@@ -118,6 +126,7 @@ function readChoice(row: ProductRow): ProductChoice {
     imageUrl: row.image_url,
     packageQuantity: sized ? row.package_quantity : null,
     packageUnit: sized ? row.package_unit : null,
+    outdated: row.outdated_at !== null,
   };
 }
 
@@ -166,7 +175,8 @@ export async function saveIngredientProduct(
             SET name = excluded.name,
                 image_url = excluded.image_url,
                 package_quantity = excluded.package_quantity,
-                package_unit = excluded.package_unit`,
+                package_unit = excluded.package_unit,
+                outdated_at = NULL`,
       )
       .bind(
         ingredientId,
@@ -212,7 +222,8 @@ export async function saveRecipeProduct(
               name = excluded.name,
               image_url = excluded.image_url,
               package_quantity = excluded.package_quantity,
-              package_unit = excluded.package_unit`,
+              package_unit = excluded.package_unit,
+              outdated_at = NULL`,
     )
     .bind(
       householdId,
@@ -241,6 +252,39 @@ export async function removeRecipeProduct(
     .bind(householdId, recipeId, ingredientId)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Mark every saved choice of this EAN as one the shop no longer knows (#333).
+ *
+ * By EAN rather than by the row that sent it: a retired code is retired for
+ * every ingredient that saved it, and the shopping row that happened to send
+ * it is not the only place it was chosen. The ingredient side is global, as
+ * the rest of this module is; a dish's override is this household's own.
+ *
+ * Statements rather than a write, so the send can put them in the one batch it
+ * already holds a subrequest for.
+ */
+export function markProductOutdatedStatements(
+  db: D1Database,
+  householdId: number,
+  ean: string,
+  at: string,
+): D1PreparedStatement[] {
+  return [
+    db
+      .prepare(
+        `UPDATE ingredient_product SET outdated_at = ?
+          WHERE ean = ? AND outdated_at IS NULL`,
+      )
+      .bind(at, ean),
+    db
+      .prepare(
+        `UPDATE recipe_ingredient_product SET outdated_at = ?
+          WHERE household_id = ? AND ean = ? AND outdated_at IS NULL`,
+      )
+      .bind(at, householdId, ean),
+  ];
 }
 
 /**

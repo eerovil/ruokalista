@@ -155,6 +155,7 @@ function product(ean: string, quantity: number, unit: string): ProductChoice {
     imageUrl: null,
     packageQuantity: quantity,
     packageUnit: unit,
+    outdated: false,
   };
 }
 

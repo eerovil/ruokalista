@@ -218,11 +218,27 @@ export function productBlock(
   </div>`;
 }
 
-/** Only a mapped row has a picture, and only where the screen shows one. */
+/**
+ * The words that stand in for a product's EAN once the shop has said it no
+ * longer knows that EAN (#333). In the EAN's place rather than beside it, so a
+ * flagged product is the same two lines tall as any other (#200).
+ */
+export const OUTDATED_PRODUCT = "Kauppa ei enää tunne tätä — valitse uusi";
+
+/**
+ * Only a mapped row has a picture, and only where the screen shows one.
+ *
+ * A product the shop no longer knows also gets a mark here, on the row line
+ * itself, so the list says which rows want a new pick without opening each
+ * one. It lives in the thumbnail slot because that slot is what the picker
+ * client redraws after a pick, which is what takes the mark away again.
+ */
 export function productThumbnail(subject: ProductSubject): Raw {
   const image = subject.chosen[0]?.product.imageUrl ?? null;
-  if (image === null) return html``;
-  return productPicture(image, PRODUCT_PICTURE.row);
+  const outdated = subject.chosen.some(({ product }) => product.outdated);
+  return html`${image === null ? "" : productPicture(image, PRODUCT_PICTURE.row)}${outdated
+    ? html`<span class="shopping-thumb-outdated" role="img" aria-label="${OUTDATED_PRODUCT}" title="${OUTDATED_PRODUCT}">!</span>`
+    : ""}`;
 }
 
 /**
@@ -345,7 +361,9 @@ export function productSummary(subject: ProductSubject): Raw {
           : productPicture(product.imageUrl, PRODUCT_PICTURE.summary)}
         <span class="s-shopping-product-copy">
           <strong>${count > 1 ? `${count} × ` : ""}${product.name}</strong>
-          <span class="meta">EAN ${product.ean}</span>
+          ${product.outdated
+            ? html`<span class="meta s-product-outdated">${OUTDATED_PRODUCT}</span>`
+            : html`<span class="meta">EAN ${product.ean}</span>`}
         </span>
       </span>`,
     )}

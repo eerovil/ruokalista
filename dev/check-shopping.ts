@@ -50,6 +50,7 @@ function product(
     imageUrl: `https://cdn.example/${ean}.jpg`,
     packageQuantity,
     packageUnit,
+    outdated: false,
   };
 }
 
