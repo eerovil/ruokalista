@@ -104,6 +104,26 @@ test("case and stray space are the same unit, nothing further is", () => {
   assert.equal(items[0]!.total, "3 dl + 3 ruokalusikka");
 });
 
+test("a number with no unit counts as pieces and joins the kpl total (#331)", () => {
+  const items = shoppingList([
+    line({ ingredientName: "sipuli", quantity: 2, unit: null, sourceLine: "2 sipulia" }),
+    line({ batchId: 2, ingredientName: "sipuli", quantity: 1, unit: "kpl" }),
+    line({ batchId: 3, ingredientName: "sipuli", quantity: 1, unit: " " }),
+  ]);
+
+  assert.equal(items[0]!.total, "4 kpl");
+  assert.equal(items[0]!.contributions[0]!.amount, "2");
+});
+
+test("a unitless count is planned against a packet's piece count (#331)", () => {
+  const LEMONS = product("lemons-3", "Sitruuna 3 kpl", 3, "kpl");
+  const item = shoppingList([
+    line({ ingredientName: "sitruuna", quantity: 4, unit: null, products: [LEMONS] }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["2 × Sitruuna 3 kpl"]);
+  assert.equal(item.packageTotal, "6 kpl");
+});
+
 test("two lines of one ingredient inside one recipe join the same total", () => {
   const items = shoppingList([
     line({ quantity: 1, unit: "dl", sourceLine: "1 dl öljyä taikinaan" }),

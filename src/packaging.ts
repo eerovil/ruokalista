@@ -57,8 +57,9 @@ export interface BaseAmount {
 /**
  * One amount as a base amount, or null when this app cannot say what it is.
  *
- * Null is the common and correct answer: `2 rkl`, `1 pss`, `hieman`, and any
- * line whose unit was never written all land here.
+ * Null is the common and correct answer: `2 rkl`, `1 pss` and `hieman` all
+ * land here, and so does a missing unit — the shopping list reads a bare
+ * number as `kpl` before it asks (#331).
  */
 export function baseAmount(
   quantity: number | null,

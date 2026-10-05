@@ -218,7 +218,7 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
     // Only the primary measurement is added up. A line written "½ kpl (500 g)"
     // states one amount twice (ADR-0001), so counting both would double it —
     // the second one stays visible in the breakdown instead.
-    addTo(item.units, scaled.unit, scaled.quantity, scaled.quantityMax);
+    addTo(item.units, countedUnit(scaled.unit), scaled.quantity, scaled.quantityMax);
 
     // The second measurement is kept on the side, never shown as a total: it
     // is only for packets when the first cannot be planned (#327). It stands
@@ -545,6 +545,16 @@ function totalText(item: Building): string {
   }
 
   return terms.join(" + ");
+}
+
+/**
+ * The unit a stated amount is added up in. A number with no unit — `2
+ * sipulia` — is a count, so it joins the `kpl` total and is planned against a
+ * packet's piece count the way `2 kpl` is (#331). The breakdown still shows the
+ * line as it was written.
+ */
+function countedUnit(unit: string | null): string | null {
+  return unitKey(unit) === "" ? "kpl" : unit;
 }
 
 /**
