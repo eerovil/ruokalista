@@ -15,7 +15,9 @@ import { sessionCookie } from "./support/session";
  * about ten lines tall.
  *
  * These tests are about the geometry rather than the words, because the words
- * were never wrong. They run at 320 px — narrower than the suite's Pixel 7 —
+ * were never wrong. Since #331 a bare count is read as kpl, so the issue's own
+ * total now adds up to `2 kpl + …`; the fixture keeps a total as long by
+ * buying the first lines in jars, which no kpl can join. They run at 320 px — narrower than the suite's Pixel 7 —
  * since that is where the line runs out first.
  */
 
@@ -24,8 +26,8 @@ const NARROW = { width: 320, height: 720 };
 /** An ingredient name long enough to be the other half of the squeeze. */
 const LONG_NAME = "kirsikkatomaattisäilykepurkki";
 
-/** The total from the issue, and what makes it: unitless, kpl, and unstated. */
-const LONG_TOTAL = "1 + 1 kpl + määrä reseptin mukaan";
+/** A total as long as the issue's, and what makes it: jars, kpl, and unstated. */
+const LONG_TOTAL = "1 prk + 1 kpl + määrä reseptin mukaan";
 
 const SHOTS = "docs/screenshots";
 const writeScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
@@ -131,8 +133,8 @@ async function idOf(page: Page, name: string): Promise<string> {
  */
 async function planTheLongTotals(page: Page): Promise<void> {
   const first = await createRecipe(page, "Pitkä summa I", [
-    { quantity: "1", unit: "", ingredient: "new", newName: "sipuli" },
-    { quantity: "1", unit: "", ingredient: "new", newName: LONG_NAME },
+    { quantity: "1", unit: "prk", ingredient: "new", newName: "sipuli" },
+    { quantity: "1", unit: "prk", ingredient: "new", newName: LONG_NAME },
   ]);
   const onion = await idOf(page, "sipuli");
   const jar = await idOf(page, LONG_NAME);

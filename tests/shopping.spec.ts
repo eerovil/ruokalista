@@ -5,6 +5,7 @@ import {
   closeShoppingRow,
   openShoppingRow,
 } from "./support/shopping-rows";
+import { captureReview } from "./support/review-capture";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -386,6 +387,43 @@ test("a recipe's two tins of tuna buy two tins, not one (#325)", async ({ page }
   await expect(
     namedRow(page, "tonnikala").locator(".s-shopping-product-summary strong"),
   ).toHaveText("2 × Rainbow tonnikalapala öljyssä 185 g");
+});
+
+test("a cabbage with no unit adds up with one counted in kpl (#331)", async ({ page }) => {
+  const response = await page.request.post("/recipes", {
+    maxRedirects: 0,
+    form: {
+      title: "Kaalikeitto",
+      yield: "4",
+      sourceText: "Kaalikeitto\n2 valkokaalia",
+      sourceRoute: "pasted",
+      structuredBy: "test",
+      lineCount: "1",
+      "line.0.quantity": "2",
+      "line.0.quantityMax": "",
+      "line.0.unit": "",
+      "line.0.altQuantity": "",
+      "line.0.altUnit": "",
+      "line.0.section": "",
+      "line.0.position": "1",
+      "line.0.ingredient": "3",
+      "line.0.sourceLine": "2 valkokaalia",
+    },
+  });
+  expect(response.status()).toBe(302);
+  const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
+  // The seed's kaalilaatikko asks for ½ kpl of the same cabbage.
+  await createBatch(page, today(), KAALILAATIKKO, 1);
+  await createBatch(page, today(), recipe, 1);
+  await page.goto("/ostoslista");
+
+  const cabbage = namedRow(page, "valkokaali");
+  await expect(cabbage.locator(".shopping-total")).toHaveText("2½ kpl");
+  await openShoppingRow(cabbage);
+  const from = cabbage.locator(".shopping-from li");
+  await expect(from).toHaveCount(2);
+  await expect(from.last().locator(".shopping-from-amount")).toHaveText("2");
+  await captureReview(page, "test-results/issue-331-shopping.png", false);
 });
 
 test("a bag also written in kilos buys enough 500 g bags, and sends that count (#327)", async ({

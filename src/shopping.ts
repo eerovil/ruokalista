@@ -218,7 +218,7 @@ export function shoppingList(lines: ShoppingLine[]): ShoppingItem[] {
     // Only the primary measurement is added up. A line written "½ kpl (500 g)"
     // states one amount twice (ADR-0001), so counting both would double it —
     // the second one stays visible in the breakdown instead.
-    addTo(item.units, scaled.unit, scaled.quantity, scaled.quantityMax);
+    addTo(item.units, countedUnit(scaled.unit), scaled.quantity, scaled.quantityMax);
 
     // The second measurement is kept on the side, never shown as a total: it
     // is only for packets when the first cannot be planned (#327). It stands
@@ -379,7 +379,8 @@ export function groupByRecipe(
  * always done — the chosen product, once, with no count claimed — because a
  * count worked out from a size nobody knows is worse than none (#161). The one
  * count that needs no size is a total the recipe already wrote in packets —
- * `2 prk` buys two of the chosen product (#325).
+ * `2 prk` buys two of the chosen product (#325) — or in pieces of a product
+ * whose size is unknown: `8 kpl` buys eight loose paprikas (#331).
  *
  * When the total cannot be planned but its lines also said the same amount a
  * second way — `2 pss (2 kg)` against a 500 g bag — that second amount is
@@ -399,7 +400,7 @@ function buy(item: Building): { chosen: ChosenPackage[]; packageTotal: string | 
     (item.alternateWhole ? planFor(item, neededAmount(item.alternate)) : null);
   if (planned !== null) return planned;
 
-  const packets = packetsStated(item);
+  const packets = packetsStated(item) ?? piecesOfUnsized(item);
   if (packets === null) return fallback;
   return {
     chosen: [{ product: item.products[0]!, count: packets }],
@@ -480,6 +481,23 @@ function packetsStated(item: Building): number | null {
   return Number.isSafeInteger(packets) && packets >= 1 ? packets : null;
 }
 
+/**
+ * The piece count of a `kpl` total, when the product it buys has no size.
+ *
+ * `8 kpl paprikaa` against a loose paprika is eight paprikas, not one (#331).
+ * A product sized in pieces is already planned above, and one sized in grams or
+ * millilitres is not a piece at all, so both keep their own answer: only a
+ * product whose size nobody knows takes the recipe's count as its own.
+ */
+function piecesOfUnsized(item: Building): number | null {
+  if (item.units.size !== 1) return null;
+  const [running] = item.units.values();
+  if (unitKey(running!.unit) !== "kpl") return null;
+  if (productSize(item.products[0]!) !== null) return null;
+  const pieces = Math.ceil(running!.ranged ? running!.quantityMax : running!.quantity);
+  return Number.isSafeInteger(pieces) && pieces >= 1 ? pieces : null;
+}
+
 function addTo(
   units: Map<string, RunningUnit>,
   unit: string | null,
@@ -545,6 +563,16 @@ function totalText(item: Building): string {
   }
 
   return terms.join(" + ");
+}
+
+/**
+ * The unit a stated amount is added up in. A number with no unit — `2
+ * sipulia` — is a count, so it joins the `kpl` total and is planned against a
+ * packet's piece count the way `2 kpl` is (#331). The breakdown still shows the
+ * line as it was written.
+ */
+function countedUnit(unit: string | null): string | null {
+  return unitKey(unit) === "" ? "kpl" : unit;
 }
 
 /**

@@ -104,6 +104,45 @@ test("case and stray space are the same unit, nothing further is", () => {
   assert.equal(items[0]!.total, "3 dl + 3 ruokalusikka");
 });
 
+test("a number with no unit counts as pieces and joins the kpl total (#331)", () => {
+  const items = shoppingList([
+    line({ ingredientName: "sipuli", quantity: 2, unit: null, sourceLine: "2 sipulia" }),
+    line({ batchId: 2, ingredientName: "sipuli", quantity: 1, unit: "kpl" }),
+    line({ batchId: 3, ingredientName: "sipuli", quantity: 1, unit: " " }),
+  ]);
+
+  assert.equal(items[0]!.total, "4 kpl");
+  assert.equal(items[0]!.contributions[0]!.amount, "2");
+});
+
+test("a unitless count is planned against a packet's piece count (#331)", () => {
+  const LEMONS = product("lemons-3", "Sitruuna 3 kpl", 3, "kpl");
+  const item = shoppingList([
+    line({ ingredientName: "sitruuna", quantity: 4, unit: null, products: [LEMONS] }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["2 × Sitruuna 3 kpl"]);
+  assert.equal(item.packageTotal, "6 kpl");
+});
+
+test("a kpl total buys that many of a product with no size (#331)", () => {
+  const PAPRIKA = product("2000638700004", "Paprika punainen");
+  const item = shoppingList([
+    line({ ingredientName: "paprika", quantity: 5, unit: "kpl", products: [PAPRIKA] }),
+    line({ batchId: 2, ingredientName: "paprika", quantity: 2.5, unit: null, products: [PAPRIKA] }),
+  ])[0]!;
+  assert.equal(item.total, "7½ kpl");
+  assert.deepEqual(bought(item), ["8 × Paprika punainen"]);
+  assert.equal(item.packageTotal, null);
+});
+
+test("a kpl total never counts a product sized in grams (#331)", () => {
+  const BAG = product("paprika-bag", "Minipaprika 200 g", 200, "g");
+  const item = shoppingList([
+    line({ ingredientName: "paprika", quantity: 8, unit: "kpl", products: [BAG] }),
+  ])[0]!;
+  assert.deepEqual(bought(item), ["1 × Minipaprika 200 g"]);
+});
+
 test("two lines of one ingredient inside one recipe join the same total", () => {
   const items = shoppingList([
     line({ quantity: 1, unit: "dl", sourceLine: "1 dl öljyä taikinaan" }),
