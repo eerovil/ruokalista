@@ -61,6 +61,22 @@ async function capture(
   }
 }
 
+/** Monday and Sunday of the week today falls in, in Helsinki, as ISO dates. */
+function currentWeek(): [string, string] {
+  const today = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Helsinki",
+  }).format(new Date());
+  const day = new Date(`${today}T00:00:00Z`);
+  const monday = new Date(day);
+  monday.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return [monday, sunday].map((d) => d.toISOString().slice(0, 10)) as [
+    string,
+    string,
+  ];
+}
+
 test.beforeAll(reseed);
 
 test("sign-in", async ({ page }) => {
@@ -301,10 +317,18 @@ test.describe("signed in", () => {
    * lands, and a full-page capture cannot show that.
    */
   test("an empty current week opens on today", async ({ page }) => {
+    // The shots above plant batches on fixed dates, and a fixed date is this
+    // week sooner or later; clear whatever landed in it.
+    const [monday, sunday] = currentWeek();
+    executeLocalSql(
+      `DELETE FROM planned_batch WHERE household_id = 1 AND id IN
+        (SELECT batch_id FROM batch_occurrence
+          WHERE date BETWEEN '${monday}' AND '${sunday}')`,
+    );
     await page.goto("/");
     const today = page.locator(".day.is-today");
-    // Only this week is empty: the screen shows a fortnight, and "the week"
-    // above plants a batch on a fixed date that can fall in the second one.
+    // Only this week is empty: the screen shows a fortnight, and a fixed-date
+    // batch can still fall in the second one.
     const thisWeek = page.locator(".week-block").filter({ has: today });
     await expect(thisWeek.locator(".batch-card")).toHaveCount(0);
     await expect(today).toBeInViewport();
