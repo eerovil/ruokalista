@@ -49,6 +49,7 @@ function product(ean: string, name: string): ProductChoice {
     imageUrl: `https://cdn.example/${ean}.jpg`,
     packageQuantity: null,
     packageUnit: null,
+    outdated: false,
   };
 }
 

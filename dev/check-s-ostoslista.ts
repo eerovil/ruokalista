@@ -107,6 +107,49 @@ test("a keyed row handed back without the flag is cleared too (#236)", async () 
   assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { collected: false });
 });
 
+test("an EAN add carries the product name and reads whether the shop knew it (#333)", async () => {
+  const api = client([
+    json(
+      { id: "a", name: "Kurkku", ean: "2000638700004", collected: false, productFound: false },
+      201,
+    ),
+    json({ id: "b", name: "Maito", ean: "6415712506032", collected: false, productFound: true }, 201),
+    json({ id: "c", name: "Suola — 1 tl", ean: null, collected: false }, 201),
+  ]);
+  const unknown = await api.add({ ean: "2000638700004" }, null, "Kotimainen kurkku");
+  const known = await api.add({ ean: "6415712506032" }, null, "Maito");
+  const note = await api.add({ note: "Suola — 1 tl" }, null, "ei mene");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    ean: "2000638700004",
+    productName: "Kotimainen kurkku",
+  });
+  // A note never carries a product name: there is no barcode to stand in for.
+  assert.deepEqual(JSON.parse(String(calls[2]?.init?.body)), { note: "Suola — 1 tl" });
+  assert.equal(unknown.productFound, false);
+  assert.equal(known.productFound, true);
+  assert.equal(note.productFound, null);
+});
+
+test("whether the shop knew the EAN survives the patch that follows (#333)", async () => {
+  const api = client([
+    json({ id: "a", name: "2000638700004", ean: "2000638700004", collected: true, productFound: false }),
+    json({ id: "a", name: "Kurkku", ean: "2000638700004", collected: false }),
+  ]);
+  const added = await api.add({ ean: "2000638700004" }, null, "Kurkku");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]?.init?.method, "PATCH");
+  assert.equal(added.productFound, false);
+});
+
+test("a name that is only the digits is not sent, and a missing answer is null (#333)", async () => {
+  const api = client([
+    json({ id: "a", name: "2000638700004", ean: "2000638700004", collected: false, productFound: "?" }, 201),
+  ]);
+  const added = await api.add({ ean: "2000638700004" }, null, "2000638700004");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { ean: "2000638700004" });
+  assert.equal(added.productFound, null);
+});
+
 test("a packet count goes out as the row's quantity, twice (#240)", async () => {
   // The keyed add hands back the row last week's trip left behind, count and
   // all, so the POST's quantity is the one the service may ignore. The patch

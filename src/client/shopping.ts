@@ -23,6 +23,9 @@ import {
   type PickerHandle,
 } from "./product-picker.ts";
 
+/** `product-picker.ts::OUTDATED_PRODUCT` on the server; said the same way. */
+var OUTDATED_TITLE = "Kauppa ei enää tunne tätä — valitse uusi";
+
 interface PendingSend {
   failed: boolean;
   done: (ready: boolean) => void;
@@ -117,6 +120,10 @@ interface CurrentListItem {
                     : "Puhelimen S-ostoslistan päivitystä ei saatu käynnistettyä.",
                 );
               }
+              if (typeof record["outdated"] === "string") {
+                note("refused", record["outdated"] as string);
+                markOutdated(record["outdatedRows"]);
+              }
               loadCurrent();
               return;
             }
@@ -169,6 +176,27 @@ interface CurrentListItem {
     var line = el("p", className, text || "");
     panel.appendChild(line);
     sendNotes.push(line);
+  }
+
+  /**
+   * Put the server's "pick a new product" mark on the rows the send just
+   * heard about (#333), so the list says it without a reload. Same element the
+   * server draws, in the slot the picker client redraws after a new pick.
+   */
+  function markOutdated(keys: unknown): void {
+    if (!Array.isArray(keys)) return;
+    var rows = document.querySelectorAll<HTMLElement>(".shopping-item[data-rivi]");
+    for (var index = 0; index < rows.length; index += 1) {
+      var row = rows.item(index)!;
+      if (keys.indexOf(row.getAttribute("data-rivi")) === -1) continue;
+      var thumb = row.querySelector<HTMLElement>(".shopping-thumb");
+      if (!thumb || thumb.querySelector(".shopping-thumb-outdated")) continue;
+      var mark = el("span", "shopping-thumb-outdated", "!");
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", OUTDATED_TITLE);
+      mark.setAttribute("title", OUTDATED_TITLE);
+      thumb.appendChild(mark);
+    }
   }
 
   // --------------------------------------------- what the S list already has

@@ -1904,6 +1904,48 @@ test.describe("without JavaScript", () => {
   });
 });
 
+test("a product the shop no longer knows goes by name and asks for a new pick (#333)", async ({
+  page,
+  request,
+}) => {
+  await planTheFortnight(page);
+  await page.goto("/ostoslista");
+  await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
+
+  await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/unknown?ean=6415712506032`);
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toContainText(
+    "lähetettiin S-ostoslistaan",
+  );
+  await expect(page.locator(".s-shopping-send .refused")).toContainText(
+    "Kauppa ei enää tunne valittua tuotetta: maito",
+  );
+  const milk = row(page, "maito");
+  await expect(milk.locator(".shopping-thumb-outdated")).toBeVisible();
+
+  // The saved name went with the digits, so the phone reads a product.
+  const added = (await externalRequests(page)).filter(
+    (call) => call.method === "POST" && call.path === "/items" &&
+      call.body?.["ean"] === "6415712506032",
+  );
+  expect(added[0]?.body?.["productName"]).toBe("Kotimaista rasvaton maito 1 l");
+
+  // Kept, not only shown: the next load still asks, and says why inside.
+  await page.reload();
+  await expect(milk.locator(".shopping-thumb-outdated")).toBeVisible();
+  await reopen(milk);
+  await expect(milk.locator(".s-product-outdated")).toContainText(
+    "Kauppa ei enää tunne tätä",
+  );
+  await closeOpenShoppingRow(page);
+
+  // A new pick takes the mark away, there and then and for good.
+  await chooseProduct(page, "maito", "Valio kevytmaito");
+  await expect(milk.locator(".shopping-thumb-outdated")).toHaveCount(0);
+  await page.reload();
+  await expect(milk.locator(".shopping-thumb-outdated")).toHaveCount(0);
+});
+
 test("sending uses stored EANs, note fallbacks, and excludes the pantry", async ({
   page,
   request,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { SOstoslistaRowFailure } from "../src/s-ostoslista-sync.ts";
-import { partialSendMessage } from "../src/shopping-screens.ts";
+import { outdatedMessage, partialSendMessage } from "../src/shopping-screens.ts";
 
 /**
  * What a partial send tells the member to do next.
@@ -143,4 +143,11 @@ test("an unreadable answer is not reported as a connection error (#308 review)",
   assert.match(text, /vastasi riviin maito jotain odottamatonta/);
   // The member cannot fix this one, so what is left is to try it again.
   assert.match(text, /Yritä uudelleen/);
+});
+
+test("a product the shop no longer knows asks for a new pick, by row (#333)", () => {
+  assert.equal(outdatedMessage([]), null);
+  const message = outdatedMessage(["kurkku", "tomaatti"]);
+  assert.match(String(message), /kurkku, tomaatti/);
+  assert.match(String(message), /valitse sille uusi tuote/);
 });

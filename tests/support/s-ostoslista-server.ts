@@ -36,6 +36,11 @@ let failures: { status: number; left: number; only: string | null } = {
 };
 let failSync = false;
 let nextId = 1;
+/**
+ * EANs the catalogue does not know, as a retired code would be (#333). An add
+ * of one answers `productFound: false` and shows the name it was sent with.
+ */
+const unknownEans = new Set<string>();
 
 const products = {
   maito: [
@@ -150,6 +155,7 @@ createServer(async (request, response) => {
     failures = { status: 503, left: 0, only: null };
     failSync = false;
     nextId = 1;
+    unknownEans.clear();
     return send(response, 200, { ok: true });
   }
   if (request.method === "POST" && url.pathname === "/_test/fail-next") {
@@ -166,6 +172,10 @@ createServer(async (request, response) => {
   // only the sync that follows a send that otherwise worked.
   if (request.method === "POST" && url.pathname === "/_test/fail-sync") {
     failSync = true;
+    return send(response, 200, { ok: true });
+  }
+  if (request.method === "POST" && url.pathname === "/_test/unknown") {
+    unknownEans.add(url.searchParams.get("ean") ?? "");
     return send(response, 200, { ok: true });
   }
   if (request.method === "GET" && url.pathname === "/_test/requests") {
@@ -234,18 +244,24 @@ createServer(async (request, response) => {
     // Keyed like the real service: adding the same product again means "make
     // sure it is on the list", so the row it already had comes back untouched —
     // old count included. Only the patch that follows changes it (#240).
+    // Like the real service: whether the catalogue knew the barcode, and null
+    // for a note, which has no barcode to know.
+    const productFound = ean === null ? null : !unknownEans.has(ean);
     const existing = items.find((item) => ean !== null ? item.ean === ean : item.name === note);
-    if (existing) return send(response, 200, existing);
-    const product = Object.values(products).flat().find((one) => one.ean === ean);
+    if (existing) return send(response, 200, { ...existing, productFound });
+    const product = productFound === false
+      ? undefined
+      : Object.values(products).flat().find((one) => one.ean === ean);
+    const productName = typeof record["productName"] === "string" ? record["productName"] : null;
     const created: Item = {
       id: `item-${nextId++}`,
-      name: note ?? product?.name ?? ean!,
+      name: note ?? product?.name ?? productName ?? ean!,
       ean,
       collected: false,
       quantity,
     };
     items.push(created);
-    return send(response, 201, created);
+    return send(response, 201, { ...created, productFound });
   }
   if (request.method === "PATCH" && url.pathname.startsWith("/items/")) {
     const id = decodeURIComponent(url.pathname.slice("/items/".length));

@@ -38,6 +38,18 @@ export interface SOstoslistaProduct {
 export type SOstoslistaKey = { ean: string } | { note: string };
 
 /**
+ * What an add hands back: the row, and whether the shop knew the EAN.
+ *
+ * `productFound` is the service's answer to the add itself (#333): `true` when
+ * the catalogue knows the barcode, `false` when it does not — a retired code,
+ * or one from another shop — and `null` when nothing was answered: a note, a
+ * catalogue the service could not reach, or a service too old to say.
+ */
+export interface SOstoslistaAdded extends SOstoslistaItem {
+  productFound: boolean | null;
+}
+
+/**
  * What went wrong, as opposed to what it looked like.
  *
  * Three unrelated failures used to arrive as "a `SOstoslistaError` with no
@@ -164,31 +176,48 @@ export class SOstoslistaClient {
    * nothing new at the price of a second round trip on every row of the list.
    * The caution stays where it was aimed: a service that omits the flag has
    * told us nothing, so that still patches, exactly as before.
+   *
+   * `productName` goes with an EAN so a barcode the catalogue does not know
+   * reaches the list as the product's name rather than as its digits (#333).
+   * The service shows it only in that case, so it is always sent. Whether the
+   * catalogue knew the barcode comes from the POST, so it survives the patch.
    */
   async add(
     key: SOstoslistaKey,
     quantity: number | null = null,
-  ): Promise<SOstoslistaItem> {
+    productName: string | null = null,
+  ): Promise<SOstoslistaAdded> {
     const count = cleanQuantity(quantity);
+    const clean = cleanKey(key);
+    const name = productName?.trim() ?? "";
     const payload = await this.#request("items", {
       method: "POST",
       body: JSON.stringify({
-        ...cleanKey(key),
+        ...clean,
+        ...("ean" in clean && name !== "" && name !== clean["ean"]
+          ? { productName: name }
+          : {}),
         ...(count === null ? {} : { quantity: count }),
       }),
     });
     const item = readItem(payload, "add response");
+    // Read leniently: the row is already on the list by now, and refusing the
+    // add over a detail on top of it would report a row that went as one that
+    // did not. Anything but a plain boolean is "nothing was answered".
+    const found = asRecord(payload, "add response")["productFound"];
+    const productFound = typeof found === "boolean" ? found : null;
     if (
       item.collectedStated &&
       !item.collected &&
       (count === null || item.quantity === count)
     ) {
-      return item;
+      return { ...item, productFound };
     }
-    return this.#patch(item.id, {
+    const patched = await this.#patch(item.id, {
       collected: false,
       ...(count === null ? {} : { quantity: count }),
     });
+    return { ...patched, productFound };
   }
 
   /** Say whether one row on the list has been picked up. */

@@ -959,8 +959,20 @@ const STYLES = `
   /* The chosen product's picture, on the row itself (#159). It is smaller than
      the row's own minimum height, and the slot collapses when there is no
      picture, so no row grows and no row is left holding an empty box. */
-  .shopping-thumb { flex: none; align-self: center; line-height: 0; }
+  .shopping-thumb { flex: none; align-self: center; line-height: 0;
+    position: relative; }
   .shopping-thumb:empty { display: none; }
+  /* The shop no longer knows this row's product (#333): a small mark on the
+     picture's corner, or standing in for it when there is no picture. */
+  .shopping-thumb-outdated {
+    display: inline-block; width: 1rem; height: 1rem; line-height: 1rem;
+    text-align: center; font-size: .75rem; font-weight: 700;
+    color: var(--accent-fg); background: var(--warn); border-radius: 50%;
+  }
+  .shopping-thumb img + .shopping-thumb-outdated {
+    position: absolute; right: -.35rem; top: -.35rem;
+  }
+  .meta.s-product-outdated { color: var(--warn); }
   .shopping-thumb img {
     width: 1.6rem; height: 1.6rem; background: #fff;
     border: 1px solid var(--edge); border-radius: .25rem;
