@@ -1189,6 +1189,8 @@ export function multiplierField(
     label: string;
     describedBy?: string;
     submit: string;
+    /** Shown in the typed box while it is empty. */
+    placeholder?: string;
   },
 ): Raw {
   return html`<div class="multiplier-choice" role="group" aria-label="${options.label}">
@@ -1206,6 +1208,9 @@ export function multiplierField(
       value="${options.typed}"
       size="4"
       aria-label="Muu kerroin"
+      ${options.placeholder === undefined
+        ? ""
+        : raw(`placeholder="${escape(options.placeholder)}"`)}
       ${options.describedBy === undefined
         ? ""
         : raw(`aria-describedby="${escape(options.describedBy)}"`)}

@@ -911,7 +911,13 @@ function recipeTopActions(
     >
   </div>
   ${adding
-    ? topModal(COOK_ADD_ID, "Lisää kokattaviin", cookListAdd(recipe, multiplier, view.preference))
+    ? topModal(
+        COOK_ADD_ID,
+        "Lisää kokattaviin",
+        cookListAdd(recipe, multiplier, view.preference),
+        "toiminnot",
+        "Sulje",
+      )
     : ""}
   ${topModal(
     MORE_ID,
@@ -996,14 +1002,20 @@ const SHARING_ID = editBlockOpenHref("sharing-open").slice(1);
  * modal on the page uses (`.edit-modal:target`). Closing goes back to the
  * buttons it was opened from, so the page does not jump.
  */
-function topModal(id: string, title: string, body: Raw, closeTo = "toiminnot"): Raw {
+function topModal(
+  id: string,
+  title: string,
+  body: Raw,
+  closeTo = "toiminnot",
+  close = "Valmis",
+): Raw {
   return html`<div class="edit-modal top-modal" id="${id}">
     <a class="edit-modal-back" href="#${closeTo}" tabindex="-1" aria-hidden="true"></a>
     <div class="edit-modal-card" role="group" aria-label="${title}">
       <p class="edit-modal-title">${title}</p>
       ${body}
       <div class="edit-modal-actions">
-        <a class="edit-done" href="#${closeTo}">Valmis</a>
+        <a class="edit-done" href="#${closeTo}">${close}</a>
       </div>
     </div>
   </div>`;
@@ -1028,10 +1040,11 @@ function cookListAdd(
     action="/recipes/${recipe.id}/kokattaviin"
     class="stacked cook-add"
   >
-    <p class="empty">Kuinka iso satsi? Koon napautus lisää heti.</p>
+    <p class="empty">Napauta kokoa, niin resepti lisätään kokattaviin.</p>
     ${multiplierField({
       current,
-      typed: formatMultiplier(current).slice(0, -1),
+      typed: "",
+      placeholder: "Muu kerroin",
       label: "Lisää kokattaviin kertoimella",
       submit: "Lisää",
     })}
@@ -1057,6 +1070,7 @@ function settingsModals(recipe: Recipe, view: RecipeView): Raw {
           current: preference,
           typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
           label: "Oletuskerroin",
+          placeholder: "Muu kerroin",
           describedBy: "preferredMultiplierHelp",
           submit: "Tallenna",
         })}
@@ -1297,7 +1311,23 @@ const PUBLISH_STYLE = html`<style>
   .top-modal .cook-add { margin: 0; }
   .top-modal .tail-heading { margin-top: 1.1rem; }
   .top-modal .edit-modal-title + .tail-heading { margin-top: 0; }
-  .top-modal .cook-add .empty { margin: 0 0 .6rem; }
+  .top-modal .cook-add .empty { margin: 0 0 .75rem; }
+  .top-modal .multiplier-choice + .empty { margin-top: .75rem; }
+  /* The sizes as four equal buttons, then the typed size on a line of its own
+     with its own button, so it does not read as a fifth size (#354). */
+  .top-modal .multiplier-choice {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem;
+  }
+  .top-modal .multiplier-choice button[name="preset"] {
+    min-width: 0; min-height: 3.25rem; font-size: 1.1rem; font-weight: 600;
+  }
+  .top-modal .multiplier-choice input {
+    grid-column: 1 / span 3; width: 100%; min-height: var(--tap);
+    margin-top: .5rem; text-align: left; padding: 0 .75rem;
+  }
+  .top-modal .multiplier-choice button:not([name]) {
+    grid-column: 4; min-width: 0; margin-top: .5rem;
+  }
   .top-modal .tail-list > style, .top-modal .tail-list > script { display: none; }
   /* The Cast launcher's own row, drawn like the rows around it. */
   .top-modal .cast-action { margin: 0; min-height: 3.5rem; padding: .3rem 1rem .3rem .5rem;
