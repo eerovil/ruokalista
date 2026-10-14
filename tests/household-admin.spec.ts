@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
-import { reseed } from "./support/seed";
+import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -520,12 +520,18 @@ test("the ordinary product still shows nobody another household", async ({
 }) => {
   // The whole point of confining the crossing: member 1 sees household 1's
   // recipes only, exactly as before. The ingredient dictionary is shared since
-  // #143 and is no longer the thing to measure this with — a recipe is.
+  // #143 and is no longer the thing to measure this with — a recipe is. The
+  // seed's Naapuri dish is published, and published dishes sit in the list
+  // since #335, so it is made private here to measure the wall itself.
+  executeLocalSql("UPDATE recipe SET published_at = NULL, published_by = NULL WHERE id = 6");
   await signIn(page, 1);
   await page.goto("/recipes");
 
   await expect(page.getByText("Naapurin uunikala")).toHaveCount(0);
   await expect(page.getByText("Kaalilaatikko")).toBeVisible();
+  executeLocalSql(
+    "UPDATE recipe SET published_at = '2026-08-26 09:00:00', published_by = 2 WHERE id = 6",
+  );
 });
 
 /**
