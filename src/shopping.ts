@@ -325,8 +325,8 @@ export interface ShoppingGroup {
  * goes in its own section at the end, where the amount reads as the sum it is
  * rather than as a share of somebody's dish.
  *
- * `recipeOrder` is the dishes as the member has them planned, so the sections
- * come in the order the week does rather than in whatever order the rows
+ * `recipeOrder` is the dishes as the member has them listed, so the sections
+ * come in the order the to-do list does rather than in whatever order the rows
  * happened to mention them. A dish it does not name still gets its section
  * — losing one would lose its rows with it.
  */

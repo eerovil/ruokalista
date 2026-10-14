@@ -1,9 +1,8 @@
 import { problem } from "./auth.ts";
 import shoppingClient from "./generated/shopping.ts";
-import { addDays, shortDate, shortDayName, today } from "./dates.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
-import { menuBetween, type PlannedBatch } from "./menu.ts";
+import { cookList, type ListedDish } from "./cook-list.ts";
 import {
   PantryRefused,
   addToPantry,
@@ -59,13 +58,13 @@ import {
 } from "./shopping.ts";
 
 /**
- * `GET /ostoslista` — what the selected cookings need bought.
+ * `GET /ostoslista` — what the selected dishes need bought.
  *
  * The selection lives in the query string and nowhere else. There is no
- * shopping-list table and no saved basket: the screen is a view over the week
- * that was already planned, and reopening it recomputes the default rather
- * than remembering what was ticked last time (issue #123 asks for exactly this
- * and no more).
+ * shopping-list table and no saved basket: the screen is a view over the
+ * household's to-do list of dishes (#345), and reopening it recomputes the
+ * default — every dish on that list — rather than remembering what was ticked
+ * last time (issue #123 asks for exactly this and no more).
  *
  * The one thing it does read and write is the cupboard (#125) — and that is a
  * fact about the kitchen, not about this list: adding oregano to the cupboard
@@ -95,12 +94,6 @@ import {
  * JSON answers below, and the save still re-searches server-side, so the
  * browser cannot invent an EAN, a name or an image whichever path it takes.
  */
-
-/** How far ahead there is anything to shop for. */
-const WINDOW_DAYS = 14;
-
-/** Cookings this close are the ones worth a trip to the shop right now. */
-const DEFAULT_DAYS = 5;
 
 /** Beyond this many dishes the heading stops naming them all. */
 const TITLES_IN_HEADING = 3;
@@ -151,7 +144,7 @@ interface Selection {
  * the difference between one answer and two identical ones.
  *
  * A send changes nothing this screen reads. The list is recomputed from the
- * week and the cupboard every time it is drawn, and the only thing a send
+ * to-do list and the cupboard every time it is drawn, and the only thing a send
  * writes is `s_ostoslista_sent_note`, which no screen reads. So the five
  * statements this used to spend re-deriving the same list after a send were
  * bought at full price against a budget shared with the send itself — and on
@@ -180,12 +173,12 @@ export async function shoppingScreen(
       ${notice === null ? "" : html`<p class="shopping-sent">${notice}</p>`}
       ${cookings.length === 0
         ? html`<div class="nothing">
-            <p class="empty">Seuraavan kahden viikon aikana ei kokata mitään.</p>
-            <p><a class="button" href="/">Suunnittele viikko</a></p>
+            <p class="empty">Kokattavien listalla ei ole yhtään ruokaa.</p>
+            <p><a class="button" href="/recipes">Selaa reseptejä</a></p>
           </div>`
         : selected.length === 0
           ? html`<p class="empty">
-              Valitse ainakin yksi ateria, niin ainekset lasketaan yhteen.
+              Valitse ainakin yksi ruoka, niin ainekset lasketaan yhteen.
             </p>`
           : html`${externalSendPanel(buy, selection, external)}
               ${groupingPills(selection)}
@@ -200,9 +193,9 @@ export async function shoppingScreen(
 }
 
 interface ShoppingState {
-  cookings: PlannedBatch[];
+  cookings: ListedDish[];
   selection: Selection;
-  selected: PlannedBatch[];
+  selected: ListedDish[];
   /**
    * Every row the trip's list draws, left-off ones among them and in their own
    * place (#318). A ticked row is not a row that went somewhere else, so this
@@ -213,21 +206,16 @@ interface ShoppingState {
   atHome: ShoppingItem[];
 }
 
-/** Recompute every mutation target from this household's current week + pantry. */
+/** Recompute every mutation target from this household's to-do list + pantry. */
 async function shoppingState(
   { env, url }: RouteContext,
   member: Member,
 ): Promise<ShoppingState> {
-  const from = today();
-  const to = addDays(from, WINDOW_DAYS - 1);
+  // Every dish on the to-do list, in the order it was added. A cooked dish
+  // has left the list, so there is nothing left to buy for it.
+  const cookings = await cookList(env.DB, member.householdId);
 
-  // A batch that was cooked before today is already in the fridge, so there is
-  // nothing to buy for it: the list offers the cookings still ahead.
-  const cookings = (await menuBetween(env.DB, member.householdId, from, to))
-    .filter((batch) => batch.startDate >= from)
-    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id);
-
-  const ids = chosenIds(url, cookings, from);
+  const ids = chosenIds(url, cookings);
   const selected = cookings.filter((batch) => ids.has(batch.id));
 
   const [lines, inPantry] = await Promise.all([
@@ -930,28 +918,17 @@ function selectionFields(selection: Selection): Raw {
 }
 
 /**
- * The batches to add up: what the query string says, or — the first time the
- * screen is opened — everything cooked today or in the next four days.
+ * The dishes to add up: what the query string says, or — the first time the
+ * screen is opened — every dish on the to-do list.
  *
- * An id that is not one of this household's upcoming cookings is dropped
- * rather than refused. The query string is a selection, not a command, and a
- * stale link should still show a list.
+ * An id that is not one of this household's listed dishes is dropped rather
+ * than refused. The query string is a selection, not a command, and a stale
+ * link should still show a list.
  */
-function chosenIds(
-  url: URL,
-  cookings: PlannedBatch[],
-  from: string,
-): Set<number> {
+function chosenIds(url: URL, cookings: ListedDish[]): Set<number> {
   const offered = new Set(cookings.map((batch) => batch.id));
 
-  if (url.searchParams.get(CHOSEN) === null) {
-    const soon = addDays(from, DEFAULT_DAYS - 1);
-    return new Set(
-      cookings
-        .filter((batch) => batch.startDate <= soon)
-        .map((batch) => batch.id),
-    );
-  }
+  if (url.searchParams.get(CHOSEN) === null) return offered;
 
   const chosen = new Set<number>();
   for (const value of url.searchParams.getAll(CHOICE)) {
@@ -962,7 +939,7 @@ function chosenIds(
 }
 
 /** `Ostoslista: Makaronilaatikko + Tortillalasagne`. */
-function headingFor(selected: PlannedBatch[]): string {
+function headingFor(selected: ListedDish[]): string {
   if (selected.length === 0) return "Ostoslista";
 
   const titles = selected.map((batch) => batch.title);
@@ -976,7 +953,7 @@ function headingFor(selected: PlannedBatch[]): string {
 
 /**
  * The cookings to choose from, closed by default — the list is what somebody
- * came here to read, and the summary already says how much of the fortnight is
+ * came here to read, and the summary already says how much of the to-do list is
  * in it. It opens itself when nothing is selected, because then the list has
  * nothing to show and the choice is the only thing to do.
  *
@@ -987,13 +964,13 @@ function headingFor(selected: PlannedBatch[]): string {
  * nobody revisited. The meal ids stay with the checkboxes, so this adds
  * nothing to what the member is choosing here.
  */
-function picker(cookings: PlannedBatch[], selection: Selection): Raw {
+function picker(cookings: ListedDish[], selection: Selection): Raw {
   const selectedIds = selection.ids;
   if (cookings.length === 0) return html``;
 
   return html`<details class="shopping-picker" ${selectedIds.size === 0 ? rawOpen : ""}>
     <summary>
-      Ateriat
+      Ruoat
       <span class="meta">${selectedIds.size}/${cookings.length} valittu</span>
     </summary>
     <form method="get" action="/ostoslista" class="stacked">
@@ -1016,10 +993,7 @@ function picker(cookings: PlannedBatch[], selection: Selection): Raw {
               />
               <span class="shopping-meal">
                 <span class="shopping-meal-title">${batch.title}</span>
-                <span class="meta"
-                  >${shortDayName(batch.startDate)} ${shortDate(batch.startDate)}
-                  · ${formatMultiplier(batch.multiplier)}</span
-                >
+                <span class="meta">${formatMultiplier(batch.multiplier)}</span>
               </span>
             </label>
           </li>`,
@@ -1072,7 +1046,7 @@ function groupingPills(selection: Selection): Raw {
  * The list in two parts: what to buy, then what the cupboard already covers.
  *
  * The second part is not a footnote about rows that were removed — they are
- * still the week's ingredients, with the same totals and the same breakdown.
+ * still the listed dishes' ingredients, with the same totals and the same breakdown.
  * It only answers a different question: this one you have (#125). A list that
  * silently dropped them would be indistinguishable from one that forgot them,
  * and the household would find out at the hob.
@@ -1085,7 +1059,7 @@ function groupingPills(selection: Selection): Raw {
 function sections(
   listed: ShoppingItem[],
   atHome: ShoppingItem[],
-  selected: PlannedBatch[],
+  selected: ListedDish[],
   selection: Selection,
   external: boolean,
 ): Raw {
@@ -1130,7 +1104,7 @@ function excludedNote(): Raw {
 /** The rows to buy: one list by ingredient name, or a section per dish. */
 function buyArea(
   listed: ShoppingItem[],
-  selected: PlannedBatch[],
+  selected: ListedDish[],
   selection: Selection,
   external: boolean,
 ): Raw {
@@ -1329,7 +1303,7 @@ function rowToggleId(item: ShoppingItem, kind: RowKind): string {
  * the grouping pills and the tab bar leave nothing behind, so a later visit to
  * `/ostoslista` opens at the top as it always has.
  *
- * Like `week-screens.ts::SCROLL_TO_TODAY` it stands down on an explicit anchor
+ * Like the old week screen's scroll-to-today did, it stands down on an explicit anchor
  * and on a position the browser restored itself — both of those are somebody
  * else's answer to the same question. A browser with no `sessionStorage`, or
  * none of this at all, lands at the top of the list, which is where every one

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { today } from "../src/dates.ts";
 import type { Env } from "../src/env.ts";
 import type { Member } from "../src/members.ts";
 import type { RouteContext } from "../src/router.ts";
@@ -37,7 +36,6 @@ const CEILING = "Too many subrequests by single Worker invocation.";
 
 function seeded(): FakeD1 {
   const fake = migratedDatabase();
-  const day = today();
   fake.sql.exec(`
     INSERT INTO household (id, name) VALUES (1, 'Koti');
     INSERT INTO member (id, household_id, google_sub, display_name)
@@ -51,10 +49,9 @@ function seeded(): FakeD1 {
       (1, 1, 5, 'dl', 1, '5 dl maitoa'),
       (1, 2, 1, 'tl', 2, '1 tl suolaa'),
       (1, 3, 2, 'dl', 3, '2 dl riisiä');
+    -- On the to-do list (#345): no days, not yet cooked.
     INSERT INTO planned_batch (id, household_id, recipe_id, created_by, instance_key)
       VALUES (1, 1, 1, 1, 'batch-1');
-    INSERT INTO batch_occurrence (batch_id, date, slot)
-      VALUES (1, '${day}', 'dinner');
   `);
   return fake;
 }

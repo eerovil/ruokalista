@@ -22,13 +22,11 @@ test("a signed-out API call answers JSON, not a redirect", async ({ request }) =
   expect(await response.json()).toHaveProperty("error");
 });
 
-test("/ is the week, which is the point of the app", async ({ context, page }) => {
+test("/ is the to-do list of dishes, which is the point of the app", async ({ context, page }) => {
   await context.addCookies([sessionCookie(1)]);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Viikko", exact: true })).toBeVisible();
-  // Two weeks at a time since #250, so fourteen days under two week blocks.
-  await expect(page.locator(".week-block")).toHaveCount(2);
-  await expect(page.locator(".day")).toHaveCount(14);
+  // The meal calendar was replaced by this list in #345.
+  await expect(page.getByRole("heading", { name: "Kokattavat", exact: true })).toBeVisible();
 });
 
 test("a cookie that has expired is not entry", async ({ context, page }) => {
@@ -79,7 +77,7 @@ test("a development server can sign in without Google", async ({
   await page.getByRole("button", { name: /Kirjaudu: / }).first().click();
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "Viikko", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Kokattavat", exact: true })).toBeVisible();
 
   await context.clearCookies();
 });

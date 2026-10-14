@@ -24,7 +24,7 @@ name what your change could break.
 1. `./scripts/node.sh npm run typecheck`
 2. `./scripts/node.sh npm run check`
 3. the browser spec that tests the behaviour you changed, and only that one:
-   `./scripts/playwright.sh npx playwright test tests/week.spec.ts`. A spec you
+   `./scripts/playwright.sh npx playwright test tests/cook-list.spec.ts`. A spec you
    only had to adjust — a count or an order that moved because of your change —
    is CI's to rerun, not yours. Run it here only when CI fails it.
 4. one screenshot, only when the change is visual, and only the screenshot test
@@ -51,7 +51,7 @@ Which spec covers what, roughly:
 
 | What changed | The spec to run |
 | --- | --- |
-| the week, the days, a planned meal | `week.spec.ts`, `week-grouping.spec.ts` |
+| the to-do list of dishes, adding one, ticking one cooked | `cook-list.spec.ts`, `dev/check-cook-list.ts` |
 | the shopping list, ingredient aggregation | `shopping.spec.ts`, `dev/check-shopping.ts` |
 | the S-ostoslista product picker, on either screen | `shopping.spec.ts`, `recipe-products.spec.ts` |
 | the shopping row's own layout on a narrow phone | `shopping-row-213.spec.ts` |

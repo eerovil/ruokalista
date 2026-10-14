@@ -130,21 +130,16 @@ test("another household never sees an empty recipe, even a published one", async
   await expect(page.locator(".recipes")).toContainText("Vanha julkinen");
 });
 
-test("a household with the dish on its week keeps it after the owner empties it", async ({
+test("a household with the dish on its to-do list keeps it after the owner empties it", async ({
   page,
 }) => {
-  // Naapuri has Koti's published Kaalilaatikko on tomorrow's dinner; then Koti
+  // Naapuri has Koti's published Kaalilaatikko on its to-do list; then Koti
   // saves it without its method.
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
   executeLocalSql(`
     UPDATE recipe SET published_at = datetime('now'), published_by = 1 WHERE id = 1;
     INSERT INTO planned_batch
       (id, household_id, recipe_id, multiplier, created_by, instance_key)
     VALUES (340, 2, 1, 1, 2, 'empty-recipes-340');
-    INSERT INTO batch_occurrence (batch_id, date, slot)
-    VALUES (340, '${tomorrow}', 'dinner');
     DELETE FROM recipe_step WHERE recipe_id = 1
   `);
 
@@ -154,9 +149,6 @@ test("a household with the dish on its week keeps it after the owner empties it"
   await expect(page.locator("h1")).toContainText("Kaalilaatikko");
 
   // Without the plan it would be gone, as any other empty dish is.
-  executeLocalSql(`
-    DELETE FROM batch_occurrence WHERE batch_id = 340;
-    DELETE FROM planned_batch WHERE id = 340
-  `);
+  executeLocalSql("DELETE FROM planned_batch WHERE id = 340");
   expect((await page.goto("/recipes/1"))?.status()).toBe(404);
 });

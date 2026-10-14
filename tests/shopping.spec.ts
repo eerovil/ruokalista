@@ -31,32 +31,13 @@ test.beforeEach(async ({ context, request }) => {
 const KAALILAATIKKO = 1;
 const LASAGNE = 3;
 
-/** Today in Helsinki, which is what the Worker means by today. */
-function today(): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
-}
-
-function inDays(days: number): string {
-  const [year, month, day] = today().split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const at = new Date(Date.UTC(year, month - 1, day));
-  at.setUTCDate(at.getUTCDate() + days);
-  return at.toISOString().slice(0, 10);
-}
-
 async function createBatch(
   page: Page,
-  date: string,
   recipeId: number,
   multiplier: number,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier },
+    data: { recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
   const created = (await response.json()) as { id: number; instanceKey: string };
@@ -101,17 +82,15 @@ async function createSpoonedSauce(page: Page): Promise<number> {
 }
 
 /**
- * The fixture the assertions below read: three cookings inside the five-day
- * default and one beyond it but still inside the fortnight.
+ * The fixture the assertions below read: three dishes on the to-do list
+ * (#345), which is what a freshly opened shopping list adds up.
  */
-async function planTheFortnight(page: Page): Promise<{ lasagne: number }> {
+async function planTheList(page: Page): Promise<{ lasagne: number }> {
   // Twice the recipe, so every amount on it is scaled.
-  await createBatch(page, today(), KAALILAATIKKO, 2);
-  const lasagne = await createBatch(page, inDays(2), LASAGNE, 1);
+  await createBatch(page, KAALILAATIKKO, 2);
+  const lasagne = await createBatch(page, LASAGNE, 1);
   const sauce = await createSpoonedSauce(page);
-  await createBatch(page, inDays(3), sauce, 1);
-  // Beyond the five days, inside the fortnight.
-  await createBatch(page, inDays(10), KAALILAATIKKO, 1);
+  await createBatch(page, sauce, 1);
   return { lasagne };
 }
 
@@ -262,15 +241,14 @@ async function externalRequests(page: Page): Promise<
   }).requests;
 }
 
-test("the list opens on the next five days' cookings", async ({ page }) => {
-  await planTheFortnight(page);
+test("the list opens on every dish on the to-do list", async ({ page }) => {
+  await planTheList(page);
   await page.goto("/ostoslista");
 
-  // The fortnight is all offered; only the imminent part is ticked.
-  await expect(page.locator(".shopping-meals li")).toHaveCount(4);
+  await expect(page.locator(".shopping-meals li")).toHaveCount(3);
   await expect(page.locator(".shopping-meals input:checked")).toHaveCount(3);
   await expect(page.locator(".shopping-picker > summary")).toContainText(
-    "3/4 valittu",
+    "3/3 valittu",
   );
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -279,7 +257,7 @@ test("the list opens on the next five days' cookings", async ({ page }) => {
 });
 
 test("what the selected cookings add up to", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // Kaalilaatikko at 2×: ½ dl of oil becomes 1 dl.
@@ -307,7 +285,7 @@ test("what the selected cookings add up to", async ({ page }) => {
 test("an external product can be selected, persisted, and replaced", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
@@ -376,7 +354,7 @@ test("a recipe's two tins of tuna buy two tins, not one (#325)", async ({ page }
   });
   expect(response.status()).toBe(302);
   const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
-  await createBatch(page, today(), recipe, 1);
+  await createBatch(page, recipe, 1);
   await page.goto("/ostoslista");
 
   const tuna = namedRow(page, "tonnikala");
@@ -413,8 +391,8 @@ test("a cabbage with no unit adds up with one counted in kpl (#331)", async ({ p
   expect(response.status()).toBe(302);
   const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
   // The seed's kaalilaatikko asks for ½ kpl of the same cabbage.
-  await createBatch(page, today(), KAALILAATIKKO, 1);
-  await createBatch(page, today(), recipe, 1);
+  await createBatch(page, KAALILAATIKKO, 1);
+  await createBatch(page, recipe, 1);
   await page.goto("/ostoslista");
 
   const cabbage = namedRow(page, "valkokaali");
@@ -452,7 +430,7 @@ test("a bag also written in kilos buys enough 500 g bags, and sends that count (
   });
   expect(response.status()).toBe(302);
   const recipe = Number((response.headers()["location"] ?? "").split("/").pop());
-  await createBatch(page, today(), recipe, 2);
+  await createBatch(page, recipe, 2);
   await page.goto("/ostoslista");
 
   const bag = namedRow(page, "peruna-sipulisekoitus");
@@ -479,7 +457,7 @@ test("a bag also written in kilos buys enough 500 g bags, and sends that count (
 test("the chosen product's picture is on the row, and the row is no taller", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");
@@ -517,15 +495,15 @@ test("the chosen product's picture is on the row, and the row is no taller", asy
 test("product selection preserves an explicit non-default meal selection", async ({
   page,
 }) => {
-  await planTheFortnight(page);
-  const futureLasagne = await createBatch(page, inDays(11), LASAGNE, 1);
+  await planTheList(page);
+  const anotherLasagne = await createBatch(page, LASAGNE, 1);
   await page.goto("/ostoslista");
   await page.locator(".shopping-picker > summary").click();
   const checked = page.locator(".shopping-meals input:checked");
   for (let at = (await checked.count()) - 1; at >= 0; at -= 1) {
     await checked.nth(at).uncheck();
   }
-  await page.locator(`.shopping-meals input[value="${futureLasagne}"]`).check();
+  await page.locator(`.shopping-meals input[value="${anotherLasagne}"]`).check();
   await page.getByRole("button", { name: "Päivitä lista" }).click();
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
@@ -534,12 +512,12 @@ test("product selection preserves an explicit non-default meal selection", async
   );
   await expect(page.locator(".shopping-meals input:checked")).toHaveCount(1);
   await expect(
-    page.locator(`.shopping-meals input[value="${futureLasagne}"]`),
+    page.locator(`.shopping-meals input[value="${anotherLasagne}"]`),
   ).toBeChecked();
 });
 
 test("a forged product result is refused and never persisted", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // The selection the screen is showing, so the post below is the one the
@@ -581,7 +559,7 @@ test("a missing CDN image is hidden without breaking product choice", async ({ p
   await page.route("**/6415712506032_kuva1.jpg", (route) =>
     route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
   );
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   const milk = row(page, "maito");
   await openShoppingRow(milk);
@@ -596,7 +574,7 @@ test("a missing CDN image is hidden without breaking product choice", async ({ p
 test("the next ingredient's search is fetched while this one is open", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const names = await buyRowNames(page);
@@ -623,7 +601,7 @@ test("the next ingredient's search is fetched while this one is open", async ({
 test("a prefetched search is never shown for another ingredient", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const names = await buyRowNames(page);
@@ -648,7 +626,7 @@ test("a prefetched search is never shown for another ingredient", async ({
 test("a choice returns to the list at once and saves behind it", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // Hold the save open, so what the row shows meanwhile is the whole point.
@@ -709,7 +687,7 @@ test("a choice returns to the list at once and saves behind it", async ({
 test("choosing a product never moves the page under the member", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
 
@@ -900,7 +878,7 @@ async function stillWhereItLeft(page: Page, rowName: string): Promise<void> {
 test("a reload after adding a package size keeps the list where it was", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
@@ -925,7 +903,7 @@ test("a reload after adding a package size keeps the list where it was", async (
  * pressed row's surviving neighbour, not on the list.
  */
 test("the cupboard button leaves the list where it was", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const oil = namedRow(page, "öljy");
@@ -964,7 +942,7 @@ test("the cupboard button leaves the list where it was", async ({ page }) => {
 test("removing a row from the cupboard leaves that list where it was", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   for (const name of ["öljy", "vesi"]) {
@@ -1003,7 +981,7 @@ test("removing a row from the cupboard leaves that list where it was", async ({
  * row changed, by a plain link, and nothing moving under the thumb.
  */
 test("ticking a row off leaves the list where it was", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await scrollDownTheList(page, "öljy");
 
@@ -1034,7 +1012,7 @@ test("ticking a row off leaves the list where it was", async ({ page }) => {
 test("a cupboard move never anchors on another row of the same ingredient", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // Pin the lasagne's milk to its own product, which splits the milk into two
@@ -1082,7 +1060,7 @@ test.describe("with a screen shorter than the list", () => {
   test("a cupboard section that empties does not drop the list to the top", async ({
     page,
   }) => {
-    await planTheFortnight(page);
+    await planTheList(page);
     await page.goto("/ostoslista");
 
     const oil = namedRow(page, "öljy");
@@ -1139,7 +1117,7 @@ test.describe("with a screen shorter than the list", () => {
 test("reading a row leaves no place behind for the next visit", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await scrollDownTheList(page);
 
@@ -1153,10 +1131,10 @@ test("reading a row leaves no place behind for the next visit", async ({
   const tabs = page.locator(".tabs");
   await Promise.all([
     page.waitForEvent("load"),
-    tabs.getByRole("link", { name: "Viikko" }).click(),
+    tabs.getByRole("link", { name: "Kokattavat" }).click(),
   ]);
   await expect(
-    page.getByRole("heading", { name: "Viikko", exact: true }),
+    page.getByRole("heading", { name: "Kokattavat", exact: true }),
   ).toBeVisible();
   await Promise.all([
     page.waitForEvent("load"),
@@ -1222,7 +1200,7 @@ test("a row left off this list is not sent, and the cupboard never hears it", as
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await leaveOff(page, "vesi");
 
@@ -1256,7 +1234,7 @@ test("a row left off this list is not sent, and the cupboard never hears it", as
 test("a row left off stays where it was and comes back with one tap", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   const before = await buyRowNames(page);
 
@@ -1281,7 +1259,7 @@ test("a row left off stays where it was and comes back with one tap", async ({
 test("the cupboard and the left-off list stay two separate answers", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await leaveOff(page, "vesi");
 
@@ -1306,7 +1284,7 @@ test("the cupboard and the left-off list stay two separate answers", async ({
 test("leaving a row off survives a trip through another form", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await leaveOff(page, "vesi");
 
@@ -1321,7 +1299,7 @@ test("leaving a row off survives a trip through another form", async ({
 });
 
 test("a junk row key on the query string leaves nothing off", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista?pois=%3Cscript%3E&pois=999");
 
   await expect(leftOff(page)).toHaveCount(0);
@@ -1353,7 +1331,7 @@ function carriedKeys(page: Page) {
 test("changing which cookings are on the list keeps the left-off rows off", async ({
   page,
 }) => {
-  const { lasagne } = await planTheFortnight(page);
+  const { lasagne } = await planTheList(page);
   await page.goto("/ostoslista");
   await leaveOff(page, "vesi");
   await expect(carriedKeys(page)).toHaveCount(1);
@@ -1373,7 +1351,7 @@ test("changing which cookings are on the list keeps the left-off rows off", asyn
 test("a left-off row whose cooking is gone stops being carried", async ({
   page,
 }) => {
-  const { lasagne } = await planTheFortnight(page);
+  const { lasagne } = await planTheList(page);
   await page.goto("/ostoslista");
   // Jauheliha is the lasagne's alone, so unticking it takes the row away.
   await leaveOff(page, "jauheliha");
@@ -1409,7 +1387,7 @@ function groupTitles(page: Page) {
 }
 
 test("the pills cut the same rows into one section per dish", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   const flat = await buyRowNames(page);
   await expect(groupTitles(page)).toHaveCount(0);
@@ -1450,7 +1428,7 @@ test("the pills cut the same rows into one section per dish", async ({ page }) =
 test("the grouping rides along with everything else the list carries", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await groupBy(page, "Resepteittäin");
   await leaveOff(page, "vesi");
@@ -1473,7 +1451,7 @@ test("the grouping rides along with everything else the list carries", async ({
 });
 
 test("sending waits for an optimistic product save", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   let release: () => void = () => {};
@@ -1541,7 +1519,7 @@ test("sending waits for an optimistic product save", async ({ page }) => {
 test("a failed background save is shown, undone, and retryable", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   let failing = true;
@@ -1623,7 +1601,7 @@ test("a failed background save is shown, undone, and retryable", async ({
 });
 
 test("the send button spins and cannot be pressed twice", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
 
@@ -1655,7 +1633,7 @@ test("the send button spins and cannot be pressed twice", async ({ page }) => {
 test("the shopping screen shows what the S list already holds, and refreshes it", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   await currentListLoaded(page);
@@ -1684,7 +1662,7 @@ test("the panel leaves out the rows the S list has already collected", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   const before = await sendAndReadPanel(page);
@@ -1709,7 +1687,7 @@ test("a product and a text row can each be taken off the S list from the panel",
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   const before = await sendAndReadPanel(page);
@@ -1779,7 +1757,7 @@ test("a delete the service refuses puts the row back where it was", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   const before = await sendAndReadPanel(page);
@@ -1814,7 +1792,7 @@ test("a row the S list has already lost still leaves the panel", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
   await sendAndReadPanel(page);
@@ -1836,7 +1814,7 @@ test("a row the S list has already lost still leaves the panel", async ({
 test("an unreadable S list is a line in its own panel, not a broken screen", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   let failing = true;
   await page.route("**/ostoslista/s-lista", async (route) => {
     if (!failing) return route.continue();
@@ -1870,7 +1848,7 @@ test.describe("without JavaScript", () => {
   test("the product screen and the send form still work on their own", async ({
     page,
   }) => {
-    await planTheFortnight(page);
+    await planTheList(page);
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");
@@ -1893,7 +1871,7 @@ test.describe("without JavaScript", () => {
   });
 
   test("a row can still be left off this list", async ({ page }) => {
-    await planTheFortnight(page);
+    await planTheList(page);
     await page.goto("/ostoslista");
     await leaveOff(page, "vesi");
 
@@ -1908,7 +1886,7 @@ test("a product the shop no longer knows goes by name and asks for a new pick (#
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
@@ -1950,7 +1928,7 @@ test("sending uses stored EANs, note fallbacks, and excludes the pantry", async 
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
@@ -1989,7 +1967,7 @@ test("a send puts an already-ticked row back to still-to-buy (#236)", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
@@ -2036,7 +2014,7 @@ test("a finished send pushes the phone's list once, after the last item", async 
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
@@ -2062,7 +2040,7 @@ test("a finished send pushes the phone's list once, after the last item", async 
 });
 
 test("a partial send does not push the phone's list", async ({ page, request }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   // A refusal the service will give again however often it is asked, so this
@@ -2084,7 +2062,7 @@ test("a row the service refuses is named, and the rest of the list still goes (#
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
@@ -2110,7 +2088,7 @@ test("a moment's congestion is ridden out rather than reported (#308)", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`);
@@ -2131,7 +2109,7 @@ test("a failed push is said beside the send, not instead of it", async ({
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   await currentListLoaded(page);
   await request.post(`${S_OSTOSLISTA_FIXTURE}/_test/fail-sync`);
@@ -2155,7 +2133,7 @@ test("an external outage refuses recoverably without replacing the list", async 
   page,
   request,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
   // The current-list read is an external call too, so let it finish before
   // arming the fixture — otherwise it, not the send, would take the outage.
@@ -2173,7 +2151,7 @@ test("an external outage refuses recoverably without replacing the list", async 
 });
 
 test("a failed product search keeps the local ingredient unmapped", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista/tuote?rivi=9&haku=virhe");
   await expect(page.locator(".refused")).toContainText("tuotehakua ei saatu avattua");
 
@@ -2184,7 +2162,7 @@ test("a failed product search keeps the local ingredient unmapped", async ({ pag
 });
 
 test("an ingredient opens to say where its total came from", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");
@@ -2207,7 +2185,7 @@ test("an ingredient opens to say where its total came from", async ({ page }) =>
 });
 
 test("unticking a cooking takes its ingredients with it", async ({ page }) => {
-  const { lasagne } = await planTheFortnight(page);
+  const { lasagne } = await planTheList(page);
   await page.goto("/ostoslista");
 
   await page.locator(".shopping-picker > summary").click();
@@ -2223,13 +2201,11 @@ test("unticking a cooking takes its ingredients with it", async ({ page }) => {
   );
 });
 
-test("ticking one further out adds it", async ({ page }) => {
-  await planTheFortnight(page);
+test("a second cooking of the same dish adds to it", async ({ page }) => {
+  await planTheList(page);
+  // A second Kaalilaatikko on the list, at 1×.
+  await createBatch(page, KAALILAATIKKO, 1);
   await page.goto("/ostoslista");
-
-  await page.locator(".shopping-picker > summary").click();
-  await page.locator(".shopping-meals input").last().check();
-  await page.getByRole("button", { name: "Päivitä lista" }).click();
 
   await expect(page.locator(".shopping-picker > summary")).toContainText(
     "4/4 valittu",
@@ -2241,7 +2217,7 @@ test("ticking one further out adds it", async ({ page }) => {
 test("unticking everything is a thing a member is allowed to mean", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista?valittu=1");
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Ostoslista");
@@ -2252,45 +2228,23 @@ test("unticking everything is a thing a member is allowed to mean", async ({
   await expect(page.locator(".shopping-picker[open]")).toHaveCount(1);
 });
 
-test("a cooking that feeds several days is bought for once", async ({ page }) => {
-  const id = await createBatch(page, today(), KAALILAATIKKO, 2);
-
-  await page.goto("/ostoslista");
-  await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1 dl");
-
-  // The same pot, now covering three days and four meals.
-  const spread = await page.request.patch(`/api/batches/${id}`, {
-    data: {
-      instanceKey: batchKeys.get(id),
-      occurrences: [
-        { date: today(), slot: "dinner" },
-        { date: inDays(1), slot: "lunch" },
-        { date: inDays(1), slot: "dinner" },
-        { date: inDays(2), slot: "lunch" },
-      ],
-    },
+test("a dish already cooked is not shopped for", async ({ page }) => {
+  const id = await createBatch(page, KAALILAATIKKO, 2);
+  const cooked = await page.request.patch(`/api/batches/${id}`, {
+    data: { instanceKey: batchKeys.get(id), cooked: true },
   });
-  expect(spread.status()).toBe(204);
-
-  await page.goto("/ostoslista");
-  await expect(row(page, "öljy").locator(".shopping-total")).toHaveText("1 dl");
-  await openShoppingRow(row(page, "öljy"));
-  await expect(row(page, "öljy").locator(".shopping-from li")).toHaveCount(1);
-});
-
-test("a cooking already behind us is not shopped for", async ({ page }) => {
-  await createBatch(page, inDays(-1), KAALILAATIKKO, 2);
+  expect(cooked.status()).toBe(204);
 
   await page.goto("/ostoslista");
   await expect(page.locator(".shopping-meals li")).toHaveCount(0);
-  await expect(page.locator(".empty")).toContainText("ei kokata mitään");
+  await expect(page.locator(".empty")).toContainText("Kokattavien listalla ei ole");
 });
 
 test("another household's cookings are not on our list", async ({
   page,
   browser,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
 
   const context = await browser.newContext();
   await context.addCookies([sessionCookie(2)]);
@@ -2324,7 +2278,7 @@ test("another household's batch id on the query string buys nothing", async ({
   page,
   browser,
 }) => {
-  const { lasagne } = await planTheFortnight(page);
+  const { lasagne } = await planTheList(page);
 
   const context = await browser.newContext();
   await context.addCookies([sessionCookie(2)]);
@@ -2372,7 +2326,7 @@ async function chooseAndReload(page: Page, product: string): Promise<void> {
 }
 
 test("an ingredient can be taught a second package size", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
@@ -2394,7 +2348,7 @@ test("an ingredient can be taught a second package size", async ({ page }) => {
 });
 
 test("a package size can be dropped again", async ({ page }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
@@ -2419,7 +2373,7 @@ test("a package size can be dropped again", async ({ page }) => {
 test("a recipe's own product is not merged into the generic pile", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // Both cookings want milk: the lasagne in decilitres, the sauce in spoons.
@@ -2459,7 +2413,7 @@ test("changing a pinned row changes that dish's product, not the ingredient's", 
   // Lasagne" used to write the *global* ingredient mapping: the override went
   // on winning when the row was read back, so the row showed a product the
   // list would not use, and every other dish changed instead.
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");
@@ -2494,8 +2448,8 @@ test("changing a pinned row changes that dish's product, not the ingredient's", 
 test("the packet count follows what the week actually needs", async ({ page }) => {
   // 5 dl from one lasagne and 10 dl from a double batch: 1,5 l of milk, which
   // one litre does not cover and two do.
-  await createBatch(page, today(), LASAGNE, 1);
-  await createBatch(page, inDays(1), LASAGNE, 2);
+  await createBatch(page, LASAGNE, 1);
+  await createBatch(page, LASAGNE, 2);
   await page.goto("/ostoslista");
 
   await expect(row(page, "maito").locator(".shopping-total")).toHaveText("15 dl");
@@ -2512,8 +2466,8 @@ test("the packet count follows what the week actually needs", async ({ page }) =
 test("a second packet is said to the S list as the row's quantity", async ({
   page,
 }) => {
-  await createBatch(page, today(), LASAGNE, 1);
-  await createBatch(page, inDays(1), LASAGNE, 2);
+  await createBatch(page, LASAGNE, 1);
+  await createBatch(page, LASAGNE, 2);
   await page.goto("/ostoslista");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
 
@@ -2542,8 +2496,8 @@ test("two recipes needing the same product keep it a product, at two packets", a
   // 400 g product chosen for it, and a send that used to leave the phone
   // holding "jauheliha × 2" as text instead of two packets of the product.
   const meatloaf = await createMeatloaf(page);
-  await createBatch(page, today(), LASAGNE, 1);
-  await createBatch(page, inDays(1), meatloaf, 1);
+  await createBatch(page, LASAGNE, 1);
+  await createBatch(page, meatloaf, 1);
   await page.goto("/ostoslista");
 
   await expect(row(page, "jauheliha").locator(".shopping-total")).toHaveText("800 g");
@@ -2576,8 +2530,8 @@ test("a product two rows both reach is sent once, at the total (#240)", async ({
   // both rows the same product and the phone must still end up with the trip's
   // total rather than whichever row went last.
   const meatloaf = await createMeatloaf(page);
-  await createBatch(page, today(), LASAGNE, 1);
-  await createBatch(page, inDays(1), meatloaf, 1);
+  await createBatch(page, LASAGNE, 1);
+  await createBatch(page, meatloaf, 1);
   await page.goto("/ostoslista");
 
   await chooseProduct(page, "jauheliha", "Kotimaista nauta-sikajauheliha");
@@ -2615,7 +2569,7 @@ test("choosing a product after a text send replaces the text row (#244)", async 
   // The report, step by step: milk goes as `maito — 5 dl` because nothing is
   // mapped to it, the household then finds the product, and the next send used
   // to leave both on the phone's list.
-  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, LASAGNE, 1);
   await page.goto("/ostoslista");
   await expect(row(page, "maito").locator(".shopping-total")).toHaveText("5 dl");
 
@@ -2645,14 +2599,14 @@ test("a note whose amount has changed since the last send is still replaced", as
 }) => {
   // The reason the note is written down rather than recomputed: the key
   // contains the amount, and next week's list cannot spell last week's key.
-  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, LASAGNE, 1);
   await page.goto("/ostoslista");
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toBeVisible();
   expect(await listNames(request)).toContain("maito — 5 dl");
 
   // A second, doubled cooking: the same ingredient, a different note.
-  await createBatch(page, inDays(1), LASAGNE, 2);
+  await createBatch(page, LASAGNE, 2);
   await page.goto("/ostoslista");
   await expect(row(page, "maito").locator(".shopping-total")).toHaveText("15 dl");
   await chooseProduct(page, "maito", "Kotimaista rasvaton maito");
@@ -2669,7 +2623,7 @@ test("a send never removes a row the household added itself", async ({
   page,
   request,
 }) => {
-  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, LASAGNE, 1);
   await page.goto("/ostoslista");
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toBeVisible();
@@ -2693,7 +2647,7 @@ test("a send that fails partway still replaces the note on the retry (#244)", as
   page,
   request,
 }) => {
-  await createBatch(page, today(), LASAGNE, 1);
+  await createBatch(page, LASAGNE, 1);
   await page.goto("/ostoslista");
   await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
   await expect(page.locator(".shopping-sent")).toBeVisible();
@@ -2814,7 +2768,7 @@ async function createMeatloaf(page: Page): Promise<number> {
 test("an unreadable package size is asked for rather than guessed", async ({
   page,
 }) => {
-  await planTheFortnight(page);
+  await planTheList(page);
   await page.goto("/ostoslista");
 
   // The fixture's coffee is named "Juhla Mokka kahvi 500 g", so its size is
@@ -2835,7 +2789,7 @@ test.describe("choosing a scope without JavaScript", () => {
   test("a recipe's own product can be chosen from the plain screen", async ({
     page,
   }) => {
-    await planTheFortnight(page);
+    await planTheList(page);
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");

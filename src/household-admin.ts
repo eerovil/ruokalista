@@ -63,7 +63,7 @@ export async function householdListScreen(
   return page(
     "Householdit",
     householdListBody(await allHouseholds(env.DB), null),
-    "week",
+    "cook-list",
     member,
   );
 }
@@ -88,7 +88,7 @@ export async function createHouseholdForm(
         message: error.message,
         values: { name },
       }),
-      "week",
+      "cook-list",
       member,
       400,
     );
@@ -238,7 +238,7 @@ async function renderHousehold(
   return page(
     household.name,
     householdBody(household, members, invitations, refusal),
-    "week",
+    "cook-list",
     member,
     status,
   );

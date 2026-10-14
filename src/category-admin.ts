@@ -327,7 +327,7 @@ export async function categoryDeleteScreen(
       </form>
       <p><a href="/admin/kategoriat">Peruuta</a></p>
       ${CATEGORY_ADMIN_STYLE}`,
-    "week",
+    "cook-list",
     member,
   );
 }
@@ -393,7 +393,7 @@ async function listPage(
         <button type="submit">Lisää kategoria</button>
       </form>
       ${CATEGORY_STYLE} ${CATEGORY_ADMIN_STYLE}`,
-    "week",
+    "cook-list",
     member,
     notice?.refused === true ? 400 : 200,
   );
@@ -463,7 +463,7 @@ function notFound(member: Member): Response {
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>
       <p class="empty">Tätä kategoriaa ei ole.</p>`,
-    "week",
+    "cook-list",
     member,
     404,
   );

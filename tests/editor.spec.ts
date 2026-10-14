@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { closeEditBlock, openEditBlock } from "./support/blocks";
+import { cookedOn, listDish } from "./support/cook-list";
 import {
   addIngredientRow,
   closeLineEditor,
@@ -339,18 +340,27 @@ test("deleting a dish says what goes with it", async ({ page }) => {
   );
 });
 
-test("a recipe on the menu cannot be deleted", async ({ page }) => {
-  await putOnMenu(page, "2026-11-02", "lunch", "Kaalilaatikko");
+test("a recipe on the to-do list cannot be deleted", async ({ page }) => {
+  await listDish(page, 1);
 
   await page.goto("/recipes/1/edit");
   await page.getByRole("link", { name: "Poista resepti" }).click();
 
   // Refused at the confirmation, before anything is asked of the reader.
   await expect(page.getByRole("heading", { name: "Ei voi poistaa" })).toBeVisible();
-  await expect(page.locator(".refused")).toContainText("ruokalistalla");
+  await expect(page.locator(".refused")).toContainText("kokattavien listalla");
 
   const api = await page.request.delete("/api/recipes/1");
   expect(api.status()).toBe(409);
+});
+
+test("a recipe that was only ever cooked can be deleted, its history with it", async ({ page }) => {
+  // Cooked, and so off the list: nobody still means to cook it (#345).
+  await cookedOn(page, 2, "2026-01-05");
+
+  const api = await page.request.delete("/api/recipes/2");
+  expect(api.status()).toBe(204);
+  expect((await page.request.get("/api/recipes/2")).status()).toBe(404);
 });
 
 test("deleting a recipe asks first", async ({ page }) => {
@@ -480,20 +490,6 @@ test.describe("ingredients", () => {
     }
   });
 });
-
-async function putOnMenu(
-  page: Page,
-  date: string,
-  slot: string,
-  title: string,
-): Promise<void> {
-  await page.goto(`/picker?date=${date}&slot=${slot}`);
-  await page
-    .locator(".pick li", { hasText: title })
-    .getByRole("button", { name: "Lisää" })
-    .click();
-  await expect(page).toHaveURL(/\/\?week=/);
-}
 
 /**
  * A dish written entirely in named parts (issue #184). Every ingredient sits on

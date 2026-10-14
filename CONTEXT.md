@@ -47,6 +47,20 @@ record of its own and not owned by anything; asking for a menu is asking a
 question about dates.
 _Avoid_: Meal plan, week, schedule
 
+ADR-0017 proposes replacing the dated menu with the **to-do list** below. Until
+that proposal merges, menu remains the live term above.
+
+**To-do list** (_Kokattavat_):
+The dishes a household means to cook, with no days and no meals. A dish gets on
+it from its recipe page and leaves it when it is cooked or taken off. Each entry
+is a planned batch with no occurrences.
+_Avoid_: Queue, backlog, menu, plan
+
+**Cooked** (_Kokattu_):
+What happens to a dish on the to-do list when somebody taps Kokattu: it leaves
+the list, and the recipe's cooking history counts it on that day.
+_Avoid_: Done, eaten, finished
+
 **Meal entry**:
 One recipe placed on one date in one slot, with a portion count. The unit the
 whole app is built from.

@@ -19,16 +19,9 @@ test.beforeEach(async ({ context }) => {
 
 const KAALILAATIKKO = 1;
 
-/** Today in Helsinki, which is what the Worker means by today. */
-function today(): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
-}
-
 async function planKaalilaatikko(page: Page): Promise<void> {
   const response = await page.request.post("/api/batches", {
-    data: { date: today(), slot: "dinner", recipeId: KAALILAATIKKO, multiplier: 1 },
+    data: { recipeId: KAALILAATIKKO, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
 }
@@ -98,7 +91,7 @@ test("the selected cookings survive a trip through the cupboard", async ({
   // A second cooking, unticked, so the selection is something other than the
   // default and a lost one would show.
   await page.request.post("/api/batches", {
-    data: { date: today(), slot: "lunch", recipeId: 3, multiplier: 1 },
+    data: { recipeId: 3, multiplier: 1 },
   });
 
   await page.goto("/ostoslista");

@@ -62,7 +62,7 @@ export const OFFLINE_PAGE = `<!doctype html>
 <main>
   <img src="/icon-192.png" alt="">
   <h1>Ruokalista odottaa verkkoyhteyttä</h1>
-  <p>Ajantasaiset reseptit ja viikon ruokalista eivät ole käytettävissä ilman verkkoyhteyttä.</p>
+  <p>Ajantasaiset reseptit ja kokattavien lista eivät ole käytettävissä ilman verkkoyhteyttä.</p>
   <button type="button" onclick="location.reload()">Yritä uudelleen</button>
 </main>
 <script>

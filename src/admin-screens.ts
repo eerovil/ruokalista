@@ -73,7 +73,7 @@ export function adminScreen(_ctx: RouteContext, member: Member): Response {
         Kirjautuneena: ${member.displayName}. Ylläpitäjyys merkitään käsin
         tietokantaan, samoin kuin jäsenyyskin.
       </p>`,
-    "week",
+    "cook-list",
     member,
   );
 }

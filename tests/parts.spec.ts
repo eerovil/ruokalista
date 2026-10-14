@@ -64,7 +64,7 @@ test("what belongs to the dish itself stays on the dish", async ({ page }) => {
   await expect(page.locator("body")).toContainText("Kokoa vuokaan");
 });
 
-test("parts are not dishes, so they are not listed or plannable", async ({
+test("parts are not dishes, so they are not listed or addable", async ({
   page,
 }) => {
   // Three of Koti's own dishes plus Naapuri's published one (#143, mixed into
@@ -74,9 +74,9 @@ test("parts are not dishes, so they are not listed or plannable", async ({
   await expect(page.locator(".recipes li")).toHaveCount(4);
   await expect(page.locator(".recipes")).not.toContainText("Jauhelihakastike");
 
-  await page.goto("/picker?date=2026-12-07&slot=lunch");
-  await expect(page.locator(".pick li")).toHaveCount(4);
-  await expect(page.locator(".pick")).not.toContainText("Juustokastike");
+  // A part's own page offers nothing to put on the to-do list.
+  await page.goto("/recipes/5");
+  await expect(page.locator(".cook-add")).toHaveCount(0);
 });
 
 test("a part can still be opened and edited on its own", async ({ page }) => {

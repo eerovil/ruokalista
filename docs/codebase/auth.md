@@ -202,8 +202,9 @@ the whole of it:
   Anything that is not "everybody" is "nobody", and this change deliberately
   does not add a way to say otherwise.
 
-Two things moved with it. `requireDish` (`src/menu.ts`) accepts a published dish
-so another household can plan one, and renaming an ingredient became an admin
+Two things moved with it. Adding a dish to the to-do list
+(`src/cook-list.ts::addToCookList`, `src/menu.ts::requireDish` before #345)
+accepts a published dish so another household can plan one, and renaming an ingredient became an admin
 operation (`requireAdminScreen`/`requireAdmin` on `/ingredients/:id/rename` and
 `PATCH /api/ingredients/:id`) because the dictionary is global now and a rename
 rewrites what every household's recipes say. Coining a new name while writing a

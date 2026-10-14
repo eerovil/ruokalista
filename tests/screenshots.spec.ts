@@ -68,22 +68,6 @@ async function capture(
   }
 }
 
-/** Monday and Sunday of the week today falls in, in Helsinki, as ISO dates. */
-function currentWeek(): [string, string] {
-  const today = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
-  const day = new Date(`${today}T00:00:00Z`);
-  const monday = new Date(day);
-  monday.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
-  return [monday, sunday].map((d) => d.toISOString().slice(0, 10)) as [
-    string,
-    string,
-  ];
-}
-
 test.beforeAll(reseed);
 
 test("sign-in", async ({ page }) => {
@@ -247,143 +231,24 @@ test.describe("signed in", () => {
     await context.addCookies([sessionCookie(1)]);
   });
 
-  test("the week", async ({ page }) => {
-    const id = await createBatch(page, "2026-10-05", "lunch", 1);
-    await setCoverage(page, id, [
-      ["2026-10-05", "lunch"],
-      ["2026-10-06", "lunch"],
-      ["2026-10-07", "lunch"],
-    ]);
-    await page.goto("/?week=2026-10-05");
-    await expect(page.locator(".batch-start")).toBeVisible();
-    await expect(page.locator(".batch-end")).toBeVisible();
-    await capture(page, { path: `${SHOTS}/02-week.png`, fullPage: true });
-  });
-
-  test("a batch spanning several days is one card", async ({ page }) => {
-    const lunches = await createBatch(page, "2026-12-07", "lunch", 1);
-    await setCoverage(page, lunches, [
-      ["2026-12-07", "lunch"],
-      ["2026-12-08", "dinner"],
-      ["2026-12-09", "lunch"],
-      ["2026-12-09", "dinner"],
-    ]);
-    const dinners = await createBatch(page, "2026-12-07", "dinner", 2);
-    await setCoverage(page, dinners, [
-      ["2026-12-07", "dinner"],
-      ["2026-12-08", "lunch"],
-    ]);
-
-    await page.goto("/?week=2026-12-07");
-    await expect(page.locator(".batch-card")).toHaveCount(2);
-    await expect(page.locator(".day").first().locator(".batch-card")).toHaveCount(2);
-    await expect(page.locator(".batch-when-day")).toHaveCount(5);
-    await expect(page.locator(".batch-end")).toHaveCount(2);
-    const tuesday = page.locator(".day").nth(1);
-    await expect(tuesday.locator(".covered-status")).toHaveText("✓ katettu");
-    await expect(tuesday.locator(".continuing-row")).toHaveCount(2);
-    await expect(tuesday.locator(".continuing-title")).toHaveText([
-      "Öljykastike",
-      "Kaalilaatikko",
-    ]);
-    await expect(tuesday.locator(".continuing-slots")).toHaveText([
-      "Lounas",
-      "Päivällinen",
-    ]);
-    await expect(tuesday.locator(".slot-actions a")).toHaveText([
-      "+ Lounas",
-      "+ Päivällinen",
-    ]);
-    const wednesday = page.locator(".day").nth(2);
-    await expect(wednesday.locator(".continuing-slots")).toHaveText(
-      "Lounas · Päivällinen",
-    );
-    await capture(page, {
-      path: `${SHOTS}/24-multi-day-batch.png`,
-      fullPage: true,
-    });
-
-    // A second, cropped shot for #138 rather than repurposing the one above:
-    // full-page, the fixed bottom tabs land across Tuesday's second row, and
-    // the covered days are the whole point of this one.
-    await tuesday.evaluate((element) => {
-      window.scrollTo(
-        0,
-        element.getBoundingClientRect().top + window.pageYOffset - 80,
-      );
-    });
-    expect(await page.evaluate(() => window.pageYOffset)).toBeGreaterThan(0);
-    await expect(tuesday.locator(".continuing-card")).toBeInViewport();
-    await expect(tuesday.locator(".slot-actions")).toBeInViewport();
-    await expect(wednesday.locator(".continuing-card")).toBeInViewport();
-    await capture(page, { path: `${SHOTS}/49-covered-days.png` });
-  });
-
-  /**
-   * Deliberately not `fullPage`: what it is evidence of is where the viewport
-   * lands, and a full-page capture cannot show that.
-   */
-  test("an empty current week opens on today", async ({ page }) => {
-    // The shots above plant batches on fixed dates, and a fixed date is this
-    // week sooner or later; clear whatever landed in it.
-    const [monday, sunday] = currentWeek();
-    executeLocalSql(
-      `DELETE FROM planned_batch WHERE household_id = 1 AND id IN
-        (SELECT batch_id FROM batch_occurrence
-          WHERE date BETWEEN '${monday}' AND '${sunday}')`,
-    );
+  test("the to-do list", async ({ page }) => {
+    await createBatch(page, 1, 2);
+    await createBatch(page, 3, 1);
+    await createBatch(page, 2, 1);
     await page.goto("/");
-    const today = page.locator(".day.is-today");
-    // Only this week is empty: the screen shows a fortnight, and a fixed-date
-    // batch can still fall in the second one.
-    const thisWeek = page.locator(".week-block").filter({ has: today });
-    await expect(thisWeek.locator(".batch-card")).toHaveCount(0);
-    await expect(today).toBeInViewport();
-    await capture(page, { path: `${SHOTS}/36-week-empty-today.png` });
+    await expect(page.locator(".cook-item")).toHaveCount(3);
+    await capture(page, { path: `${SHOTS}/02-cook-list.png`, fullPage: true });
+    clearList();
   });
 
-  test("today in the current week", async ({ page }) => {
-    const now = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
-    const tomorrow = new Date(`${now}T00:00:00Z`);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const id = await createBatch(page, now, "lunch", 1);
-    await setCoverage(page, id, [
-      [now, "lunch"],
-      [now, "dinner"],
-      [tomorrow.toISOString().slice(0, 10), "lunch"],
-    ]);
-
-    await page.goto("/");
-    const today = page.locator(".day.is-today");
-    await expect(today.locator(".today-badge")).toHaveText("Tänään");
-    await expect(today.locator(".batch-card")).toHaveCount(1);
-    await capture(page, {
-      path: `${SHOTS}/27-week-today.png`,
-      fullPage: true,
-    });
-  });
-
-  test("what you can do to a planned meal", async ({ page }) => {
-    await page.goto("/picker?date=2026-10-13&slot=dinner");
-    await page
-      .locator(".pick li", { hasText: "Kaalilaatikko" })
-      .getByRole("button", { name: "Lisää" })
-      .click();
-    await page.locator(".day .batch-edit").first().click();
+  test("what you can do to a dish on the list", async ({ page }) => {
+    await page.goto("/recipes/1");
+    await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
+    await page.locator(".cook-edit").first().click();
     await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
-    await expect(page.locator("input[name=date]")).toHaveValue("2026-10-13");
-    await capture(page, { path: `${SHOTS}/15-meal-actions.png`, fullPage: true });
-  });
-
-  test("the recipe picker", async ({ page }) => {
-    await page.goto("/picker?date=2026-10-06&slot=dinner");
-    await expect(page.locator(".pick li").first()).toBeVisible();
-    const multipliers = page.locator(".pick-multiplier");
-    await expect(multipliers).toHaveCount(4);
-    await expect(multipliers.first()).toHaveValue("1×");
-    await capture(page, { path: `${SHOTS}/03-picker.png`, fullPage: true });
+    await expect(page.getByRole("button", { name: "Kokattu" })).toHaveCount(0);
+    await capture(page, { path: `${SHOTS}/15-dish-actions.png`, fullPage: true });
+    clearList();
   });
 
   test("recipe list", async ({ page }) => {
@@ -562,16 +427,12 @@ test.describe("signed in", () => {
     await expect(page.locator(".recipes .recipe-image img")).toBeVisible();
     await capture(page, { path: `${SHOTS}/24-recipes-images.png`, fullPage: true });
 
-    await page.goto("/picker?date=2026-10-05&slot=dinner");
-    await expect(page.locator(".pick .recipe-image img")).toBeVisible();
-    await capture(page, { path: `${SHOTS}/25-picker-images.png`, fullPage: true });
-
-    await page.request.post("/api/batches", {
-      data: { date: "2026-10-06", slot: "dinner", recipeId: 1, multiplier: 1 },
-    });
-    await page.goto("/?week=2026-10-05");
-    await expect(page.locator(".entry .recipe-image img").first()).toBeVisible();
-    await capture(page, { path: `${SHOTS}/26-week-images.png`, fullPage: true });
+    await createBatch(page, 1);
+    await createBatch(page, 2);
+    await page.goto("/");
+    await expect(page.locator(".cook-item .recipe-image img").first()).toBeVisible();
+    await capture(page, { path: `${SHOTS}/26-cook-list-images.png`, fullPage: true });
+    clearList();
 
     // Put it back, so the recipe every other shot photographs is unchanged.
     await page.request.delete("/api/recipes/1/image");
@@ -1216,20 +1077,15 @@ test.describe("signed in", () => {
   });
 
   /**
-   * The shopping list (#123), on a fortnight planned relative to today —
-   * because the screen's fortnight and its five-day default are relative to
-   * today too, so a fixed October week would photograph an empty screen.
+   * The shopping list (#123), worked out from two dishes on the to-do list.
    *
    * Two shots: the list as it opens, and the same list with a total opened to
    * show what it is made of.
    */
   test("the shopping list", async ({ page }) => {
-    const soon = shiftedFromToday(0);
-    const later = shiftedFromToday(2);
-
     const planned = [
-      await createBatch(page, soon, "dinner", 1, 2),
-      await createBatch(page, later, "dinner", 3, 1),
+      await createBatch(page, 1, 2),
+      await createBatch(page, 3, 1),
     ];
 
     await page.goto("/ostoslista");
@@ -1370,8 +1226,8 @@ test.describe("signed in", () => {
    */
   test("packages and a recipe's own product", async ({ page }) => {
     const planned = [
-      await createBatch(page, shiftedFromToday(0), "dinner", 3, 1),
-      await createBatch(page, shiftedFromToday(1), "dinner", 3, 2),
+      await createBatch(page, 3, 1),
+      await createBatch(page, 3, 2),
     ];
 
     await page.goto("/ostoslista");
@@ -1540,8 +1396,8 @@ test.describe("signed in", () => {
     page,
   }) => {
     const planned = [
-      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
-      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
+      await createBatch(page, 1, 2),
+      await createBatch(page, 3, 1),
     ];
     expect(
       (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
@@ -1687,8 +1543,8 @@ test.describe("signed in", () => {
    */
   test("the cupboard, and the list it splits in two", async ({ page }) => {
     const planned = [
-      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
-      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
+      await createBatch(page, 1, 2),
+      await createBatch(page, 3, 1),
     ];
 
     await page.goto("/ostoslista");
@@ -1734,8 +1590,8 @@ test.describe("signed in", () => {
     page,
   }) => {
     const planned = [
-      await createBatch(page, shiftedFromToday(0), "dinner", 1, 2),
-      await createBatch(page, shiftedFromToday(2), "dinner", 3, 1),
+      await createBatch(page, 1, 2),
+      await createBatch(page, 3, 1),
     ];
 
     await page.goto("/ostoslista");
@@ -1792,12 +1648,12 @@ test.describe("signed in", () => {
   });
 
   test("the account menu as an ordinary member sees it", async ({ page }) => {
-    await page.goto("/?week=2026-10-05");
+    await page.goto("/");
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("button", { name: "Kirjaudu ulos" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
     await capture(page, {
-      path: `${SHOTS}/28-week-not-admin.png`,
+      path: `${SHOTS}/28-home-not-admin.png`,
       fullPage: true,
     });
   });
@@ -1811,11 +1667,11 @@ test.describe("signed in as an admin", () => {
   test("the account menu, with the way into the admin surface", async ({
     page,
   }) => {
-    await page.goto("/?week=2026-10-05");
+    await page.goto("/");
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
     await capture(page, {
-      path: `${SHOTS}/29-week-admin.png`,
+      path: `${SHOTS}/29-home-admin.png`,
       fullPage: true,
     });
   });
@@ -2029,7 +1885,7 @@ test.describe("a long recipe name on a phone", () => {
     await context.addCookies([sessionCookie(1)]);
   });
 
-  test("wraps in the card head rather than being cut off", async ({ page }) => {
+  test("wraps in the list row rather than being cut off", async ({ page }) => {
     const longTitle =
       "Uunissa paahdettu kasvispaistos ja tilliperunamuusi kermaviilikastikkeella";
     await page.goto("/recipes/1/edit");
@@ -2037,53 +1893,37 @@ test.describe("a long recipe name on a phone", () => {
     await page.getByRole("button", { name: "Tallenna muutokset" }).click();
     await expect(page.getByRole("heading", { name: longTitle })).toBeVisible();
 
-    // A week of its own, so the shot holds only these two cards.
-    const cooked = await createBatch(page, "2027-03-01", "lunch", 1);
-    await setCoverage(page, cooked, [
-      ["2027-03-01", "lunch"],
-      ["2027-03-02", "lunch"],
-    ]);
-    const carried = await createBatch(page, "2027-02-28", "dinner", 1);
-    await setCoverage(page, carried, [
-      ["2027-02-28", "dinner"],
-      ["2027-03-01", "dinner"],
-    ]);
+    // A list of its own, so the shot holds only these two rows.
+    clearList();
+    await createBatch(page, 1, 1);
+    await createBatch(page, 1, 2);
 
-    await page.goto("/?week=2027-03-01");
-    // Both pills are on screen and whole before the shot is taken.
-    await expect(page.locator(".batch-start")).toHaveText("Kokataan · 1×");
-    await expect(page.locator(".batch-carried")).toHaveText(
-      "Kokattu 28.2. · 1×",
+    await page.goto("/");
+    await expect(page.locator(".cook-size")).toHaveText(["1×", "2×"]);
+    // Nothing in a row reaches past the row's own edge.
+    const overflow = await page.evaluate(() =>
+      [...document.querySelectorAll(".cook-item")].some((item) => {
+        const box = item.getBoundingClientRect();
+        return [...item.querySelectorAll(".cook-title, .cook-size, .cook-actions")].some(
+          (part) => part.getBoundingClientRect().right > box.right + 0.5,
+        );
+      }),
     );
+    expect(overflow).toBe(false);
     await capture(page, {
-      path: `${SHOTS}/37-week-long-title.png`,
+      path: `${SHOTS}/37-list-long-title.png`,
       fullPage: true,
     });
   });
 });
 
-/** A day relative to today in Helsinki, which is what the Worker means by it. */
-function shiftedFromToday(days: number): string {
-  const [year, month, day] = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  })
-    .format(new Date())
-    .split("-")
-    .map(Number) as [number, number, number];
-  const at = new Date(Date.UTC(year, month - 1, day));
-  at.setUTCDate(at.getUTCDate() + days);
-  return at.toISOString().slice(0, 10);
-}
-
 async function createBatch(
   page: Page,
-  date: string,
-  slot: "lunch" | "dinner",
   recipeId: number,
   multiplier = 1,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot, recipeId, multiplier },
+    data: { recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
   const created = (await response.json()) as { id: number; instanceKey: string };
@@ -2101,18 +1941,13 @@ async function deleteBatch(page: Page, id: number): Promise<void> {
   expect(response.status()).toBe(204);
 }
 
-async function setCoverage(
-  page: Page,
-  id: number,
-  occurrences: Array<[string, "lunch" | "dinner"]>,
-): Promise<void> {
-  const response = await page.request.patch(`/api/batches/${id}`, {
-    data: {
-      instanceKey: batchKeys.get(id),
-      occurrences: occurrences.map(([date, slot]) => ({ date, slot })),
-    },
-  });
-  expect(response.status()).toBe(204);
+/**
+ * Empty Koti's to-do list. This file reseeds once, so a shot that puts dishes
+ * on the list takes them off again, or every shopping shot below would add
+ * them up too.
+ */
+function clearList(): void {
+  executeLocalSql("DELETE FROM planned_batch WHERE household_id = 1");
 }
 
 /**
@@ -2230,12 +2065,12 @@ test.describe("public recipes", () => {
     await page.goto("/recipes/1");
     await openEditBlock(page, "preference-open");
     await page
-      .locator(".multiplier-choice")
+      .locator(".recipe-sharing .multiplier-choice")
       .getByRole("button", { name: "1,5×" })
       .click();
     await openEditBlock(page, "preference-open");
     await expect(
-      page.locator(".multiplier-choice button.is-current"),
+      page.locator(".recipe-sharing .multiplier-choice button.is-current"),
     ).toHaveText("1,5×");
     await closeEditBlock(page, "preference-open");
     await openEditBlock(page, "sharing-open");
@@ -2318,12 +2153,9 @@ test.describe("public recipes", () => {
       fullPage: true,
     });
 
-    // Naapuri plans it, which is what puts the refusal below within reach.
-    await page.goto("/picker?date=2099-01-01&slot=dinner");
-    await page
-      .locator(".pick li", { hasText: "Kaalilaatikko" })
-      .getByRole("button", { name: "Lisää" })
-      .click();
+    // Naapuri puts it on its list, which is what puts the refusal below
+    // within reach.
+    await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
 
     // And Koti, trying to take it back while somebody is about to cook it.
     await context.clearCookies();
@@ -2332,7 +2164,7 @@ test.describe("public recipes", () => {
     await openEditBlock(page, "sharing-open");
     await page.getByLabel("Oma").check();
     await page.getByRole("button", { name: "Tallenna jako" }).click();
-    await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
+    await expect(page.locator(".refused")).toContainText("kokattavien listalla");
     await capture(page, {
       path: `${SHOTS}/55-unpublish-refused.png`,
       fullPage: true,
@@ -2389,11 +2221,8 @@ test.describe("ingredient alternatives", () => {
     });
 
     // And the shopping list, which buys one of them.
-    const today = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
     const created = await page.request.post("/api/batches", {
-      data: { date: today, slot: "dinner", recipeId: 1, multiplier: 1 },
+      data: { recipeId: 1, multiplier: 1 },
     });
     expect(created.status()).toBe(201);
 

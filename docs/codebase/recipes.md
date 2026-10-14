@@ -320,8 +320,10 @@ AgentDeck bundle written before this still imports. See
 
 ## Browsing recipes, once (issue #307)
 
-`/recipes` and `/picker` are one browse surface, and that
-surface is `src/recipe-browser.ts::recipeBrowser`. Before #307 the recipe list
+`/recipes` and `/picker` were one browse surface, and that
+surface is `src/recipe-browser.ts::recipeBrowser`. `/picker` went with the meal
+calendar in #345, so `/recipes` is the one screen left; a dish goes on the to-do
+list from its own recipe page. Before #307 the recipe list
 had the search and the category chips while the week picker — the screen a
 member is standing on when they actually want to find a dish — had a search box
 and nothing else, and the two were drifting apart one feature at a time.
@@ -343,15 +345,17 @@ and nothing else, and the two were drifting apart one feature at a time.
 ### What the household has cooked
 
 `src/cook-history.ts` answers "how many times, and when last" without a new
-table. **A planned batch is one cooking** — that is already the model
-(`src/menu.ts`) — so a batch counts once, on the day of its first occurrence,
-and only once that day has come: tomorrow's plan is a plan. It is the reader's
+table. **A planned batch is one cooking** — that is already the model — so a
+batch counts once. Since #345 that is on the day it was ticked **Kokattu** on the
+to-do list (`planned_batch.cooked_on`); a dish still on the list is a plan, not a
+cooking. A batch from the old calendar counts on the day of its first
+occurrence, once that day has come. It is the reader's
 own household that is counted, never the publisher's, so a shared recipe says
 what *this* kitchen has done with it.
 
-Two consequences worth knowing before trusting the number: deleting a batch is a
-real delete, so a tidied-up week reads as a week nobody cooked; and a recipe with
-no history at all is an ordinary state, not missing data.
+Two consequences worth knowing before trusting the number: taking a dish off the
+list without cooking it is a real delete, so it leaves nothing behind; and a
+recipe with no history at all is an ordinary state, not missing data.
 
 That is also why there are three orders rather than one. **Uusimmat** is the
 order the query already returns. **Viimeksi kokatut** puts the most recent
