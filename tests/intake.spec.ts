@@ -1238,8 +1238,11 @@ test("a queued import is still visible after refresh", async ({ page }) => {
   );
 
   await page.goto("/intake");
+  // The list is folded by default (#341); its count says something is there.
+  await page.getByText("Keskeneräiset tuonnit (1)").click();
   await expect(page.getByText("Käsitellään taustalla")).toBeVisible();
   await page.reload();
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   await expect(page.getByText("Käsitellään taustalla")).toBeVisible();
   await expect(page.getByText("Pöperö")).toBeVisible();
 });
