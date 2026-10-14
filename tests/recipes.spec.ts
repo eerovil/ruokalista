@@ -281,8 +281,8 @@ test("a recipe with a known yield shows it as source metadata", async ({
 }) => {
   await page.goto("/recipes/1");
   await expect(page.locator(".source-yield")).toHaveText("Lähteessä 4 annosta");
-  // And the scaling line says what the amounts on screen are, not that.
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  // Unscaled, there is no size to say (#354).
+  await expect(page.locator(".yield")).toHaveCount(0);
 });
 
 test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
@@ -301,7 +301,7 @@ test("a recipe with no stated yield says nothing about one (#165)", async ({
 }) => {
   await page.goto("/recipes/2");
   await expect(page.locator(".source-yield")).toHaveCount(0);
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
 });
 
 test("another household's recipe is a 404, not a peek", async ({ browser }) => {

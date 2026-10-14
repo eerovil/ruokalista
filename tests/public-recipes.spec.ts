@@ -35,7 +35,7 @@ async function publish(page: Page, recipeId: number): Promise<void> {
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 }
@@ -115,7 +115,7 @@ test("selected households can be found, added and safely removed", async ({
   await page.getByLabel("Valituille").check();
   await picker.getByLabel("Naapuri").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "Tämä resepti on jaettu: Naapuri.",
   );
 
@@ -159,7 +159,7 @@ test("selected households can be found, added and safely removed", async ({
   await openEditBlock(page, "sharing-open");
   await picker.getByLabel("Mökki").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText("Mökki, Naapuri");
+  await expect(page.locator(".household-settings")).toContainText("Mökki, Naapuri");
 
   await signIn(page, 4);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
@@ -273,7 +273,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   await expect(page.locator(".refused")).toHaveCount(0);
   await expect(picker.locator('input[name="recipientId"]:checked')).toHaveCount(50);
   await openEditBlock(page, "sharing-open");
-  await expect(page.locator(".recipe-sharing .block-value.empty")).not.toContainText(
+  await expect(page.locator(".household-settings .tail-row-note")).not.toContainText(
     "Talous 51",
   );
 
@@ -281,7 +281,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   // a public target and therefore must not hit D1's binding limit.
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 });
@@ -293,7 +293,7 @@ test("the other household cannot edit a published recipe", async ({ page }) => {
   // No way in from the screen…
   await page.goto("/recipes/1");
   await expect(page.locator("a", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
-  await expect(page.locator(".recipe-sharing")).not.toContainText("Jakaminen");
+  await expect(page.locator(".household-settings")).not.toContainText("Jakaminen");
 
   // …and none by typing the address either. Editing, deleting and unpublishing
   // are all the owner's, and each refuses on its own rather than relying on the
@@ -528,7 +528,7 @@ test("unpublishing is refused while the dish is on another household's to-do lis
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toContainText("kokattavien listalla");
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 
@@ -553,7 +553,7 @@ test("a cooking that already happened does not block unpublishing", async ({
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy vain omalle taloudelle",
   );
 });

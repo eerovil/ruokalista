@@ -490,9 +490,9 @@ test.describe("signed in", () => {
     await page.goto("/recipes/1");
     const hero = page.locator(".recipe-image.is-hero img");
     await expect(hero).toBeVisible();
-    // The intended state, asserted before the shutter: the whole square is
-    // drawn inside the band rather than cropped to fill it.
-    await expect(hero).toHaveCSS("object-fit", "contain");
+    // The intended state, asserted before the shutter: the square fills a
+    // 2:1 band (#354), its middle kept.
+    await expect(hero).toHaveCSS("object-fit", "cover");
     await expect(hero).toHaveJSProperty("naturalWidth", 512);
     await capture(page, {
       path: `${SHOTS}/35-recipe-image-square.png`,
@@ -868,10 +868,14 @@ test.describe("signed in", () => {
     await page.goto("/recipes/3");
     await expect(page.locator(".part").first()).toBeVisible();
     const cookingText = await page.locator("main").innerText();
-    expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
-      cookingText.indexOf("Jauhelihakastike"),
+    // Every ingredient, then the whole method, each in cooking order (#354).
+    expect(cookingText.indexOf("maito")).toBeLessThan(
+      cookingText.indexOf("Lämmitä uuni"),
     );
-    expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
+    expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
+      cookingText.lastIndexOf("Jauhelihakastike"),
+    );
+    expect(cookingText.lastIndexOf("Juustokastike")).toBeLessThan(
       cookingText.indexOf("Kokoa vuokaan"),
     );
     await capture(page, { path: `${SHOTS}/13-dish-in-parts.png`, fullPage: true });
@@ -2086,7 +2090,7 @@ test.describe("public recipes", () => {
     await page.getByLabel("Valituille").check();
     await page.locator(".recipient-picker").getByLabel("Naapuri").check();
     await page.getByRole("button", { name: "Tallenna jako" }).click();
-    await expect(page.locator(".recipe-sharing")).toContainText(
+    await expect(page.locator(".household-settings")).toContainText(
       "Tämä resepti on jaettu: Naapuri.",
     );
     await openEditBlock(page, "sharing-open");

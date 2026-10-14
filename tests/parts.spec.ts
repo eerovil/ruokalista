@@ -46,11 +46,11 @@ test("a dish shows each part with its own ingredients and method", async ({
   await expect(methods.nth(1)).toContainText("sulata juusto");
   await expect(parts.nth(0)).not.toContainText("Ruskista jauheliha.");
 
-  // Every ingredient first, then the whole method (#354): the dish's own, then
-  // each part in turn, and the dish's assembly last, under Lopuksi.
+  // Every ingredient first, then the whole method (#354), both in cooking
+  // order: each part in turn, and the dish's own assembly last, under Lopuksi.
   const cookingText = await page.locator("main").innerText();
-  expect(cookingText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
-    cookingText.indexOf("Jauhelihakastike"),
+  expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
+    cookingText.indexOf("12 kpl lasagnelevy"),
   );
   expect(cookingText.indexOf("maito")).toBeLessThan(
     cookingText.indexOf("Voitele vuoka"),
@@ -265,6 +265,9 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
   const importedText = await page.locator("main").innerText();
   expect(importedText.indexOf("Lämmitä uuni.")).toBeLessThan(
     importedText.lastIndexOf("Jauhelihakastike"),
+  );
+  expect(importedText.indexOf("Juustokastike")).toBeLessThan(
+    importedText.indexOf("12 kpl lasagnelevy"),
   );
   expect(importedText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
     importedText.indexOf("Lämmitä uuni."),

@@ -23,7 +23,8 @@ test("from the recipe list, a recipe reads exactly as written", async ({
 }) => {
   await page.goto("/recipes/1");
 
-  await expect(page.locator(".yield")).toContainText("1× · resepti sellaisenaan");
+  // Unscaled, the page says nothing about size at all (#354).
+  await expect(page.locator(".yield")).toHaveCount(0);
   const lines = page.locator(".lines li");
   await expect(lines.nth(0)).toContainText("½ dl");
   await expect(lines.nth(1)).toContainText("1–1½ l");
@@ -86,7 +87,7 @@ test("which amounts you are looking at is obvious from the top", async ({
 
 test("1× is the recipe as written", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=1");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
@@ -96,7 +97,7 @@ test("a recipe with no stated yield scales like any other (#165)", async ({
   // Öljykastike: the source never said what it makes. Before #165 this screen
   // could only apologise; now the recipe as written is 1× and 2× is 2×.
   await page.goto("/recipes/2");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").nth(1)).toContainText("2 dl");
 
   await page.goto("/recipes/2?multiplier=2");
@@ -110,7 +111,7 @@ test("a nonsense multiplier is ignored rather than obeyed", async ({ page }) => 
   // One bad value proves the screen falls back; which values are bad is
   // dev/check-scaling.ts's job (#347).
   await page.goto("/recipes/1?multiplier=puoltatoista");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 

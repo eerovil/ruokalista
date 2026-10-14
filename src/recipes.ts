@@ -741,11 +741,11 @@ function stepList(
 }
 
 /**
- * The ingredients and the method (#354): every ingredient first, the dish's
- * own and then each part's under its name, and then the whole method in the
- * same order — so a cook reads the shopping half and the cooking half of a
- * dish in parts each in one go. Steps the dish does after its parts get their
- * own heading, or they would read as the last part's. A part's ingredients are
+ * The ingredients and the method (#354): every ingredient first, then the
+ * whole method, both in cooking order — the dish's own first, each part under
+ * its name, and what the dish adds after its parts under Lopuksi, or it would
+ * read as the last part's. A cook reads the shopping half and the cooking half
+ * of a dish in parts each in one go. A part's ingredients are
  * its `.part`, and its steps its `.part-method`.
  */
 function cooking(
@@ -757,6 +757,10 @@ function cooking(
   const parted = recipe.parts.length > 0;
   const before = parted ? phaseFilter(recipe.steps, [null, "before_parts"]) : recipe.steps;
   const after = parted ? phaseFilter(recipe.steps, ["after_parts"]) : [];
+  const linesBefore = parted
+    ? phaseFilter(recipe.lines, [null, "before_parts"])
+    : recipe.lines;
+  const linesAfter = parted ? phaseFilter(recipe.lines, ["after_parts"]) : [];
   const hasLines = recipe.lines.length > 0 ||
     recipe.parts.some((part) => part.lines.length > 0);
   const hasSteps = recipe.steps.length > 0 ||
@@ -766,13 +770,19 @@ function cooking(
     ${hasLines
       ? html`<div class="recipe-ingredients-column">
           <h3 class="ingredients-heading">Ainekset</h3>
-          ${ingredientList(recipe, recipe.lines, multiplier, picker)}
+          ${ingredientList(recipe, linesBefore, multiplier, picker)}
           ${recipe.parts.map((part) => part.lines.length === 0
             ? ""
             : html`<section class="part">
                 <h2>${part.title}</h2>
                 ${ingredientList(part, part.lines, multiplier, picker)}
               </section>`)}
+          ${linesAfter.length === 0
+            ? ""
+            : html`<section class="part-finish-lines">
+                <h2>Lopuksi</h2>
+                ${ingredientList(recipe, linesAfter, multiplier, picker)}
+              </section>`}
         </div>`
       : ""}
     ${hasSteps
@@ -1467,10 +1477,14 @@ function sourceLink(recipe: Recipe): Raw {
 }
 
 const RECIPE_VIEW_STYLE = html`<style>
-  /* A 2:1 band rather than the shared 4:3 one (#354), cropped to fill it, so
-     the buttons and the ingredients start higher on a phone. */
-  .recipe-summary .recipe-image.is-hero:not(.is-empty) { height: 50vw; }
-  .recipe-summary .recipe-image.is-hero img { object-fit: cover; }
+  /* On a phone, a 2:1 band rather than the shared 4:3 one (#354), cropped to
+     fill it, so the buttons and the ingredients start higher. The owner chose
+     the crop over #116's whole picture: a generated picture keeps its food in
+     the middle, which the crop keeps. Wider screens keep #116's band. */
+  @media (max-width: 47.99rem) {
+    .recipe-summary .recipe-image.is-hero:not(.is-empty) { height: 50vw; }
+    .recipe-summary .recipe-image.is-hero img { object-fit: cover; }
+  }
   .recipe-method { min-width: 0; }
   .recipe-method li { overflow-wrap: break-word; }
   .recipe-ingredient {
