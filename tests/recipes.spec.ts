@@ -256,7 +256,7 @@ test("the original text is one tap away, not in the way", async ({ page }) => {
   await expect(disclosure).toBeVisible();
   await expect(page.locator(".source-text")).toBeHidden();
 
-  await disclosure.getByText("Näytä alkuperäinen").click();
+  await disclosure.getByText("Alkuperäinen resepti").click();
   await expect(page.locator(".source-text")).toContainText("hieman sitruunaruohoa");
 });
 

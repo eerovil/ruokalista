@@ -666,6 +666,22 @@ Five blocks use it:
   section whose controls are behind a button would be one tap short of the
   thing #217 added it for.
 
+### The bottom of the recipe page is a list of rows (issue #351)
+
+Below the method the recipe page draws grouped lists, the owner's pick of three
+prototypes. **Meidän taloudessa** (`recipes.ts::sharingSection`) holds the
+default multiplier and the sharing, still `editBlock`s with their modals; their
+opener is a chevron (`ROW_OPENER`) stretched over the whole row by an `::after`,
+with `Muokkaa` kept off-screen as its name. **Resepti**
+(`recipes.ts::recipeActions`) holds `Muokkaa reseptiä` and `Täydennä AI:lla`
+for the owner, and `Alkuperäinen resepti` for anyone, a `<details>` that
+unfolds in place because a long import reads better scrolling with the page.
+
+The recipe-wide `Näytä määrät` toggle moved from under the whole method to
+beside the first `Valmistus` heading (`recipes.ts::methodHeading`). One per
+page, even for a dish in parts. Its label is no longer a sibling of the
+`.reveal-all` checkbox, so the CSS reaches it with `.reveal-all:checked ~ *`.
+
 ### Two openers, and why the sharing block is opened by a fragment
 
 A `<label>` works a checkbox, and that is the whole of `editBlock`'s no-script
@@ -815,8 +831,8 @@ order; each block becomes two columns rather than flattening that cooking order.
 The picture stays whole and above the cooking content, while its wide-screen
 band becomes shorter so the useful cooking information gets more of the
 viewport. The columns have no fixed height and do not hide overflow. Long steps
-wrap normally and make the page taller when they need to, and the visible
-`Näytä kaikki määrät` control remains after the final preparation block.
+wrap normally and make the page taller when they need to. The `Näytä määrät`
+toggle sits beside the first `Valmistus` heading (#351).
 
 ## Casting a recipe to a TV
 

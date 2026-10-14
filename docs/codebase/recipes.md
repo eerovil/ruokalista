@@ -730,7 +730,7 @@ mukaan" have no field to live in, and a line whose amount **the multiplier
 changed**,
 because the number on screen is no longer the number on the page. Ranges and
 second measurements round-trip through the fields intact, so they carry no copy.
-The full source text sits behind `Näytä alkuperäinen`, still stored, still one
+The full source text sits behind `Alkuperäinen resepti`, still stored, still one
 tap away.
 
 That rule used to live in `src/recipes.ts`. Issue #123 proposes moving it to

@@ -60,39 +60,26 @@ async function expectAllMentionAmounts(
   }
 }
 
-test("the recipe-wide toggle follows the preparation instructions", async ({
+test("the recipe-wide toggle sits beside the first method heading", async ({
   page,
 }) => {
-  await page.goto("/recipes/1");
+  // #351 moved it there from under the whole method. A dish in parts still
+  // gets one toggle, beside the first "Valmistus" on the page.
+  for (const id of [1, 3]) {
+    await page.goto(`/recipes/${id}`);
+    await expect(page.locator(".reveal-all-label")).toHaveCount(1);
 
-  const placement = await page.evaluate(() => {
-    const label = document.querySelector(".reveal-all-label");
-    const steps = [...document.querySelectorAll(".steps")];
-    const ingredients = [...document.querySelectorAll("h3")].find(
-      (heading) => heading.textContent?.trim() === "Ainekset",
-    );
-    const finalSteps = steps[steps.length - 1];
-
-    if (!label || !ingredients || !finalSteps) {
-      return { afterIngredients: false, afterInstructions: false };
-    }
-
-    return {
-      afterIngredients: Boolean(
-        ingredients.compareDocumentPosition(label) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ),
-      afterInstructions: Boolean(
-        finalSteps.compareDocumentPosition(label) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ),
-    };
-  });
-
-  expect(placement).toEqual({
-    afterIngredients: true,
-    afterInstructions: true,
-  });
+    const placement = await page.evaluate(() => {
+      const label = document.querySelector(".reveal-all-label");
+      const row = label?.closest(".method-heading-row");
+      const firstMethod = document.querySelector(".method-heading");
+      return {
+        inHeadingRow: Boolean(row?.querySelector("h3")?.textContent?.trim() === "Valmistus"),
+        isFirstMethod: row === firstMethod,
+      };
+    });
+    expect(placement).toEqual({ inHeadingRow: true, isFirstMethod: true });
+  }
 });
 
 test("the recipe-wide toggle keeps the reading position still", async ({
@@ -170,7 +157,7 @@ test("one keyboard toggle reveals and then truly hides every amount", async ({
   await expect(kaali.locator(".mention-amount")).toBeVisible();
 
   const revealAllByName = page.getByRole("checkbox", {
-    name: "Näytä kaikki määrät",
+    name: "Näytä määrät",
   });
   const revealAll = page.locator(".reveal-all");
   await revealAllByName.focus();
@@ -190,7 +177,7 @@ test("one keyboard toggle reveals and then truly hides every amount", async ({
   await expect(revealAll).not.toBeChecked();
   await expect(kaali.locator(".mention-amount")).toBeHidden();
   await expect(oljy.locator(".mention-amount")).toBeVisible();
-  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+  await expect(page.getByText("Näytä määrät", { exact: true }))
     .toBeVisible();
 
   // The master can still set everything again and then truly clear it all.
@@ -200,7 +187,7 @@ test("one keyboard toggle reveals and then truly hides every amount", async ({
   await expect(revealAll).not.toBeChecked();
   await expectAllMentionAmounts(page, false);
   await expect(page.locator(".mention-toggle:checked")).toHaveCount(0);
-  await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+  await expect(page.getByText("Näytä määrät", { exact: true }))
     .toBeVisible();
 });
 
@@ -210,7 +197,7 @@ test("one toggle covers a multipart dish and survives back-forward restore", asy
   await page.goto("/recipes/3");
 
   const revealAllByName = page.getByRole("checkbox", {
-    name: "Näytä kaikki määrät",
+    name: "Näytä määrät",
   });
   const revealAll = page.locator(".reveal-all");
   await expect(revealAllByName).toBeVisible();
@@ -238,7 +225,7 @@ test.describe("without JavaScript", () => {
     await page.goto("/recipes/1");
 
     const revealAllByName = page.getByRole("checkbox", {
-      name: "Näytä kaikki määrät",
+      name: "Näytä määrät",
     });
     const revealAll = page.locator(".reveal-all");
     await expect(revealAllByName).toBeVisible();

@@ -100,7 +100,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `77-recipes-category-filter.png` | Proposed recipe list standing in **Uuniruoka**: the scrolling chip row above, only the recipes in that category below |
 | `78-intake-background-failed.png` | Proposed retained background import after failure: the original paste and explicit retry remain available (#186) |
 | `79-intake-from-link.png` | Proposed linked intake with its optional interpretation guidance visible and filled in (#219) |
-| `80-linked-recipe-source.png` | The same recipe after saving, with **Näytä alkuperäinen** open: the text read off the page, and the address it came from kept as a link |
+| `80-linked-recipe-source.png` | The same recipe after saving, with **Alkuperäinen resepti** open: the text read off the page, and the address it came from kept as a link |
 | `81-recipes-bulk-category.png` | Proposed recipe list with two recipes ticked: the count saying how many the action will hit, and the category control above the publish buttons (#199) |
 | `82-recipes-bulk-category-done.png` | The same list after one press: both recipes carry **Keitto**, the chip row has gained it, and the notice counts what moved |
 | `87-prompt-edit-proposal.png` | The proposal that came back, at the head of the shared intake review: which mode was used, what moved, and that nothing has been saved yet (#215) |
@@ -129,3 +129,4 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `114-s-ostoslista-note-replaced.png` | Proposed juusto sent as text and then given a product: the S-ostoslista panel holds one product row, and the words the earlier send left there are gone (#244) |
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |
 | `116-nested-part-refused.png` | Proposed atomic refusal when an AI edit gives a recipe part another named part: the Finnish explanation and the submitted section, ingredient, quantity and note remain on the review screen (#258) |
+| `130-recipe-tail.png` | The bottom of a recipe on a dark-mode phone (#351): **Näytä määrät** beside **Valmistus**, then **Meidän taloudessa** and **Resepti** as lists of rows, each with its current value or a note and a chevron |

@@ -245,7 +245,7 @@ Four things about it are load-bearing:
 
 The address is saved on the recipe as `recipe.source_url`, and `source_route`
 gains `linked`, so how a recipe arrived stays recorded truthfully. The recipe
-screen shows the link inside **Näytä alkuperäinen**, next to the text.
+screen shows the link inside **Alkuperäinen resepti**, next to the text.
 
 Four checks cover it, none of them spending anything or touching the network.
 `dev/check-recipe-fetch.ts` covers the address guard and the extraction against
