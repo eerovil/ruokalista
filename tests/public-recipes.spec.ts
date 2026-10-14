@@ -670,6 +670,8 @@ test("each household keeps its own default multiplier for the same recipe", asyn
   await signIn(page, 1);
   await page.goto("/recipes/1");
   await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("2×");
+  // And the one-tap button adds at it, saying so (#354).
+  await expect(page.getByRole("button", { name: "Lisää kokattaviin · 2×" })).toBeVisible();
 });
 
 test("a household's default is cleared by an empty box, not guessed at", async ({

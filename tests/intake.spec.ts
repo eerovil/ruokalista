@@ -287,6 +287,7 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   await page.getByText("Alkuperäinen resepti").click();
   const link = page.locator(".source-link a");
   await expect(link).toHaveText("kotikokki.example");

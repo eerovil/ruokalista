@@ -501,7 +501,9 @@ test.describe("our household", () => {
       });
       expect(tap).toBeGreaterThan(0);
 
-      const label = page.locator(".product-picks-label");
+      // Since #354 the words are a switch row of the ⋯ modal.
+      await page.getByRole("link", { name: "Lisää valintoja" }).click();
+      const label = page.locator(".picks-row");
       const box = await label.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.height).toBeGreaterThanOrEqual(tap - 0.5);
@@ -510,6 +512,7 @@ test.describe("our household", () => {
       // brings the buttons out.
       await label.click();
       await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+      await page.locator("#lisavalinnat .edit-done").click();
       await expect(
         ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
       ).toBeVisible();
