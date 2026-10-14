@@ -456,17 +456,36 @@ export async function recipeScreen(
   }
 
   const asked = parseMultiplier(url.searchParams.get("multiplier") ?? "");
+  // PROTOTYPE (#364): which placement of the size control to draw.
+  const named = url.searchParams.get("proto");
+  const variant = sizeVariant(
+    named ?? cookieValue(ctx.request.headers.get("Cookie"), "koko-proto"),
+  );
 
-  return renderRecipe(
+  const response = await renderRecipe(
     env.DB,
     member,
     recipe,
-    asked ?? DEFAULT_MULTIPLIER,
+    asked,
     null,
     env.CAST_APP_ID,
     undefined,
     externalClient(env, member) !== null,
+    variant,
   );
+  if (named !== null) {
+    response.headers.append(
+      "Set-Cookie",
+      `koko-proto=${variant}; Path=/; Max-Age=2592000; SameSite=Lax`,
+    );
+  }
+  return response;
+}
+
+type SizeVariant = "a" | "b" | "c";
+
+function sizeVariant(value: string | null): SizeVariant {
+  return value === "b" || value === "c" ? value : "a";
 }
 
 /**
@@ -490,11 +509,13 @@ export async function renderRecipe(
   db: D1Database,
   member: Member,
   recipe: Recipe,
-  multiplier: number,
+  /** Null is "as this household usually cooks it" (#364). */
+  multiplier: number | null,
   refusal: string | null,
   castApplicationId?: string,
   sharingDraft?: SharingDraft,
   external = false,
+  variant: SizeVariant = "a",
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
   const [preference, sharing, vocabulary, products] = await Promise.all([
@@ -508,15 +529,20 @@ export async function renderRecipe(
       : Promise.resolve(null),
   ]);
 
+  // The page opens at the household's own size for the dish (#364), so what
+  // it shows is what Lisää kokattaviin adds.
+  const shown = multiplier ?? preference ?? DEFAULT_MULTIPLIER;
+
   return page(
     recipe.title,
-    recipeBody(recipe, multiplier, {
+    recipeBody(recipe, shown, {
       owned,
       preference,
       refusal,
       sharing,
       vocabulary,
       products,
+      variant,
     }, castApplicationId),
     "recipes",
     member,
@@ -838,6 +864,8 @@ interface RecipeView {
   vocabulary: Vocabulary;
   /** Null for every household without the S-ostoslista integration (#302). */
   products: RecipeProductState | null;
+  /** PROTOTYPE (#364): where the size control sits. */
+  variant: SizeVariant;
 }
 
 function recipeBody(
@@ -854,6 +882,7 @@ function recipeBody(
       : { dish: recipe, state: view.products, anchored: new Set<number>() };
 
   return html`<div class="recipe-view">
+    ${prototypeSwitch(recipe, multiplier, view.variant)}
     <div class="recipe-summary">
       ${recipeImage(recipe)}
       <div class="recipe-intro">
@@ -873,6 +902,7 @@ function recipeBody(
     </div>
 
     <div class="recipe-cooking">
+      ${view.variant === "c" ? sizeStepper(recipe, multiplier) : ""}
       ${canRevealAmounts
         ? html`<input
               type="checkbox"
@@ -908,8 +938,8 @@ function recipeBody(
  */
 function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
   const parts: Raw[] = [];
-  if (multiplier !== DEFAULT_MULTIPLIER) {
-    parts.push(html`<span class="yield is-scaled">${formatMultiplier(multiplier)}</span>`);
+  if (view.variant === "b") {
+    parts.push(sizeOpener(multiplier, "size-pill"));
   }
   if (recipe.yieldPortions !== null) {
     parts.push(html`<span class="source-yield">Lähteessä ${recipe.yieldPortions} annosta</span>`);
@@ -961,33 +991,18 @@ function recipeTopActions(
   const viewRows = picks || (castApplicationId?.trim() ?? "") !== "";
 
   return html`<div class="recipe-top" id="toiminnot">
-    ${adding ? quickAdd(recipe, multiplier, view.preference) : ""}
+    ${view.variant === "a" ? sizeOpener(multiplier, "recipe-top-size") : ""}
+    ${adding ? quickAdd(recipe, multiplier) : ""}
     <a class="recipe-top-more" href="#${MORE_ID}" aria-label="Lisää valintoja"
       ><span aria-hidden="true">⋯</span></a
     >
   </div>
-  ${adding
-    ? topModal(
-        COOK_ADD_ID,
-        "Lisää eri koolla",
-        cookListAdd(recipe, multiplier, view.preference),
-        MORE_ID,
-        "Sulje",
-      )
-    : ""}
+  ${topModal(SIZE_ID, "Koko", sizeChooser(recipe, multiplier, view.preference), "toiminnot", "Sulje")}
   ${topModal(
     MORE_ID,
     "Lisää valintoja",
-    html`${adding || viewRows
+    html`${viewRows
       ? html`<div class="tail-list">
-          ${adding
-            ? html`<a class="tail-row" href="#${COOK_ADD_ID}"
-                ><span class="tail-row-text"
-                  ><span class="tail-row-title">Lisää eri koolla</span
-                  ><span class="tail-row-note">Kokattaviin esimerkiksi tupla-annos</span></span
-                ><span class="tail-chevron" aria-hidden="true">›</span></a
-              >`
-            : ""}
           ${picks
             ? productPicksRow()
             : ""}
@@ -1049,7 +1064,7 @@ function settingsRow(id: string, title: string, value: string, valueClass = ""):
   >`;
 }
 
-const COOK_ADD_ID = "kokattaviin";
+const SIZE_ID = "koko";
 const MORE_ID = "lisavalinnat";
 // Named as #317's blocks named them, so a bookmark or a test that opened the
 // sharing modal still does.
@@ -1081,60 +1096,89 @@ function topModal(
 }
 
 /**
- * The size a dish goes onto the list at when nobody picks one: the size on
- * screen if the reader scaled the recipe, else the household's own default.
+ * The page's main button (#354): one tap puts the dish on the list at the
+ * size the page shows (#364), which opens at the household's own size.
  */
-function addSize(multiplier: number, preference: number | null): number {
-  return multiplier !== DEFAULT_MULTIPLIER
-    ? multiplier
-    : preference ?? DEFAULT_MULTIPLIER;
-}
-
-/**
- * The page's main button (#354): one tap puts the dish on the list at its
- * usual size. A size is chosen so rarely that the choice lives behind ⋯.
- */
-function quickAdd(recipe: Recipe, multiplier: number, preference: number | null): Raw {
-  const size = addSize(multiplier, preference);
+function quickAdd(recipe: Recipe, multiplier: number): Raw {
   return html`<form
     method="post"
     action="/recipes/${recipe.id}/kokattaviin"
     class="recipe-top-add-form"
   >
-    <button type="submit" name="preset" value="${String(size)}" class="recipe-top-add"
-      ><span aria-hidden="true">＋</span> Lisää kokattaviin${size === DEFAULT_MULTIPLIER
+    <button type="submit" name="preset" value="${String(multiplier)}" class="recipe-top-add"
+      ><span aria-hidden="true">＋</span> Lisää kokattaviin${multiplier === DEFAULT_MULTIPLIER
         ? ""
-        : ` · ${formatMultiplier(size)}`}</button
+        : ` · ${formatMultiplier(multiplier)}`}</button
     >
   </form>`;
 }
 
+/** What opens the size modal, wherever the variant puts it. */
+function sizeOpener(multiplier: number, className: string): Raw {
+  return html`<a class="${className}" href="#${SIZE_ID}" aria-label="Koko: ${formatMultiplier(multiplier)}, muuta"
+    >${formatMultiplier(multiplier)} <span aria-hidden="true">▾</span></a
+  >`;
+}
+
+const SIZE_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6];
+
 /**
- * Put this dish on the to-do list (#345). Each size chip adds at that size in
- * one tap; the one already lit is the size on screen if the reader scaled the
- * recipe, else the household's own default for it. Since #354 it sits in the
- * Lisää kokattaviin modal rather than on the page.
+ * The size modal (#364): each size is a link to this page at that size, so the
+ * amounts change the moment one is tapped, with no script. A size of one's own
+ * goes through a plain GET form to the same page.
  */
-function cookListAdd(
-  recipe: Recipe,
-  multiplier: number,
-  preference: number | null,
-): Raw {
-  const current = addSize(multiplier, preference);
-  return html`<form
-    method="post"
-    action="/recipes/${recipe.id}/kokattaviin"
-    class="stacked cook-add"
-  >
-    <p class="empty">Napauta kokoa, niin resepti lisätään kokattaviin.</p>
-    ${multiplierField({
-      current,
-      typed: "",
-      placeholder: "Muu kerroin",
-      label: "Lisää kokattaviin kertoimella",
-      submit: "Lisää",
-    })}
-  </form>`;
+function sizeChooser(recipe: Recipe, multiplier: number, preference: number | null): Raw {
+  const usual = preference ?? DEFAULT_MULTIPLIER;
+  return html`<p class="empty">Ainesten määrät lasketaan tällä kertoimella, ja
+      Lisää kokattaviin lisää tämän kokoisena.</p>
+    <div class="size-choices">
+      ${[0.5, 1, 1.5, 2, 3].map((choice) => html`<a
+        class="size-choice ${choice === multiplier ? "is-current" : ""}"
+        href="/recipes/${recipe.id}?multiplier=${String(choice)}"
+        >${formatMultiplier(choice)}</a
+      >`)}
+    </div>
+    <form method="get" action="/recipes/${recipe.id}" class="size-typed">
+      <input
+        name="multiplier"
+        inputmode="decimal"
+        placeholder="Muu kerroin"
+        aria-label="Muu kerroin"
+        value="${[0.5, 1, 1.5, 2, 3].includes(multiplier) ? "" : formatMultiplier(multiplier).slice(0, -1)}"
+      />
+      <button type="submit">Näytä</button>
+    </form>
+    <p class="empty size-usual">Meillä yleensä ${formatMultiplier(usual)} — sen voi
+      vaihtaa kohdasta ⋯ → Oletuskerroin.</p>`;
+}
+
+/** PROTOTYPE (#364), variant C: a stepper above the ingredients. */
+function sizeStepper(recipe: Recipe, multiplier: number): Raw {
+  const smaller = [...SIZE_STEPS].reverse().find((step) => step < multiplier);
+  const larger = SIZE_STEPS.find((step) => step > multiplier);
+  const step = (to: number | undefined, sign: string, label: string) =>
+    to === undefined
+      ? html`<span class="size-step is-off" aria-hidden="true">${sign}</span>`
+      : html`<a class="size-step" href="/recipes/${recipe.id}?multiplier=${String(to)}" aria-label="${label}">${sign}</a>`;
+  return html`<div class="size-stepper">
+    <span class="size-stepper-label">Koko</span>
+    ${step(smaller, "−", "Pienempi")}
+    ${sizeOpener(multiplier, "size-stepper-value")}
+    ${step(larger, "+", "Suurempi")}
+  </div>`;
+}
+
+/** PROTOTYPE (#364): the switcher between the three placements. */
+function prototypeSwitch(recipe: Recipe, multiplier: number, variant: SizeVariant): Raw {
+  const names: Array<[SizeVariant, string]> = [["a", "A · napin vieressä"], ["b", "B · harmaalla rivillä"], ["c", "C · ainesten yllä"]];
+  return html`<nav class="proto-switch" aria-label="Prototyyppi">
+    <span>Prototyyppi:</span>
+    ${names.map(([key, name]) => html`<a
+      class="${key === variant ? "is-on" : ""}"
+      href="/recipes/${recipe.id}?proto=${key}&multiplier=${String(multiplier)}"
+      >${name}</a
+    >`)}
+  </nav>`;
 }
 
 /**
@@ -1397,6 +1441,42 @@ const PUBLISH_STYLE = html`<style>
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .top-modal .cook-add { margin: 0; }
+  /* PROTOTYPE (#364): the size control in its three places, and its modal. */
+  .proto-switch { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center;
+    margin: 0 0 .75rem; padding: .4rem .6rem; border-radius: var(--radius);
+    background: #f5d04a; color: #222; font-size: .8rem; font-weight: 600; }
+  .proto-switch a { color: #222; text-decoration: none; padding: .15rem .55rem;
+    border: 1px solid #222; border-radius: 999px; }
+  .proto-switch a.is-on { background: #222; color: #f5d04a; }
+  .recipe-top-size { display: inline-flex; align-items: center; justify-content: center;
+    gap: .25rem; min-height: var(--tap); padding: 0 .8rem; border-radius: var(--radius);
+    border: 1px solid var(--edge); background: var(--surface); color: var(--fg);
+    font-weight: 600; text-decoration: none; }
+  .size-pill { display: inline-flex; align-items: center; gap: .2rem;
+    min-height: var(--tap-compact); padding: 0 .6rem; border-radius: 999px;
+    border: 1px solid var(--accent); color: var(--accent); font-weight: 600;
+    text-decoration: none; }
+  .size-stepper { display: flex; align-items: center; gap: .5rem; margin: 1rem 0 0; }
+  .size-stepper-label { flex: 1 1 auto; color: var(--muted); font-size: .8rem;
+    font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .size-step, .size-stepper-value { display: inline-flex; align-items: center;
+    justify-content: center; min-width: var(--tap); min-height: var(--tap);
+    border-radius: var(--radius); border: 1px solid var(--edge);
+    background: var(--surface); color: var(--fg); font-size: 1.2rem;
+    text-decoration: none; }
+  .size-stepper-value { padding: 0 .8rem; font-size: 1rem; font-weight: 600; }
+  .size-step.is-off { opacity: .35; }
+  .size-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .5rem; margin: .75rem 0 0; }
+  .size-choice { display: flex; align-items: center; justify-content: center;
+    min-height: 3.25rem; border-radius: var(--radius); border: 1px solid var(--edge);
+    background: var(--surface); color: var(--fg); font-size: 1.05rem;
+    font-weight: 600; text-decoration: none; }
+  .size-choice.is-current { background: var(--accent); color: var(--accent-fg);
+    border-color: var(--accent); }
+  .size-typed { display: flex; gap: .5rem; margin: .5rem 0 0; }
+  .size-typed input { flex: 1 1 auto; min-width: 0; }
+  .size-usual { margin: .75rem 0 0; }
   .top-modal .tail-heading { margin-top: 1.1rem; }
   .top-modal .edit-modal-title + .tail-heading { margin-top: 0; }
   .top-modal .cook-add .empty { margin: 0 0 .75rem; }
