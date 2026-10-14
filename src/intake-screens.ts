@@ -1,6 +1,7 @@
 import { problem } from "./auth.ts";
 import intakeClient from "./generated/intake.ts";
 import { html, page, raw, type Raw, saveBar } from "./html.ts";
+import { prototypeIntake, readVariant } from "./intake-prototype.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
 import { ingredientsFor, type IngredientSummary } from "./ingredients.ts";
 import {
@@ -425,6 +426,11 @@ export async function intakeScreen(
     });
   }
   const confirmed = startedJob !== undefined;
+  // PROTOTYPE (#350): /intake?variant=A|B|C on a local or tailnet origin only.
+  const variant = target === null && isLocalOrigin(url) ? readVariant(url.searchParams.get("variant")) : null;
+  if (variant !== null) {
+    return page("Lisää resepti", prototypeIntake(variant, intakeJobs(jobs, true)), "intake", member);
+  }
   return page(
     target === null ? "Lisää resepti" : `Täydennä reseptiä: ${target.title}`,
     html`<h1>${target === null ? "Lisää resepti" : "Täydennä reseptiä"}</h1>
