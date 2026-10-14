@@ -103,20 +103,6 @@ export function categoryBulkControls(
   </fieldset>`;
 }
 
-/** A recipe's categories, as they are printed on the recipe and in a list. */
-export function categoryTags(
-  vocabulary: Vocabulary,
-  slugs: readonly string[],
-): Raw {
-  if (slugs.length === 0) return raw("");
-  return html`<p class="category-tags">
-    ${slugs.map(
-      (slug) =>
-        html`<span class="category-tag">${vocabulary.label(slug)}</span>`,
-    )}
-  </p>`;
-}
-
 /**
  * The list's filter: one chip per category, plus **Kaikki**.
  *
@@ -197,20 +183,6 @@ export const CATEGORY_STYLE = html`<style>
     color: var(--accent);
     border-color: var(--accent);
     font-weight: 600;
-  }
-  .category-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin: 0.3rem 0 0;
-  }
-  .category-tag {
-    padding: 0.15rem 0.5rem;
-    font-size: 0.8rem;
-    color: var(--accent);
-    background: var(--surface);
-    border: 1px solid var(--edge);
-    border-radius: 999px;
   }
   .category-choices {
     display: flex;
