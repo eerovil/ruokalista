@@ -69,6 +69,7 @@ test("a recipe with no method at all says so", async ({ page }) => {
   // The quick save (#211) is how a recipe with nothing in it comes to exist,
   // which is the only way to reach this state through the screens.
   await page.goto("/intake");
+  await page.getByText("Muistatko vain nimen?").click();
   await page.getByLabel("Reseptin nimi").fill("Mummin lihapullat");
   await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);

@@ -579,6 +579,12 @@ const STYLES = `
     color: var(--muted); font-size: .9rem;
   }
   .found-image .tick input { width: auto; margin: 0; }
+  /* A whole section one tap down (#341): the summary stands in for its h2. */
+  .fold { margin: 1.75rem 0 .5rem; }
+  .fold > summary {
+    min-height: var(--tap); cursor: pointer;
+    font-size: 1.15rem; font-weight: 600;
+  }
   .edit-draft > summary {
     display: inline-flex; align-items: center;
     min-height: var(--tap); cursor: pointer;
