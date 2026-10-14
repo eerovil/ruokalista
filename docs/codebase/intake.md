@@ -528,6 +528,13 @@ two photo tiles, and every source given is now material for **one** recipe.
   the import. Only a K-Ruoka link with nothing else given is refused up front.
 - **The consumer reads every link** (`readLinks`) and writes `link_reads`. One
   failed link does not fail the import; `unreadLinks` names it on the review.
+  A retry does not read a page already read, but does read again a link that
+  failed in a way that may pass (`readAgain`: anything but K-Ruoka and a
+  non-address). `source_url` keeps the link as given, so the list of links is
+  the same on every retry; the recipe's source is the first page read.
+- **Only links actually read are taken out of the text** (`withoutLinks` with
+  `takenBy`): a fourth link, or one that is no public address, stays as words.
+  A box of nothing but such non-addresses is refused with the address refusal.
   If nothing was readable and what the member typed (links removed) is not
   more than one line, the job fails with the first link's own refusal, as a
   lone link always did.

@@ -306,6 +306,76 @@ test("every link is read and the model gets the text, the pages and the photos",
   assert.deepEqual(reads[1], { url: "https://dead.example/x", failure: "unreachable" });
 });
 
+test("a link that did not answer is read again when the import is retried", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: "https://kotikokki.example/uunikaali",
+    source_url: "https://kotikokki.example/uunikaali",
+  });
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async () => new Response("", { status: 503 }),
+    structure: async () => { throw new Error("the model must not run"); },
+  });
+  assert.equal(db.claimLease(), db.failedLease());
+  assert.match(db.failureMessage() ?? "", /Sivua ei saatu auki/);
+
+  // Yritä uudelleen: the site answers now, and the retry asks it again.
+  const server = pageServer(RECIPE_PAGE);
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: server.fetchPage,
+    structure: async (_env, _job, source) => {
+      assert.equal(source.route, "linked");
+      if (source.route === "linked") assert.match(source.text, /valkokaalia/);
+      return JSON.stringify(SAMPLE_DRAFT);
+    },
+  });
+  assert.deepEqual(server.requests(), ["https://kotikokki.example/uunikaali"]);
+  assert.equal(db.claimLease(), db.readyLease());
+});
+
+test("links past the third, or not public, stay in the text as words", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: [
+      "Yhdistä nämä",
+      "https://a.example/1 https://b.example/2 https://c.example/3",
+      "https://d.example/4 http://localhost/5",
+    ].join("\n"),
+    source_url: "https://a.example/1",
+  });
+  const server = pageServer(RECIPE_PAGE);
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: server.fetchPage,
+    structure: async (_env, _job, source) => {
+      assert.equal(source.route, "linked");
+      if (source.route === "linked") {
+        assert.match(source.text, /^Käyttäjän kirjoittama teksti:\nYhdistä nämä\n\nhttps:\/\/d\.example\/4 http:\/\/localhost\/5\n/);
+      }
+      return JSON.stringify(SAMPLE_DRAFT);
+    },
+  });
+  assert.deepEqual(server.requests(), [
+    "https://a.example/1",
+    "https://b.example/2",
+    "https://c.example/3",
+  ]);
+});
+
+test("a box of nothing but addresses that are not public is refused as one", async () => {
+  const database = intakeDatabase({ status: "queued" });
+  await assert.rejects(
+    createIntakeJob(
+      database.env,
+      { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+      { sourceText: "https://192.168.1.10/resepti" },
+    ),
+    (error: Error) =>
+      error instanceof IntakeRefused &&
+      error.message === "Osoite ei näytä nettiosoitteelta. Tarkista linkki.",
+  );
+  assert.equal(database.insertedValues(), null);
+});
+
 test("a dead link with only a short note beside it fails in Finnish", async () => {
   const db = intakeDatabase({
     source_route: "linked",
@@ -688,9 +758,11 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
           } else if (sql.includes("SET status = 'failed'")) {
             failedLease = String(values[2]);
             failureMessage = String(values[0]);
-          } else if (sql.includes("SET link_reads = ?, source_url = ?")) {
-            // What the links gave up, as the JSON the consumer wrote.
+          } else if (sql.includes("SET link_reads = ?")) {
+            // What the links gave up, as the JSON the consumer wrote — kept
+            // on the row too, so a retry on the same job sees it.
             storedText = String(values[0]);
+            row.link_reads = storedText;
           } else if (sql.includes("SET page_image_key = ?")) {
             storedPageImage = { key: String(values[0]), type: String(values[1]) };
             row.page_image_key = storedPageImage.key;

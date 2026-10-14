@@ -222,7 +222,7 @@ export async function createIntakeJob(
   // installed app still running yesterday's screen sends, and it is read as
   // one more link in front of the box's own.
   const links = intakeLinks(body.url, sourceText);
-  const typed = sourceText === null ? "" : withoutLinks(sourceText);
+  const typed = sourceText === null ? "" : withoutLinks(sourceText, takenBy(links));
 
   if (images.length === 0 && links.length === 0 && sourceText === null) {
     throw new IntakeRefused("Anna reseptin osoite, tekstiä tai kuva.");
@@ -230,8 +230,16 @@ export async function createIntakeJob(
   // Only a link that cannot be read and nothing else besides: refused while
   // the member is still looking at it, rather than as a job certain to fail.
   // With anything else given, the import goes on without it.
-  if (images.length === 0 && typed === "" && links.every(isBlockedLink)) {
+  if (images.length === 0 && typed === "" && links.length > 0 && links.every(isBlockedLink)) {
     throw new IntakeRefused(K_RUOKA_REFUSAL);
+  }
+  // Only things written as links, none of them a public address: the same,
+  // in the address refusal's own words rather than as an import of a URL.
+  if (
+    images.length === 0 && links.length === 0 && sourceText !== null &&
+    withoutLinks(sourceText) === ""
+  ) {
+    throw new IntakeRefused(LINK_REFUSALS.invalid_url);
   }
 
   // The main way in, which is what the saved recipe records as its route:
@@ -362,6 +370,17 @@ function intakeLinks(url: unknown, text: string | null): string[] {
     }
   }
   return links;
+}
+
+/** Whether a written link is one of the normalised links being read. */
+function takenBy(links: string[]): (written: string) => boolean {
+  return (written) => {
+    try {
+      return links.includes(normaliseRecipeUrl(written).toString());
+    } catch {
+      return false;
+    }
+  };
 }
 
 /**
@@ -623,7 +642,7 @@ async function sourceForJob(
   job: IntakeJob,
   fetchPage?: PageFetcher,
 ): Promise<IntakeSource> {
-  const reads = job.linkReads ?? await readLinks(env, job, fetchPage);
+  const reads = await readLinks(env, job, fetchPage);
   const pages = readPages(reads);
   const typed = typedMaterial(job);
 
@@ -703,7 +722,7 @@ export function unreadLinks(job: IntakeJob): Array<{ url: string; message: strin
  * would only show the model the same address twice.
  */
 function typedMaterial(job: IntakeJob): string | null {
-  const typed = withoutLinks(job.sourceText ?? "");
+  const typed = withoutLinks(job.sourceText ?? "", takenBy(jobLinks(job)));
   return typed === "" ? null : typed;
 }
 
@@ -722,7 +741,11 @@ class LinkUnread extends Error {
   }
 }
 
-/** Every link the job has, in order: the stored first one, then the box's. */
+/**
+ * Every link the job has, in order: the stored first one, then the box's.
+ * `source_url` is never rewritten after a read, so this is the same list on
+ * every retry and its order matches `link_reads`.
+ */
 function jobLinks(job: IntakeJob): string[] {
   const links = job.sourceUrl === null ? [] : [job.sourceUrl];
   for (const written of linksIn(job.sourceText ?? "")) {
@@ -738,11 +761,25 @@ function jobLinks(job: IntakeJob): string[] {
 }
 
 /**
- * Read each link once, in order, and write what came back onto the job.
+ * Failures a retry should try again: a site that did not answer, or answered
+ * with something that was not a page, may well answer next time. A K-Ruoka
+ * link or an address that is not one will not.
+ */
+function readAgain(read: LinkRead | undefined): boolean {
+  return read === undefined ||
+    ("failure" in read && read.failure !== "blocked" && read.failure !== "invalid_url");
+}
+
+/**
+ * Read each link, in order, and write what came back onto the job.
  *
  * One link failing does not fail the others or the import (#350): it is
- * recorded with its reason and the review names it. The picture is taken from
- * the first page that offers one, after that page's text is safely written.
+ * recorded with its reason and the review names it. A link already read is
+ * not read again, so a retry after a model failure does not go back to the
+ * sites; a link that failed in a way that may pass is, which is what *Yritä
+ * uudelleen* means for it. The picture is taken from the first page that
+ * offers one, after that page's text is safely written, unless the job
+ * already has one.
  */
 async function readLinks(
   env: Env,
@@ -751,10 +788,19 @@ async function readLinks(
 ): Promise<LinkRead[]> {
   const links = jobLinks(job);
   if (links.length === 0) return [];
+  const before = job.linkReads ?? [];
+  if (job.linkReads !== null && !links.some((_, at) => readAgain(before[at]))) {
+    return job.linkReads;
+  }
 
   const reads: LinkRead[] = [];
   const pictures: string[][] = [];
-  for (const address of links) {
+  for (const [at, address] of links.entries()) {
+    const earlier = before[at];
+    if (earlier !== undefined && !readAgain(earlier)) {
+      reads.push(earlier);
+      continue;
+    }
     if (isBlockedLink(address)) {
       reads.push({ url: address, failure: "blocked" });
       continue;
@@ -784,17 +830,17 @@ async function readLinks(
   }
 
   // Written before the model runs, so the text survives a model failure and
-  // the retry is of the structuring rather than of the whole read. The first
-  // page that was read is the address the recipe will point back at.
-  const firstRead = readPages(reads)[0];
-  await env.DB.prepare(
-    "UPDATE intake_job SET link_reads = ?, source_url = ? WHERE id = ?",
-  )
-    .bind(JSON.stringify(reads), firstRead?.url ?? job.sourceUrl, job.id)
+  // the retry is of the structuring rather than of the whole read. The
+  // address the recipe points back at is the first page read, taken from
+  // these reads by the review; `source_url` keeps the link as given.
+  await env.DB.prepare("UPDATE intake_job SET link_reads = ? WHERE id = ?")
+    .bind(JSON.stringify(reads), job.id)
     .run();
 
   const offered = pictures.find((candidates) => candidates.length > 0);
-  if (offered !== undefined) await keepPageImage(env, job, offered, fetchPage);
+  if (offered !== undefined && job.pageImage === null) {
+    await keepPageImage(env, job, offered, fetchPage);
+  }
 
   return reads;
 }

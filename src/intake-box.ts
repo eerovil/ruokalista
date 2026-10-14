@@ -88,9 +88,24 @@ export function linksIn(text: string): string[] {
   return found;
 }
 
-/** The text with every link taken out, trimmed — what the member wrote. */
-export function withoutLinks(text: string): string {
-  var links = linksIn(text);
+/**
+ * The text with its links taken out, trimmed — what the member wrote.
+ *
+ * `taken` says which written links were really used as links. The server
+ * passes it, so a link it would not read (a fourth one, or one that is no
+ * public address) stays in the text as words rather than vanishing from both
+ * the pages and the text. Without it every link is taken out, which is all
+ * the screen needs for its wording.
+ */
+export function withoutLinks(
+  text: string,
+  taken?: (written: string) => boolean,
+): string {
+  var found = linksIn(text);
+  var links: string[] = [];
+  for (var k = 0; k < found.length; k++) {
+    if (!taken || taken(found[k]!)) links.push(found[k]!);
+  }
   var lines = text.split("\n");
   var kept: string[] = [];
   for (var i = 0; i < lines.length; i++) {
