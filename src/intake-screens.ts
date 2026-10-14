@@ -310,12 +310,16 @@ function intakeJobs(jobs: IntakeJob[], open = false): Raw {
   const state = (job: IntakeJob): Raw => {
     if (job.status === "ready") {
       return html`<p><strong>Valmis tarkistettavaksi</strong></p>
-        <p><a class="button" href="/intake/imports/${job.id}/review">Tarkista resepti</a></p>`;
+        <form method="post" action="/intake/imports/${job.id}/delete">
+          <a class="button" href="/intake/imports/${job.id}/review">Tarkista resepti</a>
+          <button type="submit">Poista</button>
+        </form>`;
     }
     if (job.status === "failed") {
       return html`<p class="refused">${job.errorMessage ?? "Jäsennys epäonnistui."}</p>
         <form method="post" action="/intake/imports/${job.id}/retry">
           <button type="submit">Yritä uudelleen</button>
+          <button type="submit" formaction="/intake/imports/${job.id}/delete">Poista</button>
         </form>`;
     }
     return html`<p><strong>Käsitellään taustalla</strong></p>`;
@@ -434,7 +438,7 @@ export async function intakeScreen(
         : html`<p class="refused">${refusal.message}</p>`}
       ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
       ${target === null ? quickSaveForm(refusal?.title ?? "", refusal !== undefined) : ""}
-      ${intakeJobs(jobs, confirmed)}
+      ${intakeJobs(jobs, confirmed || url.searchParams.has("imports"))}
       ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
@@ -587,6 +591,24 @@ export async function retryIntakeJobForm(
   );
   if (!retried) return intakeNotFound(member);
   return new Response(null, { status: 303, headers: { Location: "/intake" } });
+}
+
+/** `POST /intake/imports/:id/delete` — throw away a failed or unreviewed import. */
+export async function deleteIntakeJobForm(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const deleted = await deleteIntakeJob(
+    env,
+    params["id"] ?? "",
+    member.householdId,
+  );
+  if (!deleted) return intakeNotFound(member);
+  // Back with the imports fold open, so the next stale one is a press away.
+  return new Response(null, {
+    status: 303,
+    headers: { Location: "/intake?imports" },
+  });
 }
 
 /** `GET /intake/imports/:id/review` — reopen the normal review from D1. */
