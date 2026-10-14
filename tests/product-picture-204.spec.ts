@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { openShoppingRow } from "./support/shopping-rows";
+import { openShoppingRow, sheetResults } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -28,11 +28,15 @@ const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${browserPort + 1}`;
 
 const LASAGNE = 3;
 
-/** The slot sizes in html.ts, and the width each one asks the CDN for. */
+/**
+ * The slot sizes in html.ts, and the width each one asks the CDN for. Since
+ * #358 the row's chosen product is no longer drawn in a window of its own (the
+ * old 40 px summary slot): it is the ticked first result of the sheet, and the
+ * sheet's results are compact rows with a 3 rem picture.
+ */
 const SLOTS = {
   row: { size: 26, width: 96 },
-  summary: { size: 40, width: 128 },
-  result: { size: 80, width: 192 },
+  result: { size: 48, width: 192 },
 } as const;
 
 test.describe("a product picture is sized and cropped to its slot (#204)", () => {
@@ -52,11 +56,9 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
 
     const milk = row(page, "maito");
     await openShoppingRow(milk);
-    await milk.getByRole("button", { name: "Valitse tuote" }).click();
 
-    const results = page.locator(".s-sheet .s-product-results > li");
+    const results = sheetResults(page);
     await expect(results.first()).toBeVisible();
-    await expect(page.locator(".s-sheet .spinner")).toHaveCount(0);
 
     // The fixture's milk EANs are S-group's own, so these two pictures really
     // do come down off the CDN. That is the whole point of photographing this
@@ -78,27 +80,23 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
       "Kotimaista rasvaton maito",
     );
     await expect(milk.locator(".s-status .spinner")).toHaveCount(0);
-    // The row shut itself when the save landed (#204), and since #321 what it
-    // shut is a modal — so the 40 px slot is reopened to be measured.
-    await openShoppingRow(milk);
-    await expectPicture(
-      milk.locator(".s-shopping-product-one img"),
-      SLOTS.summary,
-    );
     await expectPicture(milk.locator(".shopping-thumb img"), SLOTS.row);
+    // Opened again, the chosen product is the ticked first result.
+    await openShoppingRow(milk);
+    const current = results.first();
+    await expect(current).toHaveClass(/is-current/);
+    await expectPicture(current.locator("img"), SLOTS.result);
     await shot(page, "2-chosen-drawn-by-the-island");
 
-    // And again from the server, which draws the same three slots from the
-    // saved URL — a full-size one, for a product chosen before this change.
+    // And again from the server, which draws the row's slot from the saved
+    // URL — a full-size one, for a product chosen before this change.
     await page.reload();
     const reopened = row(page, "maito");
     await expectPicture(reopened.locator(".shopping-thumb img"), SLOTS.row);
     await shot(page, "3-list-with-the-row-closed");
     await openShoppingRow(reopened);
-    await expectPicture(
-      reopened.locator(".s-shopping-product-one img"),
-      SLOTS.summary,
-    );
+    await expect(results.first()).toHaveClass(/is-current/);
+    await expectPicture(results.first().locator("img"), SLOTS.result);
     await shot(page, "4-chosen-drawn-by-the-server");
   });
 });

@@ -74,6 +74,94 @@ interface CurrentListItem {
     line.appendChild(document.createTextNode(text));
   }
 
+  // ------------------------------------- a warning before text rows (#358)
+
+  /**
+   * Rows that would go to the S-ostoslista as plain text, because no product
+   * has been chosen for them: everything on the trip that is still a note.
+   */
+  function unmappedRows(): HTMLElement[] {
+    var found: HTMLElement[] = [];
+    var seen: string[] = [];
+    var rows = document.querySelectorAll<HTMLElement>('.shopping-list[data-lista] .shopping-item[data-kind="buy"]');
+    for (var index = 0; index < rows.length; index += 1) {
+      var row = rows[index]!;
+      if (row.className.indexOf("is-excluded") !== -1) continue;
+      var key = row.getAttribute("data-rivi") || "";
+      if (seen.indexOf(key) !== -1) continue;
+      seen.push(key);
+      if (row.querySelector(".s-shopping-product.is-note")) found.push(row);
+    }
+    return found;
+  }
+
+  var confirmedSend = false;
+
+  function askBeforeSending(form: HTMLFormElement, rows: HTMLElement[]): void {
+    var node = el("div", "s-sheet s-warn");
+    var back = el("div", "s-sheet-backdrop");
+    node.appendChild(back);
+    var panel = el("div", "s-sheet-panel");
+    panel.setAttribute("role", "alertdialog");
+    panel.setAttribute("aria-modal", "true");
+    var count = rows.length;
+    panel.appendChild(el("h2", "s-warn-title",
+      count === 1 ? "1 aineelta puuttuu tuote" : count + " aineelta puuttuu tuote"));
+    panel.appendChild(el("p", "meta",
+      "Ne lähtevät S-ostoslistaan pelkkänä tekstinä, joten kaupassa ne pitää etsiä itse."));
+    var list = el("ul", "s-warn-list");
+    for (var index = 0; index < rows.length; index += 1) {
+      list.appendChild(el("li", "", rows[index]!.getAttribute("data-haku") || ""));
+    }
+    panel.appendChild(list);
+    var actions = el("div", "s-warn-actions");
+    var choose = el("button", "primary", "Valitse tuotteet");
+    choose.type = "button";
+    var anyway = el("button", "", "Lähetä silti");
+    anyway.type = "button";
+    actions.appendChild(choose);
+    actions.appendChild(anyway);
+    panel.appendChild(actions);
+    node.appendChild(panel);
+    document.body.appendChild(node);
+
+    function close(): void {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    }
+    back.addEventListener("click", close);
+    choose.addEventListener("click", function () {
+      close();
+      // Straight to the first one, in the list where it sits.
+      var summary = rows[0]!.querySelector<HTMLElement>(".shopping-summary");
+      if (summary) {
+        summary.scrollIntoView({ block: "center" });
+        summary.click();
+      }
+    });
+    anyway.addEventListener("click", function () {
+      close();
+      confirmedSend = true;
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+    choose.focus();
+  }
+
+  // Capture phase, ahead of the send itself.
+  document.addEventListener("submit", function (event) {
+    var form = event.target instanceof HTMLFormElement ? event.target : null;
+    if (!form || form.className.indexOf("s-send-form") === -1) return;
+    if (confirmedSend) {
+      confirmedSend = false;
+      return;
+    }
+    var rows = unmappedRows();
+    if (rows.length === 0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    askBeforeSending(form, rows);
+  }, true);
+
   // ------------------------------------------------------------- the sending
 
   function wireSend(): void {
@@ -236,6 +324,9 @@ interface CurrentListItem {
     request("GET", "/ostoslista/s-lista", null, function (ok, payload) {
       clear(state);
       var items = readCurrentItems(payload);
+      showOurs(ok && isRecord(payload) && typeof payload["ours"] === "number"
+        ? payload["ours"] as number
+        : 0);
       if (!ok || !items) {
         var record = isRecord(payload) ? payload : null;
         state.appendChild(
@@ -326,11 +417,59 @@ interface CurrentListItem {
     });
   }
 
+  // ----------------------------------------- taking Ruokalista's rows off
+
+  /**
+   * The button that clears every row this app put on the S-ostoslista (#358).
+   * Drawn hidden by the server; how many rows it would take is only known once
+   * the list has been read, so it shows with that count or not at all.
+   */
+  function showOurs(count: number): void {
+    var box = document.querySelector<HTMLElement>(".s-remove-ours");
+    var button = box ? box.querySelector<HTMLButtonElement>("button") : null;
+    if (!box || !button) return;
+    if (count > 0) {
+      box.hidden = false;
+      button.hidden = false;
+      button.textContent = "Poista Ruokalistan lisäämät (" + count + ")";
+    } else {
+      button.hidden = true;
+    }
+  }
+
+  function wireRemoveOurs(): void {
+    var box = document.querySelector<HTMLElement>(".s-remove-ours");
+    var foundButton = box ? box.querySelector<HTMLButtonElement>("button") : null;
+    var foundState = box ? box.querySelector<HTMLElement>(".s-remove-ours-state") : null;
+    if (!foundButton || !foundState) return;
+    var button: HTMLButtonElement = foundButton;
+    var state: HTMLElement = foundState;
+    button.addEventListener("click", function () {
+      if (button.disabled) return;
+      button.disabled = true;
+      state.hidden = false;
+      busy(state, "Poistetaan S-ostoslistalta…");
+      request("POST", "/ostoslista/s-lista/tyhjenna", "", function (ok, payload) {
+        button.disabled = false;
+        clear(state);
+        var record = isRecord(payload) ? payload : null;
+        var text = record && typeof record[ok ? "message" : "error"] === "string"
+          ? record[ok ? "message" : "error"] as string
+          : "S-ostoslistalta ei saatu poistettua rivejä. Yritä uudelleen.";
+        state.appendChild(document.createTextNode(text));
+        state.className = ok ? "s-remove-ours-state shopping-sent" : "s-remove-ours-state refused";
+        // What is left, and the new count, come from the list itself.
+        loadCurrent();
+      });
+    });
+  }
+
   // ------------------------------------------------------------------ wiring
 
   // The picker refuses on a browser that cannot run any of this, and the rest
   // of the screen has the same floor: without it there is nothing here to draw.
   if (picker === null) return;
   wireSend();
+  wireRemoveOurs();
   loadCurrent();
 })();

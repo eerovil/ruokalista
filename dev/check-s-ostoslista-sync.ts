@@ -48,12 +48,15 @@ class FakeClient implements SOstoslistaSyncClient {
     key: SOstoslistaKey,
     quantity: number | null = null,
     productName: string | null = null,
-  ): Promise<{ productFound: boolean | null }> {
+  ): Promise<{ id: string; productFound: boolean | null }> {
     const call: Call = { kind: "add", key, quantity };
     this.calls.push(call);
     this.productNames.push(productName);
     this.maybeFail(call);
-    return { productFound: "ean" in key ? this.found.get(key.ean) ?? null : null };
+    return {
+      id: `added-${this.calls.length}`,
+      productFound: "ean" in key ? this.found.get(key.ean) ?? null : null,
+    };
   }
 
   async correct(id: string, quantity: number | null = null): Promise<void> {
@@ -1137,4 +1140,46 @@ test("choosing the product again clears the flag (#333)", async () => {
   assert.deepEqual(outdatedRows(fake), ["h2r1"]);
   const read = await productsForIngredients(fake.db, [1]);
   assert.equal(read.get(1)?.[0]?.outdated, false);
+});
+
+test("a send records the rows it created, and only those (#358)", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  // Milk is already on the list — typed on the phone — at the wrong count.
+  client.held = [
+    {
+      id: "phone-milk",
+      name: "Maito",
+      ean: "6410000000001",
+      collected: true,
+      collectedStated: true,
+      quantity: 1,
+    },
+  ];
+
+  await sendToSOstoslista(fake.db, 1, client, [
+    item("1", "maito", "1 l", [{ product: product("6410000000001"), count: 2 }]),
+    item("2", "kaneli", "1 tl"),
+  ]);
+
+  const recorded = fake.sql
+    .prepare("SELECT item_id FROM s_ostoslista_sent_item WHERE household_id = 1")
+    .all()
+    .map((row) => row["item_id"]);
+  // The note was created by this send; the milk was only corrected.
+  assert.deepEqual(recorded, ["added-3"]);
+});
+
+test("a send whose opening read failed records nothing it cannot tell (#358)", async () => {
+  const fake = database();
+  const client = new FakeClient();
+  client.fail = (call) =>
+    call.kind === "list" ? new SOstoslistaError("down", 503) : null;
+
+  await sendToSOstoslista(fake.db, 1, client, [item("2", "kaneli", "1 tl")]);
+
+  const recorded = fake.sql
+    .prepare("SELECT item_id FROM s_ostoslista_sent_item")
+    .all();
+  assert.deepEqual(recorded, []);
 });

@@ -3,6 +3,10 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   closeShoppingRow,
   openShoppingRow,
+  productSheet,
+  putInCupboard,
+  sendList,
+  sheetResults,
 } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -51,16 +55,11 @@ test.describe("shopping product picking, as it is (#204)", () => {
     await shot(page, "01-list-top");
     await shot(page, "02-list-whole-page", { fullPage: true });
 
-    // 2. Opening an ingredient that has no product yet.
+    // 2. Opening an ingredient that has no product yet. Since #358 the tap
+    //    opens the product sheet itself, so the first thing the member sees
+    //    is the sheet before its results — the request held open on purpose
+    //    so the state the member actually sees is in the picture.
     const cheese = row(page, "juusto");
-    await openShoppingRow(cheese);
-    await expect(
-      cheese.getByRole("button", { name: "Valitse tuote" }),
-    ).toBeVisible();
-    await shot(page, "03-row-open");
-
-    // 3. The search sheet before results — the request held open on purpose so
-    //    the state the member actually sees is in the picture.
     let holdSearch = true;
     let releaseSearch: () => void = () => {};
     const heldSearch = new Promise<void>((resolve) => {
@@ -72,19 +71,17 @@ test.describe("shopping product picking, as it is (#204)", () => {
       if (holdSearch) await heldSearch;
       await route.continue().catch(() => {});
     });
-    await cheese.getByRole("button", { name: "Valitse tuote" }).click();
-    await expect(page.locator(".s-sheet")).toBeVisible();
-    await expect(page.locator(".s-sheet .s-product-panel-state")).toContainText(
-      "Haetaan tuotteita",
-    );
+    await cheese.locator(".shopping-summary").click();
+    await expect(productSheet(page)).toBeVisible();
+    await expect(page.locator(".s-sheet .is-placeholder").first()).toBeVisible();
     await shot(page, "04-sheet-searching");
     holdSearch = false;
     releaseSearch();
 
     // 4. The results of the search the sheet ran by itself.
-    const results = page.locator(".s-sheet .s-product-results > li");
+    const results = sheetResults(page);
     await expect(results.first()).toBeVisible();
-    await expect(page.locator(".s-sheet .spinner")).toHaveCount(0);
+    await expect(page.locator(".s-sheet .is-placeholder")).toHaveCount(0);
     await shot(page, "05-sheet-results");
 
     // 5. The moment before the tap, with the sheet scrolled to its end — what
@@ -134,40 +131,17 @@ test.describe("shopping product picking, as it is (#204)", () => {
     await openShoppingRow(mince);
     await shot(page, "10-next-ingredient-open");
 
-    // Changing a product that is already chosen. The cheese row shut itself
-    // when its choice saved (#204), so it is opened again to reach it.
+    // Changing a product that is already chosen: the same tap on its row,
+    // and the chosen product is the ticked first result.
     await closeShoppingRow(mince);
     await openShoppingRow(cheese);
-    await cheese.getByRole("button", { name: "Vaihda tuote" }).click();
-    await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
+    await expect(results.first()).toHaveClass(/is-current/);
     await shot(page, "11-changing-a-chosen-product");
-    await page.locator(".s-sheet .s-sheet-close").click();
-    await expect(page.locator(".s-sheet")).toBeHidden();
-
-    // A second package size for the same ingredient. This one does not draw
-    // optimistically: the server answers `reload`, so the page really reloads.
-    const secondSize = page.waitForEvent("load");
-    await cheese.getByRole("button", { name: "Lisää toinen pakkauskoko" }).click();
-    await expect(page.locator(".s-sheet .s-sheet-sub")).toContainText(
-      "Lisää pakkauskoko",
-    );
-    await shot(page, "12-add-another-package-size");
-    await page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Valio Polar" })
-      .getByRole("button", { name: "Valitse" })
-      .click();
-    await secondSize;
-    const cheeseAfter = row(page, "juusto");
-    await openShoppingRow(cheeseAfter);
-    await expect(cheeseAfter.locator(".s-product-sizes > li")).toHaveCount(2);
-    await shot(page, "13-two-package-sizes");
+    await closeShoppingRow(cheese);
 
     // Already in the cupboard: the row leaves the buy list for the Löytyy
     // section, through a full page load.
-    const oil = row(page, "öljy");
-    await openShoppingRow(oil);
-    await oil.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+    await putInCupboard(row(page, "öljy"));
     await expect(
       page.locator(".shopping-section", { hasText: "Löytyy" }),
     ).toBeVisible();
@@ -177,7 +151,7 @@ test.describe("shopping product picking, as it is (#204)", () => {
     const send = page.locator(".s-send-form button");
     await send.scrollIntoViewIfNeeded();
     await shot(page, "15-send-button");
-    await send.click();
+    await sendList(page);
     await expect(page.locator(".shopping-sent")).toBeVisible();
     await shot(page, "16-sent", { fullPage: true });
   });
@@ -203,10 +177,7 @@ test.describe("shopping product picking, as it is (#204)", () => {
       await openShoppingRow(item);
       await shot(page, `seq-${step}a-${slug(ingredient)}-open`);
       await pause(page);
-      await item.getByRole("button", { name: "Valitse tuote" }).click();
-      const chosen = page
-        .locator(".s-sheet .s-product-results > li")
-        .filter({ hasText: product });
+      const chosen = sheetResults(page).filter({ hasText: product });
       await expect(chosen).toBeVisible();
       await shot(page, `seq-${step}b-${slug(ingredient)}-results`);
       await pause(page);
@@ -222,8 +193,8 @@ test.describe("shopping product picking, as it is (#204)", () => {
       );
       await shot(page, `seq-${step}c-${slug(ingredient)}-chosen`);
       await pause(page);
-      // Tidy the row away the way a member would before moving on.
-      await closeShoppingRow(item);
+      // The sheet closed itself on the choice; nothing is left open.
+      await expect(productSheet(page)).toBeHidden();
     }
 
     await shot(page, "seq-9-four-chosen", { fullPage: true });

@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { openShoppingRow } from "./support/shopping-rows";
+import { openShoppingRow, sheetResults } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -250,16 +250,12 @@ test("a row with a product picture holds the same shape", async ({ page }) => {
   );
 
   await openShoppingRow(milk);
-  await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-  await expect(page.locator(".s-sheet")).toBeVisible();
-  await expect(page.locator(".s-sheet .spinner")).toHaveCount(0);
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       response.url().includes("/ostoslista/tuote"),
   );
-  await page
-    .locator(".s-sheet .s-product-results > li")
+  await sheetResults(page)
     .filter({ hasText: "Kotimaista rasvaton maito" })
     .getByRole("button", { name: "Valitse" })
     .click();

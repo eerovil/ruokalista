@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { openShoppingRow } from "./support/shopping-rows";
+import {
+  productSheet,
+  putInCupboard,
+  takeOutOfCupboard,
+} from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -44,11 +48,14 @@ async function sectionOf(page: Page, name: string): Promise<string> {
   }, name);
 }
 
-/** Move a row into or out of the cupboard from the list, as a person would. */
+/**
+ * Move a row into or out of the cupboard from the list, as a person would: in
+ * from the row's sheet, and back out by the "Osta" on the cupboard row (#358).
+ */
 async function useRowButton(page: Page, name: string, label: string) {
   const item = row(page, name);
-  await openShoppingRow(item);
-  await item.getByRole("button", { name: label }).click();
+  if (label === "Poista kaapista") await takeOutOfCupboard(item);
+  else await putInCupboard(item);
 }
 
 test("a shopping-list row can be put in the cupboard from the list", async ({
@@ -77,9 +84,13 @@ test("a row in the Löytyy section keeps its total and its breakdown", async ({
 
   const oil = row(page, "öljy");
   await expect(oil.locator(".shopping-total")).toHaveText("½ dl");
-  await openShoppingRow(oil);
-  await expect(oil.locator(".shopping-from li")).toHaveCount(1);
-  await expect(oil.locator(".shopping-from li").first()).toContainText(
+  // A cupboard row opens nothing since #358 — its one action, "Osta", is on
+  // the row — but it still carries where its total came from.
+  await expect(oil.locator(".shopping-item")).toHaveClass(/is-static/);
+  await oil.locator(".shopping-summary").click();
+  await expect(productSheet(page)).toBeHidden();
+  await expect(oil.locator(".row-data .shopping-from li")).toHaveCount(1);
+  await expect(oil.locator(".row-data .shopping-from li").first()).toContainText(
     "Kaalilaatikko",
   );
 });

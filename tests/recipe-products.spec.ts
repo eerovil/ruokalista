@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { openShoppingRow } from "./support/shopping-rows";
+import { openShoppingRow, productSheet, sheetResults } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 import { focusRing, setProductPicks, tabTo } from "./support/blocks";
@@ -93,8 +93,12 @@ test.describe("our household", () => {
     // The same fixed sheet, built by the same client, named after the row.
     const sheet = page.locator(".s-sheet");
     await expect(sheet).toBeVisible();
-    await expect(sheet.locator(".s-sheet-name")).toHaveText("maito");
-    await expect(sheet.locator(".s-sheet-sub")).toContainText("Ei valittua tuotetta");
+    // The heading is the name with the row's amount beside it (#358).
+    await expect(sheet.locator(".s-sheet-name")).toHaveText(/^maito/);
+    await expect(sheet.locator(".s-sheet-amount")).toHaveText("5 dl");
+    await expect(sheet.locator(".s-sheet-current")).toContainText(
+      "Ei tuotetta – lähtee tekstinä",
+    );
 
     // The choice is drawn before it is saved (#159), so the save is what has to
     // be waited for — not the row, which is already showing the answer.
@@ -134,8 +138,13 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const milk = page.locator(".shopping-item", { hasText: "maito" });
-    await openShoppingRow(milk);
     await expect(milk.locator(".s-shopping-product-summary")).toContainText(
+      "Kotimaista rasvaton maito 1 l",
+    );
+    // Opened, the row's sheet has it as the ticked first result.
+    await openShoppingRow(milk);
+    await expect(sheetResults(page).first()).toHaveClass(/is-current/);
+    await expect(sheetResults(page).first()).toContainText(
       "Kotimaista rasvaton maito 1 l",
     );
   });
@@ -152,10 +161,12 @@ test.describe("our household", () => {
 
     const sheet = page.locator(".s-sheet");
     await expect(sheet).toBeVisible();
-    // The scope choice is the server's own element, lifted into the sheet.
-    await sheet.locator(".s-product-scope-choice select").selectOption({
-      label: "Käytä tässä reseptissä: Lasagne",
-    });
+    // The scope choice is the server's own element, lifted into the sheet and
+    // offered as two buttons (#358).
+    await sheet
+      .locator(".s-scope-pills")
+      .getByRole("button", { name: "Vain Lasagne" })
+      .click();
     await sheet
       .locator(".s-product-results > li", { hasText: "Valio kevytmaito" })
       .getByRole("button", { name: "Valitse" })
@@ -177,13 +188,16 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const row = page.locator(".shopping-item", { hasText: "maito" });
-    await openShoppingRow(row);
-    await expect(row.locator(".s-product-scope")).toContainText(
-      "Vain reseptissä Lasagne",
-    );
     await expect(row.locator(".s-shopping-product-summary")).toContainText(
       "Valio kevytmaito 1 l",
     );
+    // The row's sheet says it is this dish's own, and has it first.
+    await openShoppingRow(row);
+    await expect(productSheet(page).locator(".s-sheet-pinned")).toContainText(
+      "Vain reseptissä Lasagne",
+    );
+    await expect(sheetResults(page).first()).toHaveClass(/is-current/);
+    await expect(sheetResults(page).first()).toContainText("Valio kevytmaito 1 l");
   });
 
   test("choosing a product does not change the row's height", async ({ page }) => {
@@ -264,13 +278,16 @@ test.describe("our household", () => {
 
     await page.goto("/ostoslista");
     const row = page.locator(".shopping-item", { hasText: "maito" });
-    await openShoppingRow(row);
-    await expect(row.locator(".s-product-scope")).toContainText(
-      "Vain reseptissä Lasagne",
-    );
     await expect(row.locator(".s-shopping-product-summary")).toContainText(
       "Kotimaista rasvaton maito 1 l",
     );
+    // The row's sheet says it is this dish's own, and has it first.
+    await openShoppingRow(row);
+    await expect(productSheet(page).locator(".s-sheet-pinned")).toContainText(
+      "Vain reseptissä Lasagne",
+    );
+    await expect(sheetResults(page).first()).toHaveClass(/is-current/);
+    await expect(sheetResults(page).first()).toContainText("Kotimaista rasvaton maito 1 l");
   });
 
   test("one ingredient on two rows of a dish moves together", async ({ page }) => {

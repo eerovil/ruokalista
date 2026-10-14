@@ -20,9 +20,13 @@ import {
 } from "./support/lines";
 import { flatPng, gradientPng } from "./support/png";
 import {
-  closeOpenShoppingRow,
   closeShoppingRow,
+  openBreakdown,
   openShoppingRow,
+  productSheet,
+  putInCupboard,
+  sendList,
+  sheetResults,
 } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -1133,28 +1137,27 @@ test.describe("signed in", () => {
     );
     await capture(page, { path: `${SHOTS}/38-shopping-list.png`, fullPage: true });
 
-    // An unmapped row's actions. `Lisää toinen pakkauskoko` holds its place
-    // disabled rather than appearing the moment a product is chosen — arriving
-    // mid-row, it used to shove every row below it down the screen (#200).
+    // An unmapped row, opened: since #358 the tap opens the product sheet
+    // itself, saying the row would go as text, with the cupboard at its foot.
     const water = page.locator(".shopping-item", { hasText: "vesi" }).first();
     await openShoppingRow(water);
+    await expect(productSheet(page).locator(".s-sheet-current")).toContainText(
+      "Ei tuotetta – lähtee tekstinä",
+    );
     await expect(
-      water.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
-    ).toBeDisabled();
+      productSheet(page).getByRole("button", { name: "Löytyy jo kaapista" }),
+    ).toBeVisible();
     await capture(page, {
-      // Viewport, not the whole page: since #321 this is a modal fixed to the
-      // viewport, and a full-page shot paints it once at the top over blank
-      // page rather than where the member sees it.
+      // Viewport, not the whole page: the sheet is fixed to the viewport, and
+      // a full-page shot paints it once at the top over blank page rather than
+      // where the member sees it.
       path: `${SHOTS}/83-shopping-unmapped-row.png`,
     });
     await closeShoppingRow(water);
 
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await openShoppingRow(milk);
-    await milk.getByRole("button", { name: "Valitse tuote" }).click();
-    const product = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Kotimaista rasvaton maito" });
+    const product = sheetResults(page).filter({ hasText: "Kotimaista rasvaton maito" });
     await expect(product).toBeVisible();
     // Not full-page: the picker is fixed to the viewport (#200), and a
     // full-page shot paints a fixed element wherever the page happens to be
@@ -1178,11 +1181,10 @@ test.describe("signed in", () => {
     await expect(milk.locator(".s-shopping-product-summary")).toContainText(
       "Kotimaista rasvaton maito",
     );
-    // The row's modal is over the list while the save runs, so getting to the
-    // send button means tapping it away first (#321). The held save carries on.
-    await closeOpenShoppingRow(page);
+    // The sheet closed on the tap, and the held save carries on behind it.
+    await expect(productSheet(page)).toBeHidden();
     const send = page.locator(".s-send-form button");
-    await send.click();
+    await sendList(page);
     await expect(send).toContainText("Tallennetaan valintoja");
     await expect(send.locator(".spinner")).toBeVisible();
     await capture(page, {
@@ -1221,13 +1223,14 @@ test.describe("signed in", () => {
       fullPage: true,
     });
 
-    // The breakdown, which since #321 is a modal over the list rather than an
-    // expanded row — so this one is the viewport, not the whole page: a fixed
-    // overlay in a full-page shot is drawn once, at the top, over nothing.
+    // The breakdown, which since #358 unfolds from the amount in the row's
+    // sheet — so this one is the viewport, not the whole page: a fixed overlay
+    // in a full-page shot is drawn once, at the top, over nothing.
     await page.locator(".shopping-picker > summary").click();
-    await openShoppingRow(milk);
-    await expect(milk.locator(".shopping-from li").first()).toBeVisible();
+    const from = await openBreakdown(milk);
+    await expect(from.first()).toBeVisible();
     await capture(page, { path: `${SHOTS}/39-shopping-breakdown.png` });
+    await closeShoppingRow(milk);
 
     // The product chosen above is the same linked product the recipe now shows.
     // Photograph that real path rather than seeding a display-only shortcut.
@@ -1276,12 +1279,10 @@ test.describe("signed in", () => {
     // The shopping-list shot above already chose a product for milk and this
     // file reseeds once, so the button may read either way by now.
     await openShoppingRow(milk);
-    await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-    const product = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Kotimaista rasvaton maito" });
+    const product = sheetResults(page).filter({ hasText: "Kotimaista rasvaton maito" });
     await expect(product).toBeVisible();
-    await expect(page.locator(".s-sheet .s-product-scope-choice")).toBeVisible();
+    // Since #358 the question is two buttons over the hidden select.
+    await expect(page.locator(".s-sheet .s-scope-pills")).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/60-product-scope-choice.png`,
     });
@@ -1295,50 +1296,24 @@ test.describe("signed in", () => {
     await saved;
     await page.reload();
 
-    // 15 dl does not fit in one litre, so the row buys two — and says so.
+    // 15 dl does not fit in one litre, so the row buys two. The count is the
+    // server's and goes to the S-list as the quantity; the sheet no longer
+    // shows packets (#358), so the shots of the package count and of a second
+    // package size went with it.
     const counted = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await openShoppingRow(counted);
     await expect(counted.locator(".s-shopping-product-summary")).toContainText(
       "2 × Kotimaista rasvaton maito 1 l",
     );
     await expect(counted.locator(".s-package-total")).toContainText("2 l");
-    await capture(page, {
-      // Viewport: the row's modal is open, and it is fixed to the viewport.
-      path: `${SHOTS}/61-package-count.png`,
-    });
-
-    // A second package size, taught from the row itself rather than a settings
-    // page, and listed underneath with the size that was stored for it.
-    await counted.getByRole("button", { name: "Lisää toinen pakkauskoko" }).click();
-    const second = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Valio kevytmaito" });
-    await expect(second).toBeVisible();
-    await Promise.all([
-      page.waitForEvent("load"),
-      second.getByRole("button", { name: "Valitse" }).click(),
-    ]);
-
-    const sized = page.locator(".shopping-item", { hasText: "maito" }).first();
-    await openShoppingRow(sized);
-    await expect(sized.locator(".s-product-sizes > li")).toHaveCount(2);
-    await capture(page, {
-      // Viewport, for the same reason as the shot above.
-      path: `${SHOTS}/62-package-sizes.png`,
-    });
 
     // #240: the same fortnight needs 1200 g of jauhelihaa, which is three of
     // the 400 g packet. Sending it used to leave the phone holding one packet
     // of the product and a written line saying "× 3" — so the shot below is of
     // the panel that says what the S-list actually holds afterwards.
-    await closeShoppingRow(sized);
     const mince = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
-    await openShoppingRow(mince);
     await expect(mince.locator(".shopping-total")).toHaveText("1200 g");
-    await mince.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-    const packet = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Kotimaista nauta-sikajauheliha" });
+    await openShoppingRow(mince);
+    const packet = sheetResults(page).filter({ hasText: "Kotimaista nauta-sikajauheliha" });
     await expect(packet).toBeVisible();
     const mincePicked = page.waitForResponse(
       (response) =>
@@ -1350,7 +1325,6 @@ test.describe("signed in", () => {
     await page.reload();
 
     const counting = page.locator(".shopping-item", { hasText: "jauheliha" }).first();
-    await openShoppingRow(counting);
     await expect(counting.locator(".s-shopping-product-summary")).toContainText(
       "3 × Kotimaista nauta-sikajauheliha 400 g",
     );
@@ -1361,8 +1335,7 @@ test.describe("signed in", () => {
     expect(
       (await page.request.post(`${S_OSTOSLISTA_FIXTURE}/_test/reset`)).ok(),
     ).toBe(true);
-    await closeShoppingRow(counting);
-    await page.locator(".s-send-form button").click();
+    await sendList(page);
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
     );
@@ -1389,10 +1362,7 @@ test.describe("signed in", () => {
     ).toHaveCount(1);
     const cheese = page.locator(".shopping-item", { hasText: "juusto" }).first();
     await openShoppingRow(cheese);
-    await cheese.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-    const grated = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Kotimaista juustoraaste" });
+    const grated = sheetResults(page).filter({ hasText: "Kotimaista juustoraaste" });
     await expect(grated).toBeVisible();
     const cheesePicked = page.waitForResponse(
       (response) =>
@@ -1402,7 +1372,7 @@ test.describe("signed in", () => {
     await grated.getByRole("button", { name: "Valitse" }).click();
     await cheesePicked;
 
-    await page.locator(".s-send-form button").click();
+    await sendList(page);
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
     );
@@ -1444,10 +1414,7 @@ test.describe("signed in", () => {
     await page.goto("/ostoslista");
     const milk = page.locator(".shopping-item", { hasText: "maito" }).first();
     await openShoppingRow(milk);
-    await milk.getByRole("button", { name: /Valitse tuote|Vaihda tuote/ }).click();
-    const carton = page
-      .locator(".s-sheet .s-product-results > li")
-      .filter({ hasText: "Kotimaista rasvaton maito" });
+    const carton = sheetResults(page).filter({ hasText: "Kotimaista rasvaton maito" });
     await expect(carton).toBeVisible();
     const picked = page.waitForResponse(
       (response) =>
@@ -1457,7 +1424,7 @@ test.describe("signed in", () => {
     await carton.getByRole("button", { name: "Valitse" }).click();
     await picked;
 
-    await page.locator(".s-send-form button").click();
+    await sendList(page);
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
     );
@@ -1590,8 +1557,7 @@ test.describe("signed in", () => {
       const item = page
         .locator(".shopping-item", { hasText: name })
         .first();
-      await openShoppingRow(item);
-      await item.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+      await putInCupboard(item);
     }
 
     // The Löytyy section is really there, with its rows and their amounts,
@@ -1646,6 +1612,9 @@ test.describe("signed in", () => {
     await expect(page.locator(".shopping-item.is-excluded")).toHaveCount(2);
     await expect(page.locator(".row-tick.is-on")).toHaveCount(2);
     await expect(page.locator(".shopping-excluded-note")).toBeVisible();
+    // A tick keeps the scroll where the thumb was (#358); the picture is of
+    // the whole list from the top.
+    await page.evaluate(() => window.scrollTo(0, 0));
     await capture(page, {
       path: `${SHOTS}/125-shopping-ticked-off.png`,
       fullPage: true,
