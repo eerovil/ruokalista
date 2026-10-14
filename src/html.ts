@@ -962,6 +962,9 @@ const STYLES = `
   .s-shopping-send h2 { margin: 0; }
   .s-shopping-send p { margin: .25rem 0 .7rem; color: var(--muted); }
   .s-shopping-send button { width: 100%; }
+  /* Clearing this app's own rows off the S-list (#358): under the send, and
+     quieter than it. */
+  .s-remove-ours { margin-top: .6rem; }
   .shopping-sent {
     padding: .7rem .8rem; margin: 0 0 1rem;
     background: var(--surface); border: 1px solid var(--accent);

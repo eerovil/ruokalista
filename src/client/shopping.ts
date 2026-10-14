@@ -236,6 +236,9 @@ interface CurrentListItem {
     request("GET", "/ostoslista/s-lista", null, function (ok, payload) {
       clear(state);
       var items = readCurrentItems(payload);
+      showOurs(ok && isRecord(payload) && typeof payload["ours"] === "number"
+        ? payload["ours"] as number
+        : 0);
       if (!ok || !items) {
         var record = isRecord(payload) ? payload : null;
         state.appendChild(
@@ -326,11 +329,59 @@ interface CurrentListItem {
     });
   }
 
+  // ----------------------------------------- taking Ruokalista's rows off
+
+  /**
+   * The button that clears every row this app put on the S-ostoslista (#358).
+   * Drawn hidden by the server; how many rows it would take is only known once
+   * the list has been read, so it shows with that count or not at all.
+   */
+  function showOurs(count: number): void {
+    var box = document.querySelector<HTMLElement>(".s-remove-ours");
+    var button = box ? box.querySelector<HTMLButtonElement>("button") : null;
+    if (!box || !button) return;
+    if (count > 0) {
+      box.hidden = false;
+      button.hidden = false;
+      button.textContent = "Poista Ruokalistan lisäämät (" + count + ")";
+    } else {
+      button.hidden = true;
+    }
+  }
+
+  function wireRemoveOurs(): void {
+    var box = document.querySelector<HTMLElement>(".s-remove-ours");
+    var foundButton = box ? box.querySelector<HTMLButtonElement>("button") : null;
+    var foundState = box ? box.querySelector<HTMLElement>(".s-remove-ours-state") : null;
+    if (!foundButton || !foundState) return;
+    var button: HTMLButtonElement = foundButton;
+    var state: HTMLElement = foundState;
+    button.addEventListener("click", function () {
+      if (button.disabled) return;
+      button.disabled = true;
+      state.hidden = false;
+      busy(state, "Poistetaan S-ostoslistalta…");
+      request("POST", "/ostoslista/s-lista/tyhjenna", "", function (ok, payload) {
+        button.disabled = false;
+        clear(state);
+        var record = isRecord(payload) ? payload : null;
+        var text = record && typeof record[ok ? "message" : "error"] === "string"
+          ? record[ok ? "message" : "error"] as string
+          : "S-ostoslistalta ei saatu poistettua rivejä. Yritä uudelleen.";
+        state.appendChild(document.createTextNode(text));
+        state.className = ok ? "s-remove-ours-state shopping-sent" : "s-remove-ours-state refused";
+        // What is left, and the new count, come from the list itself.
+        loadCurrent();
+      });
+    });
+  }
+
   // ------------------------------------------------------------------ wiring
 
   // The picker refuses on a browser that cannot run any of this, and the rest
   // of the screen has the same floor: without it there is nothing here to draw.
   if (picker === null) return;
   wireSend();
+  wireRemoveOurs();
   loadCurrent();
 })();

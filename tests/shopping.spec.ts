@@ -2643,6 +2643,41 @@ test("a send never removes a row the household added itself", async ({
   expect(names).not.toContain("maito — 5 dl");
 });
 
+/**
+ * One button takes off the S-list what Ruokalista put there, and nothing the
+ * household typed on the phone (#358).
+ */
+test("removing Ruokalista's rows leaves the household's own", async ({
+  page,
+  request,
+}) => {
+  await createBatch(page, LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await page.getByRole("button", { name: "Lähetä S-ostoslistaan" }).click();
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+  const sent = (await listNames(request)).length;
+  expect(sent).toBeGreaterThan(0);
+
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?note=${encodeURIComponent("kahvi itse")}`,
+  );
+  await page.goto("/ostoslista");
+  const remove = page.getByRole("button", {
+    name: `Poista Ruokalistan lisäämät (${sent})`,
+  });
+  await remove.click();
+
+  await expect(page.locator(".s-remove-ours-state")).toContainText(
+    `Poistettiin ${sent} riviä S-ostoslistalta.`,
+  );
+  expect(await listNames(request)).toEqual(["kahvi itse"]);
+  // Nothing of ours is left to offer.
+  await expect(remove).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: /Poista Ruokalistan lisäämät/ }),
+  ).toBeHidden();
+});
+
 test("a send that fails partway still replaces the note on the retry (#244)", async ({
   page,
   request,

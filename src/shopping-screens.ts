@@ -33,6 +33,11 @@ import {
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
 import {
+  appRows,
+  forgetSentItemStatement,
+  removeAppRows,
+} from "./s-ostoslista-sent-items.ts";
+import {
   sendToSOstoslista,
   type SOstoslistaRowFailure,
 } from "./s-ostoslista-sync.ts";
@@ -588,8 +593,12 @@ export async function currentListJson(
   if (client === null) return new Response("Not found", { status: 404 });
 
   try {
-    const items = (await client.list()).filter((item) => !item.collected);
-    return Response.json({ items });
+    const list = await client.list();
+    const items = list.filter((item) => !item.collected);
+    // How many rows the "remove Ruokalista's rows" button would take, ticked
+    // ones included (#358).
+    const ours = (await appRows(ctx.env.DB, member.householdId, list)).rows.length;
+    return Response.json({ items, ours });
   } catch (error) {
     console.error(`S-ostoslista list read failed: ${reason(error)}`);
     return problem(502, "S-ostoslistan sisältöä ei saatu luettua.");
@@ -644,6 +653,18 @@ export async function removeCurrentItemForm(
       return problem(502, "Rivin poisto S-ostoslistalta ei onnistunut. Yritä uudelleen.");
     }
   }
+  // A row this app had created is not this app's to count any more (#358).
+  if (deleted.length > 0) {
+    const db = meteredDatabase(budget, ctx.env.DB);
+    try {
+      await db.batch(
+        deleted.map((id) => forgetSentItemStatement(db, member.householdId, id)),
+      );
+    } catch (error) {
+      // Harmless: the next "remove Ruokalista's rows" forgets ids that are gone.
+      console.error(`S-ostoslista sent-item bookkeeping failed: ${reason(error)}`);
+    }
+  }
 
   /**
    * The phone is pushed for the reason a finished send pushes it, and at the
@@ -659,6 +680,46 @@ export async function removeCurrentItemForm(
   }
 
   return Response.json({ deleted });
+}
+
+/**
+ * `POST /ostoslista/s-lista/tyhjenna` — take every row this app put on the
+ * S-ostoslista off it, and nothing the household added themselves (#358).
+ *
+ * JSON only: the button is drawn by the shopping client, and the owner has
+ * said the shopping list does not need to work without scripts. What counts
+ * as this app's row is `s-ostoslista-sent-items.ts::appRows`.
+ */
+export async function removeAppRowsJson(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
+  const client = externalClient(ctx.env, member, budget);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  try {
+    const outcome = await removeAppRows(
+      meteredDatabase(budget, ctx.env.DB),
+      member.householdId,
+      client,
+      budget,
+    );
+    return Response.json({ ...outcome, message: removedMessage(outcome) });
+  } catch (error) {
+    console.error(`S-ostoslista bulk removal failed: ${reason(error)}`);
+    return problem(502, "S-ostoslistalta ei saatu poistettua rivejä. Yritä uudelleen.");
+  }
+}
+
+function removedMessage({ removed, total }: { removed: number; total: number }): string {
+  if (total === 0) return "S-ostoslistalla ei ole Ruokalistan lisäämiä rivejä.";
+  if (removed < total) {
+    return `Poistettiin ${removed}/${total} riviä — paina uudelleen, niin loput poistetaan.`;
+  }
+  return removed === 1
+    ? "Poistettiin 1 rivi S-ostoslistalta."
+    : `Poistettiin ${removed} riviä S-ostoslistalta.`;
 }
 
 /** The typed shopping client asks for JSON, so one route serves both callers. */
@@ -1606,6 +1667,12 @@ function externalSendPanel(
             ${selectionFields(selection)}
             <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
           </form>`}
+    <!-- Filled by the shopping client once the S-list has been read, with how
+         many rows it would take (#358). Script-only by the owner's word. -->
+    <div class="s-remove-ours" hidden>
+      <button type="button" hidden>Poista Ruokalistan lisäämät</button>
+      <p class="s-remove-ours-state" hidden></p>
+    </div>
   </section>`;
 }
 

@@ -276,6 +276,11 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     "id",
     "s_ostoslista_sent_note",
   );
+  uniqueIntegerKey(
+    snapshot.tables.s_ostoslista_sent_item,
+    "id",
+    "s_ostoslista_sent_item",
+  );
   uniqueComposite(snapshot.tables.recipe_step, ["recipe_id", "position"], "recipe_step");
   uniqueComposite(snapshot.tables.ingredient_line, ["recipe_id", "position"], "ingredient_line order");
   uniqueComposite(snapshot.tables.member, ["google_sub"], "member google_sub");
@@ -314,6 +319,12 @@ function validateRelationships(snapshot: BackupSnapshot): void {
     snapshot.tables.s_ostoslista_sent_note,
     ["household_id", "row_key"],
     "s-ostoslista sent note",
+  );
+  // One record per S-list row this app created (#358).
+  uniqueComposite(
+    snapshot.tables.s_ostoslista_sent_item,
+    ["household_id", "item_id"],
+    "s-ostoslista sent item",
   );
 
   for (const row of snapshot.tables.member) {
@@ -419,6 +430,14 @@ function validateRelationships(snapshot: BackupSnapshot): void {
       "household_id",
       householdIds,
       "s_ostoslista_sent_note.household_id",
+    );
+  }
+  for (const row of snapshot.tables.s_ostoslista_sent_item) {
+    requireReference(
+      row,
+      "household_id",
+      householdIds,
+      "s_ostoslista_sent_item.household_id",
     );
   }
 }

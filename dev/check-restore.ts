@@ -33,6 +33,7 @@ const TABLES: readonly BackupTableName[] = [
   "ingredient_product",
   "recipe_ingredient_product",
   "s_ostoslista_sent_note",
+  "s_ostoslista_sent_item",
   "recipe_image_cleanup",
 ];
 
@@ -493,6 +494,14 @@ async function validSnapshot() {
         household_id: 1,
         row_key: "1",
         note: "öljy — 5 dl",
+        sent_at: "2026-08-25 00:00:00",
+      },
+    ],
+    s_ostoslista_sent_item: [
+      {
+        id: 1,
+        household_id: 1,
+        item_id: "item-1",
         sent_at: "2026-08-25 00:00:00",
       },
     ],

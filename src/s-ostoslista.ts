@@ -271,6 +271,17 @@ export class SOstoslistaClient {
     await this.#request("sync", { method: "POST" }, false);
   }
 
+  /**
+   * Remove exactly one row, by the id the service handed out for it (#358).
+   * The keyed delete below takes every copy of a product, the household's own
+   * among them; this takes only the row named.
+   */
+  async removeById(id: string): Promise<void> {
+    const item = id.trim();
+    if (item === "") throw new SOstoslistaError("Item id is empty.");
+    await this.#request(`items/${encodeURIComponent(item)}`, { method: "DELETE" });
+  }
+
   /** Remove every copy added under this EAN or note key. */
   async remove(key: SOstoslistaKey): Promise<string[]> {
     const clean = cleanKey(key);
