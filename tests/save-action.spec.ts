@@ -124,15 +124,14 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
   await page.goto("/recipes/1");
 
   // Who can see it is said under the title, before any scrolling at all.
-  const shortcut = page.locator(".sharing-shortcut");
-  await expect(shortcut).toBeInViewport();
-  await expect(shortcut).toContainText("Näkyvyys: vain oma talous");
+  const said = page.locator(".recipe-meta .visibility-word");
+  await expect(said).toBeInViewport();
+  await expect(said).toHaveText("🔒 Oma");
 
-  // And one tap puts the control and its save on screen together. Since #317
-  // the sharing form is a modal, so Muuta opens it rather than scrolling to it.
-  // Still a link, so the keyboard reaches it: locating it by role is what keeps
-  // that true rather than letting any old element wearing the word pass.
-  await shortcut.getByRole("link", { name: "Muuta" }).click();
+  // And ⋯ → Jakaminen puts the control and its save on screen together.
+  // Links all the way, so the keyboard reaches them too.
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
+  await page.locator("#lisavalinnat").getByRole("link", { name: /Jakaminen/ }).click();
   const save = page.getByRole("button", { name: "Tallenna jako" });
   await expect(page.getByLabel("Julkinen")).toBeInViewport();
   await expect(save).toBeInViewport();
@@ -143,18 +142,16 @@ test("B. changing who sees a recipe needs no editor and no hunting", async ({
   await expect(save).toBeInViewport();
 
   await save.click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
   // The saved state is what the line under the title now says.
-  await expect(page.locator(".sharing-shortcut"))
-    .toContainText("Näkyvyys: kaikki taloudet");
+  await expect(said).toHaveText("🌍 Julkinen");
 
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".sharing-shortcut"))
-    .toContainText("Näkyvyys: vain oma talous");
+  await expect(said).toHaveText("🔒 Oma");
 });
 
 test("B. searching the household list is not an unsaved change", async ({
@@ -250,7 +247,7 @@ test("the save bar's button still carries its own value", async ({ page }) => {
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   expect((await posted).postData()).toContain("action=save");
 
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
   await openEditBlock(page, "sharing-open");

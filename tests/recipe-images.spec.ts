@@ -116,12 +116,12 @@ test.describe("the recipe screen", () => {
   });
 
   /**
-   * Issue #116: the hero used to be an 11rem strip filled by `object-fit:
-   * cover`, which threw most of a square generated picture away. This asserts
-   * the geometry rather than the CSS: scale the picture's own dimensions into
-   * the band the way `contain` does, and every pixel of it has to fit.
+   * Issue #116 made the hero a 4:3 band showing the whole picture; #354 made it
+   * a shorter 2:1 band the picture fills, so the buttons and the ingredients
+   * start higher on a phone. The owner chose the crop: a generated picture
+   * keeps its food in the middle of the frame, which a 2:1 crop keeps.
    */
-  test("the whole picture fits inside the hero, uncropped", async ({ page }) => {
+  test("the hero is a 2:1 band the picture fills", async ({ page }) => {
     await page.request.put(IMAGE_URL, {
       headers: { "content-type": "image/png" },
       data: png(512, 512, [200, 110, 60]),
@@ -134,28 +134,14 @@ test.describe("the recipe screen", () => {
     await expect(shown).toBeVisible();
 
     const band = await hero.boundingBox();
-    const natural = await shown.evaluate((img) => ({
-      width: (img as HTMLImageElement).naturalWidth,
-      height: (img as HTMLImageElement).naturalHeight,
-    }));
-    expect(natural.width).toBe(512);
-
-    // Taller than the old strip, and still not the whole phone.
     const viewport = page.viewportSize();
-    expect(band?.height ?? 0).toBeGreaterThan(176);
-    expect(band?.height ?? 0).toBeLessThan((viewport?.height ?? 0) * 0.75);
-    // And no wider than the page it sits on.
+    // About twice as wide as tall, and no wider than the page it sits on.
+    const ratio = (band?.width ?? 0) / (band?.height ?? 1);
+    expect(ratio).toBeGreaterThan(1.7);
+    expect(ratio).toBeLessThan(2.3);
     expect(band?.width ?? 0).toBeLessThanOrEqual(viewport?.width ?? 0);
 
-    const scale = Math.min(
-      (band?.width ?? 0) / natural.width,
-      (band?.height ?? 0) / natural.height,
-    );
-    expect(natural.width * scale).toBeLessThanOrEqual((band?.width ?? 0) + 1);
-    expect(natural.height * scale).toBeLessThanOrEqual((band?.height ?? 0) + 1);
-
-    // The picture really is drawn whole rather than cropped to fill.
-    await expect(shown).toHaveCSS("object-fit", "contain");
+    await expect(shown).toHaveCSS("object-fit", "cover");
 
     // The title still follows immediately underneath.
     const title = await page.locator("h1").boundingBox();

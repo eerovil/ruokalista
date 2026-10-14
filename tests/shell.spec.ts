@@ -100,12 +100,18 @@ test.describe("signed in", () => {
       .last();
     await expect(last).toBeInViewport();
 
-    // And that last row clears the bar rather than sitting under it.
-    const row = await page.locator(".source-original > summary").boundingBox();
+    // And the method's last step clears the bar rather than sitting under it:
+    // since #354 everything after it but the keep-awake line is behind ⋯. Its
+    // text, that is — the row's own bottom padding may tuck under the bar.
+    // Measured until the page settles: it can still grow after End (the
+    // picture band, the keep-awake line), and End is pressed again each time.
     const tabs = await page.locator("nav.tabs").boundingBox();
-    expect(row).not.toBeNull();
     expect(tabs).not.toBeNull();
-    expect(row!.y + row!.height).toBeLessThanOrEqual(tabs!.y);
+    await expect.poll(async () => {
+      await page.keyboard.press("End");
+      return page.locator(".steps li").last().evaluate((el) =>
+        el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom));
+    }).toBeLessThanOrEqual(tabs!.y);
   });
 
   // The shell is only coherent if it is actually on every screen. This walks

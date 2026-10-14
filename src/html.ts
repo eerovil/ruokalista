@@ -328,9 +328,9 @@ const STYLES = `
   .multiplier-choice input { width: 4.5rem; text-align: center; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
-  .part { margin: 1.5rem 0; padding-left: .7rem;
+  .part, .part-method, .part-finish-lines { margin: 1.5rem 0; padding-left: .7rem;
     border-left: 3px solid var(--edge); }
-  .part h2 { margin-top: 0; font-size: 1.05rem; }
+  .part h2, .part-method h2, .part-finish-lines h2 { margin-top: 0; font-size: 1.05rem; }
   .ingredients li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .position { width: 3rem !important; flex: none !important; color: var(--muted); }
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
@@ -1215,6 +1215,8 @@ export function multiplierField(
     label: string;
     describedBy?: string;
     submit: string;
+    /** Shown in the typed box while it is empty. */
+    placeholder?: string;
   },
 ): Raw {
   return html`<div class="multiplier-choice" role="group" aria-label="${options.label}">
@@ -1232,6 +1234,9 @@ export function multiplierField(
       value="${options.typed}"
       size="4"
       aria-label="Muu kerroin"
+      ${options.placeholder === undefined
+        ? ""
+        : raw(`placeholder="${escape(options.placeholder)}"`)}
       ${options.describedBy === undefined
         ? ""
         : raw(`aria-describedby="${escape(options.describedBy)}"`)}

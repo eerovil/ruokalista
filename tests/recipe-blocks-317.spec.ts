@@ -155,7 +155,8 @@ test("the household's own settings are two lines and two modals", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
-  const sharing = page.locator(".recipe-sharing");
+  // Two rows of the ⋯ modal since #354, each opening its own modal.
+  const sharing = page.locator(".household-settings");
 
   await expect(sharing.locator(".preference-value")).toHaveText(
     "Resepti sellaisenaan",
@@ -169,11 +170,7 @@ test("the household's own settings are two lines and two modals", async ({
   await page.locator(".recipe-sharing .multiplier-choice").getByRole("button", { name: "2×" }).click();
   await expect(sharing.locator(".preference-value")).toHaveText("2×");
 
-  // And the line under the title still opens the sharing modal in one tap.
-  await page
-    .locator(".sharing-shortcut")
-    .getByRole("link", { name: "Muuta" })
-    .click();
+  await openEditBlock(page, "sharing-open");
   await expect(page.locator(".sharing-form")).toBeVisible();
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
@@ -209,29 +206,29 @@ test("the editor's picture takes focus visibly, and opens with a key", async ({
   await expect(page.locator("#recipe-image")).toBeVisible();
 });
 
-test("the sharing shortcut is in the tab order, and opens with a key", async ({
+test("⋯ and its rows are in the tab order, and open with a key (#354)", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
   await expect(page.locator(".sharing-form")).toBeHidden();
 
-  const shortcut = ".sharing-shortcut a";
-  // A link, not a label: the thing the keyboard can reach and press.
-  await expect(page.locator(".sharing-shortcut").getByRole("link", { name: "Muuta" }))
-    .toBeVisible();
-  await expect(page.locator(".sharing-shortcut label")).toHaveCount(0);
+  // Links, not labels: things the keyboard can reach and press.
+  await tabTo(page, ".recipe-top-more");
+  expect(await focusRing(page, ".recipe-top-more")).not.toBe("none 0px");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#lisavalinnat .edit-modal-card")).toBeVisible();
 
-  await tabTo(page, shortcut);
-  expect(await focusRing(page, shortcut)).not.toBe("none 0px");
-
+  const row = '#lisavalinnat a[href="#sharing-open-auki"]';
+  await tabTo(page, row);
   await page.keyboard.press("Enter");
   await expect(page.locator(".sharing-form")).toBeVisible();
   await expect(page.getByLabel("Julkinen")).toBeInViewport();
 
-  // And Valmis takes it away again without a pointer either.
-  await page.locator(".edit-block#sharing-open .edit-done").focus();
+  // And Valmis takes it away again without a pointer either, back to ⋯.
+  await page.locator("#sharing-open-auki .edit-done").focus();
   await page.keyboard.press("Enter");
   await expect(page.locator(".sharing-form")).toBeHidden();
+  await expect(page.locator("#lisavalinnat .edit-modal-card")).toBeVisible();
 });
 
 test("the sharing block's own Muokkaa still opens the same modal", async ({

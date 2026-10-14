@@ -38,23 +38,31 @@ test("a dish shows each part with its own ingredients and method", async ({
   await expect(parts.nth(1)).toContainText("maito");
   await expect(parts.nth(0)).not.toContainText("maito");
 
-  await expect(parts.nth(0)).toContainText("Ruskista jauheliha.");
-  await expect(parts.nth(1)).toContainText("sulata juusto");
+  // Each part's steps are its own too, under the same name in the method.
+  const methods = page.locator(".part-method:not(.part-finish)");
+  await expect(methods).toHaveCount(2);
+  await expect(methods.nth(0).locator("h2")).toHaveText("Jauhelihakastike");
+  await expect(methods.nth(0)).toContainText("Ruskista jauheliha.");
+  await expect(methods.nth(1)).toContainText("sulata juusto");
+  await expect(parts.nth(0)).not.toContainText("Ruskista jauheliha.");
 
-  // Parent pre-work, the named parts, and parent assembly read in cooking order.
+  // Every ingredient first, then the whole method (#354), both in cooking
+  // order: each part in turn, and the dish's own assembly last, under Lopuksi.
   const cookingText = await page.locator("main").innerText();
-  expect(cookingText.indexOf("Voitele vuoka")).toBeLessThan(
-    cookingText.indexOf("Jauhelihakastike"),
-  );
-  expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
-    cookingText.indexOf("Jauhelihakastike"),
-  );
   expect(cookingText.indexOf("Juustokastike")).toBeLessThan(
     cookingText.indexOf("12 kpl lasagnelevy"),
   );
-  expect(cookingText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
+  expect(cookingText.indexOf("maito")).toBeLessThan(
+    cookingText.indexOf("Voitele vuoka"),
+  );
+  expect(cookingText.indexOf("Lämmitä uuni")).toBeLessThan(
+    cookingText.lastIndexOf("Jauhelihakastike"),
+  );
+  expect(cookingText.lastIndexOf("Juustokastike")).toBeLessThan(
     cookingText.indexOf("Kokoa vuokaan"),
   );
+  await expect(page.locator(".part-finish h2")).toHaveText("Lopuksi");
+  await expect(page.locator(".part-finish")).toContainText("Kokoa vuokaan");
 });
 
 test("what belongs to the dish itself stays on the dish", async ({ page }) => {
@@ -171,12 +179,12 @@ test("editing a part changes that part and leaves the other alone (#231)", async
   const sections = page.locator(".part");
   await expect(sections.nth(1).locator("h2")).toHaveText("Valkokastike");
   await expect(sections.nth(1)).toContainText("6 dl");
-  await expect(sections.nth(1)).toContainText("vispaa juusto");
+  await expect(page.locator(".part-method").nth(1)).toContainText("vispaa juusto");
 
   // The sibling part is untouched, which is the whole point of opening one.
   await expect(sections.nth(0).locator("h2")).toHaveText("Jauhelihakastike");
   await expect(sections.nth(0)).toContainText("400 g");
-  await expect(sections.nth(0)).toContainText("Ruskista jauheliha.");
+  await expect(page.locator(".part-method").nth(0)).toContainText("Ruskista jauheliha.");
 
   // Put the lasagne back for the cases after this one.
   reseed();
@@ -256,10 +264,13 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
 
   const importedText = await page.locator("main").innerText();
   expect(importedText.indexOf("Lämmitä uuni.")).toBeLessThan(
-    importedText.indexOf("Jauhelihakastike"),
+    importedText.lastIndexOf("Jauhelihakastike"),
   );
   expect(importedText.indexOf("Juustokastike")).toBeLessThan(
     importedText.indexOf("12 kpl lasagnelevy"),
+  );
+  expect(importedText.indexOf("12 kpl lasagnelevy")).toBeLessThan(
+    importedText.indexOf("Lämmitä uuni."),
   );
 
   // And the dish is listed while its parts are not.
@@ -324,11 +335,12 @@ test("case and whitespace variants save as one complete part", async ({ page }) 
   await expect(part.locator("h2")).toHaveText("Täyte");
   await expect(part.locator(".lines li")).toHaveCount(1);
   await expect(part.locator(".lines")).toContainText("2 dl maito tai 1 dl juusto");
-  await expect(part.locator(".steps li")).toHaveCount(2);
-  await expect(part.locator(".steps li").first())
+  const method = page.locator(".part-method");
+  await expect(method.locator(".steps li")).toHaveCount(2);
+  await expect(method.locator(".steps li").first())
     .toContainText("Sekoita");
-  await expect(part).toContainText("Täytä kaali.");
-  await expect(part.locator(".mention")).toHaveCount(2);
+  await expect(method).toContainText("Täytä kaali.");
+  await expect(method.locator(".mention")).toHaveCount(2);
 });
 
 test("correcting a part name before saving moves the lines", async ({ page }) => {

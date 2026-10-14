@@ -55,8 +55,10 @@ test("imports plain and multipart drafts through the shared save path", async ({
 
   await page.getByRole("link", { name: "AgentDeck-piirakka" }).click();
   const content = await page.locator("main").innerText();
-  expect(content.indexOf("Voitele vuoka")).toBeLessThan(content.indexOf("Täyte"));
-  expect(content.indexOf("Täyte")).toBeLessThan(content.indexOf("Kokoa piirakka"));
+  // Ingredients first, then the method, each in cooking order (#354): the
+  // part's name heads its steps too, after the dish's own pre-work.
+  expect(content.indexOf("Voitele vuoka")).toBeLessThan(content.lastIndexOf("Täyte"));
+  expect(content.lastIndexOf("Täyte")).toBeLessThan(content.indexOf("Kokoa piirakka"));
 
   expect(provenanceRows()).toEqual([
     { title: "AgentDeck-keitto", source_route: "pasted", structured_by: "agentdeck/codex/gpt-5.6" },

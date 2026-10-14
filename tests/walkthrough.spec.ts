@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { sessionCookie } from "./support/session";
+import { openCookAdd } from "./support/blocks";
 
 /**
  * A hand-walk of the whole product, kept out of `npm run check` and CI — this
@@ -32,6 +33,7 @@ test("import the sample and cook what it made", async ({ page }) => {
 
   // Put it on the to-do list at 2×, then open it from there and check it
   // scaled.
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "2×", exact: true }).click();
 
   await expect(page).toHaveURL(/\/$/);

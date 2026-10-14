@@ -165,12 +165,9 @@ test("a recipe can be saved from its name alone, with no model call", async ({
   ).toBeVisible();
   await expect(page.locator(".lines li")).toHaveCount(0);
 
-  // And it is an ordinary recipe: the editor opens on it and fills it in. The
-  // scroll is deliberate: a recipe with nothing in it is barely taller than the
-  // screen, so its last line starts out behind the fixed tab strip and is only
-  // tappable once the page has been moved — which a person does before reaching
-  // for it and a test has to say out loud.
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  // And it is an ordinary recipe: the editor opens on it, from ⋯, and fills
+  // it in.
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   await page.getByRole("link", { name: "Muokkaa reseptiä" }).click();
   await page.locator("#title").fill("Mummin lihapullat");
   await page.getByRole("button", { name: "Tallenna muutokset" }).click();
@@ -290,6 +287,7 @@ test("a web address becomes a background import and is kept on the recipe", asyn
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   await page.getByText("Alkuperäinen resepti").click();
   const link = page.locator(".source-link a");
   await expect(link).toHaveText("kotikokki.example");

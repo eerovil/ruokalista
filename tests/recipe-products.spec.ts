@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
+import { focusRing, setProductPicks, tabTo } from "./support/blocks";
 
 const browserPort = Number(process.env["PLAYWRIGHT_PORT"] ?? "8787");
 const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${browserPort + 1}`;
@@ -43,7 +44,7 @@ test.afterAll(reseed);
  * first — the same two taps a member doing a round of product mapping makes.
  */
 async function showPicks(page: Page): Promise<void> {
-  await page.getByLabel("Näytä tuotevalinnat").check();
+  await setProductPicks(page, true);
 }
 
 /** The recipe row for one ingredient, by the name printed on it. */
@@ -501,7 +502,9 @@ test.describe("our household", () => {
       });
       expect(tap).toBeGreaterThan(0);
 
-      const label = page.locator(".product-picks-label");
+      // Since #354 the words are a switch row of the ⋯ modal.
+      await page.getByRole("link", { name: "Lisää valintoja" }).click();
+      const label = page.locator(".picks-row");
       const box = await label.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.height).toBeGreaterThanOrEqual(tap - 0.5);
@@ -510,6 +513,33 @@ test.describe("our household", () => {
       // brings the buttons out.
       await label.click();
       await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+      await page.locator("#lisavalinnat .edit-done").click();
+      await expect(
+        ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("the switch works from the keyboard, with its focus shown (#354 review)", async ({
+      page,
+    }) => {
+      // A label takes no focus, so the checkbox itself is the switch: reached
+      // by Tab inside ⋯, worked with Space, its focus drawn on the switch. And
+      // nothing on the page is an invisible tab stop for it any more.
+      await page.goto(`/recipes/${LASAGNE}`);
+      await expect(page.locator("#show-product-picks")).toBeHidden();
+
+      await tabTo(page, ".recipe-top-more");
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#lisavalinnat .edit-modal-card")).toBeVisible();
+
+      await tabTo(page, "#show-product-picks");
+      expect(await focusRing(page, ".product-picks:focus-visible + .picks-switch"))
+        .toBe("solid 2px");
+      await page.keyboard.press("Space");
+      await expect(page.getByLabel("Näytä tuotevalinnat")).toBeChecked();
+
+      await page.locator("#lisavalinnat .edit-done").focus();
+      await page.keyboard.press("Enter");
       await expect(
         ingredient(page, "maito").getByRole("button", { name: "Valitse", exact: true }),
       ).toBeVisible();
@@ -528,7 +558,7 @@ test.describe("our household", () => {
       ).toBeVisible();
 
       // And unticking is remembered just as well.
-      await page.getByLabel("Näytä tuotevalinnat").uncheck();
+      await setProductPicks(page, false);
       await page.goto(`/recipes/${LASAGNE}`);
       await expect(page.getByLabel("Näytä tuotevalinnat")).not.toBeChecked();
       await expect(

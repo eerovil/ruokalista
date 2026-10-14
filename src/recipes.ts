@@ -9,7 +9,6 @@ import {
   CATEGORY_STYLE,
   SELECTION_COUNT_ISLAND,
   categoryBulkControls,
-  categoryTags,
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
@@ -26,7 +25,6 @@ import {
 import { recipeImage, type Pictured } from "./recipe-picture.ts";
 import recipeProductsClient from "./generated/recipe-products.ts";
 import {
-  editBlock,
   editBlockOpenHref,
   html,
   multiplierField,
@@ -617,49 +615,48 @@ function pickerRowAttributes(picker: RecipePicker, subject: ProductSubject): Raw
  * doing a round of product mapping. Off, a mapped row still shows which product
  * it is — the name and the picture stay; only the way to change it goes.
  *
- * It is a plain checkbox in front of the ingredient lists, and what hides the
- * buttons is CSS reading `:checked` on it — so the tick works on a browser with
- * no JavaScript too, the same trick `reveal-all` has always used. The typed
- * recipe-products client adds only the remembering, in `localStorage`, which is
- * why the checkbox has an id. That also keeps it per browser rather than per
- * household, which is what the card asks for: one person mapping products does
- * not change what everybody else's recipe screen looks like.
- *
- * The input and the label are siblings of the sections rather than wrapped in
- * anything, because `~` is how the CSS reaches the rows and a wrapper would cut
- * that off.
+ * It is a real checkbox drawn as a switch in a row of the ⋯ modal (#354), so
+ * it takes focus and answers Space like any checkbox. What hides the buttons
+ * is CSS reading `:checked` on it — `.recipe-view:has(.product-picks:checked)`,
+ * since the modal is not a sibling of the ingredient lists — so the tick works
+ * on a browser with no JavaScript too. A browser without `:has` drops those
+ * rules and simply always shows the buttons, which fails quietly. The typed
+ * recipe-products client adds only the remembering, in `localStorage`, which
+ * is why the checkbox has an id. That also keeps it per browser rather than
+ * per household, which is what the card asks for: one person mapping products
+ * does not change what everybody else's recipe screen looks like.
  */
-function productPicksToggle(): Raw {
-  return html`<input
-      type="checkbox"
-      id="show-product-picks"
-      class="product-picks"
-    /><label for="show-product-picks" class="product-picks-label"
-      >Näytä tuotevalinnat</label
-    >`;
+function productPicksRow(): Raw {
+  return html`<label class="tail-row picks-row"
+    ><span class="tail-row-text"
+      ><span class="tail-row-title">Näytä tuotevalinnat</span
+      ><span class="tail-row-note">S-ostoslistan tuotteet ainesten kohdalla</span></span
+    ><span class="picks-control"
+      ><input type="checkbox" id="show-product-picks" class="product-picks"
+      /><span class="picks-switch" aria-hidden="true"></span></span
+  ></label>`;
 }
 
-function body(
+function phaseFilter<T extends { phase: RecipePhase }>(
+  rows: readonly T[],
+  phases?: RecipePhase[],
+): T[] {
+  return phases === undefined ? [...rows] : rows.filter((row) => phases.includes(row.phase));
+}
+
+/**
+ * One recipe's ingredient lines — the dish's own or one part's — as a list.
+ * `recipe` is the row's own recipe row, which is half of what names a line
+ * for the product picker.
+ */
+function ingredientList(
   recipe: Recipe,
+  lines: Recipe["lines"],
   multiplier: number,
   picker: RecipePicker | null,
-  phases?: RecipePhase[],
-  bucket = "a",
-  reveal: RevealSlot | null = null,
 ): Raw {
-  const lines = phases === undefined
-    ? recipe.lines
-    : recipe.lines.filter((line) => phases.includes(line.phase));
-  const steps = phases === undefined
-    ? recipe.steps
-    : recipe.steps.filter((step) => phases.includes(step.phase));
-  const amounts = amountsByIngredient(recipe.lines, multiplier);
-
-  return html`<section class="recipe-section">
-    ${lines.length === 0
-      ? ""
-      : html`<h3 class="ingredients-heading">Ainekset</h3>
-          <ul class="lines recipe-ingredients">
+  if (lines.length === 0) return raw("");
+  return html`<ul class="lines recipe-ingredients">
             ${alternativeSets(lines).map((set) => {
               const shown = set.options[0]!;
               const shared = sharedSource(set.options, (line) =>
@@ -722,17 +719,90 @@ function body(
                     })}
               </li>`;
             })}
-          </ul>`}
-    ${steps.length === 0
-      ? ""
-      : html`${methodHeading(reveal)}
-          <ol class="steps recipe-method">
+          </ul>`;
+}
+
+/** One recipe's steps — the dish's own or one part's — as a numbered list. */
+function stepList(
+  recipe: Recipe,
+  steps: Recipe["steps"],
+  multiplier: number,
+  bucket: string,
+): Raw {
+  if (steps.length === 0) return raw("");
+  const amounts = amountsByIngredient(recipe.lines, multiplier);
+  return html`<ol class="steps recipe-method">
             ${steps.map(
               (step, index) => html`<li>
                 ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
-          </ol>`}
+          </ol>`;
+}
+
+/**
+ * The ingredients and the method (#354): every ingredient first, then the
+ * whole method, both in cooking order — the dish's own first, each part under
+ * its name, and what the dish adds after its parts under Lopuksi, or it would
+ * read as the last part's. A cook reads the shopping half and the cooking half
+ * of a dish in parts each in one go. A part's ingredients are
+ * its `.part`, and its steps its `.part-method`.
+ */
+function cooking(
+  recipe: Recipe,
+  multiplier: number,
+  picker: RecipePicker | null,
+  reveal: RevealSlot | null,
+): Raw {
+  const parted = recipe.parts.length > 0;
+  const before = parted ? phaseFilter(recipe.steps, [null, "before_parts"]) : recipe.steps;
+  const after = parted ? phaseFilter(recipe.steps, ["after_parts"]) : [];
+  const linesBefore = parted
+    ? phaseFilter(recipe.lines, [null, "before_parts"])
+    : recipe.lines;
+  const linesAfter = parted ? phaseFilter(recipe.lines, ["after_parts"]) : [];
+  const hasLines = recipe.lines.length > 0 ||
+    recipe.parts.some((part) => part.lines.length > 0);
+  const hasSteps = recipe.steps.length > 0 ||
+    recipe.parts.some((part) => part.steps.length > 0);
+
+  return html`<section class="recipe-section">
+    ${hasLines
+      ? html`<div class="recipe-ingredients-column">
+          <h3 class="ingredients-heading">Ainekset</h3>
+          ${ingredientList(recipe, linesBefore, multiplier, picker)}
+          ${recipe.parts.map((part) => part.lines.length === 0
+            ? ""
+            : html`<section class="part">
+                <h2>${part.title}</h2>
+                ${ingredientList(part, part.lines, multiplier, picker)}
+              </section>`)}
+          ${linesAfter.length === 0
+            ? ""
+            : html`<section class="part-finish-lines">
+                <h2>Lopuksi</h2>
+                ${ingredientList(recipe, linesAfter, multiplier, picker)}
+              </section>`}
+        </div>`
+      : ""}
+    ${hasSteps
+      ? html`<div class="recipe-method-column">
+          ${methodHeading(reveal)}
+          ${stepList(recipe, before, multiplier, "a")}
+          ${recipe.parts.map((part) => part.steps.length === 0
+            ? ""
+            : html`<section class="part-method">
+                <h2>${part.title}</h2>
+                ${stepList(part, part.steps, multiplier, "a")}
+              </section>`)}
+          ${after.length === 0
+            ? ""
+            : html`<section class="part-method part-finish">
+                <h2>Lopuksi</h2>
+                ${stepList(recipe, after, multiplier, "b")}
+              </section>`}
+        </div>`
+      : ""}
   </section>`;
 }
 
@@ -797,26 +867,12 @@ function recipeBody(
               ${recipe.householdName} on jakanut tämän reseptin. Voit käyttää
               sitä, mutta vain sen oma talous voi muokata sitä.
             </p>`}
-        <p class="${multiplier === DEFAULT_MULTIPLIER ? "yield" : "yield is-scaled"}">
-          ${multiplier === DEFAULT_MULTIPLIER
-            ? `${formatMultiplier(multiplier)} · resepti sellaisenaan`
-            : formatMultiplier(multiplier)}
-        </p>
-        ${recipe.yieldPortions === null
-          ? ""
-          : html`<p class="meta source-yield">
-              Lähteessä ${recipe.yieldPortions} annosta
-            </p>`}
-        ${categoryTags(view.vocabulary, recipe.categories)}
-        ${cookListAdd(recipe, multiplier, view.preference)}
-        ${sharingShortcut(recipe, view)}
-        ${castSender(recipe, multiplier, castApplicationId)}
+        ${recipeMeta(recipe, multiplier, view)}
+        ${recipeTopActions(recipe, multiplier, view, picker !== null, castApplicationId)}
       </div>
     </div>
 
     <div class="recipe-cooking">
-      ${picker === null ? "" : productPicksToggle()}
-
       ${canRevealAmounts
         ? html`<input
               type="checkbox"
@@ -825,18 +881,7 @@ function recipeBody(
             />`
         : ""}
 
-      ${recipe.parts.length === 0
-        ? body(recipe, multiplier, picker, undefined, "a", reveal)
-        : body(recipe, multiplier, picker, [null, "before_parts"], "a", reveal)}
-      ${recipe.parts.map(
-        (part) => html`<section class="part">
-          <h2>${part.title}</h2>
-          ${body(part, multiplier, picker, undefined, "a", reveal)}
-        </section>`,
-      )}
-      ${recipe.parts.length === 0
-        ? ""
-        : body(recipe, multiplier, picker, ["after_parts"], "b", reveal)}
+      ${cooking(recipe, multiplier, picker, reveal)}
     </div>
 
     ${keepAwake()}
@@ -851,162 +896,118 @@ function recipeBody(
       : html`${pickerSettings()}
           <script>${raw(recipeProductsClient)}</script>`}
 
-    ${sharingSection(recipe, view)}
-    ${recipeActions(recipe, view)}
+    ${settingsModals(recipe, view)}
   </div>`;
 }
 
 /**
- * Put this dish on the to-do list (#345), which is how a dish gets there now
- * that the calendar is gone. Each size chip adds at that size in one tap; the
- * one already lit is the size on screen if the reader scaled the recipe, else
- * the household's own default for it.
+ * The grey line under the title (#354): the size, if the page is scaled, where
+ * the source put its portions, the categories, and for the owner who can see
+ * the dish. One line rather than a stack of them, so the ingredients start
+ * under the buttons rather than a screen further down.
  */
-function cookListAdd(
+function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
+  const parts: Raw[] = [];
+  if (multiplier !== DEFAULT_MULTIPLIER) {
+    parts.push(html`<span class="yield is-scaled">${formatMultiplier(multiplier)}</span>`);
+  }
+  if (recipe.yieldPortions !== null) {
+    parts.push(html`<span class="source-yield">Lähteessä ${recipe.yieldPortions} annosta</span>`);
+  }
+  if (recipe.categories.length > 0) {
+    parts.push(html`<span class="category-tags">${recipe.categories
+      .map((slug) => view.vocabulary.label(slug))
+      .join(" · ")}</span>`);
+  }
+  const visibility = visibilityWord(recipe, view);
+  if (visibility !== null) {
+    parts.push(html`<span class="visibility-word">${visibility}</span>`);
+  }
+  if (parts.length === 0) return raw("");
+  return html`<p class="meta recipe-meta">${parts.map((part, index) =>
+    index === 0 ? part : html`<span aria-hidden="true"> · </span>${part}`)}</p>`;
+}
+
+function visibilityWord(recipe: Recipe, view: RecipeView): string | null {
+  if (!view.owned || view.sharing === null || recipe.parentId !== null) return null;
+  const saved = view.sharing.savedVisibility;
+  return saved === "public"
+    ? "🌍 Julkinen"
+    : saved === "selected"
+      ? "👥 Valituille"
+      : "🔒 Oma";
+}
+
+/**
+ * The two buttons under the title (#354): Lisää kokattaviin, which opens the
+ * sizes, and ⋯, which opens everything else the page offers — what used to be
+ * the lists of rows under the method (#351) as well as the view switches. The
+ * modals open on a fragment rather than a checkbox, because a row in the ⋯
+ * modal hands over to another modal, and moving the address bar's fragment is
+ * what closes one as the other opens.
+ */
+function recipeTopActions(
   recipe: Recipe,
   multiplier: number,
-  preference: number | null,
+  view: RecipeView,
+  picks: boolean,
+  castApplicationId: string | undefined,
 ): Raw {
-  if (recipe.parentId !== null) return raw("");
-  const current = multiplier !== DEFAULT_MULTIPLIER
-    ? multiplier
-    : preference ?? DEFAULT_MULTIPLIER;
-  return html`<form
-    method="post"
-    action="/recipes/${recipe.id}/kokattaviin"
-    class="stacked cook-add"
-  >
-    <p class="preference-label">Lisää kokattaviin</p>
-    ${multiplierField({
-      current,
-      typed: formatMultiplier(current).slice(0, -1),
-      label: "Lisää kokattaviin kertoimella",
-      submit: "Lisää",
-    })}
-  </form>`;
-}
-
-function sharingSection(recipe: Recipe, view: RecipeView): Raw {
-  if (recipe.parentId !== null) return raw("");
-
+  const adding = recipe.parentId === null;
+  const household = recipe.parentId === null;
+  const sharing = view.owned && view.sharing !== null && recipe.parentId === null;
   const preference = view.preference;
-
-  return html`<section class="recipe-sharing tail-group" id="jakaminen">
-    <h2 class="tail-heading">Meidän taloudessa</h2>
-    <div class="tail-list">
-
-    <!-- Both of these are settings: chosen once, then read for months. Since
-         #317 each is one line and a Muokkaa, with its form in a modal behind
-         it — the same checkbox-driven overlay the editor's ingredient rows use,
-         and the same promise that none of it needs a script. -->
-    ${editBlock(
-      { id: "preference-open", title: "Oletuskerroin", trigger: ROW_OPENER },
-      html`<p class="block-label" id="preferredMultiplierLabel">Oletuskerroin</p>
-        <p class="block-value preference-value">
-          ${preference === null
-            ? "Resepti sellaisenaan"
-            : formatMultiplier(preference)}
-        </p>`,
-      html`<form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
-        ${multiplierField({
-          current: preference,
-          typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
-          label: "Oletuskerroin",
-          describedBy: "preferredMultiplierHelp",
-          submit: "Tallenna",
-        })}
-        <p class="empty" id="preferredMultiplierHelp">
-          Mikä kerroin on valmiiksi valittuna, kun tämä resepti lisätään
-          kokattaviin. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
-          reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
-        </p>
-      </form>`,
-    )}
-
-    ${view.owned && view.sharing !== null
-      ? editBlock(
-          {
-            id: "sharing-open",
-            title: "Jakaminen",
-            trigger: ROW_OPENER,
-            // Opened from two places a screen apart — here, and the line under
-            // the recipe's title. Only a fragment reaches both (#317 review).
-            openedBy: "fragment",
-          },
-          html`<p class="block-label">Jakaminen</p>
-            <p class="block-value empty">${sharingSummary(view.sharing)}</p>`,
-          html`<form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
-              <input type="hidden" name="recipeId" value="${recipe.id}" />
-              <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
-              ${recipe.empty
-                ? html`<p class="empty">
-                    Resepti on tyhjä: sitä ei voi julkaista eikä jakaa, ennen
-                    kuin siinä on ainekset ja valmistusvaiheet.
-                  </p>`
-                : ""}
-              <fieldset class="visibility-choices">
-                <legend>Näkyvyys</legend>
-                ${visibilityChoice("private", "Oma", view.sharing.visibility)}
-                ${visibilityChoice("selected", "Valituille", view.sharing.visibility)}
-                ${visibilityChoice("public", "Julkinen", view.sharing.visibility)}
-              </fieldset>
-              <div class="recipient-picker">
-                <label for="recipient-search">Hae vastaanottavaa taloutta</label>
-                <input
-                  type="search"
-                  id="recipient-search"
-                  placeholder="Talouden nimi"
-                  autocomplete="off"
-                />
-                <p class="empty">
-                  Valitse vähintään yksi talous, kun näkyvyys on Valituille.
-                  Jäsenien nimiä tai sähköposteja ei näytetä.
-                </p>
-                <ul class="recipient-list" id="recipient-list">
-                  ${view.sharing.recipients.map(
-                    (recipient) => html`<li data-household-name="${recipient.name}">
-                      <label>
-                        <input
-                          type="checkbox"
-                          name="recipientId"
-                          value="${recipient.id}"
-                          ${recipient.selected ? raw("checked") : ""}
-                        />
-                        ${recipient.name}
-                      </label>
-                    </li>`,
-                  )}
-                </ul>
-              </div>
-              ${saveBar({ submit: "Tallenna jako", name: "action", value: "save" })}
-            </form>
-            <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`,
-        )
-      : ""}
-    </div>
-  </section>`;
-}
-
-/**
- * A settings row's opener (#351): the whole row is the tap target, and what
- * shows at its end is a chevron. The word stays for anyone who cannot see it,
- * since the opener is what names the control.
- */
-const ROW_OPENER = html`<span class="visually-hidden">Muokkaa</span
-  ><span class="tail-chevron" aria-hidden="true">›</span>`;
-
-/**
- * The recipe's own rows under the household's (#351): changing it, filling it
- * in with AI, and the text it was imported from. The first two are the owner's
- * alone; the original is anybody's who can read the recipe, and it unfolds in
- * place rather than in a modal because a long import reads better scrolling
- * with the page.
- */
-function recipeActions(recipe: Recipe, view: RecipeView): Raw {
   const host = sourceHost(recipe);
-  return html`<section class="tail-group recipe-actions">
+  const viewRows = picks || (castApplicationId?.trim() ?? "") !== "";
+
+  return html`<div class="recipe-top" id="toiminnot">
+    ${adding ? quickAdd(recipe, multiplier, view.preference) : ""}
+    <a class="recipe-top-more" href="#${MORE_ID}" aria-label="Lisää valintoja"
+      ><span aria-hidden="true">⋯</span></a
+    >
+  </div>
+  ${adding
+    ? topModal(
+        COOK_ADD_ID,
+        "Lisää eri koolla",
+        cookListAdd(recipe, multiplier, view.preference),
+        MORE_ID,
+        "Sulje",
+      )
+    : ""}
+  ${topModal(
+    MORE_ID,
+    "Lisää valintoja",
+    html`${adding || viewRows
+      ? html`<div class="tail-list">
+          ${adding
+            ? html`<a class="tail-row" href="#${COOK_ADD_ID}"
+                ><span class="tail-row-text"
+                  ><span class="tail-row-title">Lisää eri koolla</span
+                  ><span class="tail-row-note">Kokattaviin esimerkiksi tupla-annos</span></span
+                ><span class="tail-chevron" aria-hidden="true">›</span></a
+              >`
+            : ""}
+          ${picks
+            ? productPicksRow()
+            : ""}
+          ${castSender(recipe, multiplier, castApplicationId)}
+        </div>`
+      : ""}
+    ${household
+      ? html`<h2 class="tail-heading">Meidän taloudessa</h2>
+          <div class="tail-list household-settings">
+            ${settingsRow(
+              PREFERENCE_ID,
+              "Oletuskerroin",
+              preference === null ? "Resepti sellaisenaan" : formatMultiplier(preference),
+              "preference-value",
+            )}
+            ${sharing ? settingsRow(SHARING_ID, "Jakaminen", sharingSummary(view.sharing!)) : ""}
+          </div>`
+      : ""}
     <h2 class="tail-heading">Resepti</h2>
-    <div class="tail-list">
+    <div class="tail-list recipe-actions">
       ${view.owned
         ? html`<a class="tail-row is-action" href="/recipes/${recipe.id}/edit"
               ><span class="tail-row-text"
@@ -1034,8 +1035,193 @@ function recipeActions(recipe: Recipe, view: RecipeView): Raw {
           <p class="source-text">${recipe.sourceText}</p>
         </div>
       </details>
+    </div>`,
+  )}`;
+}
+
+/** A row of the ⋯ modal that opens one of the settings modals. */
+function settingsRow(id: string, title: string, value: string, valueClass = ""): Raw {
+  return html`<a class="tail-row" href="#${id}"
+    ><span class="tail-row-text"
+      ><span class="tail-row-title">${title}</span
+      ><span class="tail-row-note ${valueClass}">${value}</span></span
+    ><span class="tail-chevron" aria-hidden="true">›</span></a
+  >`;
+}
+
+const COOK_ADD_ID = "kokattaviin";
+const MORE_ID = "lisavalinnat";
+// Named as #317's blocks named them, so a bookmark or a test that opened the
+// sharing modal still does.
+const PREFERENCE_ID = editBlockOpenHref("preference-open").slice(1);
+const SHARING_ID = editBlockOpenHref("sharing-open").slice(1);
+
+/**
+ * A modal opened by its fragment, with the same declarations every other
+ * modal on the page uses (`.edit-modal:target`). Closing goes back to the
+ * buttons it was opened from, so the page does not jump.
+ */
+function topModal(
+  id: string,
+  title: string,
+  body: Raw,
+  closeTo = "toiminnot",
+  close = "Valmis",
+): Raw {
+  return html`<div class="edit-modal top-modal" id="${id}">
+    <a class="edit-modal-back" href="#${closeTo}" tabindex="-1" aria-hidden="true"></a>
+    <div class="edit-modal-card" role="group" aria-label="${title}">
+      <p class="edit-modal-title">${title}</p>
+      ${body}
+      <div class="edit-modal-actions">
+        <a class="edit-done" href="#${closeTo}">${close}</a>
+      </div>
     </div>
-  </section>`;
+  </div>`;
+}
+
+/**
+ * The size a dish goes onto the list at when nobody picks one: the size on
+ * screen if the reader scaled the recipe, else the household's own default.
+ */
+function addSize(multiplier: number, preference: number | null): number {
+  return multiplier !== DEFAULT_MULTIPLIER
+    ? multiplier
+    : preference ?? DEFAULT_MULTIPLIER;
+}
+
+/**
+ * The page's main button (#354): one tap puts the dish on the list at its
+ * usual size. A size is chosen so rarely that the choice lives behind ⋯.
+ */
+function quickAdd(recipe: Recipe, multiplier: number, preference: number | null): Raw {
+  const size = addSize(multiplier, preference);
+  return html`<form
+    method="post"
+    action="/recipes/${recipe.id}/kokattaviin"
+    class="recipe-top-add-form"
+  >
+    <button type="submit" name="preset" value="${String(size)}" class="recipe-top-add"
+      ><span aria-hidden="true">＋</span> Lisää kokattaviin${size === DEFAULT_MULTIPLIER
+        ? ""
+        : ` · ${formatMultiplier(size)}`}</button
+    >
+  </form>`;
+}
+
+/**
+ * Put this dish on the to-do list (#345). Each size chip adds at that size in
+ * one tap; the one already lit is the size on screen if the reader scaled the
+ * recipe, else the household's own default for it. Since #354 it sits in the
+ * Lisää kokattaviin modal rather than on the page.
+ */
+function cookListAdd(
+  recipe: Recipe,
+  multiplier: number,
+  preference: number | null,
+): Raw {
+  const current = addSize(multiplier, preference);
+  return html`<form
+    method="post"
+    action="/recipes/${recipe.id}/kokattaviin"
+    class="stacked cook-add"
+  >
+    <p class="empty">Napauta kokoa, niin resepti lisätään kokattaviin.</p>
+    ${multiplierField({
+      current,
+      typed: "",
+      placeholder: "Muu kerroin",
+      label: "Lisää kokattaviin kertoimella",
+      submit: "Lisää",
+    })}
+  </form>`;
+}
+
+/**
+ * The two household settings behind the ⋯ modal's rows (#317, #354): the
+ * default size and who the dish is shared with. Each is its own modal, and
+ * Valmis goes back to the ⋯ modal it was opened from.
+ */
+function settingsModals(recipe: Recipe, view: RecipeView): Raw {
+  if (recipe.parentId !== null) return raw("");
+
+  const preference = view.preference;
+
+  return html`<div class="recipe-sharing" id="jakaminen">
+    ${topModal(
+      PREFERENCE_ID,
+      "Oletuskerroin",
+      html`<form method="post" action="/recipes/${recipe.id}/kerroin" class="stacked">
+        ${multiplierField({
+          current: preference,
+          typed: preference === null ? "" : formatMultiplier(preference).slice(0, -1),
+          label: "Oletuskerroin",
+          placeholder: "Muu kerroin",
+          describedBy: "preferredMultiplierHelp",
+          submit: "Tallenna",
+        })}
+        <p class="empty" id="preferredMultiplierHelp">
+          Mikä kerroin on valmiiksi valittuna, kun tämä resepti lisätään
+          kokattaviin. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
+          reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
+        </p>
+      </form>`,
+      MORE_ID,
+    )}
+    ${view.owned && view.sharing !== null
+      ? topModal(
+          SHARING_ID,
+          "Jakaminen",
+          html`<form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
+              <input type="hidden" name="recipeId" value="${recipe.id}" />
+              <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
+              ${recipe.empty
+                ? html`<p class="empty">
+                    Resepti on tyhjä: sitä ei voi julkaista eikä jakaa, ennen
+                    kuin siinä on ainekset ja valmistusvaiheet.
+                  </p>`
+                : ""}
+              <fieldset class="visibility-choices">
+                <legend>Näkyvyys</legend>
+                ${visibilityChoice("private", "Oma", view.sharing!.visibility)}
+                ${visibilityChoice("selected", "Valituille", view.sharing!.visibility)}
+                ${visibilityChoice("public", "Julkinen", view.sharing!.visibility)}
+              </fieldset>
+              <div class="recipient-picker">
+                <label for="recipient-search">Hae vastaanottavaa taloutta</label>
+                <input
+                  type="search"
+                  id="recipient-search"
+                  placeholder="Talouden nimi"
+                  autocomplete="off"
+                />
+                <p class="empty">
+                  Valitse vähintään yksi talous, kun näkyvyys on Valituille.
+                  Jäsenien nimiä tai sähköposteja ei näytetä.
+                </p>
+                <ul class="recipient-list" id="recipient-list">
+                  ${view.sharing!.recipients.map(
+                    (recipient) => html`<li data-household-name="${recipient.name}">
+                      <label>
+                        <input
+                          type="checkbox"
+                          name="recipientId"
+                          value="${recipient.id}"
+                          ${recipient.selected ? raw("checked") : ""}
+                        />
+                        ${recipient.name}
+                      </label>
+                    </li>`,
+                  )}
+                </ul>
+              </div>
+              ${saveBar({ submit: "Tallenna jako", name: "action", value: "save" })}
+            </form>
+            <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`,
+          MORE_ID,
+        )
+      : ""}
+  </div>`;
 }
 
 function sourceHost(recipe: Recipe): string | null {
@@ -1046,29 +1232,6 @@ function sourceHost(recipe: Recipe): string | null {
   } catch {
     return null;
   }
-}
-
-function sharingShortcut(recipe: Recipe, view: RecipeView): Raw {
-  if (!view.owned || view.sharing === null || recipe.parentId !== null) {
-    return raw("");
-  }
-
-  const saved = view.sharing.savedVisibility;
-  const said =
-    saved === "public"
-      ? "Näkyvyys: kaikki taloudet"
-      : saved === "selected"
-        ? "Näkyvyys: valitut taloudet"
-        : "Näkyvyys: vain oma talous";
-
-  // Still the link it always was, but it now lands on the open sharing modal
-  // rather than on the section heading: since #317 the form is behind a button,
-  // so scrolling to the section would have been one tap short. A label would
-  // have saved the same tap and cost the keyboard the shortcut entirely, which
-  // is what the fragment-opened block exists to avoid (#317 review).
-  return html`<p class="meta sharing-shortcut">
-    ${said}<a href="${editBlockOpenHref("sharing-open")}">Muuta</a>
-  </p>`;
 }
 
 function sharingSummary(sharing: RecipeSharingState): string {
@@ -1215,15 +1378,67 @@ const PUBLISH_STYLE = html`<style>
   .recipient-list li { border-bottom: 1px solid var(--edge); }
   .recipient-list li:last-child { border-bottom: 0; }
   .recipe-sharing .save-bar { background: var(--surface); }
-  .sharing-shortcut { margin: .1rem 0 0; }
-  /* A link that opens the sharing modal rather than scrolling to the section
-     it is in (#317), and a real one so the keyboard can reach it (#317 review). */
-  .sharing-shortcut a {
-    display: inline; margin-left: .4rem; color: var(--accent);
-    font-weight: 600; cursor: pointer; text-decoration: underline;
+  /* The top of the page since #354: one grey line, then the two buttons. */
+  .recipe-meta { margin: .1rem 0 0; font-size: .9rem; }
+  .recipe-meta .yield.is-scaled { padding: .1rem .45rem; }
+  .recipe-top { display: flex; gap: .5rem; margin: .8rem 0 0; }
+  .recipe-top-add, .recipe-top-more {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+    min-height: var(--tap); border-radius: var(--radius);
+    font-weight: 600; text-decoration: none;
   }
-  .preference-label { margin: 0 0 .4rem; font-weight: 600; }
-  .source-yield { margin: .1rem 0 0; }
+  .recipe-top-add-form { flex: 1 1 auto; display: flex; margin: 0; }
+  .recipe-top-add { flex: 1 1 auto; width: 100%; padding: 0 1rem; font: inherit;
+    font-weight: 600; color: var(--accent-fg); background: var(--accent);
+    border: 1px solid var(--accent); cursor: pointer; }
+  .recipe-top-more { flex: 0 0 auto; width: var(--tap); color: var(--fg);
+    background: var(--surface); border: 1px solid var(--edge); font-size: 1.2rem; }
+  .recipe-top-add:focus-visible, .recipe-top-more:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .top-modal .cook-add { margin: 0; }
+  .top-modal .tail-heading { margin-top: 1.1rem; }
+  .top-modal .edit-modal-title + .tail-heading { margin-top: 0; }
+  .top-modal .cook-add .empty { margin: 0 0 .75rem; }
+  .top-modal .multiplier-choice + .empty { margin-top: .75rem; }
+  /* The sizes as four equal buttons, then the typed size on a line of its own
+     with its own button, so it does not read as a fifth size (#354). */
+  .top-modal .multiplier-choice {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem;
+  }
+  .top-modal .multiplier-choice button[name="preset"] {
+    min-width: 0; min-height: 3.25rem; font-size: 1.1rem; font-weight: 600;
+  }
+  .top-modal .multiplier-choice input {
+    grid-column: 1 / span 3; width: 100%; min-height: var(--tap);
+    margin-top: .5rem; text-align: left; padding: 0 .75rem;
+  }
+  .top-modal .multiplier-choice button:not([name]) {
+    grid-column: 4; min-width: 0; margin-top: .5rem;
+  }
+  .top-modal .tail-list > style, .top-modal .tail-list > script { display: none; }
+  /* The Cast launcher's own row, drawn like the rows around it. */
+  .top-modal .cast-action { margin: 0; min-height: 3.5rem; padding: .3rem 1rem .3rem .5rem;
+    color: var(--fg); font-size: 1rem; font-weight: 600; }
+  /* The product-picks checkbox, drawn as a switch: the input sits over the
+     drawing, the same size, so a tap or a click on it is a tap on the box and
+     the keyboard's focus is shown where the switch is. */
+  .picks-control { flex: 0 0 auto; position: relative; width: 2.7rem; height: 1.55rem; }
+  .picks-control .product-picks {
+    position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
+    margin: 0; opacity: 0; cursor: pointer;
+  }
+  .picks-switch { position: absolute; inset: 0;
+    border-radius: 999px; background: var(--edge); }
+  .picks-switch::after { content: ""; position: absolute; top: .2rem; left: .2rem;
+    width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--muted); }
+  .product-picks:checked + .picks-switch { background: var(--accent); }
+  .product-picks:checked + .picks-switch::after {
+    left: auto; right: .2rem; background: var(--accent-fg);
+  }
+  .product-picks:focus-visible + .picks-switch {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
 </style>`;
 
 const RECIPIENT_SEARCH_ISLAND = `
@@ -1262,6 +1477,14 @@ function sourceLink(recipe: Recipe): Raw {
 }
 
 const RECIPE_VIEW_STYLE = html`<style>
+  /* On a phone, a 2:1 band rather than the shared 4:3 one (#354), cropped to
+     fill it, so the buttons and the ingredients start higher. The owner chose
+     the crop over #116's whole picture: a generated picture keeps its food in
+     the middle, which the crop keeps. Wider screens keep #116's band. */
+  @media (max-width: 47.99rem) {
+    .recipe-summary .recipe-image.is-hero:not(.is-empty) { height: 50vw; }
+    .recipe-summary .recipe-image.is-hero img { object-fit: cover; }
+  }
   .recipe-method { min-width: 0; }
   .recipe-method li { overflow-wrap: break-word; }
   .recipe-ingredient {
@@ -1297,19 +1520,16 @@ const RECIPE_VIEW_STYLE = html`<style>
     .recipe-intro { min-width: 0; }
     .recipe-intro h1 { margin-bottom: .5rem; }
     .recipe-intro .yield { margin-bottom: 0; }
+    /* A little wider than the old per-part grid's .8fr: each part's ingredients
+       now sit in a bordered section inside this column rather than around it. */
     .recipe-section {
       display: grid;
-      grid-template-columns: minmax(14rem, .8fr) minmax(0, 1.2fr);
-      grid-template-areas:
-        "ingredients-heading method-heading"
-        "ingredients method";
+      grid-template-columns: minmax(15rem, 1fr) minmax(0, 1.2fr);
       column-gap: 2rem;
       align-items: start;
     }
-    .recipe-section > .ingredients-heading { grid-area: ingredients-heading; }
-    .recipe-section > .recipe-ingredients { grid-area: ingredients; }
-    .recipe-section > .method-heading { grid-area: method-heading; }
-    .recipe-section > .recipe-method { grid-area: method; }
+    .recipe-section > div > h3:first-child,
+    .recipe-section > div > .method-heading:first-child { margin-top: 0; }
     .recipe-section > h3 { margin-top: 0; }
     .recipe-section .lines li { padding: .35rem 0; font-size: 1rem; }
     .recipe-section .steps li { padding: .25rem 0; line-height: 1.45; }
@@ -1375,47 +1595,26 @@ const RECIPE_PRODUCT_STYLE = html`<style>
     color: var(--muted);
   }
 
-  /* The tick itself (#305), reading as one control with its words.
-
-     The words carry the tap target, the way .as-new does in html.ts: the box a
-     browser draws for a checkbox is a fraction of a thumb, so the label beside
-     it is a full --tap tall and tapping anywhere on it toggles. This one is on
-     a line of its own above the ingredient lists rather than inside a row, so
-     it gets the full height rather than --tap-compact. The spec measures it
-     against the page's own token, so the two cannot drift apart. */
-  .product-picks {
-    vertical-align: middle; margin: 0 .45rem 0 0;
-    width: 1.25rem; height: 1.25rem; accent-color: var(--accent);
-  }
-  .product-picks-label {
-    display: inline-flex; align-items: center; vertical-align: middle;
-    min-height: var(--tap); margin: 0 0 .35rem; padding-right: .5rem;
-    cursor: pointer; font-size: .9rem; color: var(--muted);
-  }
-  .product-picks:focus-visible + .product-picks-label {
-    outline: 2px solid var(--accent); outline-offset: 2px;
-  }
-
   /* Off — the ordinary case. The button goes and the busy slot with it, and a
      row with no product goes entirely: an "Ei tuotetta" on every line is the
      same clutter in quieter words. A mapped row keeps its name and its
      picture, so the screen still says what an ingredient is bought as. Nothing
      reserves the picker's fixed column while it is off, which is what gives a
      long ingredient name the width back on a phone. */
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-product-open,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-status,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product.is-note {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-product-open,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-status,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product.is-note {
     display: none;
   }
   /* And with no button in it the block is a line of text, so it stops
      reserving a tap target's worth of height: a row showing its product has to
      be the same height as one that has none, or a dish's ingredient list steps
      up and down as it is read. */
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product-body {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product-body {
     min-height: 0;
   }
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product {
     flex: 0 1 auto; width: auto; max-width: 10rem; min-width: 0;
   }
 </style>`;

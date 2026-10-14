@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { openEditBlock } from "./support/blocks";
+import { openEditBlock, openCookAdd } from "./support/blocks";
 import { onePixelPng } from "./support/png";
 import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
@@ -35,7 +35,7 @@ async function publish(page: Page, recipeId: number): Promise<void> {
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 }
@@ -83,6 +83,7 @@ test("a published recipe reaches the other household, and can be planned", async
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 
   // And it can go on the to-do list, the same as an own recipe.
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
   await expect(page.locator(".cook-item")).toContainText("Kaalilaatikko");
 });
@@ -114,7 +115,7 @@ test("selected households can be found, added and safely removed", async ({
   await page.getByLabel("Valituille").check();
   await picker.getByLabel("Naapuri").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "Tämä resepti on jaettu: Naapuri.",
   );
 
@@ -158,7 +159,7 @@ test("selected households can be found, added and safely removed", async ({
   await openEditBlock(page, "sharing-open");
   await picker.getByLabel("Mökki").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText("Mökki, Naapuri");
+  await expect(page.locator(".household-settings")).toContainText("Mökki, Naapuri");
 
   await signIn(page, 4);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
@@ -180,7 +181,7 @@ test("selected households can be found, added and safely removed", async ({
   await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
   await signIn(page, 4);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
-  await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+  await expect(page.locator("a", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
 });
 
 test("planning and revocation cannot both win the same race", async ({ page }) => {
@@ -272,7 +273,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   await expect(page.locator(".refused")).toHaveCount(0);
   await expect(picker.locator('input[name="recipientId"]:checked')).toHaveCount(50);
   await openEditBlock(page, "sharing-open");
-  await expect(page.locator(".recipe-sharing .block-value.empty")).not.toContainText(
+  await expect(page.locator(".household-settings")).not.toContainText(
     "Talous 51",
   );
 
@@ -280,7 +281,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   // a public target and therefore must not hit D1's binding limit.
   await page.getByLabel("Julkinen").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 });
@@ -291,8 +292,8 @@ test("the other household cannot edit a published recipe", async ({ page }) => {
 
   // No way in from the screen…
   await page.goto("/recipes/1");
-  await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
-  await expect(page.locator(".recipe-sharing")).not.toContainText("Jakaminen");
+  await expect(page.locator("a", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
+  await expect(page.locator(".household-settings")).not.toContainText("Jakaminen");
 
   // …and none by typing the address either. Editing, deleting and unpublishing
   // are all the owner's, and each refuses on its own rather than relying on the
@@ -527,7 +528,7 @@ test("unpublishing is refused while the dish is on another household's to-do lis
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
   await expect(page.locator(".refused")).toContainText("kokattavien listalla");
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
 
@@ -552,7 +553,7 @@ test("a cooking that already happened does not block unpublishing", async ({
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".recipe-sharing")).toContainText(
+  await expect(page.locator(".household-settings")).toContainText(
     "näkyy vain omalle taloudelle",
   );
 });
@@ -669,6 +670,8 @@ test("each household keeps its own default multiplier for the same recipe", asyn
   await signIn(page, 1);
   await page.goto("/recipes/1");
   await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("2×");
+  // And the one-tap button adds at it, saying so (#354).
+  await expect(page.getByRole("button", { name: "Lisää kokattaviin · 2×" })).toBeVisible();
 });
 
 test("a household's default is cleared by an empty box, not guessed at", async ({

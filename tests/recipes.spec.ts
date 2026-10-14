@@ -251,7 +251,9 @@ test("the cooking view uses tablet width without clipping long steps", async ({
 test("the original text is one tap away, not in the way", async ({ page }) => {
   await page.goto("/recipes/1");
 
-  // Present, but closed: at the hob the recipe is the point.
+  // Behind ⋯ since #354, and closed there: at the hob the recipe is the point.
+  await expect(page.locator(".source-original")).toBeHidden();
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   const disclosure = page.locator(".source-original");
   await expect(disclosure).toBeVisible();
   await expect(page.locator(".source-text")).toBeHidden();
@@ -265,13 +267,13 @@ test("editing is reachable, but it is not what the screen is for", async ({
 }) => {
   await page.goto("/recipes/1");
 
+  // Not on the page at all since #354: one tap away behind ⋯.
   const edit = page.getByRole("link", { name: "Muokkaa reseptiä" });
+  await expect(edit).toBeHidden();
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   await expect(edit).toBeVisible();
-
-  // Below the cooking, not above it.
-  const method = await page.locator("ol").first().boundingBox();
-  const editBox = await edit.boundingBox();
-  expect(editBox!.y).toBeGreaterThan(method!.y);
+  await edit.click();
+  await expect(page).toHaveURL(/\/recipes\/1\/edit$/);
 });
 
 test("a recipe with a known yield shows it as source metadata", async ({
@@ -279,8 +281,8 @@ test("a recipe with a known yield shows it as source metadata", async ({
 }) => {
   await page.goto("/recipes/1");
   await expect(page.locator(".source-yield")).toHaveText("Lähteessä 4 annosta");
-  // And the scaling line says what the amounts on screen are, not that.
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  // Unscaled, there is no size to say (#354).
+  await expect(page.locator(".yield")).toHaveCount(0);
 });
 
 test("plain recipe JSON keeps its existing public shape", async ({ page }) => {
@@ -299,7 +301,7 @@ test("a recipe with no stated yield says nothing about one (#165)", async ({
 }) => {
   await page.goto("/recipes/2");
   await expect(page.locator(".source-yield")).toHaveCount(0);
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
 });
 
 test("another household's recipe is a 404, not a peek", async ({ browser }) => {

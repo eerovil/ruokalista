@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
+import { openCookAdd } from "./support/blocks";
 
 /**
  * A recipe opened from a planned batch shows the amounts that cooking actually
@@ -22,7 +23,8 @@ test("from the recipe list, a recipe reads exactly as written", async ({
 }) => {
   await page.goto("/recipes/1");
 
-  await expect(page.locator(".yield")).toContainText("1× · resepti sellaisenaan");
+  // Unscaled, the page says nothing about size at all (#354).
+  await expect(page.locator(".yield")).toHaveCount(0);
   const lines = page.locator(".lines li");
   await expect(lines.nth(0)).toContainText("½ dl");
   await expect(lines.nth(1)).toContainText("1–1½ l");
@@ -85,7 +87,7 @@ test("which amounts you are looking at is obvious from the top", async ({
 
 test("1× is the recipe as written", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=1");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
@@ -95,7 +97,7 @@ test("a recipe with no stated yield scales like any other (#165)", async ({
   // Öljykastike: the source never said what it makes. Before #165 this screen
   // could only apologise; now the recipe as written is 1× and 2× is 2×.
   await page.goto("/recipes/2");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").nth(1)).toContainText("2 dl");
 
   await page.goto("/recipes/2?multiplier=2");
@@ -109,7 +111,7 @@ test("a nonsense multiplier is ignored rather than obeyed", async ({ page }) => 
   // One bad value proves the screen falls back; which values are bad is
   // dev/check-scaling.ts's job (#347).
   await page.goto("/recipes/1?multiplier=puoltatoista");
-  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".yield")).toHaveCount(0);
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
@@ -146,6 +148,7 @@ test("the to-do list carries a dish's multiplier into the recipe", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
 
   // The newest dish is at the end: the list is in the order dishes were added.
@@ -167,6 +170,7 @@ test("changing a dish's multiplier changes what the recipe opens at", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
 
   await page.locator(".cook-edit").last().click();
@@ -182,6 +186,7 @@ test("a multiplier the chips do not offer can still be typed", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   const add = page.locator(".cook-add");
   // The Finnish comma, the way every other number field in the app takes it.
   await add.locator("input[name=multiplier]").fill("2,5");
