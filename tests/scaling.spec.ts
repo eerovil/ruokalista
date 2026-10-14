@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
+import { openCookAdd } from "./support/blocks";
 
 /**
  * A recipe opened from a planned batch shows the amounts that cooking actually
@@ -146,6 +147,7 @@ test("the to-do list carries a dish's multiplier into the recipe", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
 
   // The newest dish is at the end: the list is in the order dishes were added.
@@ -167,6 +169,7 @@ test("changing a dish's multiplier changes what the recipe opens at", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
 
   await page.locator(".cook-edit").last().click();

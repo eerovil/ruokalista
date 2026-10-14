@@ -112,7 +112,8 @@ test("the Cast action appears only after the sender SDK is available", async ({
   page,
 }) => {
   await stubSenderSdk(page, false);
-  await page.goto("/recipes/1");
+  // The launcher is a row of the ⋯ modal since #354, so the page opens on it.
+  await page.goto("/recipes/1#lisavalinnat");
   await expect(page.locator("#cast-action")).toBeHidden();
 
   await stubSenderSdk(page);
@@ -128,7 +129,8 @@ test("the Cast action waits for a device rather than offering a dead label", asy
   page,
 }) => {
   await stubSenderSdk(page, true, "NO_DEVICES_AVAILABLE");
-  await page.goto("/recipes/1");
+  // The launcher is a row of the ⋯ modal since #354, so the page opens on it.
+  await page.goto("/recipes/1#lisavalinnat");
   await expect(page.locator("#cast-action")).toBeHidden();
 
   await page.evaluate(() => {
@@ -149,7 +151,8 @@ test("selecting a device sends the scaled recipe and later recipe pages resync",
   page,
 }) => {
   await stubSenderSdk(page);
-  await page.goto("/recipes/1?multiplier=1.5");
+  // The launcher is a row of the ⋯ modal since #354, so the page opens on it.
+  await page.goto("/recipes/1?multiplier=1.5#lisavalinnat");
   await page.getByRole("button", { name: "Näytä Cast-laitteet" }).click();
 
   let messages = await sentMessages(page);
@@ -187,7 +190,8 @@ test("closing and reopening Ruokalista keeps the one Cast session", async ({
   page,
 }) => {
   await stubSenderSdk(page);
-  await page.goto("/recipes/1");
+  // The launcher is a row of the ⋯ modal since #354, so the page opens on it.
+  await page.goto("/recipes/1#lisavalinnat");
   await page.getByRole("button", { name: "Näytä Cast-laitteet" }).click();
   expect(await sentMessages(page)).toHaveLength(1);
 

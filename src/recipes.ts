@@ -745,7 +745,8 @@ function stepList(
  * own and then each part's under its name, and then the whole method in the
  * same order — so a cook reads the shopping half and the cooking half of a
  * dish in parts each in one go. Steps the dish does after its parts get their
- * own heading, or they would read as the last part's.
+ * own heading, or they would read as the last part's. A part's ingredients are
+ * its `.part`, and its steps its `.part-method`.
  */
 function cooking(
   recipe: Recipe,
@@ -780,13 +781,13 @@ function cooking(
           ${stepList(recipe, before, multiplier, "a")}
           ${recipe.parts.map((part) => part.steps.length === 0
             ? ""
-            : html`<section class="part">
+            : html`<section class="part-method">
                 <h2>${part.title}</h2>
                 ${stepList(part, part.steps, multiplier, "a")}
               </section>`)}
           ${after.length === 0
             ? ""
-            : html`<section class="part part-finish">
+            : html`<section class="part-method part-finish">
                 <h2>Lopuksi</h2>
                 ${stepList(recipe, after, multiplier, "b")}
               </section>`}

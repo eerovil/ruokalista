@@ -338,7 +338,7 @@ test("ambiguous existing part titles refuse and preserve the proposal", async ({
 
 test("another household's readable recipe cannot enter edit intake", async ({ page }) => {
   await page.goto("/recipes/6");
-  await expect(page.getByRole("link", { name: "Täydennä AI:lla" })).toHaveCount(0);
+  await expect(page.locator("a", { hasText: "Täydennä AI:lla" })).toHaveCount(0);
   const response = await page.goto("/intake?recipe=6");
   expect(response?.status()).toBe(404);
   const started = await page.request.post("/api/intake/imports", {

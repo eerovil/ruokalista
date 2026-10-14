@@ -302,9 +302,9 @@ const STYLES = `
   .multiplier-choice input { width: 4.5rem; text-align: center; }
   .section { font-size: .85rem; }
   .edit-step { flex-direction: column; align-items: stretch; }
-  .part { margin: 1.5rem 0; padding-left: .7rem;
+  .part, .part-method { margin: 1.5rem 0; padding-left: .7rem;
     border-left: 3px solid var(--edge); }
-  .part h2 { margin-top: 0; font-size: 1.05rem; }
+  .part h2, .part-method h2 { margin-top: 0; font-size: 1.05rem; }
   .ingredients li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
   .position { width: 3rem !important; flex: none !important; color: var(--muted); }
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }

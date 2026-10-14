@@ -125,6 +125,7 @@ test("a save bar belonging to one section stays with it (#298)", async ({
   // page. Pinning its bar to the bottom of every recipe would put "Tallenna
   // jako" over whatever a member was actually reaching for.
   await page.goto("/recipes/1");
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   const edit = page.getByRole("link", { name: "Muokkaa reseptiä" });
   await expect(edit).toBeVisible();
   await expect(page.locator(".save-bar-slot")).not.toHaveClass(/is-pinned/);

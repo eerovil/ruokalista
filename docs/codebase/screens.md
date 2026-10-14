@@ -29,13 +29,13 @@ list, and counted in the recipe's cooking history on that day), and the quiet
 **Muokkaa** opens `/batches/:id`, where the size can be changed or the dish
 taken off without cooking. The order is the order dishes were added.
 
-A dish gets on the list from its recipe page: the **Lisää kokattaviin** block
-under the title (`recipes.ts::cookListAdd`) is the same `multiplierField` the
-household default uses, so each chip adds at that size in one tap. The chip
-already lit is the size the reader scaled the recipe to, else the household's
-own default for it. A part's page has no such block — a part is cooked as part
-of its dish. That puts two `.multiplier-choice` groups on a recipe page, so a
-test reaching for the default's chips scopes to `.recipe-sharing`.
+A dish gets on the list from its recipe page: **＋ Lisää kokattaviin** under
+the title (`recipes.ts::quickAdd`) adds it in one tap at the size the reader
+scaled the recipe to, else the household's own default (#354). Another size is
+behind ⋯ → *Lisää eri koolla*, a modal holding the same `multiplierField` the
+household default uses (`recipes.ts::cookListAdd`, `.cook-add`), where each
+chip adds at that size. A part's page has neither — a part is cooked as part
+of its dish. Tests reach the sizes with `tests/support/blocks.ts::openCookAdd`.
 
 The calendar's screens — the week, `/picker`, the day move — are gone, along
 with their styles and their inline scroll-to-today script. `/` ignores a
@@ -659,23 +659,38 @@ Five blocks use it:
   submits no yield is a form that erases what the import read. The import
   review still asks for it, where it is being checked.
 - **The categories read as a line** and the method reads as a numbered list.
-- **A recipe's own settings are two lines** (`recipes.ts::sharingSection`): the
-  default multiplier and who the dish is shared with, each one line and its own
-  modal. `.sharing-shortcut`'s `Muuta` now opens the sharing modal outright
-  rather than scrolling to `#jakaminen` as it used to, because scrolling to a
-  section whose controls are behind a button would be one tap short of the
-  thing #217 added it for.
+- **A recipe's own settings are two rows** of the ⋯ modal since #354
+  (`recipes.ts::settingsModals`): the default multiplier and who the dish is
+  shared with, each its own modal.
 
-### The bottom of the recipe page is a list of rows (issue #351)
+### The top of the recipe page, and everything behind ⋯ (issues #351, #354)
 
-Below the method the recipe page draws grouped lists, the owner's pick of three
-prototypes. **Meidän taloudessa** (`recipes.ts::sharingSection`) holds the
-default multiplier and the sharing, still `editBlock`s with their modals; their
-opener is a chevron (`ROW_OPENER`) stretched over the whole row by an `::after`,
-with `Muokkaa` kept off-screen as its name. **Resepti**
-(`recipes.ts::recipeActions`) holds `Muokkaa reseptiä` and `Täydennä AI:lla`
-for the owner, and `Alkuperäinen resepti` for anyone, a `<details>` that
-unfolds in place because a long import reads better scrolling with the page.
+Above the ingredients the page is the picture (a 2:1 band), the title, one grey
+line (`recipes.ts::recipeMeta`: the size if scaled, the source's portions, the
+category names, and the visibility for the owner), and two buttons
+(`recipes.ts::recipeTopActions`) — the owner's pick of three prototypes, then
+shaped on local dev against production data. **＋ Lisää kokattaviin** adds in
+one tap; **⋯** opens one modal of #351's rows: Lisää eri koolla, the
+product-picks switch, the Cast launcher, *Meidän taloudessa* (Oletuskerroin,
+Jakaminen) and *Resepti* (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen
+resepti). Nothing of it is under the method any more.
+
+Every one of these modals is `recipes.ts::topModal`, opened by its fragment
+(`#kokattaviin`, `#lisavalinnat`, `#preference-open-auki`,
+`#sharing-open-auki`) with the same `.edit-modal:target` rule. A fragment, not
+a checkbox, because a row of the ⋯ modal opens another modal, and moving the
+fragment is what closes one as the other opens. Valmis in a settings modal goes
+back to ⋯. Tests open the two settings through ⋯ with `openEditBlock`, which
+knows this shape.
+
+The product-picks checkbox stays the first child of `.recipe-view`, so its `~`
+rules reach both the switch drawn in the ⋯ modal and the ingredient rows; its
+label is the switch's row, which works it from anywhere on the page.
+
+A dish in parts lists every ingredient first — the dish's own, then each part's
+`.part` under its name — and then the whole method in the same order, each
+part's steps a `.part-method`, with the dish's own last steps under *Lopuksi*
+(`recipes.ts::cooking`).
 
 The recipe-wide `Näytä määrät` toggle moved from under the whole method to
 beside the first `Valmistus` heading (`recipes.ts::methodHeading`). One per
@@ -757,7 +772,7 @@ people opened the editor looking for a control that was never in it.
   clear of the fixed tab strip, the placement still CSS only, and a browser
   that cannot pin it gets the button at the end of the form as before. The
   editor, the import review (`intake-screens.ts::renderCorrection`) and the
-  sharing form (`recipes.ts::sharingSection`) all use it.
+  sharing form (`recipes.ts::settingsModals`) all use it.
 - **A bar that is its screen's one save is `position: fixed`; a bar inside a
   section stays `position: sticky`.** #298 reported the sticky bar rising to
   the middle of an iPhone's screen after a long import review was scrolled down
@@ -812,10 +827,10 @@ people opened the editor looking for a control that was never in it.
 - **The button is disabled from a timeout, not inside the submit handler.** A
   disabled button is not a successful submitter, so disabling it synchronously
   would take `action=save` out of the sharing form's post.
-- **`.sharing-shortcut` says who can see the dish, under its title**, with a
-  link to `#jakaminen`. Only for the household that owns it, and never for a
-  part, because `sharingSection` draws nothing for one. This is what stops a
-  member opening the editor for a control the editor does not have.
+- **The grey line under the title says who can see the dish**
+  (`.visibility-word`, #354), and ⋯ → Jakaminen changes it. Only for the
+  household that owns it, and never for a part. This is what stops a member
+  opening the editor for a control the editor does not have.
 
 `tests/save-action.spec.ts` walks the two cases the issue names plus the long
 editor #184 covered, in both directions: with JavaScript and without.

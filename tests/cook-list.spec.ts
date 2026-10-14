@@ -14,8 +14,11 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
+// A size other than the usual one is behind ⋯ since #354: Lisää eri koolla.
 async function addFromRecipe(page: Page, recipeId: number, size: string): Promise<void> {
   await page.goto(`/recipes/${recipeId}`);
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
+  await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
   await page.locator(".cook-add").getByRole("button", { name: size, exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
 }
@@ -47,6 +50,13 @@ test("a dish goes on the list from its recipe page, at the size tapped", async (
   await expect(page.locator(".yield")).toContainText("1,5×");
 });
 
+test("one tap on the recipe page adds the dish at its usual size (#354)", async ({ page }) => {
+  await page.goto("/recipes/1");
+  await page.getByRole("button", { name: "Lisää kokattaviin" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(row(page, "Kaalilaatikko").locator(".cook-size")).toHaveText("1×");
+});
+
 test("the same dish twice is two cookings", async ({ page }) => {
   await addFromRecipe(page, 1, "1×");
   await addFromRecipe(page, 1, "2×");
@@ -63,7 +73,7 @@ test("a part has nothing to add, it is cooked as part of its dish", async ({ pag
 });
 
 test("a nonsense size keeps you on the recipe, with the reason", async ({ page }) => {
-  await page.goto("/recipes/1");
+  await page.goto("/recipes/1#kokattaviin");
   const add = page.locator(".cook-add");
   await add.locator("input[name=multiplier]").fill("0");
   await add.getByRole("button", { name: "Lisää", exact: true }).click();

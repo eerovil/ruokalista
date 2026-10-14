@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { closeEditBlock, openEditBlock } from "./support/blocks";
+import { closeEditBlock, openEditBlock, openCookAdd } from "./support/blocks";
 import {
   DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
@@ -242,7 +242,8 @@ test.describe("signed in", () => {
   });
 
   test("what you can do to a dish on the list", async ({ page }) => {
-    await page.goto("/recipes/1");
+    await page.goto("/recipes/1#kokattaviin");
+    await openCookAdd(page);
     await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
     await page.locator(".cook-edit").first().click();
     await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
@@ -772,6 +773,7 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
+    await page.getByRole("link", { name: "Lisää valintoja" }).click();
     await page.getByText("Alkuperäinen resepti").click();
     await expect(page.locator(".source-link a")).toHaveText("kotikokki.example");
     // Not full-page: the tab strip is position: fixed and a full-page shot
@@ -940,21 +942,17 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/105-review-save-bar.png` });
   });
 
-  test("who can see a dish, said under its title and changed in one tap", async ({
+  test("who can see a dish, said under its title and changed from ⋯", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 720 });
 
     await page.goto("/recipes/1");
-    await expect(page.locator(".sharing-shortcut"))
-      .toContainText("Näkyvyys: vain oma talous");
-    await expect(page.locator(".sharing-shortcut")).toBeInViewport();
+    await expect(page.locator(".recipe-meta .visibility-word")).toHaveText("🔒 Oma");
+    await expect(page.locator(".recipe-meta")).toBeInViewport();
     await capture(page, { path: `${SHOTS}/106-sharing-shortcut.png` });
 
-    await page
-      .locator(".sharing-shortcut")
-      .getByRole("link", { name: "Muuta" })
-      .click();
+    await openEditBlock(page, "sharing-open");
     await page.getByLabel("Julkinen").check();
     await expect(page.getByRole("button", { name: "Tallenna jako" }))
       .toBeInViewport();
@@ -963,11 +961,9 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/107-sharing-save-bar.png` });
 
     // Left as it was found: this file seeds once for the whole run.
-    await openEditBlock(page, "sharing-open");
     await page.getByLabel("Oma").check();
     await page.getByRole("button", { name: "Tallenna jako" }).click();
-    await expect(page.locator(".sharing-shortcut"))
-      .toContainText("Näkyvyys: vain oma talous");
+    await expect(page.locator(".recipe-meta .visibility-word")).toHaveText("🔒 Oma");
   });
 
   test("editing a dish that has no ingredients of its own", async ({ page }) => {
@@ -2096,7 +2092,7 @@ test.describe("public recipes", () => {
     await openEditBlock(page, "sharing-open");
     // The form is in a fixed modal since #317, so it is measured against the
     // open card, not against the section the card is drawn from (#351).
-    const sharing = page.locator("#sharing-open .edit-modal-card");
+    const sharing = page.locator("#sharing-open-auki .edit-modal-card");
     const search = sharing.getByLabel("Hae vastaanottavaa taloutta");
     const recipient = sharing.getByLabel("Naapuri");
     const saveSharing = sharing.getByRole("button", { name: "Tallenna jako" });
@@ -2149,7 +2145,7 @@ test.describe("public recipes", () => {
 
     await page.goto("/recipes/1");
     await expect(page.locator(".shared-from")).toContainText("Koti");
-    await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+    await expect(page.locator("a.tail-row", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
     const hero = page.locator(".recipe-image.is-hero img");
     await expect(hero).toHaveJSProperty("complete", true);
     await expect(hero).not.toHaveJSProperty("naturalWidth", 0);
@@ -2160,6 +2156,7 @@ test.describe("public recipes", () => {
 
     // Naapuri puts it on its list, which is what puts the refusal below
     // within reach.
+    await openCookAdd(page);
     await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
 
     // And Koti, trying to take it back while somebody is about to cook it.
@@ -2807,9 +2804,10 @@ test.describe("saving a recipe from its name alone (#211)", () => {
       page.getByRole("heading", { name: "Mummin lihapullat" }),
     ).toBeVisible();
     await expect(page.locator(".lines li")).toHaveCount(0);
+    // Behind ⋯ since #354, so it is there rather than on screen.
     await expect(
-      page.getByRole("link", { name: "Muokkaa reseptiä" }),
-    ).toBeVisible();
+      page.locator("a.tail-row", { hasText: "Muokkaa reseptiä" }),
+    ).toHaveCount(1);
     await capture(page, {
       path: `${SHOTS}/100-wip-recipe.png`,
       fullPage: true,
@@ -2853,7 +2851,7 @@ test.describe("editing a part from the dish's editor (#231)", () => {
     await expect(page.locator(".part").nth(1).locator("h2")).toHaveText(
       "Valkokastike",
     );
-    await expect(page.locator(".part").nth(1)).toContainText("vispaa juusto");
+    await expect(page.locator(".part-method").nth(1)).toContainText("vispaa juusto");
     await capture(page, {
       path: `${SHOTS}/103-part-saved-on-dish.png`,
       fullPage: true,

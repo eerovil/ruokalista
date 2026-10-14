@@ -17,7 +17,36 @@ function editBlockLocator(page: Page, id: string) {
   return page.locator(`.edit-block#${id}, .edit-block:has(> #${id})`);
 }
 
+/**
+ * On the recipe screen, `preference-open` and `sharing-open` are no longer
+ * lines of the page but rows of its ⋯ modal (#354), each opening a modal of
+ * its own at `#<id>-auki`. Opening one goes through ⋯ as a person would;
+ * closing it goes back out through ⋯ too, so the page underneath is usable.
+ */
+function settingsModal(page: Page, id: string) {
+  return page.locator(`.top-modal#${id}-auki`);
+}
+
+async function openSettingsModal(page: Page, id: string): Promise<void> {
+  const card = settingsModal(page, id).locator(".edit-modal-card");
+  if (!(await card.isVisible())) {
+    await page.getByRole("link", { name: "Lisää valintoja" }).click();
+    await page.locator(`#lisavalinnat a[href="#${id}-auki"]`).click();
+  }
+  await expect(card).toBeVisible();
+}
+
+async function closeSettingsModal(page: Page, id: string): Promise<void> {
+  const card = settingsModal(page, id).locator(".edit-modal-card");
+  if (await card.isVisible()) await card.locator(".edit-done").click();
+  const more = page.locator("#lisavalinnat .edit-modal-card");
+  if (await more.isVisible()) await more.locator(".edit-done").click();
+  await expect(card).toBeHidden();
+  await expect(more).toBeHidden();
+}
+
 export async function openEditBlock(page: Page, id: string): Promise<void> {
+  if ((await settingsModal(page, id).count()) > 0) return openSettingsModal(page, id);
   const block = editBlockLocator(page, id);
   const modal = block.locator(".edit-modal-card");
   if (!(await modal.isVisible())) {
@@ -31,6 +60,7 @@ export async function openEditBlock(page: Page, id: string): Promise<void> {
 
 /** And closes it again, so the screen underneath can be read or clicked. */
 export async function closeEditBlock(page: Page, id: string): Promise<void> {
+  if ((await settingsModal(page, id).count()) > 0) return closeSettingsModal(page, id);
   const block = editBlockLocator(page, id);
   const modal = block.locator(".edit-modal-card");
   if (await modal.isVisible()) {
@@ -70,4 +100,17 @@ export async function focusRing(page: Page, selector: string): Promise<string> {
     const drawn = getComputedStyle(el);
     return `${drawn.outlineStyle} ${drawn.outlineWidth}`;
   });
+}
+
+/**
+ * The recipe screen's sizes for Lisää kokattaviin, behind ⋯ → Lisää eri koolla
+ * since #354 (the main button adds at the usual size in one tap).
+ */
+export async function openCookAdd(page: Page): Promise<void> {
+  const add = page.locator(".cook-add");
+  if (!(await add.isVisible())) {
+    await page.getByRole("link", { name: "Lisää valintoja" }).click();
+    await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
+  }
+  await expect(add).toBeVisible();
 }

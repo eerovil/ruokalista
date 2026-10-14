@@ -46,6 +46,7 @@ test("the editor opens from the recipe with its fields filled in", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
   await page.getByRole("link", { name: "Muokkaa reseptiä" }).click();
 
   await expect(page).toHaveURL(/\/recipes\/1\/edit$/);

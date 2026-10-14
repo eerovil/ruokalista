@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { openEditBlock } from "./support/blocks";
+import { openEditBlock, openCookAdd } from "./support/blocks";
 import { onePixelPng } from "./support/png";
 import { openShoppingRow } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
@@ -83,6 +83,7 @@ test("a published recipe reaches the other household, and can be planned", async
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 
   // And it can go on the to-do list, the same as an own recipe.
+  await openCookAdd(page);
   await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
   await expect(page.locator(".cook-item")).toContainText("Kaalilaatikko");
 });
@@ -180,7 +181,7 @@ test("selected households can be found, added and safely removed", async ({
   await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
   await signIn(page, 4);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(200);
-  await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+  await expect(page.locator("a", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
 });
 
 test("planning and revocation cannot both win the same race", async ({ page }) => {
@@ -291,7 +292,7 @@ test("the other household cannot edit a published recipe", async ({ page }) => {
 
   // No way in from the screen…
   await page.goto("/recipes/1");
-  await expect(page.getByRole("link", { name: "Muokkaa reseptiä" })).toHaveCount(0);
+  await expect(page.locator("a", { hasText: "Muokkaa reseptiä" })).toHaveCount(0);
   await expect(page.locator(".recipe-sharing")).not.toContainText("Jakaminen");
 
   // …and none by typing the address either. Editing, deleting and unpublishing
