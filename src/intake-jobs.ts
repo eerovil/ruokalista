@@ -407,21 +407,33 @@ export async function retryIntakeJob(
   return true;
 }
 
-/** Remove a completed job once its reviewed draft became a recipe. */
+/**
+ * Remove a job that is no longer being worked on: a ready one once its reviewed
+ * draft became a recipe, or a ready or failed one the member threw away (#337).
+ * A queued or running job is left alone, and so is the answer: false.
+ */
 export async function deleteIntakeJob(
   env: Env,
   id: string,
   householdId: number,
-): Promise<void> {
+): Promise<boolean> {
   const job = await findIntakeJob(env.DB, id, householdId);
-  if (job === null || job.status !== "ready") return;
-  await env.DB.prepare("DELETE FROM intake_job WHERE id = ? AND household_id = ?")
+  if (job === null || (job.status !== "ready" && job.status !== "failed")) {
+    return false;
+  }
+  // Re-checked in the statement, because a retry may have queued it since.
+  const deleted = await env.DB.prepare(
+    `DELETE FROM intake_job
+      WHERE id = ? AND household_id = ? AND status IN ('ready', 'failed')`,
+  )
     .bind(id, householdId)
     .run();
+  if (deleted.meta.changes !== 1) return false;
   await deleteImages(
     env.RECIPE_IMAGES,
     job.pageImage === null ? job.imageRefs : [...job.imageRefs, job.pageImage],
   );
+  return true;
 }
 
 /** The Queue entrypoint. Every message is explicitly acknowledged or retried. */

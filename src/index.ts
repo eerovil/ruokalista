@@ -39,6 +39,7 @@ import {
 import { listIngredients } from "./ingredients.ts";
 import {
   correctScreen,
+  deleteIntakeJobForm,
   intakeJobImage,
   intakeJobReviewScreen,
   intakeJobStatus,
@@ -205,6 +206,7 @@ const router = new Router()
   .post("/intake/keskeneras", requireMemberScreen(quickSaveScreen))
   .get("/intake/imports/:id/review", requireMemberScreen(intakeJobReviewScreen))
   .post("/intake/imports/:id/retry", requireMemberScreen(retryIntakeJobForm))
+  .post("/intake/imports/:id/delete", requireMemberScreen(deleteIntakeJobForm))
   .post("/api/intake/imports", requireMember(startIntakeJob))
   .post("/api/intake/failures", requireMember(reportIntakeFailure))
   .get("/api/intake/imports/:id", requireMember(intakeJobStatus))

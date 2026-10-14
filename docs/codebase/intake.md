@@ -537,7 +537,10 @@ Pasted text stays in `intake_job.source_text`. Downscaled photographed pages
 use private `intake/<job>/<page>` objects in the existing R2 bucket and D1 keeps
 only their ordered keys. Success deletes those objects; failure retains them
 for the explicit retry action. Ready and failed jobs remain until the member
-saves the recipe or retries them. The same maintenance pass removes a temporary
+saves the recipe, retries it, or throws it away with **Poista**
+(`POST /intake/imports/:id/delete`, #337), which deletes the row and its stored
+photos; a queued or running job has no Poista and the route refuses it with a
+404. The same maintenance pass removes a temporary
 `intake/` object only when no D1 job references it and it is at least a day old;
 failed source pages have no blanket expiry.
 
