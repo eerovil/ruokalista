@@ -140,7 +140,7 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   the sequence that does work. See
   [data-model](docs/codebase/data-model.md).
 - **Verify focused locally, and let CI be complete.** Before a pull request:
-  the typecheck, `npm run check`, and the browser specs that cover what you
+  the typecheck, `npm run check`, and the one browser spec that tests what you
   changed. Touching a file every screen goes through — `src/html.ts`,
   `src/auth.ts`, `src/router.ts`, `src/index.ts`, `src/env.ts`, a migration —
   is not on its own a reason to run the whole suite here; CI runs it on every

@@ -72,10 +72,14 @@ test("a published recipe reaches the other household, and can be planned", async
   await publish(page, 1);
 
   await signIn(page, 2);
-  await page.goto("/recipes/julkiset");
-  await expect(page.locator(".recipes a")).toContainText("Kaalilaatikko");
+  // It sits in the other household's own list since #335, with no tick: the
+  // bulk actions are only ever for this household's recipes.
+  await page.goto("/recipes");
+  const shared = page.locator(".recipes li", { hasText: "Kaalilaatikko" });
   // Whose it is sits on the row's provenance line, under the cooking one.
-  await expect(page.locator(".recipes li").first()).toContainText("Koti");
+  await expect(shared).toContainText("Koti");
+  await expect(shared).toContainText("Julkinen");
+  await expect(page.getByLabel("Valitse Kaalilaatikko")).toHaveCount(0);
 
   // Reading it works, and says whose it is.
   await page.getByRole("link", { name: /Kaalilaatikko/ }).click();
@@ -130,7 +134,7 @@ test("selected households can be found, added and safely removed", async ({
   ).toContainText("Jaettu 1 taloudelle");
 
   await signIn(page, 2);
-  await page.goto("/recipes/julkiset");
+  await page.goto("/recipes");
   const shared = page.locator(".recipes li", { hasText: "Kaalilaatikko" });
   await expect(shared).toContainText("Jaettu sinulle");
   await shared.getByRole("link").click();
@@ -368,8 +372,8 @@ test("a published recipe's picture is readable by the other household", async ({
   expect((await page.request.delete("/api/recipes/1/image")).status()).toBe(404);
 
   // And it is a picture on the screen rather than a broken-image icon, both in
-  // the public list and on the recipe itself.
-  await page.goto("/recipes/julkiset");
+  // the recipe list and on the recipe itself.
+  await page.goto("/recipes");
   const thumb = page
     .locator(".recipes li", { hasText: "Kaalilaatikko" })
     .locator(".recipe-image img");
@@ -420,16 +424,46 @@ test("an unpublished recipe stays invisible to the other household", async ({
 }) => {
   await signIn(page, 2);
 
-  // Koti's recipes are all private in the seed.
-  await page.goto("/recipes/julkiset");
-  await expect(page.locator(".recipes li")).toHaveCount(0);
-  await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
-  await expect((await page.goto("/api/recipes/1"))?.status()).toBe(404);
-
-  // Its own list is its own list: a public recipe is not mixed into it.
+  // Koti's recipes are all private in the seed, so Naapuri's list holds only
+  // its own dish.
   await page.goto("/recipes");
   await expect(page.locator(".recipes li")).toHaveCount(1);
   await expect(page.locator(".recipes a")).toContainText("Naapurin uunikala");
+  await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
+  await expect((await page.goto("/api/recipes/1"))?.status()).toBe(404);
+});
+
+test("shared recipes can be hidden from the list, and that is remembered", async ({
+  page,
+}) => {
+  await publish(page, 1);
+  await signIn(page, 2);
+  await page.goto("/recipes");
+  await expect(page.locator(".recipes li")).toHaveCount(2);
+
+  const toggle = page.getByRole("checkbox", { name: "Piilota jaetut reseptit" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".recipes li")).toHaveCount(1);
+  await expect(page.locator(".recipes")).not.toContainText("Kaalilaatikko");
+
+  // A plain visit later still hides them, and so does a chip.
+  await page.goto("/recipes");
+  await expect(page.locator(".recipes li")).toHaveCount(1);
+  await page.locator(".browse-sort").getByRole("link", { name: "Viimeksi kokatut" }).click();
+  await expect(page.locator(".recipes li")).toHaveCount(1);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator(".recipes li")).toHaveCount(2);
+  await page.goto("/recipes");
+  await expect(page.locator(".recipes li")).toHaveCount(2);
+
+  // The old shared section is the list now.
+  await page.goto("/recipes/julkiset");
+  await expect(page).toHaveURL(/\/recipes\?jaetut=nayta$/);
+  await expect(page.locator(".recipes li", { hasText: "Kaalilaatikko" })).toHaveCount(1);
 });
 
 test("an edit by the owner is what the other household reads", async ({
@@ -461,9 +495,10 @@ test("publishing and unpublishing work on a selection of recipes", async ({
   await expect(page.locator(".done")).toContainText("2 reseptiä");
   await expect(page.locator(".badge.is-published")).toHaveCount(2);
 
+  // Naapuri's list: its own dish and the two Koti published.
   await signIn(page, 2);
-  await page.goto("/recipes/julkiset");
-  await expect(page.locator(".recipes li")).toHaveCount(2);
+  await page.goto("/recipes");
+  await expect(page.locator(".recipes li")).toHaveCount(3);
 
   await signIn(page, 1);
   await page.goto("/recipes");
@@ -481,9 +516,10 @@ test("a multipart dish is shared as one dish, parts and all", async ({
   await shareWith(page, 3, ["Naapuri"]);
   await signIn(page, 2);
 
-  await page.goto("/recipes/julkiset");
-  await expect(page.locator(".recipes li")).toHaveCount(1);
-  await expect(page.locator(".recipes a")).toContainText("Lasagne");
+  await page.goto("/recipes");
+  await expect(page.locator(".recipes li")).toHaveCount(2);
+  await expect(page.locator(".recipes li", { hasText: "Lasagne" })).toHaveCount(1);
+  await expect(page.locator(".recipes")).not.toContainText("Juustokastike");
 
   // The parts are readable through the dish, which is where a cook needs them.
   await page.goto("/recipes/3");

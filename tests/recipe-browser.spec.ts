@@ -92,13 +92,15 @@ test("the list can be ordered by when it was last cooked", async ({ page }) => {
   await expect(page.locator(".recipes-title")).toHaveText([
     "Kaalilaatikko",
     "Öljykastike",
-    // Never cooked is not recent, so it is last.
+    // Never cooked is not recent, so it is last — Naapuri's shared dish too.
+    "Naapurin uunikala",
     "Lasagne",
   ]);
 
   await page.locator(".browse-sort").getByRole("link", { name: "Kauan kokkaamatta" }).click();
   await expect(page.locator(".recipes-title")).toHaveText([
     // Nothing has been longer than never.
+    "Naapurin uunikala",
     "Lasagne",
     "Öljykastike",
     "Kaalilaatikko",
@@ -163,7 +165,7 @@ test("typing filters the list at once, without asking the server", async ({
   await expect(page.locator(".browse-none")).toContainText('Haku "pizza"');
 
   await page.locator(".browse-search input[name=q]").fill("");
-  await expect(visibleRows(page, ".recipes")).toHaveCount(3);
+  await expect(visibleRows(page, ".recipes")).toHaveCount(4);
   expect(documents).toBe(0);
   // There is nothing left to submit, so the button is not offered.
   await expect(page.locator(".browse-go")).toBeHidden();
@@ -180,9 +182,9 @@ test("the instant search never searches only what the server left", async ({
   await expect(page.locator(".browse-search input[name=q]")).toHaveValue("kaali");
   await expect(visibleRows(page, ".recipes")).toHaveCount(1);
 
-  // And now the other two are here to be found, without another request.
+  // And now the others are here to be found, without another request.
   await page.locator(".browse-search input[name=q]").fill("");
-  await expect(visibleRows(page, ".recipes")).toHaveCount(3);
+  await expect(visibleRows(page, ".recipes")).toHaveCount(4);
 });
 
 test("the typed search survives a category or order chip", async ({ page }) => {
@@ -192,7 +194,8 @@ test("the typed search survives a category or order chip", async ({ page }) => {
 
   await page.locator(".browse-sort").getByRole("link", { name: "Kauan kokkaamatta" }).click();
   await expect(page.locator(".browse-search input[name=q]")).toHaveValue("la");
-  await expect(visibleRows(page, ".recipes")).toHaveCount(2);
+  // Lasagne, Kaalilaatikko and Naapurin uunikala.
+  await expect(visibleRows(page, ".recipes")).toHaveCount(3);
 });
 
 test("a row the search hides is not a row the bulk buttons act on", async ({
@@ -299,7 +302,7 @@ test("the browser, on a phone, with cooking behind it", async ({ page }) => {
 
   await page.locator(".browse-sort").getByRole("link", { name: "Kauan kokkaamatta" }).click();
   await expect(page.locator(".browse-sort .chip.is-on")).toHaveText("Kauan kokkaamatta");
-  await expect(page.locator(".recipes-title").first()).toHaveText("Lasagne");
+  await expect(page.locator(".recipes-title").nth(1)).toHaveText("Lasagne");
   await captureReview(page, "test-results/307-recipes-jarjestys.png");
 
   await page.goto(`/picker?date=${inDays(5)}&slot=dinner`);

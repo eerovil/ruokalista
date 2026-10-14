@@ -47,7 +47,9 @@ function browseInstantly(): void {
   var rows = matchableRows(browser);
   var none = browser.querySelector(".browse-none") as HTMLElement | null;
   var template = browser.getAttribute("data-none") || "";
-  var chips = browser.querySelectorAll(".chip");
+  // The shared-recipes switch is a link like the chips, and carries the text
+  // the same way.
+  var chips = browser.querySelectorAll(".chip, .browse-toggle");
   var posting = carriedForm(browser);
 
   var carried = textFromHash();

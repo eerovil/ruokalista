@@ -19,7 +19,7 @@ import {
 import { browseState, type BrowseState } from "./recipe-browser.ts";
 import {
   findReadableRecipe,
-  ownRecipeList,
+  recipeList,
   renderRecipe,
   type ListNotice,
 } from "./recipes.ts";
@@ -96,7 +96,7 @@ export async function publishForm(
 
   return page(
     "Reseptit",
-    await ownRecipeList(
+    await recipeList(
       env.DB,
       vocabulary,
       member,
@@ -236,7 +236,7 @@ async function refuse(
 
   return page(
     "Reseptit",
-    await ownRecipeList(env.DB, vocabulary, member, state, {
+    await recipeList(env.DB, vocabulary, member, state, {
       message,
       refused: true,
     }),
