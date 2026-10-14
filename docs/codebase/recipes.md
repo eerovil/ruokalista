@@ -121,7 +121,8 @@ definition, and `RecipeSummary.empty` carries it to the screens.
   the rest and refuses naming the empty ones; the sharing form refuses outright.
 - Another household never sees one. `readableRecipeScope` drops it even when
   it was published or shared before it was emptied, so it reappears once it
-  has both ingredients and a method again.
+  has both ingredients and a method again. A household that already has it
+  planned keeps it, so emptying a dish never strands somebody's meal.
 - The list marks it with a **Tyhjä** badge, and **Näytä vain tyhjät**
   (`tyhjat=vain`, `BrowseState.onlyEmpty`) narrows the list to them. Unlike the
   shared switch it is not remembered: it is an errand, not a view.

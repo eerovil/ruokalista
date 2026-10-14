@@ -83,7 +83,7 @@ export interface DishRow {
 
 export interface ReadableRecipeScope {
   sql: string;
-  bindings: readonly [number, number];
+  bindings: readonly [number, number, number];
 }
 
 /**
@@ -116,9 +116,12 @@ export function emptyDishSql(alias = "recipe"): string {
  * image and preference paths from growing subtly different definitions of
  * "shared with us".
  *
- * An empty dish (#340) is never readable outside its own household, even when
+ * An empty dish (#340) is not readable outside its own household, even when
  * it was published or shared before it was emptied: what another household
- * would find there is a name and nothing to cook.
+ * would find there is a name and nothing to cook. The one exception is a
+ * household that already has it on its week — emptying it must not strand
+ * their meal unopenable and unmovable, the same stranding that
+ * `futurePlansElsewhere` stops an unpublish from causing.
  */
 export function readableRecipeScope(
   householdId: number,
@@ -132,8 +135,13 @@ export function readableRecipeScope(
                       WHERE recipe_share.recipe_id = ${alias}.id
                         AND recipe_share.household_id = ?
                    ))
-               AND NOT ${emptyDishSql(alias)}))`,
-    bindings: [householdId, householdId],
+               AND (NOT ${emptyDishSql(alias)}
+                    OR EXISTS (
+                         SELECT 1 FROM planned_batch
+                          WHERE planned_batch.recipe_id = ${alias}.id
+                            AND planned_batch.household_id = ?
+                       ))))`,
+    bindings: [householdId, householdId, householdId],
   };
 }
 
@@ -567,11 +575,6 @@ export async function futurePlansElsewhere(
   return row?.households ?? 0;
 }
 
-/**
- * Why an unpublish did not happen, in Finnish, as a sentence a person can act
- * on. It names the recipe and says what has to change, because "estetty" on its
- * own leaves the reader with nowhere to go.
- */
 /** Why an empty recipe stayed private (#340). */
 export function emptyMessage(titles: string[]): string {
   const which = titles.length === 1
@@ -580,6 +583,11 @@ export function emptyMessage(titles: string[]): string {
   return `${which}, joten ${titles.length === 1 ? "sitä" : "niitä"} ei voi julkaista eikä jakaa. Lisää ensin ainekset ja valmistusvaiheet.`;
 }
 
+/**
+ * Why an unpublish did not happen, in Finnish, as a sentence a person can act
+ * on. It names the recipe and says what has to change, because "estetty" on its
+ * own leaves the reader with nowhere to go.
+ */
 export function blockedMessage(blocked: PublishBlock[]): string {
   if (blocked.length === 1) {
     const only = blocked[0]!;
