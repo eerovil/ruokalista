@@ -163,6 +163,18 @@ function insertFixtures(database: FakeD1): {
     throw error;
   }
 
+  // An empty dish is never readable by another household (#340), so every
+  // fixture gets something to cook: a line where it has none, and a step.
+  sql.exec(`
+    INSERT INTO ingredient (id, name, created_by) VALUES (9000, 'Filler', 1);
+    INSERT INTO ingredient_line
+      (recipe_id, position, quantity, unit, ingredient_id, source_line)
+    SELECT id, 1, 1, 'g', 9000, '1 g filler' FROM recipe
+     WHERE id NOT IN (SELECT recipe_id FROM ingredient_line);
+    INSERT INTO recipe_step (recipe_id, position, text)
+    SELECT id, 1, 'Sekoita.' FROM recipe;
+  `);
+
   const foreignBatchId = 9999;
   batch.run(
     foreignBatchId,

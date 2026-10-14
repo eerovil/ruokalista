@@ -49,6 +49,13 @@ function fixtures(fake: FakeD1): void {
        created_by, updated_by)
       VALUES (1, 1, 'Kaalilaatikko', 4, 'Kaalia', 'pasted', 1, 1),
              (2, 2, 'Naapurin keitto', 4, 'Keittoa', 'pasted', 2, 2);
+    -- Something to cook in each, since an empty dish is never shared (#340).
+    INSERT INTO ingredient (id, name, created_by) VALUES (1, 'kaali', 1);
+    INSERT INTO ingredient_line
+      (recipe_id, position, quantity, unit, ingredient_id, source_line)
+      VALUES (1, 1, 1, 'kpl', 1, '1 kaali'), (2, 1, 1, 'kpl', 1, '1 kaali');
+    INSERT INTO recipe_step (recipe_id, position, text)
+      VALUES (1, 1, 'Keitä.'), (2, 1, 'Keitä.');
   `);
 }
 
@@ -226,6 +233,32 @@ test("access lost just before a future replacement rolls the whole write back", 
     MenuRefused,
   );
   assert.deepEqual(occurrences(fake, original.id), before);
+});
+
+test("a shared dish emptied by its owner stays movable on a week that has it (#340)", async () => {
+  const fake = migratedDatabase();
+  fixtures(fake);
+  fake.sql.exec(
+    "INSERT INTO recipe_share (recipe_id, household_id, shared_by) VALUES (2, 1, 2)",
+  );
+  const original = await ownBatch(fake, addDays(today(), 1), 2);
+  // The owner saves it without its method: an empty dish, hidden from others
+  // who have not planned it, but never from the week that already holds it.
+  fake.sql.exec("DELETE FROM recipe_step WHERE recipe_id = 2");
+
+  assert.equal(
+    await replaceOccurrences(fake.db, HOME, original.id, original.instanceKey, [
+      { date: addDays(today(), 2), slot: "lunch" },
+    ]),
+    true,
+  );
+  assert.deepEqual(occurrences(fake, original.id), [
+    { date: addDays(today(), 2), slot: "lunch" },
+  ]);
+
+  // A household that never planned it cannot plan it now.
+  fake.sql.exec("DELETE FROM batch_occurrence; DELETE FROM planned_batch;");
+  await assert.rejects(() => ownBatch(fake, addDays(today(), 1), 2), MenuRefused);
 });
 
 test("moving a batch to another day carries its whole run with it", async () => {

@@ -1137,6 +1137,33 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/17-nothing-found.png`, fullPage: true });
   });
 
+  test("an empty recipe on the list, and the switch that finds them (#340)", async ({
+    page,
+  }) => {
+    // Made and removed here: every other shot shares this database.
+    executeLocalSql(`
+      INSERT INTO recipe
+        (id, household_id, title, source_text, source_route, created_by, updated_by)
+      VALUES (340, 1, 'Mummon pulla', '', 'pasted', 1, 1)
+    `);
+    try {
+      await page.goto("/recipes");
+      await expect(page.locator(".badge.is-empty")).toHaveCount(1);
+      await capture(page, { path: `${SHOTS}/127-empty-recipe-marked.png` });
+      await page.getByRole("checkbox", { name: "Näytä vain tyhjät" }).click();
+      await expect(page.locator(".recipes li")).toHaveCount(1);
+      await capture(page, { path: `${SHOTS}/128-only-empty-recipes.png` });
+      await page.goto("/recipes/340#jakaminen");
+      await openEditBlock(page, "sharing-open");
+      await page.getByLabel("Julkinen").check();
+      await page.getByRole("button", { name: "Tallenna jako" }).click();
+      await expect(page.locator("p.refused")).toBeVisible();
+      await capture(page, { path: `${SHOTS}/129-empty-recipe-refused.png` });
+    } finally {
+      executeLocalSql("DELETE FROM recipe WHERE id = 340");
+    }
+  });
+
   /**
    * The shopping list (#123), on a fortnight planned relative to today —
    * because the screen's fortnight and its five-day default are relative to

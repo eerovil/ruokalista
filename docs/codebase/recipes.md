@@ -111,6 +111,22 @@ a removed rule: on an import an empty `lines` means the model gave back nothing
 usable, and writing that quietly would turn a failed import into a recipe
 nobody asked for.
 
+### An empty recipe stays at home (issue #340)
+
+A dish is **empty** when it has no ingredient line, or no step, on itself or
+on any of its parts. `src/recipe-publish.ts::emptyDishSql` is the one
+definition, and `RecipeSummary.empty` carries it to the screens.
+
+- It cannot be published or shared. The bulk **Julkaise valitut** publishes
+  the rest and refuses naming the empty ones; the sharing form refuses outright.
+- Another household never sees one. `readableRecipeScope` drops it even when
+  it was published or shared before it was emptied, so it reappears once it
+  has both ingredients and a method again. A household that already has it
+  planned keeps it, so emptying a dish never strands somebody's meal.
+- The list marks it with a **Tyhjä** badge, and **Näytä vain tyhjät**
+  (`tyhjat=vain`, `BrowseState.onlyEmpty`) narrows the list to them. Unlike the
+  shared switch it is not remembered: it is an errand, not a view.
+
 ### Cooking order has a phase (issue #58, decision #50, ADR-0003)
 
 Parent-level content on a multipart dish — a line or step that belongs to the

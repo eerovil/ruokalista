@@ -49,11 +49,20 @@ export interface BrowseState {
    * picker keeps its own order and ignores this.
    */
   hideShared: boolean;
+  /**
+   * Whether the reader has asked to see only empty recipes (#340) — the
+   * name-only saves still waiting for their ingredients and method. Like
+   * `hideShared`, only `/recipes` offers it.
+   */
+  onlyEmpty: boolean;
 }
 
 /** The query value that hides shared recipes, and the one that shows them. */
 export const HIDE_SHARED = "piilota";
 export const SHOW_SHARED = "nayta";
+
+/** The query value that narrows the list to empty recipes (`tyhjat=vain`). */
+export const ONLY_EMPTY = "vain";
 
 /**
  * The category a list was asked to show, or null for all of them.
@@ -84,6 +93,7 @@ export function browseState(
     category: askedCategory(vocabulary, read("kategoria")),
     sort: askedSort(read("jarjestys")),
     hideShared: read("jaetut") === HIDE_SHARED,
+    onlyEmpty: read("tyhjat") === ONLY_EMPTY,
   };
 }
 
@@ -110,6 +120,9 @@ export function browseFields(state: BrowseState): Raw {
       : html`<input type="hidden" name="jarjestys" value="${state.sort}" />`}
     ${state.hideShared
       ? html`<input type="hidden" name="jaetut" value="${HIDE_SHARED}" />`
+      : ""}
+    ${state.onlyEmpty
+      ? html`<input type="hidden" name="tyhjat" value="${ONLY_EMPTY}" />`
       : ""}`;
 }
 
@@ -231,6 +244,9 @@ export function recipeBrowser(
         : html`<input type="hidden" name="jarjestys" value="${state.sort}" />`}
       ${state.hideShared
         ? html`<input type="hidden" name="jaetut" value="${HIDE_SHARED}" />`
+        : ""}
+      ${state.onlyEmpty
+        ? html`<input type="hidden" name="tyhjat" value="${ONLY_EMPTY}" />`
         : ""}
       <input
         type="search"
@@ -385,6 +401,7 @@ export function browseHref(screen: BrowseScreen, state: BrowseState): string {
   if (state.category !== null) params.set("kategoria", state.category);
   if (state.sort !== DEFAULT_SORT) params.set("jarjestys", state.sort);
   if (state.hideShared) params.set("jaetut", HIDE_SHARED);
+  if (state.onlyEmpty) params.set("tyhjat", ONLY_EMPTY);
   const search = params.toString();
   return search === "" ? screen.path : `${screen.path}?${search}`;
 }

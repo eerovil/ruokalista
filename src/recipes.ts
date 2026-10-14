@@ -128,6 +128,7 @@ function summaryForApi(summary: RecipeSummary): object {
     publishedAt: _publishedAt,
     shareCount: _shareCount,
     categories: _categories,
+    empty: _empty,
     ...wire
   } = summary;
   return wire;
@@ -155,6 +156,7 @@ function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
     publishedAt: _publishedAt,
     shareCount: _shareCount,
     categories: _categories,
+    empty: _empty,
     parentId: _parentId,
     parentTitle: _parentTitle,
     ...wire
@@ -254,7 +256,13 @@ export async function recipeList(
     publicRecipeSummaries(db, member.householdId, state.query),
     cookHistory(db, member.householdId),
   ]);
-  const matching = state.hideShared ? own : newestFirst([...own, ...shared]);
+  const everything = state.hideShared ? own : newestFirst([...own, ...shared]);
+  // Another household's empty dish never reaches this list (the readable
+  // scope drops it), so "only empty" is only ever this household's own.
+  const matching = state.onlyEmpty
+    ? everything.filter((recipe) => recipe.empty)
+    : everything;
+  const anyEmpty = own.some((recipe) => recipe.empty);
 
   return html`<h1>Reseptit</h1>
     ${recipeBrowser(
@@ -265,11 +273,13 @@ export async function recipeList(
         matching,
         history,
         viewerHouseholdId: member.householdId,
-        filters: shared.length > 0 || state.hideShared
+        filters: html`${shared.length > 0 || state.hideShared
           ? sharedToggle(state)
-          : undefined,
+          : ""}${anyEmpty || state.onlyEmpty ? emptyToggle(state) : ""}`,
         notice: noticeLine(notice),
-        emptyAll: "Reseptejä ei ole vielä yhtään.",
+        emptyAll: state.onlyEmpty
+          ? "Tyhjiä reseptejä ei ole."
+          : "Reseptejä ei ole vielä yhtään.",
         emptyAction: html`<p>
           <a class="button" href="/intake">Lisää ensimmäinen</a>
         </p>`,
@@ -283,7 +293,9 @@ export async function recipeList(
                   class="recipe-pick"
                   aria-label="Valitse ${recipe.title}"
                 />
-                <a href="/recipes/${recipe.id}">${card}${sharingBadge(recipe)}</a>`
+                <a href="/recipes/${recipe.id}"
+                  >${card}${emptyBadge(recipe)}${sharingBadge(recipe)}</a
+                >`
             : // An unticked, invisible box keeps the row lined up with the
               // ones that can be ticked. It has no name, so it posts nothing.
               html`<input
@@ -364,6 +376,39 @@ function sharedToggle(state: BrowseState): Raw {
       Piilota jaetut reseptit</a
     >
   </p>`;
+}
+
+/**
+ * "Näytä vain tyhjät" (#340): the name-only saves still waiting to be written
+ * down, found in one tap. The same link-drawn-as-a-checkbox as the shared one,
+ * and for the same reasons; unlike that one it is not remembered, because it
+ * is an errand rather than a way of looking at the list.
+ */
+function emptyToggle(state: BrowseState): Raw {
+  const href = browseHref(
+    { path: "/recipes" },
+    { ...state, onlyEmpty: !state.onlyEmpty },
+  );
+  return html`<p class="browse-shared">
+    <a
+      class="browse-toggle"
+      href="${href}"
+      role="checkbox"
+      aria-checked="${state.onlyEmpty ? "true" : "false"}"
+      ><span class="browse-toggle-box" aria-hidden="true"
+        >${state.onlyEmpty ? "✓" : ""}</span
+      >
+      Näytä vain tyhjät</a
+    >
+  </p>`;
+}
+
+/** An empty dish says so on its row (#340), so it is not mistaken for a meal. */
+function emptyBadge(recipe: RecipeSummary): Raw {
+  if (!recipe.empty) return raw("");
+  return html`<span class="badge is-empty" title="Ei aineksia tai valmistusvaiheita"
+    ><span aria-hidden="true">✎</span> Tyhjä</span
+  >`;
 }
 
 /** `GET /recipes/julkiset` — the old shared section, now part of the list. */
@@ -853,6 +898,12 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
           html`<form method="post" action="/recipes/julkaisu" class="stacked sharing-form">
               <input type="hidden" name="recipeId" value="${recipe.id}" />
               <input type="hidden" name="palaa" value="/recipes/${recipe.id}" />
+              ${recipe.empty
+                ? html`<p class="empty">
+                    Resepti on tyhjä: sitä ei voi julkaista eikä jakaa, ennen
+                    kuin siinä on ainekset ja valmistusvaiheet.
+                  </p>`
+                : ""}
               <fieldset class="visibility-choices">
                 <legend>Näkyvyys</legend>
                 ${visibilityChoice("private", "Oma", view.sharing.visibility)}
@@ -966,6 +1017,9 @@ const PUBLISH_STYLE = html`<style>
   .badge.is-published { margin: 0 0 0 auto; align-self: center;
     color: var(--accent); border-color: var(--accent); white-space: nowrap; }
   .badge.is-shared { margin: 0 0 0 auto; align-self: center; white-space: nowrap; }
+  .badge.is-empty { margin: 0 0 0 auto; align-self: center; white-space: nowrap;
+    color: var(--muted); border-style: dashed; }
+  .badge.is-empty + .badge { margin-left: .3rem; }
   .recipe-pick-gap { visibility: hidden; }
   .browse-shared { margin: -.4rem 0 1rem; font-size: .9rem; }
   .browse-toggle { display: inline-flex; align-items: center; gap: .5rem;
