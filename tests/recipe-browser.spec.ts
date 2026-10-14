@@ -1,33 +1,30 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { cookedOn, listDish } from "./support/cook-list";
 import { captureReview } from "./support/review-capture";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
 /**
- * The one recipe browser (#307), on both screens that list recipes.
- *
- * The point of the change is that `/recipes` and `/picker` are the same browse
- * surface, so nearly everything here is checked twice — once where recipes are
- * read and once where they are planned. The ordering rules themselves are pure
+ * The one recipe browser (#307). `/picker` went with the meal calendar (#345),
+ * so `/recipes` is the screen it is checked on. The ordering rules themselves are pure
  * and are checked in `dev/check-recipe-browser.ts`; what needs a browser is the
- * cooking history coming out of real planned batches, and the instant search,
+ * cooking history coming out of real cooked dishes, and the instant search,
  * which is a browser or it is nothing.
  */
 
 /**
  * The history every test below reads, made once: two cookings of one dish, one
- * of another, and a third nobody has ever cooked. Planned through the picker,
- * because a batch planned any other way would not prove the picker plans one.
+ * of another, and a third nobody has ever cooked.
  */
 test.beforeAll(async ({ browser }) => {
   reseed();
   const context = await browser.newContext();
   await context.addCookies([sessionCookie(1)]);
   const page = await context.newPage();
-  await planOn(page, daysAgo(30), "Kaalilaatikko");
-  await planOn(page, daysAgo(10), "Kaalilaatikko");
-  await planOn(page, daysAgo(20), "Öljykastike");
+  await cookedOn(page, 1, daysAgo(30));
+  await cookedOn(page, 1, daysAgo(10));
+  await cookedOn(page, 2, daysAgo(20));
   await context.close();
 });
 
@@ -40,20 +37,6 @@ function daysAgo(days: number): string {
   const at = new Date();
   at.setDate(at.getDate() - days);
   return at.toISOString().slice(0, 10);
-}
-
-function inDays(days: number): string {
-  return daysAgo(-days);
-}
-
-/** Plan one batch the way a member does: from the picker, on that day. */
-async function planOn(page: Page, date: string, title: string): Promise<void> {
-  await page.goto(`/picker?date=${date}&slot=dinner`);
-  await page
-    .locator(".pick li", { hasText: title })
-    .getByRole("button", { name: "Lisää" })
-    .click();
-  await expect(page).toHaveURL(/\/\?week=/);
 }
 
 const visibleRows = (page: Page, list: string) =>
@@ -75,9 +58,8 @@ test("the list says how many times each recipe has been cooked", async ({
   await expect(kaali.locator(".meta").last()).toContainText("Eero");
 });
 
-test("a batch still to come is a plan, not a cooking", async ({ page }) => {
-  // Far enough out that no later test's week screen shows it too.
-  await planOn(page, inDays(40), "Lasagne");
+test("a dish still on the to-do list is a plan, not a cooking", async ({ page }) => {
+  await listDish(page, 3);
   await page.goto("/recipes");
 
   await expect(
@@ -105,42 +87,6 @@ test("the list can be ordered by when it was last cooked", async ({ page }) => {
     "Öljykastike",
     "Kaalilaatikko",
   ]);
-});
-
-test("the week picker browses with the same filters and the same order", async ({
-  page,
-}) => {
-  await page.goto(`/picker?date=${inDays(2)}&slot=lunch`);
-
-  await expect(page.locator(".pick li", { hasText: "Kaalilaatikko" })).toContainText(
-    "Kokattu 2×",
-  );
-  await page.locator(".browse-sort").getByRole("link", { name: "Kauan kokkaamatta" }).click();
-  await expect(page.locator(".pick .recipes-title").first()).toHaveText("Lasagne");
-
-  // The day and the meal survive the chip, and planning still works.
-  await expect(page).toHaveURL(new RegExp(`date=${inDays(2)}&slot=lunch`));
-  await page
-    .locator(".pick li", { hasText: "Lasagne" })
-    .getByRole("button", { name: "Lisää" })
-    .click();
-  await expect(page).toHaveURL(/\/\?week=/);
-  await expect(page.locator(".entry", { hasText: "Lasagne" })).toHaveCount(1);
-});
-
-test("the picker filters by category, which it never could before", async ({
-  page,
-}) => {
-  await page.goto("/recipes");
-  await page.locator(".recipe-pick").first().check();
-  await page.locator("select[name=bulkCategory]").selectOption("uuniruoka");
-  await page.getByRole("button", { name: "Lisää valituille" }).click();
-  await expect(page.locator(".done")).toContainText("Uuniruoka");
-
-  await page.goto(`/picker?date=${inDays(1)}&slot=lunch`);
-  await page.locator(".category-filter").getByRole("link", { name: "Uuniruoka" }).click();
-  await expect(page.locator(".pick li")).toHaveCount(1);
-  await expect(page.locator(".pick .recipes-title")).toHaveText("Lasagne");
 });
 
 test("typing filters the list at once, without asking the server", async ({
@@ -231,56 +177,54 @@ test("without script the search is still the server's, and still works", async (
  * The enhancement and the fallback are one search, not two.
  *
  * `?q=` is what a browser without script submits, so a query that finds a dish
- * with script has to find it without. The query that proves it is the reader's
- * own household name: `Koti` is on every row of the picker as the household
- * that owns the recipe, and is in none of their names — so a client search that
- * looked at anything but the name would find three recipes here and the server
- * would find none.
+ * with script has to find it without. The query that proves it is the name of
+ * the member who imported the household's own recipes: `Eero` is on each of
+ * those rows, and is in none of their names — so a client search that looked
+ * at anything but the name would find three recipes here and the server would
+ * find none.
  */
 test("the search finds the same recipes with and without JavaScript", async ({
   browser,
 }) => {
-  const date = inDays(6);
   const scripted = await browser.newContext();
   await scripted.addCookies([sessionCookie(1)]);
   const withScript = await scripted.newPage();
-  await withScript.goto(`/picker?date=${date}&slot=lunch`);
+  await withScript.goto("/recipes");
 
   const plain = await browser.newContext({ javaScriptEnabled: false });
   await plain.addCookies([sessionCookie(1)]);
   const withoutScript = await plain.newPage();
 
-  for (const query of ["Koti", "Naapuri", "kaali", "UUNIKALA", "öljy", "pizza"]) {
-    await withoutScript.goto(
-      `/picker?date=${date}&slot=lunch&q=${encodeURIComponent(query)}`,
-    );
+  for (const query of ["Eero", "Naapuri", "kaali", "UUNIKALA", "öljy", "pizza"]) {
+    await withoutScript.goto(`/recipes?q=${encodeURIComponent(query)}`);
     const served = await withoutScript
-      .locator(".pick li .recipes-title")
+      .locator(".recipes li .recipes-title")
       .allTextContents();
 
     await withScript.locator(".browse-search input[name=q]").fill(query);
     await expect(
-      withScript.locator(".pick li:not([hidden]) .recipes-title"),
+      withScript.locator(".recipes li:not([hidden]) .recipes-title"),
       `haku "${query}"`,
     ).toHaveText(served);
   }
 
-  // Not vacuously equal: the household's name really is on the screen, and
+  // Not vacuously equal: the member's name really is on the screen, and
   // really is not a recipe name.
-  await expect(withScript.locator(".pick li", { hasText: "Naapurin uunikala" }))
-    .toContainText("Naapuri");
-  await withScript.locator(".browse-search input[name=q]").fill("Koti");
-  await expect(withScript.locator(".browse-none")).toContainText('Haku "Koti"');
+  await withScript.locator(".browse-search input[name=q]").fill("");
+  await expect(withScript.locator(".recipes li", { hasText: "Kaalilaatikko" }))
+    .toContainText("Eero");
+  await withScript.locator(".browse-search input[name=q]").fill("Eero");
+  await expect(withScript.locator(".browse-none")).toContainText('Haku "Eero"');
   await captureReview(withScript, "test-results/307-parity-script-koti.png");
-  await withoutScript.goto(`/picker?date=${date}&slot=lunch&q=Koti`);
-  await expect(withoutScript.locator(".nothing")).toContainText('Haku "Koti"');
+  await withoutScript.goto("/recipes?q=Eero");
+  await expect(withoutScript.locator(".nothing")).toContainText('Haku "Eero"');
   await captureReview(withoutScript, "test-results/307-parity-noscript-koti.png");
 
   await withScript.locator(".browse-search input[name=q]").fill("Naapuri");
-  await expect(visibleRows(withScript, ".pick")).toHaveCount(1);
+  await expect(visibleRows(withScript, ".recipes")).toHaveCount(1);
   await captureReview(withScript, "test-results/307-parity-script-naapuri.png");
-  await withoutScript.goto(`/picker?date=${date}&slot=lunch&q=Naapuri`);
-  await expect(withoutScript.locator(".pick li")).toHaveCount(1);
+  await withoutScript.goto("/recipes?q=Naapuri");
+  await expect(withoutScript.locator(".recipes li")).toHaveCount(1);
   await captureReview(withoutScript, "test-results/307-parity-noscript-naapuri.png");
 
   await scripted.close();
@@ -305,14 +249,4 @@ test("the browser, on a phone, with cooking behind it", async ({ page }) => {
   await expect(page.locator(".recipes-title").nth(1)).toHaveText("Lasagne");
   await captureReview(page, "test-results/307-recipes-jarjestys.png");
 
-  await page.goto(`/picker?date=${inDays(5)}&slot=dinner`);
-  await expect(page.locator(".pick li", { hasText: "Öljykastike" })).toContainText(
-    "Kokattu 1×",
-  );
-  await expect(page.locator(".category-filter")).toBeVisible();
-  await captureReview(page, "test-results/307-picker.png");
-
-  await page.locator(".browse-search input[name=q]").fill("kaali");
-  await expect(visibleRows(page, ".pick")).toHaveCount(1);
-  await captureReview(page, "test-results/307-picker-haku.png");
 });

@@ -94,7 +94,7 @@ export async function recipeImageAdminScreen(
   member: Member,
 ): Promise<Response> {
   const candidates = await imageCandidates(env.DB);
-  return page("Reseptikuvat", listBody(candidates, null), "week", member);
+  return page("Reseptikuvat", listBody(candidates, null), "cook-list", member);
 }
 
 /**
@@ -113,7 +113,7 @@ export async function recipeImageConfirmScreen(
   const chosen = chooseFrom(candidates, url.searchParams.getAll("id"));
 
   if (typeof chosen === "string") {
-    return page("Reseptikuvat", listBody(candidates, chosen), "week", member, 400);
+    return page("Reseptikuvat", listBody(candidates, chosen), "cook-list", member, 400);
   }
 
   const dishes = await briefsFor(env.DB, chosen);
@@ -121,7 +121,7 @@ export async function recipeImageConfirmScreen(
     return page(
       "Reseptikuvat",
       listBody(candidates, "Valinnassa oli resepti, jota ei enää ole."),
-      "week",
+      "cook-list",
       member,
       409,
     );
@@ -130,7 +130,7 @@ export async function recipeImageConfirmScreen(
   return page(
     "Luo reseptikuvat",
     confirmBody(chosen, sheetPrompt(dishes)),
-    "week",
+    "cook-list",
     member,
   );
 }

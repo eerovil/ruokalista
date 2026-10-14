@@ -81,19 +81,19 @@ test("the account menu offers the panel to an admin and not to a member", async 
   await expect(page.getByRole("heading", { name: "Ylläpito" })).toBeVisible();
 });
 
-test("the same entry is on every screen, not only the week", async ({
+test("the same entry is on every screen, not only the home screen", async ({
   context,
   page,
 }) => {
   // The link moved into the shell in #106, so a screen deep in the app offers
-  // it too. Recipes, because it is the furthest from the week's own code.
+  // it too. Recipes, because it is the furthest from the home screen's code.
   await context.addCookies([sessionCookie(3)]);
   await page.goto("/recipes");
   await page.getByRole("button", { name: "Tili" }).click();
   await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
 });
 
-test("the week no longer carries an admin link of its own", async ({
+test("the home screen carries no admin link of its own", async ({
   context,
   page,
 }) => {

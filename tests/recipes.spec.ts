@@ -85,11 +85,8 @@ test.describe("linked product pictures", () => {
     ean = "6415712506032",
     scope = "aines",
   ): Promise<void> {
-    const date = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
     const cooking = await page.request.post("/api/batches", {
-      data: { date, slot: "dinner", recipeId: 3, multiplier: 1 },
+      data: { recipeId: 3, multiplier: 1 },
     });
     expect(cooking.status()).toBe(201);
     const cookingId = ((await cooking.json()) as { id: number }).id;

@@ -21,6 +21,11 @@ import type { RecipeSummary } from "./recipe-read.ts";
  * arrives as `row(recipe, card)` — the card is built here so both screens show
  * a recipe the same way, and the screen decides only what surrounds it.
  *
+ * `/picker` went with the meal calendar (#345); `/recipes` is the one screen
+ * left, and a dish now goes onto the to-do list from its own recipe page. The
+ * `carried` fields and the row callback stay, because they cost nothing and a
+ * second browsing screen would need them again.
+ *
  * The three controls are links and a form, not script: the state is in the URL,
  * so it survives the back button, a bookmark and a reload. `recipe-browser.ts`
  * in `src/client/` adds instant text filtering on top of that, and takes
@@ -169,7 +174,7 @@ export function sortRecipes(
 export interface BrowseScreen {
   /** The screen's own path, which the form and every chip points back at. */
   path: string;
-  /** Query fields this screen cannot lose — the picker's day and meal. */
+  /** Query fields this screen cannot lose (the old picker's day and meal). */
   carried?: Record<string, string>;
 }
 
@@ -420,16 +425,9 @@ export const BROWSE_STYLE = html`<style>
     margin-top: -0.6rem;
   }
   /* A row the instant search has filtered out. Said here because .recipes a
-     and .pick li both set a display of their own. */
+     sets a display of its own. */
   .browse li[hidden] {
     display: none;
-  }
-  /* The picker's row: the card sits beside the multiplier and the button, so
-     it is the row's flexible part and the thumbnail rides inside it. */
-  .pick .pick-title {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
   }
   .browse-none {
     margin: 1.5rem 0;

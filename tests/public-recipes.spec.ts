@@ -19,12 +19,8 @@ import { sessionCookie } from "./support/session";
 
 test.beforeEach(reseed);
 
-/** Today in Helsinki, which is what the Worker means by today. */
-function today(): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
-}
+/** Naapuri's published dish in the seed. */
+const NAAPURIN_UUNIKALA = 6;
 
 async function signIn(page: Page, memberId: number): Promise<void> {
   await page.context().clearCookies();
@@ -86,15 +82,9 @@ test("a published recipe reaches the other household, and can be planned", async
   await expect(page.locator(".shared-from")).toContainText("Koti");
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 
-  // And it can go on the week, the same as an own recipe.
-  await page.goto("/picker?date=2026-09-01&slot=dinner");
-  const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
-  await expect(row).toContainText("Koti");
-  await row.getByRole("button", { name: "Lisää" }).click();
-  // Two Tuesdays are on screen since #250; the planned one is the first.
-  await expect(
-    page.locator(".day", { hasText: "tiistai" }).first(),
-  ).toContainText("Kaalilaatikko");
+  // And it can go on the to-do list, the same as an own recipe.
+  await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
+  await expect(page.locator(".cook-item")).toContainText("Kaalilaatikko");
 });
 
 test("selected households can be found, added and safely removed", async ({
@@ -145,7 +135,7 @@ test("selected households can be found, added and safely removed", async ({
   expect(body.recipe.createdBy).toBe("Koti");
   expect(JSON.stringify(body)).not.toContain("Eero");
 
-  await plan(page, 2, today(), 1);
+  await plan(page, 2, 1);
   await page.goto("/ostoslista");
   const cabbage = page.locator(".shopping-list > li", { hasText: "valkokaali" });
   await expect(cabbage).toHaveCount(1);
@@ -159,7 +149,7 @@ test("selected households can be found, added and safely removed", async ({
   expect((await page.request.get("/api/recipes/1")).status()).toBe(404);
   expect(
     (await page.request.post("/api/batches", {
-      data: { date: "2099-02-01", slot: "lunch", recipeId: 1, multiplier: 1 },
+      data: { recipeId: 1, multiplier: 1 },
     })).status(),
   ).toBe(400);
 
@@ -178,17 +168,11 @@ test("selected households can be found, added and safely removed", async ({
   await openEditBlock(page, "sharing-open");
   await picker.getByLabel("Naapuri").uncheck();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
+  await expect(page.locator(".refused")).toContainText("kokattavien listalla");
   await expect(picker.getByLabel("Mökki")).toBeChecked();
   await expect(picker.getByLabel("Naapuri")).not.toBeChecked();
 
-  executeLocalSql(`
-    DELETE FROM batch_occurrence
-     WHERE batch_id IN (
-       SELECT id FROM planned_batch WHERE household_id = 2 AND recipe_id = 1
-     );
-    DELETE FROM planned_batch WHERE household_id = 2 AND recipe_id = 1
-  `);
+  executeLocalSql("DELETE FROM planned_batch WHERE household_id = 2 AND recipe_id = 1");
   await openEditBlock(page, "sharing-open");
   await page.getByRole("button", { name: "Tallenna jako" }).click();
 
@@ -216,12 +200,7 @@ test("planning and revocation cannot both win the same race", async ({ page }) =
         maxRedirects: 0,
       }),
       recipient.request.post(`${origin}/api/batches`, {
-        data: {
-          date: "2099-04-01",
-          slot: "dinner",
-          recipeId: 1,
-          multiplier: 1,
-        },
+        data: { recipeId: 1, multiplier: 1 },
       }),
     ]);
 
@@ -239,29 +218,26 @@ test("planning and revocation cannot both win the same race", async ({ page }) =
   }
 });
 
-test("a revoked historical batch cannot be moved back into the future", async ({
+test("a dish already cooked does not hold a revoked recipe open", async ({
   page,
 }) => {
   await shareWith(page, 1, ["Naapuri"]);
   await signIn(page, 2);
   const planned = await page.request.post("/api/batches", {
-    data: { date: "2020-01-06", slot: "dinner", recipeId: 1, multiplier: 1 },
+    data: { recipeId: 1, multiplier: 1 },
   });
   expect(planned.status()).toBe(201);
   const { id, instanceKey } = (await planned.json()) as {
     id: number;
     instanceKey: string;
   };
+  const cooked = await page.request.patch(`/api/batches/${id}`, {
+    data: { instanceKey, cooked: true },
+  });
+  expect(cooked.status()).toBe(204);
 
   await makePrivate(page, 1);
   await signIn(page, 2);
-  const moved = await page.request.patch(`/api/batches/${id}`, {
-    data: {
-      instanceKey,
-      occurrences: [{ date: "2099-04-02", slot: "dinner" }],
-    },
-  });
-  expect(moved.status()).toBe(400);
   await expect((await page.goto("/recipes/1"))?.status()).toBe(404);
   await page.goto("/ostoslista");
   await expect(page.locator("body")).not.toContainText("valkokaali");
@@ -532,25 +508,25 @@ test("a multipart dish is shared as one dish, parts and all", async ({
   // publishable on its own.
   await expect((await page.goto("/recipes/4"))?.status()).toBe(404);
 
-  // The picker offers Naapuri's own recipe and the shared dish — and neither
-  // part, because only dishes are planned.
-  await page.goto("/picker?date=2026-09-01&slot=dinner");
-  await expect(page.locator(".pick li")).toHaveCount(2);
-  await expect(page.locator(".pick")).not.toContainText("Juustokastike");
+  // And a part cannot go on the to-do list either: only dishes are cooked.
+  expect(
+    (await page.request.post("/api/batches", { data: { recipeId: 4, multiplier: 1 } }))
+      .status(),
+  ).toBe(400);
 });
 
-test("unpublishing is refused while another household plans it for a day still to come", async ({
+test("unpublishing is refused while the dish is on another household's to-do list", async ({
   page,
 }) => {
   await publish(page, 1);
-  await plan(page, 2, "2099-01-01", 1);
+  await plan(page, 2, 1);
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
   await openEditBlock(page, "sharing-open");
   await page.getByLabel("Oma").check();
   await page.getByRole("button", { name: "Tallenna jako" }).click();
-  await expect(page.locator(".refused")).toContainText("tulevalla ruokalistalla");
+  await expect(page.locator(".refused")).toContainText("kokattavien listalla");
   await expect(page.locator(".recipe-sharing")).toContainText(
     "näkyy kaikille kirjautuneille talouksille",
   );
@@ -565,7 +541,11 @@ test("a cooking that already happened does not block unpublishing", async ({
   page,
 }) => {
   await publish(page, 1);
-  await plan(page, 2, "2020-01-06", 1);
+  const { id, instanceKey } = await plan(page, 2, 1);
+  const cooked = await page.request.patch(`/api/batches/${id}`, {
+    data: { instanceKey, cooked: true },
+  });
+  expect(cooked.status()).toBe(204);
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
@@ -575,28 +555,20 @@ test("a cooking that already happened does not block unpublishing", async ({
   await expect(page.locator(".recipe-sharing")).toContainText(
     "näkyy vain omalle taloudelle",
   );
-
-  // The other household's week still reads correctly afterwards: the batch is a
-  // record of a cooking, and taking the recipe private does not rewrite it.
-  await signIn(page, 2);
-  await page.goto("/?week=2020-01-06");
-  await expect(
-    page.locator(".day", { hasText: "maanantai" }).first(),
-  ).toContainText("Kaalilaatikko");
 });
 
-/** Put a recipe on a household's week, without going through the picker. */
+/** Put a recipe on a household's to-do list, signed in as one of its members. */
 async function plan(
   page: Page,
   memberId: number,
-  date: string,
   recipeId: number,
-): Promise<void> {
+): Promise<{ id: number; instanceKey: string }> {
   await signIn(page, memberId);
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier: 1 },
+    data: { recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
+  return (await response.json()) as { id: number; instanceKey: string };
 }
 
 test("a published recipe cannot be deleted until it is private again", async ({
@@ -624,11 +596,7 @@ test("a public recipe feeds the other household's shopping list and cupboard", a
   // Naapuri's uunikala is published in the seed and uses öljy, vettä and
   // naapurin suola — all now one global ingredient each.
   await signIn(page, 1);
-  await page.goto(`/picker?date=${today()}&slot=dinner`);
-  await page
-    .locator(".pick li", { hasText: "Naapurin uunikala" })
-    .getByRole("button", { name: "Lisää" })
-    .click();
+  await plan(page, 1, NAAPURIN_UUNIKALA);
 
   await page.goto("/ostoslista");
   const salt = page.locator(".shopping-list > li", { hasText: "naapurin suola" });
@@ -679,32 +647,28 @@ test("each household keeps its own default multiplier for the same recipe", asyn
   await page.goto("/recipes/1");
   // The default multiplier is a modal behind Muokkaa since #317.
   await openEditBlock(page, "preference-open");
-  await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await page.locator(".recipe-sharing .multiplier-choice").getByRole("button", { name: "2×" }).click();
   await openEditBlock(page, "preference-open");
   await expect(
-    page.locator(".multiplier-choice button.is-current"),
+    page.locator(".recipe-sharing .multiplier-choice button.is-current"),
   ).toHaveText("2×");
 
   // Naapuri is two people, and Koti's habit is not theirs.
   await signIn(page, 2);
   await page.goto("/recipes/1");
   await openEditBlock(page, "preference-open");
-  await expect(page.locator(".multiplier-choice button.is-current")).toHaveCount(0);
+  await expect(page.locator(".recipe-sharing .multiplier-choice button.is-current")).toHaveCount(0);
   await page
-    .locator(".multiplier-choice")
+    .locator(".recipe-sharing .multiplier-choice")
     .getByRole("button", { name: "0,5×" })
     .click();
 
-  await page.goto("/picker?date=2099-03-03&slot=lunch");
-  await expect(
-    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
-  ).toHaveValue("0,5×");
+  // Each household's own default is the size its add button starts at.
+  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("0,5×");
 
   await signIn(page, 1);
-  await page.goto("/picker?date=2099-03-03&slot=lunch");
-  await expect(
-    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
-  ).toHaveValue("2×");
+  await page.goto("/recipes/1");
+  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("2×");
 });
 
 test("a household's default is cleared by an empty box, not guessed at", async ({
@@ -715,44 +679,17 @@ test("a household's default is cleared by an empty box, not guessed at", async (
 
   await page.goto("/recipes/1");
   await openEditBlock(page, "preference-open");
-  await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await page.locator(".recipe-sharing .multiplier-choice").getByRole("button", { name: "2×" }).click();
   await openEditBlock(page, "preference-open");
-  await expect(page.locator(".multiplier-choice button.is-current")).toHaveText("2×");
+  await expect(page.locator(".recipe-sharing .multiplier-choice button.is-current")).toHaveText("2×");
 
-  await page.locator(".multiplier-choice input").fill("");
+  await page.locator(".recipe-sharing .multiplier-choice input").fill("");
   await page
-    .locator(".multiplier-choice")
+    .locator(".recipe-sharing .multiplier-choice")
     .getByRole("button", { name: "Tallenna" })
     .click();
 
-  await expect(page.locator(".multiplier-choice button.is-current")).toHaveCount(0);
-  await page.goto("/picker?date=2099-03-04&slot=lunch");
-  await expect(
-    page.locator(".pick li", { hasText: "Kaalilaatikko" }).getByLabel("Kerroin"),
-  ).toHaveValue("1×");
+  await expect(page.locator(".recipe-sharing .multiplier-choice button.is-current")).toHaveCount(0);
+  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("1×");
 });
 
-test("a refused move keeps the date that was typed, not the one on file", async ({
-  page,
-}) => {
-  // The one way a *valid* date can still be refused: the cooking is in the
-  // past, so it was never blocking the owner from taking the recipe private,
-  // and moving it forward now needs an access this household no longer has.
-  await publish(page, 1);
-  await plan(page, 2, "2020-01-06", 1);
-  await makePrivate(page, 1);
-
-  await signIn(page, 2);
-  await page.goto("/?week=2020-01-06");
-  await page.locator(".day .batch-edit").first().click();
-  await page.locator("input[name=date]").fill("2099-05-04");
-  await page.getByRole("button", { name: "Siirrä" }).click();
-
-  await expect(page.locator(".refused")).toBeVisible();
-  // The date the member asked for is still in the box — losing it would mean
-  // retyping it to find out what went wrong (#309 review).
-  await expect(page.locator("input[name=date]")).toHaveValue("2099-05-04");
-  // And nothing moved.
-  await page.goto("/?week=2020-01-06");
-  await expect(page.locator(".day .batch-card")).toHaveCount(1);
-});

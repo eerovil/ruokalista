@@ -5,19 +5,18 @@ import { today } from "./dates.ts";
  *
  * There is no cooking log and this adds none. A planned batch *is* one cooking,
  * however many meals it feeds, so the batches a household already keeps are the
- * history: a batch counts once, on the day of its first occurrence, and only
- * once that day has come. Tomorrow's plan is a plan, not a cooking — which is
- * the same line `week-screens.ts::batchCard` draws when it says "Kokataan" on
- * one side of today and "Kokattu" on the other.
+ * history. A dish ticked off the to-do list (#345) counts once, on the day it
+ * was ticked. A batch from the old meal calendar counts once, on the day of its
+ * first occurrence, and only once that day has come. A dish still on the list
+ * has neither, so it is a plan and not a cooking.
  *
  * It is the reader's own household that is counted, never the publisher's. On a
  * recipe another household shared, "3× · viimeksi 12.3." means this kitchen
  * cooked it three times; a household that has never cooked it sees that it has
  * never cooked it.
  *
- * A deleted batch takes its evidence with it, because `removePlannedBatch` is a
- * real delete. That is a known and accepted edge: a week somebody tidied up
- * afterwards reads as a week that was not cooked.
+ * A dish taken off the list without being cooked leaves nothing, because
+ * `removeFromCookList` is a real delete.
  */
 export interface CookRecord {
   /** How many times this household has cooked it. One batch is one cooking. */
@@ -47,7 +46,7 @@ interface HistoryRow {
  * Every recipe this household has cooked, by recipe id.
  *
  * One query for the whole list rather than one per row: the inner select folds
- * a batch's occurrences down to the day that batch started, and the outer one
+ * a batch down to the day it was cooked, and the outer one
  * counts the batches. A recipe missing from the map has never been cooked here,
  * which is an ordinary state and not an absence to work around — `cookedRecord`
  * hands back `NEVER_COOKED` for it.
@@ -62,9 +61,10 @@ export async function cookHistory(
       `SELECT recipe_id, count(*) AS times, max(started) AS last_cooked
          FROM (SELECT planned_batch.id AS batch_id,
                       planned_batch.recipe_id AS recipe_id,
-                      min(batch_occurrence.date) AS started
+                      coalesce(planned_batch.cooked_on,
+                               min(batch_occurrence.date)) AS started
                  FROM planned_batch
-                 JOIN batch_occurrence
+                 LEFT JOIN batch_occurrence
                    ON batch_occurrence.batch_id = planned_batch.id
                 WHERE planned_batch.household_id = ?
                 GROUP BY planned_batch.id)

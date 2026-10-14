@@ -1,4 +1,6 @@
 import { problem } from "./auth.ts";
+import { stillPlannedSql } from "./batch-state.ts";
+import { today } from "./dates.ts";
 import {
   CATEGORY_STYLE,
   categoryChoices,
@@ -1159,8 +1161,8 @@ function stillPlanned(member: Member, recipe: Recipe, onMenu: number): Response 
     "Ei voi poistaa",
     html`<h1>Ei voi poistaa</h1>
       <p class="refused">
-        ${recipe.title} tai sen osa on ruokalistalla ${onMenu} kertaa. Poista se
-        ensin viikoilta.
+        ${recipe.title} tai sen osa on vielä kokattavien listalla ${onMenu}
+        kertaa. Ota se ensin pois listalta.
       </p>
       <p><a href="/recipes/${recipe.id}">Takaisin reseptiin</a></p>`,
     "recipes",
@@ -1216,16 +1218,15 @@ async function load(
 }
 
 /**
- * How many planned batches — anybody's — still name this recipe or one of its
- * parts.
+ * How many batches — anybody's — still mean to cook this recipe or one of its
+ * parts: a dish on a to-do list (#345), or an old calendar day still to come.
  *
  * Deliberately not scoped to the owning household since #143. A recipe that was
- * published can be sitting on another household's *past* weeks, and a past week
- * does not block unpublishing (see `src/recipe-publish.ts`) — so by the time a
+ * published can be sitting on another household's list — so by the time a
  * delete is attempted, the rows pointing at this recipe may well belong to
- * somebody else. Deleting it anyway would break their week, and the foreign key
- * with it. The reason this household cannot delete the recipe stays the same
- * either way: it is still on a menu.
+ * somebody else. Deleting it anyway would take a dish off their list. Batches
+ * already cooked do not count: they are deleted with the recipe
+ * (`recipe-deletion.ts::deleteRecipeWithImages`).
  */
 async function countOnMenu(db: D1Database, recipeId: number): Promise<number> {
   const row = await db
@@ -1234,9 +1235,10 @@ async function countOnMenu(db: D1Database, recipeId: number): Promise<number> {
          FROM planned_batch
         WHERE recipe_id IN (
             SELECT id FROM recipe WHERE id = ? OR parent_id = ?
-          )`,
+          )
+          AND ${stillPlannedSql()}`,
     )
-    .bind(recipeId, recipeId)
+    .bind(recipeId, recipeId, today())
     .first<{ n: number }>();
 
   return row?.n ?? 0;

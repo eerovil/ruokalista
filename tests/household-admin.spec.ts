@@ -551,7 +551,7 @@ test("an established member is removed, keeps their history, and can be invited 
   // record who made a row.
   const planned = await request.post("/api/batches", {
     headers: { Cookie: cookieHeader(1) },
-    data: { recipeId: 1, date: "2026-11-02", slot: "lunch", multiplier: 1 },
+    data: { recipeId: 1, multiplier: 1 },
   });
   expect(planned.status()).toBe(201);
 
@@ -582,7 +582,7 @@ test("an established member is removed, keeps their history, and can be invited 
   await page.goto("/ingredients");
   await expect(page.getByText("valkokaali")).toBeVisible();
 
-  const menu = await request.get("/api/menu?from=2026-11-02&to=2026-11-02", {
+  const menu = await request.get("/api/batches", {
     headers: { Cookie: cookieHeader(3) },
   });
   expect(menu.status()).toBe(200);

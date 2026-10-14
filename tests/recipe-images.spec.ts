@@ -172,7 +172,7 @@ test.describe("the recipe screen", () => {
   });
 
   test("no screen but the editor offers an upload", async ({ page }) => {
-    for (const url of ["/recipes", `/recipes/${RECIPE}`, "/?week=2026-10-05"]) {
+    for (const url of ["/recipes", `/recipes/${RECIPE}`, "/"]) {
       await page.goto(url);
       await expect(page.locator("input[type=file]")).toHaveCount(0);
     }
@@ -185,13 +185,12 @@ test.describe("every screen a recipe appears on", () => {
   });
 
   /**
-   * The list, the picker, the week and the meal a day opens. Each is checked
-   * twice — once with no picture anywhere, once with one on recipe 1 — because
-   * the point of the placeholder is that the row is the same size either way.
+   * The recipe list and the to-do list. Each is checked twice — once with no
+   * picture anywhere, once with one on recipe 1 — because the point of the
+   * placeholder is that the row is the same size either way.
    */
   const SCREENS = [
     { name: "the recipe list", url: "/recipes", row: ".recipes li" },
-    { name: "the picker", url: "/picker?date=2026-10-05&slot=dinner", row: ".pick li" },
   ];
 
   for (const screen of SCREENS) {
@@ -225,32 +224,38 @@ test.describe("every screen a recipe appears on", () => {
     });
   }
 
-  test("a planned meal shows it on the week and on the meal itself", async ({
+  test("a dish on the to-do list shows it there and on the dish itself", async ({
     page,
   }) => {
-    // Plan recipe 1 for a day, then look at the week and at the meal.
-    const planned = await page.request.post("/api/batches", {
-      data: { date: "2026-10-06", slot: "dinner", recipeId: RECIPE, multiplier: 1 },
+    const listed = await page.request.post("/api/batches", {
+      data: { recipeId: RECIPE, multiplier: 1 },
     });
-    expect(planned.ok()).toBe(true);
+    expect(listed.ok()).toBe(true);
 
-    await page.goto("/?week=2026-10-05");
-    await expect(page.locator(".entry .recipe-image.is-empty").first()).toBeVisible();
+    await page.goto("/");
+    const empty = page.locator(".cook-item .recipe-image.is-empty").first();
+    await expect(empty).toBeVisible();
+    const before = await empty.boundingBox();
 
     await page.request.put(IMAGE_URL, {
       headers: { "content-type": "image/png" },
       data: png(600, 400, [200, 110, 60]),
     });
 
-    await page.goto("/?week=2026-10-05");
-    const onWeek = page.locator(".entry .recipe-image img").first();
-    await expect(onWeek).toBeVisible();
-    await expect(onWeek).not.toHaveJSProperty("naturalWidth", 0);
+    await page.goto("/");
+    const onList = page.locator(".cook-item .recipe-image img").first();
+    await expect(onList).toBeVisible();
+    await expect(onList).not.toHaveJSProperty("naturalWidth", 0);
+    const after = await page.locator(".cook-item .recipe-image").first().boundingBox();
+    expect(after?.height).toBe(before?.height);
+    expect(after?.width).toBe(before?.width);
 
-    await page.locator(".entry > a").first().click();
+    await page.locator(".cook-edit").first().click();
     await expect(page.locator(".recipe-image img")).toBeVisible();
-    // Still read-only: the meal screen changes the multiplier, not pictures.
+    // Still read-only: the dish's own screen changes its size, not pictures.
     await expect(page.locator("input[type=file]")).toHaveCount(0);
+
+    await page.request.delete(IMAGE_URL);
   });
 });
 

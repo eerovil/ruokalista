@@ -100,19 +100,11 @@ function sourceLineOf(line: Line): string {
 async function createBatch(
   page: Page,
   recipeId: number,
-  date: string,
 ): Promise<void> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier: 1 },
+    data: { recipeId, multiplier: 1 },
   });
   expect(response.status()).toBe(201);
-}
-
-/** Today in Helsinki, which is what the Worker means by today. */
-function today(): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
 }
 
 async function idOf(page: Page, name: string): Promise<string> {
@@ -144,8 +136,8 @@ async function planTheLongTotals(page: Page): Promise<void> {
     { quantity: "1", unit: "kpl", ingredient: jar },
     { quantity: "", unit: "", ingredient: jar },
   ]);
-  await createBatch(page, first, today());
-  await createBatch(page, second, today());
+  await createBatch(page, first);
+  await createBatch(page, second);
 }
 
 interface RowShape {
@@ -226,7 +218,7 @@ test("a long name and a long total share the row", async ({ page }) => {
 test("an ordinary row is unchanged", async ({ page }) => {
   await page.setViewportSize(NARROW);
   await planTheLongTotals(page);
-  await createBatch(page, 1, today());
+  await createBatch(page, 1);
   await page.goto("/ostoslista");
 
   const oil = row(page, "öljy");
@@ -248,8 +240,8 @@ test("a row with a product picture holds the same shape", async ({ page }) => {
     { quantity: "1", unit: "kpl", ingredient: milkId },
     { quantity: "", unit: "", ingredient: milkId },
   ]);
-  await createBatch(page, extra, today());
-  await createBatch(page, 3, today());
+  await createBatch(page, extra);
+  await createBatch(page, 3);
   await page.goto("/ostoslista");
 
   const milk = row(page, "maito");

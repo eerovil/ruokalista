@@ -1,5 +1,5 @@
 /**
- * The one HTML shell. Server-rendered, mobile-first — a week gets planned at the
+ * The one HTML shell. Server-rendered, mobile-first — dishes get chosen at the
  * kitchen table and a recipe gets read at the hob.
  *
  * `html` is a tagged template that escapes every interpolated value. To put
@@ -295,131 +295,10 @@ const STYLES = `
   .remove { display: inline-flex; align-items: center; gap: .35rem;
     min-height: var(--tap-compact); font-size: .85rem; color: var(--muted); }
   .remove input { width: auto; min-height: 0; }
-  nav.weeks { display: flex; justify-content: space-between; gap: .5rem;
-    margin-bottom: 1.5rem; font-size: .85rem; }
-  nav.weeks a { display: inline-flex; align-items: center;
-    min-height: var(--tap-compact); text-decoration: none; color: var(--muted); }
-  /* Two weeks in one column, never side by side: the shell is 40rem wide and
-     a batch card needs all of it, so a narrow screen and a wide one read the
-     same way and only the heading says where one week ends (#250). */
-  .week-pair { display: flex; flex-direction: column; gap: 1.25rem; }
-  .week-block { min-width: 0; }
-  .week-block + .week-block { padding-top: 1.25rem;
-    border-top: 1px solid var(--edge); }
-  .week-heading { display: flex; align-items: center; gap: .5rem;
-    margin: 0 0 .75rem; font-size: .8rem; font-weight: 600;
-    letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-  .week-now { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
-    letter-spacing: 0; text-transform: none;
-    color: var(--accent-fg); background: var(--accent); border-radius: .25rem; }
-  .day { margin-bottom: 1.25rem; scroll-margin-top: .75rem; }
-  .day h3 { display: flex; align-items: center; gap: .5rem;
-    margin: 0 0 .4rem; font-size: 1rem; text-transform: capitalize; }
-  .day.is-today h3 { font-weight: 700; }
-  .day.is-today { padding: .6rem .7rem .1rem; border: 1px solid var(--accent);
-    border-radius: var(--radius); background: var(--surface); }
-  .today-badge { padding: .1rem .4rem; font-size: .7rem; font-weight: 600;
-    text-transform: none; color: var(--accent-fg); background: var(--accent);
-    border-radius: .25rem; }
-  .covered-status { margin-left: auto; font-size: .75rem; font-weight: 600;
-    text-transform: none; color: var(--accent); white-space: nowrap; }
-  .continuing-card { margin: 0 0 .5rem; padding: .15rem .7rem;
-    background: var(--surface); border: 1px solid var(--edge);
-    border-radius: var(--radius); }
-  .continuing-row { display: flex; flex-wrap: wrap; align-items: baseline;
-    gap: .2rem .75rem; padding: .45rem 0; }
-  .continuing-row + .continuing-row { border-top: 1px solid var(--edge); }
-  .continuing-title { flex: 1 1 12rem; min-width: 0; font-weight: 600;
-    overflow-wrap: break-word; }
-  .continuing-slots { flex: 0 0 auto; font-size: .8rem;
-    color: var(--muted); white-space: nowrap; }
-  .batch-cards { display: flex; flex-direction: column; gap: .5rem;
-    margin: 0 0 .5rem; }
-  /* One cooking reads as one card: head, then a hairline per covered day. */
-  .batch-card { min-width: 0; background: var(--surface);
-    border: 1px solid var(--edge); border-radius: var(--radius);
-    overflow: hidden; }
-  /* The head wraps rather than clipping: a long Finnish compound title beside
-     the wider carried pill runs a 360px row out of width, and a card that
-     hides its overflow would simply cut the name off. */
-  .batch-card .entry > a { flex-wrap: wrap; gap: .4rem .6rem;
-    padding: .6rem .7rem; background: transparent; border-radius: 0; }
-  .batch-card .entry .recipe-image.is-thumb { flex: none;
-    width: 3rem; height: 3rem; border-radius: 50%; }
-  /* Picture and name stay together on one line; only the pill wraps below.
-     A content-sized basis is what makes it wrap for a long name and stay
-     inline for a short one. (No backticks here — STYLES is a template
-     literal, so one would end the string.) */
-  .batch-head-main { display: flex; align-items: center; gap: .6rem;
-    flex: 1 1 auto; min-width: 0; }
-  .batch-card .entry-title { min-width: 0; overflow-wrap: break-word; }
-  .batch-start, .batch-carried { flex: none; margin-left: auto;
-    padding: .2rem .55rem;
-    font-size: .75rem; font-weight: 600; white-space: nowrap;
-    border-radius: 1rem; }
-  .batch-start { color: var(--accent-fg); background: var(--accent); }
-  .batch-carried { color: var(--accent); border: 1px solid var(--accent); }
-  .batch-when { display: block; margin: 0; padding: 0; list-style: none; }
-  .batch-when-day { display: flex; flex-wrap: wrap; align-items: center;
-    gap: .5rem; padding: .45rem .7rem; font-size: .85rem;
-    border-top: 1px solid var(--edge); }
-  .batch-when-weekday { min-width: 1.5rem; color: var(--fg);
-    text-transform: capitalize; }
-  .batch-when-date { min-width: 3rem; color: var(--muted);
-    font-variant-numeric: tabular-nums; }
-  .batch-when-slots { flex: 1 1 6rem; min-width: 0; color: var(--fg);
-    overflow-wrap: break-word; }
-  .batch-passes { margin-left: auto; padding: .1rem .45rem;
-    font-size: .7rem; color: var(--accent); white-space: nowrap;
-    border: 1px solid var(--accent); border-radius: 1rem; }
-  /* A batch #165 could not convert. Loud enough to be corrected, quiet enough
-     not to look like an error the household caused. */
-  .batch-unconverted { margin: 0; padding: .35rem .7rem;
-    font-size: .75rem; color: var(--accent);
-    border-top: 1px solid var(--edge); }
-  .batch-end, .batch-onward { margin: 0; padding: .35rem .7rem .45rem;
-    font-size: .75rem; color: var(--muted); }
-  .batch-end { text-align: right; }
-  /* Findable but quiet: the card's own tap goes to the recipe, and changing the
-     plan is the smaller thing you do next to it (#309). */
-  .batch-edit { display: inline-flex; align-items: center;
-    min-height: var(--tap-compact); margin: 0 .7rem .3rem;
-    font-size: .8rem; color: var(--muted); }
-  /* Jump back to today after scrolling away — the week's one floating action. */
-  .to-today {
-    position: fixed; right: 1rem; z-index: 2;
-    bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1rem);
-    display: inline-flex; align-items: center;
-    min-height: var(--tap-compact); padding: .4rem .9rem;
-    font-size: .85rem; font-weight: 600; text-decoration: none;
-    color: var(--accent); background: var(--bg);
-    border: 1px solid var(--accent); border-radius: 1.5rem;
-    box-shadow: 0 .25rem .75rem light-dark(rgba(0,0,0,.15), rgba(0,0,0,.55));
-  }
-  .slot-actions { display: flex; gap: 1rem; padding: .2rem 0 .5rem;
-    border-top: 1px solid var(--edge); }
-  .empty-slot, .add-more { display: inline-flex; align-items: center;
-    min-height: var(--tap-compact); font-size: .9rem; color: var(--muted); }
-  .entry > a {
-    display: flex; align-items: center; gap: .5rem;
-    min-height: var(--tap); padding: .5rem .6rem;
-    text-decoration: none;
-    background: var(--surface); border-radius: var(--radius);
-  }
-  .entries { display: flex; flex-direction: column; gap: .35rem; margin: .1rem 0 .5rem; }
-  /* Today's own container is already --surface, so its cards need to lift. */
-  .day.is-today .batch-card,
-  .day.is-today .continuing-card { background: var(--bg); }
-  .entry-title { flex: 1; }
-  .entry-when { margin: 0 0 .2rem; }
   .meta { color: var(--muted); font-size: .85rem; }
   .batch-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
   .control-row { display: flex; gap: .5rem; align-items: center; }
   .control-row input { width: 5rem; text-align: center; }
-  /* A date box needs room for a whole date and the browser's own picker glyph,
-     so it opts out of the narrow, centred default the row gives a number. */
-  .control-row input[type="date"] { width: auto; min-height: var(--tap);
-    text-align: left; }
   /* One tap for the four multipliers a household actually uses, and a box for
      everything else — the domain takes any positive number. */
   .multiplier-choice { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
@@ -437,16 +316,29 @@ const STYLES = `
   .edit-steps li { display: flex; gap: .4rem; align-items: flex-start; }
   .edit-steps li.has-phase { flex-wrap: wrap; }
   .edit-steps li.has-phase > label { flex-basis: 100%; }
-  .pick li { padding: .5rem 0; border-bottom: 1px solid var(--edge); }
-  .pick .recipe-image.is-thumb { width: 2.5rem; height: 2.5rem; }
-  .entry .recipe-image.is-thumb { width: 2.25rem; height: 2.25rem; }
-  /* min-width so a long name shrinks instead of shoving the row's controls
-     past the viewport edge — a flex item will not go below its content
-     otherwise, which is how the multiplier control ended up over the button. */
-  .pick-title { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
-  /* Narrow and non-shrinking, so a long recipe name gives way rather than
-     pushing the multiplier field over the button beside it. */
-  .pick-multiplier { flex: 0 0 auto; width: 4.5rem; min-height: var(--tap-compact); }
+  /* The to-do list of dishes (#345): one card per dish, the recipe its own
+     tap, Kokattu the one loud button and Muokkaa the quiet one beside it. */
+  .cook-list { display: flex; flex-direction: column; gap: .5rem;
+    margin: 0 0 1rem; padding: 0; list-style: none; }
+  .cook-item { display: flex; flex-wrap: wrap; align-items: center;
+    gap: .4rem .75rem; padding: .5rem .7rem; background: var(--surface);
+    border: 1px solid var(--edge); border-radius: var(--radius); }
+  .cook-dish { display: flex; align-items: center; gap: .6rem;
+    flex: 1 1 14rem; min-width: 0; min-height: var(--tap);
+    color: inherit; text-decoration: none; }
+  .cook-dish .recipe-image.is-thumb { flex: none;
+    width: 3rem; height: 3rem; border-radius: 50%; }
+  .cook-title { flex: 1 1 auto; min-width: 0; font-weight: 600;
+    overflow-wrap: break-word; }
+  .cook-size { flex: none; padding: .2rem .55rem;
+    font-size: .75rem; font-weight: 600; white-space: nowrap;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 1rem; }
+  .cook-actions { display: flex; align-items: center; gap: .75rem;
+    margin-left: auto; }
+  .cook-edit { display: inline-flex; align-items: center;
+    min-height: var(--tap-compact); font-size: .85rem; color: var(--muted); }
+  .cook-more { text-align: center; font-size: .9rem; }
+  .cook-add { margin: .75rem 0 .75rem; }
   .chosen { list-style: none; margin: .25rem 0 0; padding: 0; }
   .chosen li {
     display: flex; align-items: center; gap: .75rem;
@@ -1699,7 +1591,7 @@ export function saveBar(
  * for a browser with nowhere to navigate yet — no tabs, no sign-out.
  */
 export type Shell =
-  | "week"
+  | "cook-list"
   | "shopping"
   | "recipes"
   | "intake"
@@ -1708,14 +1600,15 @@ export type Shell =
 
 const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
   {
-    shell: "week",
+    shell: "cook-list",
     href: "/",
-    label: "Viikko",
-    icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>`,
+    label: "Kokattavat",
+    // A checklist: the tab is a to-do list of dishes (#345), not a calendar.
+    icon: `<path d="M4 6.5l1.5 1.5L8 5.5M4 12.5l1.5 1.5L8 11.5M4 18.5l1.5 1.5L8 17.5"/><path d="M11 7h9M11 13h9M11 19h9"/>`,
   },
   {
-    // Next to the week on purpose: the list is a reading of the week, and the
-    // shop is the next thing that happens after the week is planned.
+    // Next to the to-do list on purpose: the shopping list is a reading of it,
+    // and the shop is the next thing that happens after dishes are chosen.
     shell: "shopping",
     href: "/ostoslista",
     label: "Ostokset",
@@ -1777,7 +1670,7 @@ export interface Viewer {
 /**
  * The account affordance: small, out of the way, and the way out of the app —
  * and, for an admin, the one way in to the admin panel. It lives here rather
- * than on the week screen so that every screen offers it, which is what #106
+ * than on the home screen so that every screen offers it, which is what #106
  * asked for and what #94 deliberately deferred.
  */
 function accountMenu(viewer: Viewer | null): Raw {

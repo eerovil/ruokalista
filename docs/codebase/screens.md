@@ -19,93 +19,33 @@ Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
 is the first thing to become unreadable on a phone in a bright kitchen. Controls
 are at least `--tap` tall, `--tap-compact` where a row would otherwise blow up.
 
-## The week
+## The to-do list
 
-Issue #119 proposes replacing the week's occurrence-per-row layout with one card
-per cooked batch. `src/week-screens.ts::weekScreen` groups by `PlannedBatch.id`
-— never by recipe title, so two cookings of the same dish stay two cards — and
-draws each batch once, in the day of its first occurrence inside the visible
-range (`anchorDate`). The card carries the recipe, `Kokataan · N annosta`, one
-row per covered day (`ma 7.12. · Lounas · Päivällinen`), and the batch's edge
-state: `Kokattu 6.12.` when the cooking happened before the visible range,
-`viimeinen annos` when it ends inside it, `jatkuu eteenpäin` when it does
-not. The proposal deletes the left-hand rail #90 added, because a card that
-lists its own days no longer needs a line drawn beside it.
+Issue #345 replaced the two-week meal calendar with a plain to-do list of
+dishes, **Kokattavat**, at `/` (`src/cook-list-screens.ts`, decision in
+ADR-0017). There are no days and no meals. Each row is one dish at its size: the
+row's own tap opens the recipe at that size, **Kokattu** ticks it off (off the
+list, and counted in the recipe's cooking history on that day), and the quiet
+**Muokkaa** opens `/batches/:id`, where the size can be changed or the dish
+taken off without cooking. The order is the order dishes were added.
 
-Issue #250 proposes showing two weeks at once rather than one. `VISIBLE_WEEKS`
-is how many; `weekScreen` builds that many `weekFrom` weeks starting at the
-Monday `?week=` names, queries `menuBetween` across the whole range, and renders
-each week as a `.week-block` under a `.week-heading` giving its dates, with a
-`.week-now` badge on the one holding today. The arrows move a whole fortnight
-(`7 * VISIBLE_WEEKS`), so the pair never shears into a half-week either side,
-and `?week=` still means the first Monday. Everything below the block is
-unchanged: the same day sections, the same cards, the same picker and batch
-actions serve both weeks, because they were already written against the visible
-range rather than against a week.
+A dish gets on the list from its recipe page: the **Lisää kokattaviin** block
+under the title (`recipes.ts::cookListAdd`) is the same `multiplierField` the
+household default uses, so each chip adds at that size in one tap. The chip
+already lit is the size the reader scaled the recipe to, else the household's
+own default for it. A part's page has no such block — a part is cooked as part
+of its dish. That puts two `.multiplier-choice` groups on a recipe page, so a
+test reaching for the default's chips scopes to `.recipe-sharing`.
 
-The two blocks are stacked, never side by side, because `main` is 40rem wide and
-a batch card wants all of it — a phone and a desktop read the same layout, and
-the heading is the only thing that says where one week ends. That is also why
-the day heading is an `h3` under the week's `h2`: with two weeks on screen the
-days are no longer the top level of the page.
-
-Two consequences of the wider range are worth knowing. A cooking that runs over
-a Sunday is now one card on the day it is cooked, listing every meal it feeds,
-instead of being drawn once in each week; and `jatkuu eteenpäin` now means "past
-the end of the fortnight", which is why it no longer says `ensi viikolle`.
-
-The card's shape follows the mockup the issue's author attached to #119: a
-bordered `.batch-card` with the recipe, a round thumbnail and the portions pill
-(`.batch-start`, or `.batch-carried` when the cooking predates the visible
-week) in its head, then one hairline-separated row per covered day, each row
-laid out as weekday, date, meals, and a `jatkuu` pill pushed to the right on
-every row after the first.
-
-The head wraps rather than clips, which matters because the card hides its
-overflow and recipe titles have no length limit. Picture and title sit in one
-`.batch-head-main` group so they stay on the same line; that group is sized
-from its content, so the pill stays inline beside a short title and drops onto
-its own line beneath a long one, and `overflow-wrap: break-word` plus
-`min-width: 0` break a single unbroken Finnish compound instead of letting it
-run past the card's edge. `tests/week-grouping.spec.ts` guards it by comparing
-each card's `scrollWidth` with its `clientWidth`; a page-level overflow check
-cannot see inside a clipping card.
-
-Issue #138 proposes what a *later* day shows once its meals are already served
-by food cooked earlier, because anchoring each card on its first occurrence
-leaves those days reading as empty. `week-screens.ts::continuingRecipesOn`
-collects the batches whose anchor day is before this date and which still have
-an occurrence on it, and reduces them to one `.continuing-row` per recipe with
-that day's meal labels combined (`Lounas · Päivällinen`) — so two cookings of
-the same dish continuing into one day become one row, even though they stay two
-cards on their anchor day. The rows sit in a `.continuing-card`, and the
-heading gains `✓ katettu` only when the continuations cover every slot in
-`SLOTS`; a day whose remaining slot is filled by fresh cooking is not
-"covered by earlier food" and does not claim to be.
-
-The summary is deliberately not a second batch card: no thumbnail, no portions
-pill, no link. The card on the anchor day is still the one way into everything
-you can do to that cooking, which is what keeps #119's grouping-by-batch-id
-intact while the later-day view groups by recipe purely for reading. Both
-`+ Lounas` and `+ Päivällinen` stay on a covered day too — a second dish beside
-leftovers is an ordinary thing to plan.
-
-The current day gets `.day.is-today`, `id="tanaan"` and a `Tänään` badge, and a
-floating `.to-today` chip offers the way back after scrolling elsewhere — the
-week nav keeps "Tämä viikko" on every week, as the mockup shows. A third inline
-island scrolls to today — see below.
-
-Two places where that mockup and the issue's own text disagree, resolved in
-favour of the text because it states both as acceptance criteria: the mockup
-draws only days that start something, while every one of the visible days keeps
-its heading; and the mockup replaces the per-day add links with a single
-`+ Lisää ateria` button, which has no day or meal to hand `/picker`, so
-`+ Lounas` / `+ Päivällinen` stay per day.
+The calendar's screens — the week, `/picker`, the day move — are gone, along
+with their styles and their inline scroll-to-today script. `/` ignores a
+leftover `?week=`.
 
 ## The shopping list
 
 Issue #123 proposes `GET /ostoslista` (`src/shopping-screens.ts`), a fifth
-bottom tab and a computed view over what is already planned — no
+bottom tab and a computed view over what is already planned — since #345 the
+dishes on the to-do list — no
 shopping-list table, no saved basket, no pantry or purchased state. The
 proposal keeps the whole selection in the query string: `valittu=1` marks that
 the member has actually chosen, and one `ateria=<batch id>` per ticked cooking.
@@ -992,14 +932,6 @@ strings reach the browser without transpilation:
   itself long after the submit that started the save was cancelled, and there
   is no press left for the screen to read the row off. The recipe screen
   defines no such function, so the same client call is a no-op there.
-- `src/week-screens.ts::SCROLL_TO_TODAY` — proposed for issue #119. Rendered
-  whenever today falls inside the range on screen, empty or not — fourteen day
-  headings and twenty-eight add links already outrun a phone, and an empty
-  fortnight is exactly the one somebody opens in order to plan today. It runs once at parse
-  time, before anyone can have scrolled, so it cannot fight a member who is
-  already moving. It bails out on an explicit `#` anchor and on a scroll
-  position the browser restored, and a browser without `scrollIntoView` simply
-  opens at Monday as before.
 - `src/cast.ts::CAST_SENDER_ISLAND` and `CAST_RECEIVER_ISLAND` — proposed for
   issue #176. The sender feature-detects Google's framework and keeps the action
   hidden when unavailable; the receiver validates custom messages and writes

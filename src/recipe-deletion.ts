@@ -1,3 +1,5 @@
+import { stillPlannedSql } from "./batch-state.ts";
+import { today } from "./dates.ts";
 import type { Env } from "./env.ts";
 import {
   cleanupRetiredRecipeImages,
@@ -12,6 +14,12 @@ export { IMAGE_CLEANUP_LIMIT };
 
 /**
  * Delete a private, unplanned recipe tree and durably remember its image keys.
+ *
+ * Unplanned means nobody still means to cook it (#345): it is on no to-do list
+ * and on no calendar day still to come. Batches already cooked go with the
+ * recipe — they are the history of a dish that no longer exists, and before
+ * the list replaced the calendar a household could clear them off its past
+ * weeks by hand; nothing offers that now.
  *
  * This module owns the recipe-deletion eligibility and guarded D1 mutation. The
  * image lifecycle owns which parent/part image keys are retired, renewal of old
@@ -46,9 +54,15 @@ export async function deleteRecipeWithImages(
                SELECT id FROM recipe AS tree
                 WHERE tree.id = recipe.id OR tree.parent_id = recipe.id
              )
+               AND ${stillPlannedSql()}
           )`,
-    ).bind(token, recipeId, householdId),
+    ).bind(token, recipeId, householdId, today()),
     retireRecipeTreeImages(env.DB, householdId, recipeId, token),
+    env.DB.prepare(
+      `DELETE FROM planned_batch
+        WHERE recipe_id IN (SELECT id FROM recipe WHERE id = ? OR parent_id = ?)
+          AND ${guard}`,
+    ).bind(recipeId, recipeId, ...bindings),
     env.DB.prepare(
       `DELETE FROM recipe
         WHERE household_id = ? AND parent_id = ? AND ${guard}`,
@@ -60,7 +74,7 @@ export async function deleteRecipeWithImages(
 
   // D1's count includes rows removed by this DELETE's cascades. Zero means the
   // guarded parent was not deleted; any positive count means it was.
-  if ((results[3]?.meta.changes ?? 0) < 1) return false;
+  if ((results[4]?.meta.changes ?? 0) < 1) return false;
 
   // Failure here is pending cleanup, not a failed recipe deletion. The queue
   // survives a lost response or an isolate ending before this call starts.

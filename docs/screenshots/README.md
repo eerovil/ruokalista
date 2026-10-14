@@ -33,8 +33,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | file | screen |
 | --- | --- |
 | `01-signin.png` | Sign-in — the one button |
-| `02-week.png` | Proposed grouped week: one card per cooked batch, with the meals it covers |
-| `03-picker.png` | The recipe picker, reached from a slot |
+| `02-cook-list.png` | Proposed home screen (#345): the dishes to cook, each with its size, Muokkaa and Kokattu |
 | `04-recipes.png` | The recipe list, newest first |
 | `05-recipe.png` | One recipe: every awkward line shape, source lines underneath |
 | `06-recipe-no-yield.png` | Proposed recipe whose source never stated a yield, scaled to 2× anyway (#165) |
@@ -46,14 +45,12 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
 | `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
 | `14-scaled.png` | Proposed same lasagne at 1,5×, amounts rounded for a kitchen |
-| `15-meal-actions.png` | The one screen that edits a planned dish: recipe, day, multiplier chips and removal |
+| `15-dish-actions.png` | Proposed screen behind a listed dish's Muokkaa: open the recipe, change the size, or take it off uncooked (#345) |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
 | `20-agentdeck-batch-review.png` | Proposed AgentDeck bundle summary, ingredient decision and recipe preview |
 | `21-agentdeck-stale-review.png` | Proposed stale ingredient review refusal before import |
-| `24-multi-day-batch.png` | Proposed one card for a batch spanning three days beside a shorter one |
-| `27-week-today.png` | Proposed current week: today highlighted with its `Tänään` badge |
-| `28-week-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
-| `29-week-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
+| `28-home-not-admin.png` | Proposed account menu as an ordinary member sees it — sign-out and nothing else |
+| `29-home-admin.png` | Proposed account menu as an admin sees it, with the one way into Ylläpito |
 | `30-admin.png` | Proposed admin panel: recipe image management and the AgentDeck import |
 | `32-admin-recipe-images.png` | Proposed all-household admin picture list: missing, stale, current and manually added |
 | `33-admin-recipe-images-confirm.png` | Proposed prompt to copy, the numbered manifest, and the sheet upload |
@@ -61,8 +58,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `32-generated-images.png` | Recipe list with every row pictured from one contact sheet |
 | `33-generated-recipe.png` | One recipe with its picture from that sheet |
 | `35-recipe-image-square.png` | Proposed recipe hero: a square generated picture shown whole rather than cropped into a strip |
-| `36-week-empty-today.png` | Proposed empty current week as it opens — the viewport lands on today, not Monday (not full-page, on purpose) |
-| `37-week-long-title.png` | Proposed long recipe name wrapping in the card head, beside the widest carried pill |
+| `37-list-long-title.png` | Proposed long recipe name wrapping inside its to-do list row, beside the size and the buttons |
 | `38-step-mentions-closed.png` | Proposed method with its ingredient mentions closed — ordinary instruction text |
 | `39-step-mentions-open.png` | Proposed same method with two mentions tapped open, showing this meal's amounts inline |
 | `40-step-mention-all-amounts.png` | Proposed duplicated ingredient mention showing every distinct stated amount inline |
@@ -76,14 +72,13 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `47-admin-member-sub-refused.png` | Proposed email-only member form refusing an address that already belongs to an active member (#187) |
 | `47-editor-remove-mentioned.png` | Proposed refusal when a linked row is repointed and removed together but the step still names its saved ingredient, with the step quoted and the forced-removal escape hatch |
 | `48-step-mentions-all-open.png` | Proposed recipe-wide amount toggle with every ingredient amount revealed in the preparation sentences |
-| `49-covered-days.png` | Proposed covered days: two recipes continuing into Tuesday, one covering both of Wednesday's meals, `katettu` in each heading and both add links still there (not full-page, on purpose) |
 | `50-recipes-select-to-publish.png` | Proposed recipe list with two recipes selected for the bulk publish action |
 | `51-recipes-published.png` | Proposed same list afterwards: what was published says so on the row, and the action reports what happened |
 | `52-recipe-owner-sharing.png` | Proposed owner's view of a published recipe: this household's own default multiplier, and the control to take the publication back |
 | `68-recipe-selected-sharing.png` | Proposed owner view after sharing a recipe with one selected household, including the searchable household-only recipient picker |
 | `53-public-recipes.png` | Proposed public section as the other household sees it — recipes from all households, each credited to the one that shared it |
 | `54-public-recipe-read-only.png` | Proposed public recipe read by a non-owner: whose it is said under the title, and no way to edit it |
-| `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe out from under another household's future cooking |
+| `55-unpublish-refused.png` | Proposed refusal when unpublishing would pull a recipe off another household's to-do list |
 | `56-intake-two-pages.png` | Proposed intake with a recipe printed across a spread: page one shot with the camera, page two picked from the library, both numbered in reading order and both bound for one recipe |
 | `57-intake-requires-javascript.png` | Proposed intake without JavaScript: the requirement is stated in Finnish and structuring stays unavailable |
 | `59-s-ostoslista-waits-for-product.png` | Proposed S-ostoslista send while an optimistic product choice is still saving: the chosen product stays visible and the send button says it is finishing that choice first |

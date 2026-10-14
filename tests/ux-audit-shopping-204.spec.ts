@@ -260,31 +260,19 @@ function slug(name: string): string {
 }
 
 async function planTheFortnight(page: Page): Promise<void> {
-  await createBatch(page, shiftedFromToday(0), KAALILAATIKKO, 2);
-  await createBatch(page, shiftedFromToday(2), LASAGNE, 1);
+  await createBatch(page, KAALILAATIKKO, 2);
+  await createBatch(page, LASAGNE, 1);
 }
 
 async function createBatch(
   page: Page,
-  date: string,
   recipeId: number,
   multiplier: number,
 ): Promise<number> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier },
+    data: { recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
   return ((await response.json()) as { id: number }).id;
 }
 
-function shiftedFromToday(days: number): string {
-  const [year, month, day] = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  })
-    .format(new Date())
-    .split("-")
-    .map(Number) as [number, number, number];
-  const at = new Date(Date.UTC(year, month - 1, day));
-  at.setUTCDate(at.getUTCDate() + days);
-  return at.toISOString().slice(0, 10);
-}

@@ -270,11 +270,8 @@ test("case variants replace one existing part without losing children", async ({
   await page.goto("/recipes/5/edit");
   await expect(page.locator('input[name="revision"]')).toHaveValue("1");
 
-  const today = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
   const planned = await page.request.post("/api/batches", {
-    data: { date: today, slot: "dinner", recipeId: 3, multiplier: 1 },
+    data: { recipeId: 3, multiplier: 1 },
   });
   expect(planned.status()).toBe(201);
   await page.goto("/ostoslista");

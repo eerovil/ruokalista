@@ -41,8 +41,8 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
   test("choosing a product leaves the next ingredient a tap away", async ({
     page,
   }) => {
-    await createBatch(page, shiftedFromToday(0), KAALILAATIKKO, 2);
-    await createBatch(page, shiftedFromToday(2), LASAGNE, 1);
+    await createBatch(page, KAALILAATIKKO, 2);
+    await createBatch(page, LASAGNE, 1);
     await page.goto("/ostoslista");
     await expect(page.locator(".shopping-list > li").first()).toBeVisible();
 
@@ -123,8 +123,8 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
   // only a save that worked closes the row. A refused one has an error and a
   // retry in it, and closing the row would carry both off the screen.
   test("a refused save leaves the row open", async ({ page }) => {
-    await createBatch(page, shiftedFromToday(0), KAALILAATIKKO, 2);
-    await createBatch(page, shiftedFromToday(2), LASAGNE, 1);
+    await createBatch(page, KAALILAATIKKO, 2);
+    await createBatch(page, LASAGNE, 1);
     await page.goto("/ostoslista");
     await expect(page.locator(".shopping-list > li").first()).toBeVisible();
 
@@ -166,24 +166,12 @@ async function shot(page: Page, name: string): Promise<void> {
 
 async function createBatch(
   page: Page,
-  date: string,
   recipeId: number,
   multiplier: number,
 ): Promise<void> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier },
+    data: { recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
 }
 
-function shiftedFromToday(days: number): string {
-  const [year, month, day] = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  })
-    .format(new Date())
-    .split("-")
-    .map(Number) as [number, number, number];
-  const at = new Date(Date.UTC(year, month - 1, day));
-  at.setUTCDate(at.getUTCDate() + days);
-  return at.toISOString().slice(0, 10);
-}

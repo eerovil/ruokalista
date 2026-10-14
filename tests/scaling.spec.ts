@@ -156,34 +156,37 @@ test("opening a part on its own does not inherit a multiplier", async ({
   await expect(page.locator(".lines li").first()).toContainText("400 g");
 });
 
-test("the week carries the batch's multiplier into the recipe", async ({
+test("the to-do list carries a dish's multiplier into the recipe", async ({
   page,
 }) => {
-  await page.goto("/picker?date=2026-12-01&slot=dinner");
-  const row = page.locator(".pick li", { hasText: "Kaalilaatikko" });
-  await row.locator("input[name=multiplier]").fill("1,5");
-  await row.getByRole("button", { name: "Lisää" }).click();
+  await page.goto("/recipes/1");
+  await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
 
-  await page.locator(".entry a").first().click();
+  // The newest dish is at the end: the list is in the order dishes were added.
+  await page.locator(".cook-dish").last().click();
 
   await expect(page).toHaveURL(/\/recipes\/1\?multiplier=1\.5$/);
   await expect(page.locator(".yield")).toHaveText("1,5×");
   await expect(page.locator(".lines li").first()).toContainText("¾ dl");
 });
 
-test("changing a batch's multiplier changes what the recipe opens at", async ({
+test("a recipe opened scaled is added at that size", async ({ page }) => {
+  await page.goto("/recipes/1?multiplier=2");
+  await expect(
+    page.locator(".cook-add .multiplier-choice .is-current"),
+  ).toHaveText("2×");
+});
+
+test("changing a dish's multiplier changes what the recipe opens at", async ({
   page,
 }) => {
-  await page.goto("/picker?date=2026-12-02&slot=lunch");
-  await page
-    .locator(".pick li", { hasText: "Kaalilaatikko" })
-    .getByRole("button", { name: "Lisää" })
-    .click();
+  await page.goto("/recipes/1");
+  await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
 
-  await page.locator(".day", { hasText: "2.12." }).locator(".batch-edit").click();
+  await page.locator(".cook-edit").last().click();
   await page.locator(".multiplier-choice").getByRole("button", { name: "0,5×" }).click();
 
-  await page.locator(".day", { hasText: "2.12." }).locator(".entry a").click();
+  await page.locator(".cook-dish").last().click();
   await expect(page).toHaveURL(/multiplier=0\.5$/);
   // Half of ½ dl is ¼ dl.
   await expect(page.locator(".lines li").first()).toContainText("¼ dl");
@@ -192,17 +195,12 @@ test("changing a batch's multiplier changes what the recipe opens at", async ({
 test("a multiplier the chips do not offer can still be typed", async ({
   page,
 }) => {
-  await page.goto("/picker?date=2026-12-03&slot=dinner");
-  await page
-    .locator(".pick li", { hasText: "Kaalilaatikko" })
-    .getByRole("button", { name: "Lisää" })
-    .click();
-
-  await page.locator(".day", { hasText: "3.12." }).locator(".batch-edit").click();
+  await page.goto("/recipes/1");
+  const add = page.locator(".cook-add");
   // The Finnish comma, the way every other number field in the app takes it.
-  await page.locator(".multiplier-choice input").fill("2,5");
-  await page.locator(".multiplier-choice").getByRole("button", { name: "Tallenna" }).click();
+  await add.locator("input[name=multiplier]").fill("2,5");
+  await add.getByRole("button", { name: "Lisää", exact: true }).click();
 
-  await page.locator(".day", { hasText: "3.12." }).locator(".entry a").click();
+  await page.locator(".cook-dish").last().click();
   await expect(page.locator(".yield")).toHaveText("2,5×");
 });
