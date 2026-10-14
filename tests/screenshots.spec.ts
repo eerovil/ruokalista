@@ -269,15 +269,18 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/05-recipe.png` });
   });
 
-  test("the bottom of a recipe on a phone (#351)", async ({ page }) => {
-    // Only a picture here: the rows are asserted in recipes.spec.ts,
-    // recipe-blocks-317.spec.ts and ingredient-mentions.spec.ts.
+  test("the recipe page on a phone, and what is behind ⋯ (#354)", async ({ page }) => {
+    // Only a picture here: the page is asserted in recipes.spec.ts,
+    // recipe-blocks-317.spec.ts, cook-list.spec.ts and parts.spec.ts.
     test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await page.setViewportSize({ width: 412, height: 900 });
     await page.emulateMedia({ colorScheme: "dark" });
-    await page.goto("/recipes/1");
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await capture(page, { path: `${SHOTS}/130-recipe-tail.png` });
+    await page.goto("/recipes/3");
+    await capture(page, { path: `${SHOTS}/130-recipe-top.png` });
+    await page.getByRole("link", { name: "Lisää valintoja" }).click();
+    await capture(page, { path: `${SHOTS}/131-recipe-more.png` });
+    await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
+    await capture(page, { path: `${SHOTS}/132-recipe-add-size.png` });
   });
 
   /**

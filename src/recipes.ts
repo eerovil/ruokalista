@@ -1520,9 +1520,11 @@ const RECIPE_VIEW_STYLE = html`<style>
     .recipe-intro { min-width: 0; }
     .recipe-intro h1 { margin-bottom: .5rem; }
     .recipe-intro .yield { margin-bottom: 0; }
+    /* A little wider than the old per-part grid's .8fr: each part's ingredients
+       now sit in a bordered section inside this column rather than around it. */
     .recipe-section {
       display: grid;
-      grid-template-columns: minmax(14rem, .8fr) minmax(0, 1.2fr);
+      grid-template-columns: minmax(15rem, 1fr) minmax(0, 1.2fr);
       column-gap: 2rem;
       align-items: start;
     }

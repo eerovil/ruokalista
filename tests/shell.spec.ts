@@ -82,9 +82,9 @@ test.describe("signed in", () => {
       .last();
     await expect(last).toBeInViewport();
 
-    // And the last thing on the page clears the bar rather than sitting under
-    // it. Since #354 that is the method's end, everything else being behind ⋯.
-    const row = await last.boundingBox();
+    // And the method's last step clears the bar rather than sitting under it:
+    // since #354 everything after it but the keep-awake line is behind ⋯.
+    const row = await page.locator(".steps li").last().boundingBox();
     const tabs = await page.locator("nav.tabs").boundingBox();
     expect(row).not.toBeNull();
     expect(tabs).not.toBeNull();

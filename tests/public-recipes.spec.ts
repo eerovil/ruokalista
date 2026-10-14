@@ -273,7 +273,7 @@ test("selected sharing has an explicit recipient cap", async ({ page }) => {
   await expect(page.locator(".refused")).toHaveCount(0);
   await expect(picker.locator('input[name="recipientId"]:checked')).toHaveCount(50);
   await openEditBlock(page, "sharing-open");
-  await expect(page.locator(".household-settings .tail-row-note")).not.toContainText(
+  await expect(page.locator(".household-settings")).not.toContainText(
     "Talous 51",
   );
 
