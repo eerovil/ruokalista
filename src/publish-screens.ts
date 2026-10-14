@@ -8,6 +8,7 @@ import {
 } from "./recipe-preference.ts";
 import {
   blockedMessage,
+  emptyMessage,
   PublishRefused,
   publishRecipes,
   setRecipeSharing,
@@ -90,6 +91,9 @@ export async function publishForm(
   // happen, and they have to be told which and why.
   if (outcome.blocked.length > 0) {
     return refuse(env, vocabulary, member, back, state, blockedMessage(outcome.blocked));
+  }
+  if (outcome.empty.length > 0) {
+    return refuse(env, vocabulary, member, back, state, emptyMessage(outcome.empty));
   }
 
   if (back !== null) return seeOther(back);

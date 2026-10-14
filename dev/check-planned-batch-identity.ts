@@ -49,6 +49,13 @@ function fixtures(fake: FakeD1): void {
        created_by, updated_by)
       VALUES (1, 1, 'Kaalilaatikko', 4, 'Kaalia', 'pasted', 1, 1),
              (2, 2, 'Naapurin keitto', 4, 'Keittoa', 'pasted', 2, 2);
+    -- Something to cook in each, since an empty dish is never shared (#340).
+    INSERT INTO ingredient (id, name, created_by) VALUES (1, 'kaali', 1);
+    INSERT INTO ingredient_line
+      (recipe_id, position, quantity, unit, ingredient_id, source_line)
+      VALUES (1, 1, 1, 'kpl', 1, '1 kaali'), (2, 1, 1, 'kpl', 1, '1 kaali');
+    INSERT INTO recipe_step (recipe_id, position, text)
+      VALUES (1, 1, 'Keitä.'), (2, 1, 'Keitä.');
   `);
 }
 
