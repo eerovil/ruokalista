@@ -423,8 +423,8 @@ const STYLES = `
      The link is a whole tap target tall and the box is drawn inside it, so a
      thumb hits it without the box having to be finger-sized and shout. */
   .row-tick {
-    flex: none; display: flex; align-items: center; justify-content: center;
-    width: 2rem; min-height: var(--tap); text-decoration: none;
+    flex: none; display: flex; align-items: center; justify-content: flex-end;
+    width: var(--tap); min-height: var(--tap); text-decoration: none;
   }
   .row-tick::before {
     content: ""; display: flex; align-items: center; justify-content: center;
@@ -862,7 +862,8 @@ const STYLES = `
   .shopping-list > li { border-bottom: 1px solid var(--edge); }
   /* The tick sits beside the whole row rather than inside it (#318): it has to
      be one tap without opening the row, and the row's own summary already owns
-     every tap inside itself. */
+     every tap inside itself. It is the row's last thing, at the thumb's edge
+     of the screen (#358). */
   .shopping-row { display: flex; align-items: flex-start; gap: .2rem; }
   .shopping-row > .shopping-item { flex: 1 1 auto; min-width: 0; }
   /* The row line: a label for the checkbox that opens the row's modal (#321),

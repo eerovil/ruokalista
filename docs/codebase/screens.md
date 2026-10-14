@@ -69,6 +69,13 @@ a link. The whole toggle is a link to the next URL, so it needs no script, no
 write, and no table; `src/shopping.ts::splitByExcluded` does the split, after
 the cupboard's, and `dev/check-shopping-exclusion.ts` tests both straight.
 
+Since #358 the tick sits at the right end of the row and, with scripts, never
+loads a page: `src/client/shopping-ticks.ts` (loaded on every shopping list,
+not only the S-ostoslista household's) flips the row, rewrites the address,
+every selection-carrying form's hidden `pois` fields and every link back to the
+list, recounts the send panel from the rows, and scrolls back by however far
+the left-off sentence above the list moved the tapped row.
+
 `shoppingState` then narrows that set to the rows the list it just computed
 actually has (`rowsThatExist`), and everything the screen emits is built from
 the narrowed set. So `pois=999` is never handed back out, and — this is the
@@ -1012,6 +1019,10 @@ enhancements through feature detection and compatible syntax, add a modest
 fallback when it preserves an important flow, and let unsupported extras fail
 quietly without taking the page with them. Inline browser scripts are delivered
 without transpilation, so write them for the oldest target they need to serve.
+
+The owner narrowed the no-script part in #358: only the recipe reading page has
+to work without JavaScript. The shopping list's existing no-script paths stay
+where they are, but a new control there may require scripts.
 
 ## The recipe-image admin screen
 

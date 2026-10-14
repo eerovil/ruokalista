@@ -1611,6 +1611,9 @@ test.describe("signed in", () => {
     await expect(page.locator(".shopping-item.is-excluded")).toHaveCount(2);
     await expect(page.locator(".row-tick.is-on")).toHaveCount(2);
     await expect(page.locator(".shopping-excluded-note")).toBeVisible();
+    // A tick keeps the scroll where the thumb was (#358); the picture is of
+    // the whole list from the top.
+    await page.evaluate(() => window.scrollTo(0, 0));
     await capture(page, {
       path: `${SHOTS}/125-shopping-ticked-off.png`,
       fullPage: true,

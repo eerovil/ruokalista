@@ -978,24 +978,28 @@ test("removing a row from the cupboard leaves that list where it was", async ({
 
 /**
  * The tick is the list's most-pressed button and the one the card is about: one
- * row changed, by a plain link, and nothing moving under the thumb.
+ * row changed, and nothing moving under the thumb. With the tick client there
+ * is no page load at all (#358), so the row simply stays where it was.
  */
 test("ticking a row off leaves the list where it was", async ({ page }) => {
   await planTheList(page);
   await page.goto("/ostoslista");
-  await scrollDownTheList(page, "öljy");
-
-  await tapAndWait(
-    page,
-    row(page, "öljy").getByRole("link", {
-      name: "Jätä öljy pois tältä listalta",
-    }),
+  await page.evaluate(() =>
+    window.scrollTo(0, document.body.scrollHeight - window.innerHeight),
   );
+  const tick = row(page, "öljy").getByRole("link", {
+    name: "Jätä öljy pois tältä listalta",
+  });
+  await tick.scrollIntoViewIfNeeded();
+  const before = await onScreen(page, "öljy");
 
-  await stillWhereItLeft(page, "öljy");
+  await tickAndWait(page, tick);
+
   await expect(row(page, "öljy").locator(".shopping-item")).toHaveClass(
     /is-excluded/,
   );
+  expect(Math.abs((await onScreen(page, "öljy")) - before)).toBeLessThan(4);
+  expect(new URL(page.url()).hash).toBe("");
 });
 
 /**
@@ -1164,7 +1168,7 @@ test("reading a row leaves no place behind for the next visit", async ({
 async function leaveOff(page: Page, ingredient: string): Promise<void> {
   // One tap on the row's own tick, without opening it: that is the whole point
   // of #318, so the helper every assertion below runs through does it that way.
-  await tapAndWait(
+  await tickAndWait(
     page,
     row(page, ingredient).getByRole("link", {
       name: `Jätä ${ingredient} pois tältä listalta`,
@@ -1189,6 +1193,19 @@ async function tapAndWait(
   await control.click();
   await page.waitForURL((url) => url.href !== before);
   await expect(page.locator(".shopping-list").first()).toBeAttached();
+}
+
+/**
+ * Tap a row's tick, which with the tick client rewrites the address in place
+ * rather than loading a page (#358), and wait until it has.
+ */
+async function tickAndWait(
+  page: Page,
+  control: ReturnType<typeof row>,
+): Promise<void> {
+  const before = page.url();
+  await control.click();
+  await expect.poll(() => page.url()).not.toBe(before);
 }
 
 /** The rows the member has taken off, wherever they sit in the list. */
@@ -1246,7 +1263,7 @@ test("a row left off stays where it was and comes back with one tap", async ({
   await expect(leftOff(page)).toHaveCount(1);
   await expect(leftOff(page)).toContainText("vesi");
 
-  await tapAndWait(
+  await tickAndWait(
     page,
     row(page, "vesi").getByRole("link", { name: "Ota vesi takaisin listalle" }),
   );
@@ -1254,6 +1271,47 @@ test("a row left off stays where it was and comes back with one tap", async ({
   await expect(leftOff(page)).toHaveCount(0);
   await expect(page.locator(".shopping-excluded-note")).toBeHidden();
   expect(await buyRowNames(page)).toEqual(before);
+});
+
+/**
+ * The tick is the list's most-pressed control, and with the tick client it
+ * never loads a page (#358): "not this time" lives only in the address, so
+ * there is nothing to save. What has to follow the tap is everything the next
+ * press reads — the address, the forms' hidden fields, the send counts.
+ */
+test("a tick changes the list in place, without loading a page", async ({
+  page,
+}) => {
+  await planTheList(page);
+  await page.goto("/ostoslista");
+  await page.evaluate(() => {
+    (window as unknown as { samePage: boolean }).samePage = true;
+  });
+  const counts = page.locator(".s-send-counts");
+  const products = Number(await counts.getAttribute("data-tuotteet"));
+  const notes = Number(await counts.getAttribute("data-muistutukset"));
+
+  await leaveOff(page, "vesi");
+
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { samePage?: boolean }).samePage === true,
+    ),
+  ).toBe(true);
+  expect(new URL(page.url()).searchParams.getAll("pois")).toHaveLength(1);
+  await expect(page.locator(".shopping-excluded-note")).toBeVisible();
+  // Water has no product, so it was going as a text row.
+  await expect(counts).toHaveAttribute("data-tuotteet", String(products));
+  await expect(counts).toHaveAttribute("data-muistutukset", String(notes - 1));
+  // Every form that leaves the page carries the new answer.
+  await expect(
+    page.locator('.s-send-form input[type="hidden"][name="pois"]'),
+  ).toHaveCount(1);
+
+  // A reload draws the same list from the address alone.
+  await page.reload();
+  await expect(leftOff(page)).toHaveCount(1);
+  await expect(leftOff(page)).toContainText("vesi");
 });
 
 test("the cupboard and the left-off list stay two separate answers", async ({

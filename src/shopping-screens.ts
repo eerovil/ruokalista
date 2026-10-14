@@ -1,5 +1,6 @@
 import { problem } from "./auth.ts";
 import shoppingClient from "./generated/shopping.ts";
+import shoppingTicks from "./generated/shopping-ticks.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
 import { cookList, type ListedDish } from "./cook-list.ts";
@@ -184,7 +185,8 @@ export async function shoppingScreen(
               ${groupingPills(selection)}
               ${sections(listed, atHome, selected, selection, external)}
               ${external ? currentListPanel() : ""}
-              ${KEEP_PLACE}`}
+              ${KEEP_PLACE}
+              <script>${raw(shoppingTicks)}</script>`}
       ${external ? html`<script>${raw(shoppingClient)}</script>` : ""}`,
     "shopping",
     member,
@@ -1008,6 +1010,7 @@ const rawOpen = raw("open");
 const rawChecked = raw("checked");
 const rawCurrent = raw('aria-current="page"');
 const rawDisabled = raw("disabled");
+const rawHidden = raw("hidden");
 
 /**
  * How the list is cut up, as two pills above it (#318).
@@ -1063,7 +1066,7 @@ function sections(
   selection: Selection,
   external: boolean,
 ): Raw {
-  const note = selection.excluded.size === 0 ? html`` : excludedNote();
+  const note = excludedNote(selection.excluded.size === 0);
 
   // With nothing in the cupboard there is only one list, and a lone
   // "Ostettavat" heading under a heading that already says Ostoslista is a
@@ -1093,8 +1096,10 @@ function sections(
  * that it is *not* the cupboard, and a greyed-out row on its own does not say
  * which of the two sentences it is.
  */
-function excludedNote(): Raw {
-  return html`<p class="empty shopping-excluded-note">
+function excludedNote(hidden: boolean): Raw {
+  // Drawn hidden rather than left out, so the tick client can show it on the
+  // first tick without a round-trip (#358).
+  return html`<p class="empty shopping-excluded-note" ${hidden ? rawHidden : ""}>
     Rastitut rivit jäävät pois tältä listalta eikä niitä lähetetä
     S-ostoslistaan. Tämä ei kerro mitään <a href="/kaappi">kaapista</a>, ja
     seuraava lista laskee ne taas mukaan.
@@ -1185,7 +1190,6 @@ function itemList(
       const excluded = kind === "buy" && selection.excluded.has(item.key);
       const toggle = rowToggleId(item, kind);
       return html`<li class="shopping-row">
-        ${excludeTick(item, selection, kind, excluded)}
         <div
           class="${excluded ? "shopping-item is-excluded" : "shopping-item"}"
           data-product-row
@@ -1244,6 +1248,7 @@ function itemList(
             </div>
           </div>
         </div>
+        ${excludeTick(item, selection, kind, excluded)}
       </li>`;
     })}
   </ul>`;
@@ -1768,6 +1773,8 @@ function excludeTick(
   return html`<a
     class="${excluded ? "row-tick is-on" : "row-tick"}"
     href="${listLocation({ ...selection, excluded: next })}"
+    data-rivi="${item.key}"
+    data-nimi="${item.name}"
     aria-label="${label}"
     title="${label}"
   ></a>`;

@@ -21,6 +21,7 @@ const checking = process.argv.includes("--check");
 const entries = [
   { name: "recipe-image-split", target: "es2019", description: "The bundled splitter, served to the admin image screen as a script." },
   { name: "intake", target: "es5", description: "The bundled intake client, embedded on the server-rendered intake form." },
+  { name: "shopping-ticks", target: "es5", description: "The bundled tick client, embedded on every server-rendered shopping list." },
   { name: "shopping", target: "es5", description: "The bundled shopping client, embedded on the server-rendered shopping list." },
   { name: "recipe-products", target: "es5", description: "The bundled product picker, embedded on a recipe screen for the S-ostoslista household." },
   { name: "recipe-browser", target: "es5", description: "The bundled recipe browser, embedded on every screen that lists recipes." },
