@@ -2238,10 +2238,14 @@ test.describe("public recipes", () => {
     await context.clearCookies();
     await context.addCookies([sessionCookie(2)]);
 
-    await page.goto("/recipes/julkiset");
-    await expect(page.locator(".recipes li")).toHaveCount(2);
+    // Shared dishes sit in Naapuri's own list since #335.
+    await page.goto("/recipes");
+    await expect(page.locator(".recipes .badge.is-shared")).toHaveCount(2);
     // Somebody else's picture, actually loaded rather than a broken icon.
-    const thumb = page.locator(".recipes .recipe-image img").first();
+    const thumb = page
+      .locator(".recipes li", { has: page.locator(".badge.is-shared") })
+      .locator(".recipe-image img")
+      .first();
     await expect(thumb).toHaveJSProperty("complete", true);
     await expect(thumb).not.toHaveJSProperty("naturalWidth", 0);
     await capture(page, {

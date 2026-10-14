@@ -304,7 +304,7 @@ AgentDeck bundle written before this still imports. See
 
 ## Browsing recipes, once (issue #307)
 
-`/recipes`, `/recipes/julkiset` and `/picker` are one browse surface, and that
+`/recipes` and `/picker` are one browse surface, and that
 surface is `src/recipe-browser.ts::recipeBrowser`. Before #307 the recipe list
 had the search and the category chips while the week picker — the screen a
 member is standing on when they actually want to find a dish — had a search box
@@ -641,10 +641,14 @@ plan. All readable/plannable query paths use its shared SQL condition, while
 - **A partial result is a refusal.** Publishing eleven and having two blocked
   re-renders the list with the reason; only a clean run redirects.
 
-`/recipes/julkiset` is the public section, and it deliberately excludes this
-household's own published recipes: "ours" and "somebody else's" are different
-things to a cook, and one of them can be corrected when the oven temperature
-turns out to be wrong.
+Since #335 `/recipes` mixes in what other households share, newest first by
+when each recipe was added, and `/recipes/julkiset` only redirects there. A
+shared row says whose it is and carries no tick, because the bulk actions only
+act on this household's own recipes. **Piilota jaetut reseptit** hides them:
+it is a link drawn as a checkbox, so the choice is `jaetut=piilota` in the URL
+and lives in `BrowseState.hideShared`, and the `ruokalista_jaetut` cookie
+remembers it per browser. Turning it off says `jaetut=nayta` explicitly, or
+the cookie would hide them again. The picker ignores the flag.
 
 ### A default that belongs to the kitchen
 

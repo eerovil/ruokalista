@@ -23,12 +23,21 @@ name what your change could break.
 
 1. `./scripts/node.sh npm run typecheck`
 2. `./scripts/node.sh npm run check`
-3. the browser spec or specs that cover what you touched, and only those:
-   `./scripts/playwright.sh npx playwright test tests/week.spec.ts`
-4. one screenshot, only when the change is visual, and only of the screen that
-   changed — screenshot capture is opt-in, so it is
-   `PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots`
+3. the browser spec that tests the behaviour you changed, and only that one:
+   `./scripts/playwright.sh npx playwright test tests/week.spec.ts`. A spec you
+   only had to adjust — a count or an order that moved because of your change —
+   is CI's to rerun, not yours. Run it here only when CI fails it.
+4. one screenshot, only when the change is visual, and only the screenshot test
+   that draws the screen that changed — capture is opt-in, and `-g` picks the
+   one test out of `screenshots.spec.ts`:
+   `PLAYWRIGHT_SCREENSHOTS=1 ./scripts/playwright.sh npx playwright test screenshots -g "<test name>"`
 5. open the pull request and let CI run the rest
+
+The browser runs share this host's CPU with every other agent, so the smallest
+run that answers your question is the right one. Run them one after the other,
+never two at once in one checkout: both start `wrangler dev` over the same
+files, and its esbuild watcher has crashed with a deadlock that way, failing
+every test after it with connection-refused (#335).
 
 Steps 1 and 2 are cheap and catch most of what a full suite would have caught, so
 they are not optional at any tier.

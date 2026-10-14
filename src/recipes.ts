@@ -16,8 +16,11 @@ import {
 import { cookHistory } from "./cook-history.ts";
 import {
   browseFields,
+  browseHref,
   browseStateFrom,
+  HIDE_SHARED,
   recipeBrowser,
+  SHOW_SHARED,
   type BrowseState,
 } from "./recipe-browser.ts";
 import { recipeImage, type Pictured } from "./recipe-picture.ts";
@@ -73,6 +76,7 @@ import {
   sourceWorthShowing,
 } from "./scaling.ts";
 import type { RouteContext } from "./router.ts";
+import { cookieValue } from "./signing.ts";
 
 /**
  * Recipe HTTP/API and rendering adapters.
@@ -176,22 +180,51 @@ function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
 
 /** `GET /recipes` — the recipe list screen. */
 export async function recipeListScreen(
-  { env, url }: RouteContext,
+  { env, request, url }: RouteContext,
   member: Member,
 ): Promise<Response> {
   const vocabulary = await loadVocabulary(env.DB);
-  return page(
+  const asked = url.searchParams.get("jaetut");
+  const state = {
+    ...browseStateFrom(vocabulary, url.searchParams),
+    hideShared: asked === null
+      ? sharedHiddenByDefault(request)
+      : asked === HIDE_SHARED,
+  };
+  const response = page(
     "Reseptit",
-    await ownRecipeList(
-      env.DB,
-      vocabulary,
-      member,
-      browseStateFrom(vocabulary, url.searchParams),
-      null,
-    ),
+    await recipeList(env.DB, vocabulary, member, state, null),
     "recipes",
     member,
   );
+  if (asked === HIDE_SHARED || asked === SHOW_SHARED) {
+    response.headers.append("Set-Cookie", sharedCookie(state.hideShared));
+  }
+  return response;
+}
+
+/**
+ * Whether shared recipes are hidden is remembered per browser (#335): a member
+ * who only ever wants their own list should not have to ask for it on every
+ * visit. A cookie rather than a member setting, because it is a view of a list
+ * on one device, and the URL's `jaetut` always wins over it.
+ */
+const SHARED_COOKIE = "ruokalista_jaetut";
+const SHARED_COOKIE_SECONDS = 365 * 24 * 60 * 60;
+
+function sharedHiddenByDefault(request: Request): boolean {
+  return cookieValue(request.headers.get("Cookie"), SHARED_COOKIE) === HIDE_SHARED;
+}
+
+function sharedCookie(hidden: boolean): string {
+  return [
+    `${SHARED_COOKIE}=${hidden ? HIDE_SHARED : ""}`,
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+    `Max-Age=${hidden ? SHARED_COOKIE_SECONDS : 0}`,
+  ].join("; ");
 }
 
 /** A word said back after a bulk action, or the reason one did not happen. */
@@ -200,7 +233,15 @@ export interface ListNotice {
   refused: boolean;
 }
 
-export async function ownRecipeList(
+/**
+ * The household's recipes, with what other households share mixed in (#335).
+ *
+ * One list rather than a separate "Jaetut reseptit" section: a member looking
+ * for something to cook does not first decide whose kitchen it comes from. A
+ * shared dish says whose it is and has no tick, because the bulk actions —
+ * publishing, categories — only ever act on this household's own recipes.
+ */
+export async function recipeList(
   db: D1Database,
   vocabulary: Vocabulary,
   member: Member,
@@ -208,13 +249,14 @@ export async function ownRecipeList(
   notice: ListNotice | null,
   bulkCategory: string | null = null,
 ): Promise<Raw> {
-  const [matching, history] = await Promise.all([
+  const [own, shared, history] = await Promise.all([
     recipeSummaries(db, member.householdId, state.query),
+    publicRecipeSummaries(db, member.householdId, state.query),
     cookHistory(db, member.householdId),
   ]);
+  const matching = state.hideShared ? own : newestFirst([...own, ...shared]);
 
   return html`<h1>Reseptit</h1>
-    <p class="public-link"><a href="/recipes/julkiset">Jaetut reseptit</a></p>
     ${recipeBrowser(
       { path: "/recipes" },
       {
@@ -223,20 +265,39 @@ export async function ownRecipeList(
         matching,
         history,
         viewerHouseholdId: member.householdId,
+        filters: shared.length > 0 || state.hideShared
+          ? sharedToggle(state)
+          : undefined,
         notice: noticeLine(notice),
         emptyAll: "Reseptejä ei ole vielä yhtään.",
         emptyAction: html`<p>
           <a class="button" href="/intake">Lisää ensimmäinen</a>
         </p>`,
         listClass: "recipes is-selectable",
-        row: (recipe, card) => html`<input
-            type="checkbox"
-            name="recipeId"
-            value="${recipe.id}"
-            class="recipe-pick"
-            aria-label="Valitse ${recipe.title}"
-          />
-          <a href="/recipes/${recipe.id}">${card}${sharingBadge(recipe)}</a>`,
+        row: (recipe, card) =>
+          recipe.householdId === member.householdId
+            ? html`<input
+                  type="checkbox"
+                  name="recipeId"
+                  value="${recipe.id}"
+                  class="recipe-pick"
+                  aria-label="Valitse ${recipe.title}"
+                />
+                <a href="/recipes/${recipe.id}">${card}${sharingBadge(recipe)}</a>`
+            : // An unticked, invisible box keeps the row lined up with the
+              // ones that can be ticked. It has no name, so it posts nothing.
+              html`<input
+                  type="checkbox"
+                  class="recipe-pick-gap"
+                  disabled
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+                <a href="/recipes/${recipe.id}"
+                  >${card}<span class="badge is-shared"
+                    >${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}</span
+                  ></a
+                >`,
         // The list rides inside the form the bulk actions post, so ticking a
         // row means one thing on this screen rather than two.
         wrap: (list) => html`<form
@@ -265,52 +326,52 @@ export async function ownRecipeList(
     ${CATEGORY_STYLE}`;
 }
 
-/** `GET /recipes/julkiset` — what other households are sharing with this one. */
-export async function publicRecipeListScreen(
-  { env, url }: RouteContext,
-  member: Member,
-): Promise<Response> {
-  const vocabulary = await loadVocabulary(env.DB);
-  const state = browseStateFrom(vocabulary, url.searchParams);
-  const [matching, history] = await Promise.all([
-    publicRecipeSummaries(env.DB, member.householdId, state.query),
-    cookHistory(env.DB, member.householdId),
-  ]);
-
-  return page(
-    "Jaetut reseptit",
-    html`<h1>Jaetut reseptit</h1>
-      <p class="empty">
-        Muiden talouksien jakamat reseptit. Voit ottaa ne ruokalistalle, mutta
-        muokata voi vain reseptin oma talous.
-      </p>
-      <p class="public-link"><a href="/recipes">Omat reseptit</a></p>
-      ${recipeBrowser(
-        { path: "/recipes/julkiset" },
-        {
-          state,
-          vocabulary,
-          matching,
-          history,
-          viewerHouseholdId: member.householdId,
-          noun: "jaettua reseptiä",
-          emptyAll:
-            "Yhtään reseptiä ei ole vielä jaettu tälle taloudelle tai kaikille.",
-          resetLabel: "Näytä kaikki jaetut",
-          listClass: "recipes",
-          row: (recipe, card) => html`<a href="/recipes/${recipe.id}"
-            >${card}
-            <span class="badge is-published">
-              ${recipe.publishedAt === null ? "Jaettu sinulle" : "Julkinen"}
-            </span>
-          </a>`,
-        },
-      )}
-      ${PUBLISH_STYLE}
-    ${CATEGORY_STYLE}`,
-    "recipes",
-    member,
+/**
+ * Newest first across both kitchens, by when each recipe was added. Both lists
+ * arrive sorted already; this only interleaves them.
+ */
+function newestFirst(recipes: RecipeSummary[]): RecipeSummary[] {
+  return recipes.sort((a, b) =>
+    a.createdAt === b.createdAt
+      ? b.id - a.id
+      : b.createdAt.localeCompare(a.createdAt),
   );
+}
+
+/**
+ * "Piilota jaetut reseptit", drawn as a checkbox but made of a link, like the
+ * chips beside it: the choice is a place in the URL, so it needs no script and
+ * survives the back button. Turning it off has to say so out loud
+ * (`jaetut=nayta`), or the remembered cookie would hide them again.
+ */
+function sharedToggle(state: BrowseState): Raw {
+  const screen = { path: "/recipes" };
+  const href = state.hideShared
+    ? browseHref(
+      { ...screen, carried: { jaetut: SHOW_SHARED } },
+      { ...state, hideShared: false },
+    )
+    : browseHref(screen, { ...state, hideShared: true });
+  return html`<p class="browse-shared">
+    <a
+      class="browse-toggle"
+      href="${href}"
+      role="checkbox"
+      aria-checked="${state.hideShared ? "true" : "false"}"
+      ><span class="browse-toggle-box" aria-hidden="true"
+        >${state.hideShared ? "✓" : ""}</span
+      >
+      Piilota jaetut reseptit</a
+    >
+  </p>`;
+}
+
+/** `GET /recipes/julkiset` — the old shared section, now part of the list. */
+export function publicRecipeListScreen(): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { Location: `/recipes?jaetut=${SHOW_SHARED}` },
+  });
 }
 
 function sharingBadge(recipe: RecipeSummary): Raw {
@@ -899,12 +960,20 @@ function hasRevealableMention(recipe: Recipe, multiplier: number): boolean {
 }
 
 const PUBLISH_STYLE = html`<style>
-  .public-link { margin: 0 0 1rem; font-size: .9rem; }
   .recipes.is-selectable li { display: flex; align-items: center; gap: .6rem; }
   .recipes.is-selectable li > a { flex: 1; min-width: 0; }
-  .recipe-pick { width: auto; min-height: 0; flex: 0 0 auto; }
+  .recipe-pick, .recipe-pick-gap { width: auto; min-height: 0; flex: 0 0 auto; }
   .badge.is-published { margin: 0 0 0 auto; align-self: center;
     color: var(--accent); border-color: var(--accent); white-space: nowrap; }
+  .badge.is-shared { margin: 0 0 0 auto; align-self: center; white-space: nowrap; }
+  .recipe-pick-gap { visibility: hidden; }
+  .browse-shared { margin: -.4rem 0 1rem; font-size: .9rem; }
+  .browse-toggle { display: inline-flex; align-items: center; gap: .5rem;
+    min-height: var(--tap-compact); color: inherit; text-decoration: none; }
+  .browse-toggle-box { display: inline-flex; align-items: center;
+    justify-content: center; width: 1.1rem; height: 1.1rem;
+    border: 1px solid var(--edge); border-radius: 3px; background: var(--surface);
+    color: var(--accent); font-size: .85rem; line-height: 1; }
   .bulk-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
   .bulk-actions button { flex: 1 1 10rem; }
   .done {

@@ -44,7 +44,7 @@ test("a recipe with no category reads and lists exactly as before", async ({
 }) => {
   await signIn(page, 1);
   await page.goto("/recipes");
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
   // Nothing is categorised, so there is nothing to filter by and no chip row.
   await expect(page.locator(".category-filter")).toHaveCount(0);
 
@@ -90,7 +90,7 @@ test("the list filters to one category and back again", async ({ page }) => {
   await categorise(page, 2, ["Lisuke"]);
 
   await page.goto("/recipes");
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
 
   const filter = page.locator(".category-filter");
   // Only the two categories something actually has, plus the way back.
@@ -105,7 +105,7 @@ test("the list filters to one category and back again", async ({ page }) => {
   await expect(page.locator(".recipes li")).toContainText("Kaalilaatikko");
 
   await page.locator(".category-filter").getByRole("link", { name: "Kaikki" }).click();
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
 });
 
 test("a name search made inside a category stays inside it", async ({ page }) => {
@@ -134,7 +134,7 @@ test("an empty category says so and offers the way back", async ({ page }) => {
   await page.goto("/recipes?kategoria=keitto");
   await expect(page.locator(".nothing .empty")).toContainText("Keitto");
   await page.getByRole("link", { name: "Näytä kaikki reseptit" }).click();
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
 });
 
 test("a category from a stale link shows the recipes rather than an error", async ({
@@ -142,7 +142,7 @@ test("a category from a stale link shows the recipes rather than an error", asyn
 }) => {
   await signIn(page, 1);
   await page.goto("/recipes?kategoria=wellington");
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
 });
 
 test("a shared recipe carries its owner's categories into the other household", async ({
@@ -155,8 +155,10 @@ test("a shared recipe carries its owner's categories into the other household", 
   await categorise(page, 6, ["Uuniruoka"]);
 
   await signIn(page, 1);
-  await page.goto("/recipes/julkiset");
-  await expect(page.locator(".recipes li")).toContainText("Uuniruoka");
+  await page.goto("/recipes");
+  await expect(
+    page.locator(".recipes li", { hasText: "Naapurin uunikala" }),
+  ).toContainText("Uuniruoka");
 
   await page.locator(".category-filter").getByRole("link", { name: "Uuniruoka" }).click();
   await expect(page.locator(".recipes li")).toHaveCount(1);
@@ -261,7 +263,7 @@ test("pressing with nothing ticked refuses and changes nothing", async ({
   await page.getByRole("button", { name: "Lisää valituille" }).click();
 
   await expect(page.locator(".refused")).toContainText("Valitse ainakin yksi");
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
   await expect(page.locator(".category-filter")).toHaveCount(0);
   // The refusal keeps what the member chose, so only the ticking is redone.
   await expect(page.locator(".bulk-categories select")).toHaveValue("keitto");

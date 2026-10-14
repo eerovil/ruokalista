@@ -238,5 +238,5 @@ test("an empty vocabulary hides the picker instead of breaking", async ({
   await expect(page.locator(".category-choices")).toHaveCount(0);
   await page.goto("/recipes");
   await expect(page.locator(".bulk-categories")).toHaveCount(0);
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  await expect(page.locator(".recipes li")).toHaveCount(4);
 });
