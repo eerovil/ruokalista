@@ -992,7 +992,7 @@ function recipeTopActions(
       : ""}
     ${household
       ? html`<h2 class="tail-heading">Meidän taloudessa</h2>
-          <div class="tail-list recipe-sharing">
+          <div class="tail-list household-settings">
             ${settingsRow(
               PREFERENCE_ID,
               "Oletuskerroin",
