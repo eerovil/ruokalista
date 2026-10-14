@@ -1199,7 +1199,9 @@ test.describe("signed in", () => {
     );
     releaseSave();
     await sent;
-    await page.unroute("**/ostoslista/tuote");
+    // The route is left in place: it only ever held the one save, and
+    // unrouting while the panel's re-read is being intercepted could strand
+    // that request — the panel then sat on `Luetaan S-ostoslistaa…` (#358).
     await expect(page.locator(".shopping-sent")).toContainText(
       "lähetettiin S-ostoslistaan",
     );
