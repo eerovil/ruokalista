@@ -68,6 +68,8 @@ export interface PublishOutcome {
   unchanged: string[];
   /** Recipes a future plan elsewhere kept published. */
   blocked: PublishBlock[];
+  /** Recipes left unpublished because they are still empty (#340). */
+  empty: string[];
 }
 
 export interface DishRow {
@@ -75,11 +77,34 @@ export interface DishRow {
   title: string;
   published_at: string | null;
   share_count: number;
+  /** 1 when the dish has no ingredient or no step anywhere in it (#340). */
+  empty: number;
 }
 
 export interface ReadableRecipeScope {
   sql: string;
-  bindings: readonly [number, number];
+  bindings: readonly [number, number, number];
+}
+
+/**
+ * Whether the dish at `alias` is empty (#340): no ingredient line, or no step,
+ * on the dish or on any of its parts. A name-only quick save (#211) is the usual
+ * way to get one — a reminder to write it down later, not something to cook.
+ *
+ * Both halves count, because a dish with ingredients and no method (or a method
+ * and nothing to buy) is just as unfinished to the household reading it.
+ */
+export function emptyDishSql(alias = "recipe"): string {
+  return `(NOT EXISTS (
+             SELECT 1 FROM ingredient_line
+               JOIN recipe AS line_owner ON line_owner.id = ingredient_line.recipe_id
+              WHERE line_owner.id = ${alias}.id OR line_owner.parent_id = ${alias}.id
+           )
+           OR NOT EXISTS (
+             SELECT 1 FROM recipe_step
+               JOIN recipe AS step_owner ON step_owner.id = recipe_step.recipe_id
+              WHERE step_owner.id = ${alias}.id OR step_owner.parent_id = ${alias}.id
+           ))`;
 }
 
 /**
@@ -90,6 +115,13 @@ export interface ReadableRecipeScope {
  * every caller. Keeping the scope together also stops the screen, API, picker,
  * image and preference paths from growing subtly different definitions of
  * "shared with us".
+ *
+ * An empty dish (#340) is not readable outside its own household, even when
+ * it was published or shared before it was emptied: what another household
+ * would find there is a name and nothing to cook. The one exception is a
+ * household that already has it on its week — emptying it must not strand
+ * their meal unopenable and unmovable, the same stranding that
+ * `futurePlansElsewhere` stops an unpublish from causing.
  */
 export function readableRecipeScope(
   householdId: number,
@@ -97,13 +129,19 @@ export function readableRecipeScope(
 ): ReadableRecipeScope {
   return {
     sql: `(${alias}.household_id = ?
-           OR ${alias}.published_at IS NOT NULL
-           OR EXISTS (
-                SELECT 1 FROM recipe_share
-                 WHERE recipe_share.recipe_id = ${alias}.id
-                   AND recipe_share.household_id = ?
-              ))`,
-    bindings: [householdId, householdId],
+           OR ((${alias}.published_at IS NOT NULL
+                OR EXISTS (
+                     SELECT 1 FROM recipe_share
+                      WHERE recipe_share.recipe_id = ${alias}.id
+                        AND recipe_share.household_id = ?
+                   ))
+               AND (NOT ${emptyDishSql(alias)}
+                    OR EXISTS (
+                         SELECT 1 FROM planned_batch
+                          WHERE planned_batch.recipe_id = ${alias}.id
+                            AND planned_batch.household_id = ?
+                       ))))`,
+    bindings: [householdId, householdId, householdId],
   };
 }
 
@@ -131,7 +169,8 @@ export async function ownedDishes(
       .prepare(
         `SELECT id, title, published_at,
                 (SELECT count(*) FROM recipe_share
-                  WHERE recipe_share.recipe_id = recipe.id) AS share_count
+                  WHERE recipe_share.recipe_id = recipe.id) AS share_count,
+                ${emptyDishSql()} AS empty
            FROM recipe
           WHERE household_id = ?
             AND parent_id IS NULL
@@ -155,12 +194,21 @@ export async function publishRecipes(
   const dishes = await ownedDishes(db, member.householdId, ids);
   if (dishes.length === 0) throw new PublishRefused("Valitse ainakin yksi resepti.");
 
-  const outcome: PublishOutcome = { changed: [], unchanged: [], blocked: [] };
+  const outcome: PublishOutcome = {
+    changed: [],
+    unchanged: [],
+    blocked: [],
+    empty: [],
+  };
   const statements = [];
 
   for (const dish of dishes) {
     if (dish.published_at !== null) {
       outcome.unchanged.push(dish.title);
+      continue;
+    }
+    if (dish.empty !== 0) {
+      outcome.empty.push(dish.title);
       continue;
     }
     outcome.changed.push(dish.title);
@@ -188,7 +236,12 @@ export async function unpublishRecipes(
   const dishes = await ownedDishes(db, member.householdId, ids);
   if (dishes.length === 0) throw new PublishRefused("Valitse ainakin yksi resepti.");
 
-  const outcome: PublishOutcome = { changed: [], unchanged: [], blocked: [] };
+  const outcome: PublishOutcome = {
+    changed: [],
+    unchanged: [],
+    blocked: [],
+    empty: [],
+  };
   for (const dish of dishes) {
     if (dish.published_at === null && dish.share_count === 0) {
       outcome.unchanged.push(dish.title);
@@ -285,6 +338,9 @@ export async function setRecipeSharing(
 ): Promise<void> {
   const [dish] = await ownedDishes(db, member.householdId, [recipeId]);
   if (dish === undefined) throw new PublishRefused("Tuntematon resepti.");
+  if (draft.visibility !== "private" && dish.empty !== 0) {
+    throw new PublishRefused(emptyMessage([dish.title]));
+  }
 
   // Checked boxes are irrelevant when the target is private or public. Ignoring
   // them also means a large selected audience can always be taken to either
@@ -517,6 +573,14 @@ export async function futurePlansElsewhere(
     .first<{ households: number }>();
 
   return row?.households ?? 0;
+}
+
+/** Why an empty recipe stayed private (#340). */
+export function emptyMessage(titles: string[]): string {
+  const which = titles.length === 1
+    ? `${titles[0]} on tyhjä`
+    : `${titles.length} valituista resepteistä on tyhjiä (${titles.join(", ")})`;
+  return `${which}, joten ${titles.length === 1 ? "sitä" : "niitä"} ei voi julkaista eikä jakaa. Lisää ensin ainekset ja valmistusvaiheet.`;
 }
 
 /**

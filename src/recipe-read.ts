@@ -17,7 +17,7 @@ import {
 } from "./ingredient-products.ts";
 import type { Measurement } from "./quantities.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
-import { readableRecipeScope } from "./recipe-publish.ts";
+import { emptyDishSql, readableRecipeScope } from "./recipe-publish.ts";
 
 /**
  * Reading the recipe store, without HTTP or rendering dependencies.
@@ -50,6 +50,11 @@ export interface RecipeSummary {
   shareCount: number;
   /** Category slugs in vocabulary order. Empty is an ordinary state. */
   categories: string[];
+  /**
+   * No ingredient or no step on the dish or any of its parts (#340). Such a
+   * dish cannot be published and is never shown to another household.
+   */
+  empty: boolean;
 }
 
 export interface RecipeLine extends Measurement {
@@ -100,6 +105,7 @@ interface SummaryRow {
   household_name: string;
   published_at: string | null;
   share_count: number;
+  empty: number;
 }
 
 const SUMMARY_SELECT = `SELECT recipe.id,
@@ -111,6 +117,7 @@ const SUMMARY_SELECT = `SELECT recipe.id,
               recipe.published_at,
               (SELECT count(*) FROM recipe_share
                 WHERE recipe_share.recipe_id = recipe.id) AS share_count,
+              ${emptyDishSql()} AS empty,
               household.name AS household_name,
               member.display_name AS created_by
          FROM recipe
@@ -200,6 +207,7 @@ function toSummary(row: SummaryRow): RecipeSummary {
     householdName: row.household_name,
     publishedAt: row.published_at,
     shareCount: row.share_count,
+    empty: row.empty !== 0,
     categories: [],
   };
 }
@@ -299,6 +307,7 @@ async function loadRecipe(
               recipe.published_at,
               (SELECT count(*) FROM recipe_share
                 WHERE recipe_share.recipe_id = recipe.id) AS share_count,
+              ${emptyDishSql()} AS empty,
               recipe.parent_id,
               (SELECT parent.title FROM recipe AS parent
                 WHERE parent.id = recipe.parent_id) AS parent_title,
@@ -378,6 +387,7 @@ async function loadRecipe(
     householdName: row.household_name,
     publishedAt: row.published_at,
     shareCount: row.share_count,
+    empty: row.empty !== 0,
     categories,
     parentId: row.parent_id,
     parentTitle: row.parent_title,
