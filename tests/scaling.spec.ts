@@ -185,6 +185,7 @@ test("a multiplier the chips do not offer can still be typed", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
+  await openCookAdd(page);
   const add = page.locator(".cook-add");
   // The Finnish comma, the way every other number field in the app takes it.
   await add.locator("input[name=multiplier]").fill("2,5");
