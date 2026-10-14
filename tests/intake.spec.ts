@@ -490,8 +490,9 @@ test("a page with no recipe on it fails the import in Finnish, with a retry", as
 
   // The failure lives on the import list, like every other background failure,
   // rather than as a message that disappears with the page.
-  await expect(page).toHaveURL(/\/intake/);
-  await page.getByText(/^Keskeneräiset tuonnit/).click();
+  // The list opens by itself after the member's own import (#341), so the
+  // failure is in front of them without a tap.
+  await expect(page).toHaveURL(/\/intake\?started=/);
   const job = page.locator("[data-intake-job]").first();
   await expect(job.locator(".refused")).toHaveText(
     "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",

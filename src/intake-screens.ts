@@ -304,7 +304,7 @@ function quickSaveForm(title = "", open = false): Raw {
   </details>`;
 }
 
-function intakeJobs(jobs: IntakeJob[]): Raw {
+function intakeJobs(jobs: IntakeJob[], open = false): Raw {
   if (jobs.length === 0) return html``;
 
   const state = (job: IntakeJob): Raw => {
@@ -322,8 +322,9 @@ function intakeJobs(jobs: IntakeJob[]): Raw {
   };
 
   // Folded by default (#341), with the count on the fold so a waiting import
-  // is not invisible.
-  return html`<details class="fold">
+  // is not invisible. Open right after the member started one, so if it has
+  // already failed they see why and can retry without hunting for it.
+  return html`<details class="fold" ${open ? "open" : ""}>
     <summary>Keskeneräiset tuonnit (${jobs.length})</summary>
     <ul class="recipes">
       ${jobs.map((job) => html`<li
@@ -433,7 +434,7 @@ export async function intakeScreen(
         : html`<p class="refused">${refusal.message}</p>`}
       ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
       ${target === null ? quickSaveForm(refusal?.title ?? "", refusal !== undefined) : ""}
-      ${intakeJobs(jobs)}
+      ${intakeJobs(jobs, confirmed)}
       ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
