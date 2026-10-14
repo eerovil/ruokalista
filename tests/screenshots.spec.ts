@@ -657,6 +657,34 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/07-intake.png`, fullPage: true });
   });
 
+  test("unfinished imports can be thrown away", async ({ page }) => {
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_url,
+         source_text, draft_json, error_message, created_at, updated_at)
+       VALUES
+        ('shot-failed', 1, 1, 'failed', 'linked', 'https://www.k-ruoka.fi/reseptit/lohikeitto',
+         NULL, NULL,
+         'Sivua ei saatu auki. Tarkista linkki tai kokeile hetken kuluttua uudelleen.',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+        ('shot-ready', 1, 1, 'ready', 'pasted', NULL, 'Uunikaali',
+         '${JSON.stringify(DRAFT_FIXTURE).replaceAll("'", "''")}', NULL,
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    );
+    await page.goto("/intake");
+    const section = page.locator('section[aria-labelledby="intake-jobs-title"]');
+    await expect(section.getByRole("button", { name: "Poista" })).toHaveCount(2);
+    await section.scrollIntoViewIfNeeded();
+    await capture(page, { path: `${SHOTS}/127-intake-discard.png` });
+
+    await section
+      .locator('[data-intake-job="shot-failed"]')
+      .getByRole("button", { name: "Poista" })
+      .click();
+    await expect(page.locator('[data-intake-job="shot-failed"]')).toHaveCount(0);
+    executeLocalSql("DELETE FROM intake_job WHERE id = 'shot-ready'");
+  });
+
   test("a recipe photographed across a spread", async ({ page }) => {
     await page.goto("/intake");
 

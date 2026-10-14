@@ -1197,6 +1197,8 @@ test("another household cannot see an import or its status", async ({ browser, p
   expect(status.status()).toBe(404);
   const retry = await neighbour.request.post("/intake/imports/private-import/retry");
   expect(retry.status()).toBe(404);
+  const remove = await neighbour.request.post("/intake/imports/private-import/delete");
+  expect(remove.status()).toBe(404);
   await page.goto("/intake");
   await expect(page.locator('[data-intake-job="private-import"] .refused'))
     .toBeVisible();
@@ -1252,6 +1254,44 @@ test("a failed import keeps its source and offers an explicit retry", async ({
   await page.getByText("Alkuperäinen teksti").click();
   await expect(page.getByText("Uunikaali\n½ dl öljyä")).toBeVisible();
   await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+});
+
+test("a failed or unreviewed import can be thrown away, a running one cannot", async ({
+  page,
+}) => {
+  executeLocalSql(
+    `INSERT INTO intake_job
+      (id, household_id, created_by, status, lease_id, source_route, source_text,
+       draft_json, error_message, created_at, updated_at)
+     VALUES
+      ('discard-failed', 1, 1, 'failed', NULL, 'pasted', 'Hylätty keitto',
+       NULL, 'Reseptin jäsennys ei onnistunut. Yritä uudelleen.',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+      ('discard-ready', 1, 1, 'ready', NULL, 'pasted', 'Hylätty pata',
+       '${JSON.stringify(DRAFT_FIXTURE).replaceAll("'", "''")}', NULL,
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+      ('discard-running', 1, 1, 'running', 'test-lease', 'pasted', 'Kesken oleva',
+       NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+  );
+
+  await page.goto("/intake");
+  const failed = page.locator('[data-intake-job="discard-failed"]');
+  const ready = page.locator('[data-intake-job="discard-ready"]');
+  const running = page.locator('[data-intake-job="discard-running"]');
+  await expect(running.getByRole("button", { name: "Poista" })).toHaveCount(0);
+
+  await failed.getByRole("button", { name: "Poista" }).click();
+  await expect(page).toHaveURL(/\/intake$/);
+  await expect(failed).toHaveCount(0);
+
+  await ready.getByRole("button", { name: "Poista" }).click();
+  await expect(ready).toHaveCount(0);
+
+  const refused = await page.request.post("/intake/imports/discard-running/delete");
+  expect(refused.status()).toBe(404);
+  await page.goto("/intake");
+  await expect(running).toBeVisible();
+  executeLocalSql("DELETE FROM intake_job WHERE id = 'discard-running'");
 });
 
 test("a failed structuring keeps what was typed", async ({ page }) => {
