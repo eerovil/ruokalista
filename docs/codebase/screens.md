@@ -16,7 +16,11 @@ to an admin. `signed-out` renders no tabs or account button, because there is
 nowhere to navigate yet.
 
 Hierarchy comes from the colour tokens in `:root`, not from opacity: faded text
-is the first thing to become unreadable on a phone in a bright kitchen. Controls
+is the first thing to become unreadable on a phone in a bright kitchen. The
+device's own light or dark setting picks the tokens (#355): light values in
+`:root`, dark ones in a `prefers-color-scheme: dark` block. Not CSS
+`light-dark()` — Safari reads it only from 17.5, and an older iPad drops every
+colour written with it. `dev/check-color-scheme.ts` keeps it out. Controls
 are at least `--tap` tall, `--tap-compact` where a row would otherwise blow up.
 
 ## The to-do list

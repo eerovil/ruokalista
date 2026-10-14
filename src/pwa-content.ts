@@ -1,4 +1,6 @@
 export const THEME_COLOR = "#1f5d3c";
+/** The dark shell's page colour, for the browser bar in dark mode (#355). */
+export const THEME_COLOR_DARK = "#15171c";
 export const BACKGROUND_COLOR = "#ffffff";
 
 export const MANIFEST = JSON.stringify({
@@ -47,15 +49,20 @@ export const OFFLINE_PAGE = `<!doctype html>
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
     padding: calc(1.5rem + env(safe-area-inset-top)) 1.5rem calc(1.5rem + env(safe-area-inset-bottom));
-    color: light-dark(#16181d, #ecedf1); background: light-dark(#ffffff, #15171c);
+    color: #16181d; background: #ffffff;
     font: 1rem/1.55 system-ui, sans-serif; text-align: center; }
   main { max-width: 24rem; }
   img { width: 5rem; height: 5rem; border-radius: 1.25rem; }
   h1 { margin: 1rem 0 .5rem; font-size: 1.5rem; }
-  p { margin: 0 0 1.25rem; color: light-dark(#5c6270, #a3a9b6); }
+  p { margin: 0 0 1.25rem; color: #5c6270; }
   button { min-height: 2.75rem; padding: .5rem 1rem; color: #ffffff;
     background: ${THEME_COLOR}; border: 0; border-radius: .5rem; font: inherit;
     font-weight: 600; cursor: pointer; }
+  /* Not light-dark(): older Safari cannot read it (#355). */
+  @media (prefers-color-scheme: dark) {
+    body { color: #ecedf1; background: #15171c; }
+    p { color: #a3a9b6; }
+  }
 </style>
 </head>
 <body>
