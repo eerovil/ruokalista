@@ -672,7 +672,8 @@ test.describe("signed in", () => {
          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
     await page.goto("/intake");
-    const section = page.locator('section[aria-labelledby="intake-jobs-title"]');
+    await page.getByText(/^Keskeneräiset tuonnit/).click();
+    const section = page.locator("details", { hasText: "Keskeneräiset tuonnit" });
     await expect(section.getByRole("button", { name: "Poista" })).toHaveCount(2);
     await section.scrollIntoViewIfNeeded();
     await capture(page, { path: `${SHOTS}/127-intake-discard.png` });

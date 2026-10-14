@@ -438,7 +438,7 @@ export async function intakeScreen(
         : html`<p class="refused">${refusal.message}</p>`}
       ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
       ${target === null ? quickSaveForm(refusal?.title ?? "", refusal !== undefined) : ""}
-      ${intakeJobs(jobs, confirmed)}
+      ${intakeJobs(jobs, confirmed || url.searchParams.has("imports"))}
       ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",
@@ -604,7 +604,11 @@ export async function deleteIntakeJobForm(
     member.householdId,
   );
   if (!deleted) return intakeNotFound(member);
-  return new Response(null, { status: 303, headers: { Location: "/intake" } });
+  // Back with the imports fold open, so the next stale one is a press away.
+  return new Response(null, {
+    status: 303,
+    headers: { Location: "/intake?imports" },
+  });
 }
 
 /** `GET /intake/imports/:id/review` — reopen the normal review from D1. */

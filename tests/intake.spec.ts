@@ -1290,21 +1290,23 @@ test("a failed or unreviewed import can be thrown away, a running one cannot", a
   );
 
   await page.goto("/intake");
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   const failed = page.locator('[data-intake-job="discard-failed"]');
   const ready = page.locator('[data-intake-job="discard-ready"]');
   const running = page.locator('[data-intake-job="discard-running"]');
   await expect(running.getByRole("button", { name: "Poista" })).toHaveCount(0);
 
   await failed.getByRole("button", { name: "Poista" }).click();
-  await expect(page).toHaveURL(/\/intake$/);
+  await expect(page).toHaveURL(/\/intake\?imports$/);
   await expect(failed).toHaveCount(0);
 
+  // The list comes back open, so the next one needs no second unfolding.
   await ready.getByRole("button", { name: "Poista" }).click();
   await expect(ready).toHaveCount(0);
 
   const refused = await page.request.post("/intake/imports/discard-running/delete");
   expect(refused.status()).toBe(404);
-  await page.goto("/intake");
+  await page.goto("/intake?imports");
   await expect(running).toBeVisible();
   executeLocalSql("DELETE FROM intake_job WHERE id = 'discard-running'");
 });
