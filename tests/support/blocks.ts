@@ -114,3 +114,14 @@ export async function openCookAdd(page: Page): Promise<void> {
   }
   await expect(add).toBeVisible();
 }
+
+/**
+ * The recipe screen's Näytä tuotevalinnat switch, a row of its ⋯ modal since
+ * #354: open ⋯, set it, and close ⋯ again so the rows underneath can be used.
+ */
+export async function setProductPicks(page: Page, on: boolean): Promise<void> {
+  await page.getByRole("link", { name: "Lisää valintoja" }).click();
+  await page.getByLabel("Näytä tuotevalinnat").setChecked(on);
+  await page.locator("#lisavalinnat .edit-done").click();
+  await expect(page.locator("#lisavalinnat .edit-modal-card")).toBeHidden();
+}

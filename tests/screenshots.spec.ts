@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { closeEditBlock, openEditBlock, openCookAdd } from "./support/blocks";
+import { closeEditBlock, openEditBlock, openCookAdd, setProductPicks } from "./support/blocks";
 import {
   DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
@@ -1531,7 +1531,7 @@ test.describe("signed in", () => {
     // Map the milk from the recipe screen itself, which needs the tick.
     await page.setViewportSize({ width: 1024, height: 1200 });
     await page.goto("/recipes/3");
-    await page.getByLabel("Näytä tuotevalinnat").check();
+    await setProductPicks(page, true);
     const milk = page.locator(".recipe-ingredient", { hasText: "maito" });
     const picked = page.waitForResponse(
       (response) =>
@@ -1561,7 +1561,7 @@ test.describe("signed in", () => {
     // The ordinary case, on a fresh read of the dish: the buttons gone, the
     // chosen product still said.
     await page.reload();
-    await page.getByLabel("Näytä tuotevalinnat").uncheck();
+    await setProductPicks(page, false);
     await expect(
       page.getByRole("button", { name: "Vaihda", exact: true }),
     ).toBeHidden();

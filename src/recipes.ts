@@ -615,26 +615,26 @@ function pickerRowAttributes(picker: RecipePicker, subject: ProductSubject): Raw
  * doing a round of product mapping. Off, a mapped row still shows which product
  * it is — the name and the picture stay; only the way to change it goes.
  *
- * It is a plain checkbox in front of the ingredient lists, and what hides the
- * buttons is CSS reading `:checked` on it — so the tick works on a browser with
- * no JavaScript too, the same trick `reveal-all` has always used. The typed
- * recipe-products client adds only the remembering, in `localStorage`, which is
- * why the checkbox has an id. That also keeps it per browser rather than per
- * household, which is what the card asks for: one person mapping products does
- * not change what everybody else's recipe screen looks like.
- *
- * The input is the first child of the recipe view, a sibling of both the
- * summary and the cooking sections, because `~` is how the CSS reaches the rows
- * and the switch drawn for it. Its label is a row in the ⋯ modal (#354): a
- * label works its checkbox from anywhere on the page, which a CSS selector
- * cannot do.
+ * It is a real checkbox drawn as a switch in a row of the ⋯ modal (#354), so
+ * it takes focus and answers Space like any checkbox. What hides the buttons
+ * is CSS reading `:checked` on it — `.recipe-view:has(.product-picks:checked)`,
+ * since the modal is not a sibling of the ingredient lists — so the tick works
+ * on a browser with no JavaScript too. A browser without `:has` drops those
+ * rules and simply always shows the buttons, which fails quietly. The typed
+ * recipe-products client adds only the remembering, in `localStorage`, which
+ * is why the checkbox has an id. That also keeps it per browser rather than
+ * per household, which is what the card asks for: one person mapping products
+ * does not change what everybody else's recipe screen looks like.
  */
-function productPicksToggle(): Raw {
-  return html`<input
-    type="checkbox"
-    id="show-product-picks"
-    class="product-picks"
-  />`;
+function productPicksRow(): Raw {
+  return html`<label class="tail-row picks-row"
+    ><span class="tail-row-text"
+      ><span class="tail-row-title">Näytä tuotevalinnat</span
+      ><span class="tail-row-note">S-ostoslistan tuotteet ainesten kohdalla</span></span
+    ><span class="picks-control"
+      ><input type="checkbox" id="show-product-picks" class="product-picks"
+      /><span class="picks-switch" aria-hidden="true"></span></span
+  ></label>`;
 }
 
 function phaseFilter<T extends { phase: RecipePhase }>(
@@ -854,7 +854,6 @@ function recipeBody(
       : { dish: recipe, state: view.products, anchored: new Set<number>() };
 
   return html`<div class="recipe-view">
-    ${picker === null ? "" : productPicksToggle()}
     <div class="recipe-summary">
       ${recipeImage(recipe)}
       <div class="recipe-intro">
@@ -990,12 +989,7 @@ function recipeTopActions(
               >`
             : ""}
           ${picks
-            ? html`<label class="tail-row picks-row" for="show-product-picks"
-                ><span class="tail-row-text"
-                  ><span class="tail-row-title">Näytä tuotevalinnat</span
-                  ><span class="tail-row-note">S-ostoslistan tuotteet ainesten kohdalla</span></span
-                ><span class="picks-switch" aria-hidden="true"></span
-              ></label>`
+            ? productPicksRow()
             : ""}
           ${castSender(recipe, multiplier, castApplicationId)}
         </div>`
@@ -1426,18 +1420,24 @@ const PUBLISH_STYLE = html`<style>
   /* The Cast launcher's own row, drawn like the rows around it. */
   .top-modal .cast-action { margin: 0; min-height: 3.5rem; padding: .3rem 1rem .3rem .5rem;
     color: var(--fg); font-size: 1rem; font-weight: 600; }
-  /* A switch drawn for the product-picks checkbox, which lives at the top of
-     the view so it can reach both this row and the ingredient rows. */
-  .picks-switch { flex: 0 0 auto; position: relative; width: 2.7rem; height: 1.55rem;
+  /* The product-picks checkbox, drawn as a switch: the input sits over the
+     drawing, the same size, so a tap or a click on it is a tap on the box and
+     the keyboard's focus is shown where the switch is. */
+  .picks-control { flex: 0 0 auto; position: relative; width: 2.7rem; height: 1.55rem; }
+  .picks-control .product-picks {
+    position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
+    margin: 0; opacity: 0; cursor: pointer;
+  }
+  .picks-switch { position: absolute; inset: 0;
     border-radius: 999px; background: var(--edge); }
   .picks-switch::after { content: ""; position: absolute; top: .2rem; left: .2rem;
     width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--muted); }
-  .product-picks:checked ~ .recipe-summary .picks-switch { background: var(--accent); }
-  .product-picks:checked ~ .recipe-summary .picks-switch::after {
+  .product-picks:checked + .picks-switch { background: var(--accent); }
+  .product-picks:checked + .picks-switch::after {
     left: auto; right: .2rem; background: var(--accent-fg);
   }
-  .product-picks:focus-visible ~ .recipe-summary .picks-row {
-    outline: 2px solid var(--accent); outline-offset: -2px;
+  .product-picks:focus-visible + .picks-switch {
+    outline: 2px solid var(--accent); outline-offset: 2px;
   }
 </style>`;
 
@@ -1595,33 +1595,26 @@ const RECIPE_PRODUCT_STYLE = html`<style>
     color: var(--muted);
   }
 
-  /* The tick itself (#305). Since #354 what you tap is a switch row in the ⋯
-     modal; the checkbox stays in the page, off screen but still in the tab
-     order, because it is what the CSS below reads. */
-  .product-picks {
-    position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0;
-  }
-
   /* Off — the ordinary case. The button goes and the busy slot with it, and a
      row with no product goes entirely: an "Ei tuotetta" on every line is the
      same clutter in quieter words. A mapped row keeps its name and its
      picture, so the screen still says what an ingredient is bought as. Nothing
      reserves the picker's fixed column while it is off, which is what gives a
      long ingredient name the width back on a phone. */
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-product-open,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-status,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product.is-note {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-product-open,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-status,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product.is-note {
     display: none;
   }
   /* And with no button in it the block is a line of text, so it stops
      reserving a tap target's worth of height: a row showing its product has to
      be the same height as one that has none, or a dish's ingredient list steps
      up and down as it is read. */
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product,
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product-body {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product,
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product-body {
     min-height: 0;
   }
-  .product-picks:not(:checked) ~ * .recipe-ingredient .s-shopping-product {
+  .recipe-view:not(:has(.product-picks:checked)) .recipe-ingredient .s-shopping-product {
     flex: 0 1 auto; width: auto; max-width: 10rem; min-width: 0;
   }
 </style>`;

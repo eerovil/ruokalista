@@ -363,18 +363,20 @@ is drawn at all.
   its block entirely; `Ei tuotetta` on every line of a dish is the same clutter
   in quieter words. Nothing reserves the picker's fixed 10 rem column while the
   tick is off, which is what gives a long ingredient its width back on a phone.
-- **What hides them is CSS, not the client.** The checkbox and its label are
-  siblings of the ingredient sections and `RECIPE_PRODUCT_STYLE` reads
-  `.product-picks:not(:checked) ~ *` — the same trick `reveal-all` uses. So the
-  tick is a working control on a browser with no JavaScript too, rather than the
-  buttons being hidden by a script that a no-JS reader never runs. Do not wrap
-  the input and the label in anything: `~` is how the rule reaches the rows.
-- **The words are the tap target.** The box a browser draws for a checkbox is a
-  fraction of a thumb, so `.product-picks-label` is a full `--tap` tall — the
-  bargain `.as-new` makes in `html.ts`, and the full height rather than
-  `--tap-compact` because this control has a line to itself rather than sitting
-  in a row. `tests/recipe-products.spec.ts` measures it against the page's own
-  `--tap`, so the two cannot drift apart.
+- **What hides them is CSS, not the client.** `RECIPE_PRODUCT_STYLE` reads
+  `.recipe-view:not(:has(.product-picks:checked))` — so the tick is a working
+  control on a browser with no JavaScript too, rather than the buttons being
+  hidden by a script that a no-JS reader never runs. Since #354 the checkbox
+  lives in a row of the ⋯ modal, which is not a sibling of the ingredient
+  lists, hence `:has` rather than `~`. A browser without `:has` drops those
+  rules and always shows the buttons, which fails quietly (#65).
+- **The switch is the checkbox itself** (`recipes.ts::productPicksRow`): the
+  real input lies over the drawn switch, so it takes focus with Tab inside ⋯,
+  answers Space, and shows its focus ring on the switch. The whole row is its
+  label and at least a `--tap` tall. There is no other copy of the control and
+  no invisible tab stop for it on the page — the 1 px trap "Two openers" below
+  warns about. `tests/recipe-products.spec.ts` measures the row against the
+  page's own `--tap` and walks the keyboard path.
 - **Only the remembering needs a browser.** `src/client/recipe-products.ts`
   stores `ruokalista.tuotevalinnat` in `localStorage`, so somebody doing a round
   of product mapping ticks it once rather than once per dish. Per browser and
@@ -689,9 +691,8 @@ fragment is what closes one as the other opens. Valmis in a settings modal goes
 back to ⋯. Tests open the two settings through ⋯ with `openEditBlock`, which
 knows this shape.
 
-The product-picks checkbox stays the first child of `.recipe-view`, so its `~`
-rules reach both the switch drawn in the ⋯ modal and the ingredient rows; its
-label is the switch's row, which works it from anywhere on the page.
+The product-picks switch is a real checkbox in its ⋯ row, and the ingredient
+rows read it through `.recipe-view:has(…)`; see the product picks section above.
 
 A dish in parts lists every ingredient first — the dish's own, then each part's
 `.part` under its name — and then the whole method in the same order, each
