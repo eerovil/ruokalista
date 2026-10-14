@@ -26,13 +26,12 @@ test.describe("signed in", () => {
     await page.goto("/");
 
     const tabs = page.locator("nav.tabs a");
-    await expect(tabs).toHaveCount(5);
+    await expect(tabs).toHaveCount(4);
 
     for (const [label, heading] of [
       ["Ostokset", "Ostoslista"],
       ["Reseptit", "Reseptit"],
       ["Lisää", "Lisää resepti"],
-      ["Ainekset", "Ainekset"],
       ["Kokattavat", "Kokattavat"],
     ] as const) {
       await page.locator("nav.tabs").getByRole("link", { name: label }).click();
@@ -40,6 +39,25 @@ test.describe("signed in", () => {
         page.getByRole("heading", { level: 1, name: heading, exact: true }),
       ).toBeVisible();
     }
+  });
+
+  // Ainekset is visited rarely, so it sits in the account menu with Ylläpito
+  // rather than taking a bottom tab (#357).
+  test("the ingredient list is in the account menu", async ({ page }) => {
+    await page.goto("/");
+    await expect(
+      page.locator("nav.tabs").getByRole("link", { name: "Ainekset" }),
+    ).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Tili" }).click();
+    await page.getByRole("link", { name: "Ainekset" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Ainekset", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".account-menu a[aria-current=page]")).toHaveText(
+      "Ainekset",
+    );
+    await expect(page.locator("nav.tabs a[aria-current=page]")).toHaveCount(0);
   });
 
   test("the current destination is marked", async ({ page }) => {
@@ -108,8 +126,11 @@ test.describe("signed in", () => {
 
     for (const path of screens) {
       await page.goto(path);
-      await expect(page.locator("nav.tabs a")).toHaveCount(5);
-      await expect(page.locator("nav.tabs a[aria-current=page]")).toHaveCount(1);
+      await expect(page.locator("nav.tabs a")).toHaveCount(4);
+      // Exactly one destination is marked, in the tabs or the account menu.
+      await expect(
+        page.locator("nav.tabs a[aria-current=page], .account-menu a[aria-current=page]"),
+      ).toHaveCount(1);
       await expect(page.getByRole("button", { name: "Tili" })).toBeVisible();
       await expect(page.locator("body.has-tabs")).toHaveCount(1);
     }

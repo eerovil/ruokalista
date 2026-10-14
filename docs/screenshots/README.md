@@ -132,3 +132,5 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `130-recipe-top.png` | The top of a dish in parts on a dark-mode phone (#354): the 2:1 picture, the title, one grey line, **＋ Lisää kokattaviin** and **⋯**, then every ingredient before the method |
 | `131-recipe-more.png` | The same recipe with **⋯** open (#354): **Lisää eri koolla**, **Meidän taloudessa** (Oletuskerroin, Jakaminen) and **Resepti** (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen resepti) |
 | `132-recipe-add-size.png` | **Lisää eri koolla** open (#354): four size buttons that add at once, then **Muu kerroin** and **Lisää** |
+| `140-dark-recipes.png` | The recipe list on a phone set to dark mode (#355): the app takes the device's own setting, older iPads included |
+| `141-dark-recipe.png` | One recipe on a phone set to dark mode (#355): the picture placeholder, the size chips with the chosen one lit, and the ingredients |

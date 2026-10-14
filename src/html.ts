@@ -7,7 +7,7 @@
  * escaping, so it is also the only thing to look at when reviewing for XSS.
  */
 
-import { PWA_CLIENT_SCRIPT, THEME_COLOR } from "./pwa-content.ts";
+import { PWA_CLIENT_SCRIPT, THEME_COLOR, THEME_COLOR_DARK } from "./pwa-content.ts";
 import { formatMultiplier, MULTIPLIER_CHOICES } from "./scaling.ts";
 
 /**
@@ -66,16 +66,27 @@ export function escape(text: string): string {
  * thing to become unreadable — and every control is at least a thumb tall.
  */
 const STYLES = `
+  /* The device decides light or dark (#355). The light colours stand alone in
+     :root and the dark ones override them under prefers-color-scheme, rather
+     than one light-dark() per token: Safari only understands light-dark() from
+     17.5, and an older iPad that cannot read it drops every token at once, so
+     its buttons lose their fill and its borders vanish. The media query works
+     back to Safari 12.1. */
   :root {
     color-scheme: light dark;
-    --bg: light-dark(#ffffff, #15171c);
-    --fg: light-dark(#16181d, #ecedf1);
-    --muted: light-dark(#5c6270, #a3a9b6);
-    --edge: light-dark(#e1e4ea, #2d313a);
-    --surface: light-dark(#f5f6f8, #1d2027);
-    --accent: light-dark(#1f5d3c, #7fd6a4);
-    --accent-fg: light-dark(#ffffff, #10251a);
-    --warn: light-dark(#8a3312, #f0a98a);
+    --bg: #ffffff;
+    --fg: #16181d;
+    --muted: #5c6270;
+    --edge: #e1e4ea;
+    --surface: #f5f6f8;
+    --accent: #1f5d3c;
+    --accent-fg: #ffffff;
+    --warn: #8a3312;
+    /* Shadows under a floating menu, a toast and a bottom sheet: darker in the
+       dark, or they disappear against the page. */
+    --shadow-soft: rgba(0,0,0,.12);
+    --shadow: rgba(0,0,0,.18);
+    --shadow-strong: rgba(0,0,0,.22);
 
     --tap: 2.75rem;
     --tap-compact: 2.25rem;
@@ -86,6 +97,21 @@ const STYLES = `
        and a full-height button. Written out so the space kept in the flow and
        the space taken over it are the same number. */
     --save-bar-height: calc(1.2rem + 1.4rem + .5rem + var(--tap));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171c;
+      --fg: #ecedf1;
+      --muted: #a3a9b6;
+      --edge: #2d313a;
+      --surface: #1d2027;
+      --accent: #7fd6a4;
+      --accent-fg: #10251a;
+      --warn: #f0a98a;
+      --shadow-soft: rgba(0,0,0,.5);
+      --shadow: rgba(0,0,0,.5);
+      --shadow-strong: rgba(0,0,0,.6);
+    }
   }
   * { box-sizing: border-box; }
   /* The hidden attribute is how the islands hide things, and the browser
@@ -157,7 +183,7 @@ const STYLES = `
     min-width: 12rem; padding: .5rem;
     background: var(--bg); border: 1px solid var(--edge);
     border-radius: var(--radius);
-    box-shadow: 0 .5rem 1.5rem light-dark(rgba(0,0,0,.12), rgba(0,0,0,.5));
+    box-shadow: 0 .5rem 1.5rem var(--shadow-soft);
   }
   .account-menu form { margin: 0; }
   .account-menu button { width: 100%; }
@@ -1064,7 +1090,7 @@ const STYLES = `
     color: var(--warn); font-size: .85rem;
     background: var(--bg); border: 1px solid var(--warn);
     border-radius: var(--radius);
-    box-shadow: 0 .4rem 1.2rem light-dark(rgba(0,0,0,.18), rgba(0,0,0,.5));
+    box-shadow: 0 .4rem 1.2rem var(--shadow);
   }
   .s-toast-text { flex: 1 1 12rem; min-width: 0; overflow-wrap: break-word; }
   .s-toast button { min-height: var(--tap-compact); }
@@ -1087,7 +1113,7 @@ const STYLES = `
     background: var(--bg);
     border-top: 1px solid var(--edge);
     border-radius: var(--radius) var(--radius) 0 0;
-    box-shadow: 0 -.4rem 1.4rem light-dark(rgba(0,0,0,.22), rgba(0,0,0,.6));
+    box-shadow: 0 -.4rem 1.4rem var(--shadow-strong);
   }
   /* On a wider screen it is a centred dialog rather than a full-width sheet;
      the flow is the same one, and nothing about it is phone-only. */
@@ -1615,8 +1641,10 @@ export function saveBar(
 }
 
 /**
- * Which bottom-tab destination a screen belongs to. `signed-out` is the shell
- * for a browser with nowhere to navigate yet — no tabs, no sign-out.
+ * Which destination a screen belongs to. Most are bottom tabs; `ingredients`
+ * lives in the account menu instead (#357), since a household visits it rarely.
+ * `signed-out` is the shell for a browser with nowhere to navigate yet — no
+ * tabs, no sign-out.
  */
 export type Shell =
   | "cook-list"
@@ -1640,8 +1668,7 @@ const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
     shell: "shopping",
     href: "/ostoslista",
     label: "Ostokset",
-    // A trolley, not a basket: the Ainekset tab is already a jar-shaped
-    // container, and two containers side by side read as the same tab twice.
+    // A trolley: it says "the shop" more plainly than a basket or a bag.
     icon: `<circle cx="9.5" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.5 10.2a1.5 1.5 0 0 0 1.5 1.1h7.6a1.5 1.5 0 0 0 1.5-1.2L20 8H6"/>`,
   },
   {
@@ -1655,12 +1682,6 @@ const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
     href: "/intake",
     label: "Lisää",
     icon: `<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>`,
-  },
-  {
-    shell: "ingredients",
-    href: "/ingredients",
-    label: "Ainekset",
-    icon: `<path d="M5 9h14l-1.2 10.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z"/><path d="M9 9a3 3 0 0 1 6 0"/>`,
   },
 ];
 
@@ -1697,16 +1718,20 @@ export interface Viewer {
 
 /**
  * The account affordance: small, out of the way, and the way out of the app —
- * and, for an admin, the one way in to the admin panel. It lives here rather
+ * and the way in to the rarely visited screens: the ingredient list for every
+ * member (#357) and, for an admin, the admin panel. It lives here rather
  * than on the home screen so that every screen offers it, which is what #106
  * asked for and what #94 deliberately deferred.
  */
-function accountMenu(viewer: Viewer | null): Raw {
+function accountMenu(viewer: Viewer | null, current: Shell): Raw {
   return html`<details class="account">
   <summary role="button" aria-label="Tili">
     ${icon(`<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>`)}
   </summary>
   <div class="account-menu">
+    <a href="/ingredients"${current === "ingredients"
+      ? raw(' aria-current="page"')
+      : ""}>Ainekset</a>
     ${viewer?.isAdmin ? html`<a href="/admin">Ylläpito</a>` : ""}
     <form method="post" action="/auth/signout">
       <button type="submit" class="quiet">Kirjaudu ulos</button>
@@ -1740,6 +1765,9 @@ function pageHead(title: string, shell: Shell, viewer: Viewer | null): Raw {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The browser bar takes the page's own dark colour in dark mode (#355); the
+     first theme-color whose media matches wins. -->
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="${THEME_COLOR_DARK}">
 <meta name="theme-color" content="${THEME_COLOR}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1755,7 +1783,7 @@ function pageHead(title: string, shell: Shell, viewer: Viewer | null): Raw {
 ${signedIn
     ? html`<header class="topbar">
   <a class="wordmark" href="/">Ruokalista</a>
-  ${accountMenu(viewer)}
+  ${accountMenu(viewer, shell)}
 </header>`
     : ""}
 <main>`;
