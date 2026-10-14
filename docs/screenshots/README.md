@@ -133,4 +133,4 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `131-recipe-more.png` | The same recipe with **⋯** open (#354): product picks, **Meidän taloudessa** (Oletuskerroin, Jakaminen) and **Resepti** (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen resepti) |
 | `132-recipe-add-size.png` | The **Koko** modal (#364), opened from the size beside **＋ Lisää kokattaviin**: five sizes that rescale the page at once, and **Muu kerroin** |
 | `140-dark-recipes.png` | The recipe list on a phone set to dark mode (#355): the app takes the device's own setting, older iPads included |
-| `141-dark-recipe.png` | One recipe on a phone set to dark mode (#355): the picture placeholder, **＋ Lisää kokattaviin** and **⋯** (#354), and the ingredients |
+| `141-dark-recipe.png` | One recipe on a phone set to dark mode (#355): the picture placeholder, the size, **＋ Lisää kokattaviin** and **⋯** (#354, #364), and the ingredients |
