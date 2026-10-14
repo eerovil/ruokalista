@@ -2789,6 +2789,44 @@ test("removing Ruokalista's rows leaves the household's own", async ({
   ).toBeHidden();
 });
 
+/**
+ * A text row taken off by hand stops being Ruokalista's, words and all (#358
+ * review): the phone typing the same text back afterwards is the household's
+ * own row, and the bulk clear must leave it.
+ */
+test("a text row removed by hand and typed back on the phone is not cleared", async ({
+  page,
+  request,
+}) => {
+  await createBatch(page, LASAGNE, 1);
+  await page.goto("/ostoslista");
+  await sendList(page);
+  await expect(page.locator(".shopping-sent")).toBeVisible();
+  expect(await listNames(request)).toContain("maito — 5 dl");
+  const sent = (await listNames(request)).length;
+
+  await currentListLoaded(page);
+  await page
+    .getByRole("button", { name: "Poista S-ostoslistalta: maito — 5 dl" })
+    .click();
+  await expect.poll(() => listNames(request)).not.toContain("maito — 5 dl");
+
+  // The household types the very same words on the phone.
+  await request.post(
+    `${S_OSTOSLISTA_FIXTURE}/_test/collected?note=${encodeURIComponent("maito — 5 dl")}`,
+  );
+
+  await page.goto("/ostoslista");
+  const remove = page.getByRole("button", {
+    name: `Poista Ruokalistan lisäämät (${sent - 1})`,
+  });
+  await remove.click();
+  await expect(page.locator(".s-remove-ours-state")).toContainText(
+    `Poistettiin ${sent - 1} riviä S-ostoslistalta.`,
+  );
+  expect(await listNames(request)).toEqual(["maito — 5 dl"]);
+});
+
 test("a send that fails partway still replaces the note on the retry (#244)", async ({
   page,
   request,

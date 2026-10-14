@@ -33,6 +33,7 @@ import {
 } from "./product-picker.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
+import { forgetSentNoteWordsStatement } from "./s-ostoslista-notes.ts";
 import {
   appRows,
   forgetSentItemStatement,
@@ -655,16 +656,21 @@ export async function removeCurrentItemForm(
       return problem(502, "Rivin poisto S-ostoslistalta ei onnistunut. Yritä uudelleen.");
     }
   }
-  // A row this app had created is not this app's to count any more (#358).
-  if (deleted.length > 0) {
-    const db = meteredDatabase(budget, ctx.env.DB);
+  // A row taken off by hand is not this app's to count any more (#358): not
+  // by its id, and — for a text row — not by its words either, or a row the
+  // household later types on the phone with the same text would be taken for
+  // this app's by the next "remove Ruokalista's rows". A 404 is the row
+  // already gone, which is the same answer.
+  const db = meteredDatabase(budget, ctx.env.DB);
+  const forget = [
+    ...deleted.map((id) => forgetSentItemStatement(db, member.householdId, id)),
+    ...("note" in key ? [forgetSentNoteWordsStatement(db, member.householdId, key.note)] : []),
+  ];
+  if (forget.length > 0) {
     try {
-      await db.batch(
-        deleted.map((id) => forgetSentItemStatement(db, member.householdId, id)),
-      );
+      await db.batch(forget);
     } catch (error) {
-      // Harmless: the next "remove Ruokalista's rows" forgets ids that are gone.
-      console.error(`S-ostoslista sent-item bookkeeping failed: ${reason(error)}`);
+      console.error(`S-ostoslista sent-row bookkeeping failed: ${reason(error)}`);
     }
   }
 
