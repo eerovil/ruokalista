@@ -71,10 +71,13 @@ test("Chromium sees Ruokalista's origin-bound install identity", async ({
     "href",
     "/apple-touch-icon.png",
   );
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+  await expect(page.locator('meta[name="theme-color"]:not([media])')).toHaveAttribute(
     "content",
     "#1f5d3c",
   );
+  await expect(
+    page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]'),
+  ).toHaveAttribute("content", "#15171c");
   expect(await page.locator("style").textContent()).toContain(
     "env(safe-area-inset-top)",
   );

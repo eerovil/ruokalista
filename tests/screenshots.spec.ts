@@ -257,6 +257,38 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/04-recipes.png`, fullPage: true });
   });
 
+  /**
+   * Issue #355: the device's own light or dark setting picks the colours. Read
+   * off the page rather than only photographed, because the old way of writing
+   * them (light-dark()) silently lost every colour on an older iPad.
+   */
+  test("the app follows the device's light or dark setting (#355)", async ({ page }) => {
+    const colours = () =>
+      page.evaluate(() => {
+        const body = getComputedStyle(document.body);
+        return { background: body.backgroundColor, text: body.color };
+      });
+    await page.setViewportSize({ width: 412, height: 900 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/recipes");
+    expect(await colours()).toEqual({
+      background: "rgb(255, 255, 255)",
+      text: "rgb(22, 24, 29)",
+    });
+    await page.emulateMedia({ colorScheme: "dark" });
+    expect(await colours()).toEqual({
+      background: "rgb(21, 23, 28)",
+      text: "rgb(236, 237, 241)",
+    });
+    await expect(page.locator('meta[name="theme-color"]').first()).toHaveAttribute(
+      "content",
+      "#15171c",
+    );
+    await capture(page, { path: `${SHOTS}/140-dark-recipes.png` });
+    await page.goto("/recipes/1");
+    await capture(page, { path: `${SHOTS}/141-dark-recipe.png` });
+  });
+
   test("one recipe", async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/recipes/1");
