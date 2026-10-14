@@ -136,8 +136,49 @@ export const MAX_PAGES_BASE64_BYTES = 8 * 1024 * 1024;
  */
 export type IntakeSource =
   | { route: "pasted"; text: string }
-  | { route: "photographed"; images: IntakeImage[] }
-  | { route: "linked"; url: string; text: string; guidance?: string };
+  | {
+      route: "photographed";
+      images: IntakeImage[];
+      /** Typed text and read pages given with the photographs (#350). */
+      text?: string;
+      /** Whether `text` holds text read off a web page. */
+      fromPages?: boolean;
+    }
+  | {
+      route: "linked";
+      url: string;
+      text: string;
+      guidance?: string;
+      /** The text is more than one page, or a page and typed text (#350). */
+      mixed?: boolean;
+    };
+
+/** One web page as the consumer read it, in the order its link was given. */
+export interface ReadPage {
+  url: string;
+  text: string;
+}
+
+/**
+ * Everything given as text for one import, as one block (#350).
+ *
+ * A single piece is passed through exactly as it arrived, so an import of only
+ * a paste or only a link is the same prompt it was before the box took all
+ * three. Once there is more than one piece — photographs count as one — each
+ * is headed, so the model can tell the member's own words from a page.
+ */
+export function givenMaterial(
+  typed: string | null,
+  pages: ReadPage[],
+  withPhotos: boolean,
+): string {
+  const pieces = (typed === null ? 0 : 1) + pages.length + (withPhotos ? 1 : 0);
+  if (pieces <= 1) return typed ?? pages[0]?.text ?? "";
+  const blocks: string[] = [];
+  if (typed !== null) blocks.push(`Käyttäjän kirjoittama teksti:\n${typed}`);
+  for (const page of pages) blocks.push(`Sivu osoitteesta ${page.url}:\n${page.text}`);
+  return blocks.join("\n\n");
+}
 
 /** The model asked for. Exposed so a streamed draft can be stamped with it. */
 export const STRUCTURED_BY = MODEL;
@@ -463,6 +504,28 @@ Nettisivulta luetun tekstin lisäsäännöt:
 `;
 
 /**
+ * Extra standing rules once one import is given more than one source (#350).
+ *
+ * The member's own words may be part of the recipe or a wish about it, and
+ * nothing on the screen asks which: the add screen has one box. So the rules
+ * say what to do with either, and that every source is the same dish.
+ */
+const COMBINED_RULES = `
+Useasta lähteestä koostuvan aineiston lisäsäännöt:
+
+- Kaikki annettu aineisto (käyttäjän kirjoittama teksti, nettisivut ja kuvat)
+  koskee samaa ruokaa. Niistä syntyy täsmälleen yksi resepti.
+- Käyttäjän kirjoittama teksti voi olla osa reseptiä tai toive siitä (esim.
+  "puolet sokeria" tai "ilman pähkinöitä"). Toive toteutetaan reseptissä, ja
+  jokaiseen sen vuoksi muutettuun ainesriviin kirjoitetaan note.
+- Jos lähteet kertovat samasta asiasta eri tavalla, käyttäjän teksti ratkaisee.
+  Muuten yhdistä lähteet: esimerkiksi taikina yhdeltä sivulta ja täyte toiselta.
+- Jos jokin nettisivu on aivan eri ruoasta kuin muu aineisto, jätä se huomiotta.
+- source_text on annettu teksti sellaisenaan; kuvien transkriptio liitetään
+  sen perään erikseen.
+`;
+
+/**
  * The household's ingredient dictionary, as the model is shown it. Exported
  * because a prompt edit (#208) has to hand the model the same list under the
  * same heading — a second wording for the same fact is a second thing to drift.
@@ -555,11 +618,17 @@ export const DRAFT_RULES = `Säännöt, joista ei poiketa:
 
 /** The standing rules, from docs/spec.md's intake flow. */
 function sourceRules(source: IntakeSource): string {
-  return source.route === "photographed"
-    ? PHOTOGRAPHED_RULES + (source.images.length > 1 ? MULTIPAGE_RULES : "")
-    : source.route === "linked"
-      ? LINKED_RULES
-      : "";
+  if (source.route === "photographed") {
+    const given = source.text?.trim() ?? "";
+    return PHOTOGRAPHED_RULES +
+      (source.images.length > 1 ? MULTIPAGE_RULES : "") +
+      (given !== "" && source.fromPages ? LINKED_RULES : "") +
+      (given !== "" ? COMBINED_RULES : "");
+  }
+  if (source.route === "linked") {
+    return LINKED_RULES + (source.mixed ? COMBINED_RULES : "");
+  }
+  return "";
 }
 
 function systemPrompt(
@@ -610,6 +679,9 @@ function userContent(source: IntakeSource) {
       }
   > = [];
 
+  const given = source.text?.trim() ?? "";
+  if (given !== "") content.push({ type: "text", text: given });
+
   pages.forEach((image, index) => {
     if (pages.length > 1) {
       content.push({
@@ -630,9 +702,10 @@ function userContent(source: IntakeSource) {
   content.push({
     type: "text",
     text:
-      pages.length > 1
+      (pages.length > 1
         ? `Jäsennä näiden ${pages.length} sivun resepti. Sivut ovat saman reseptin osia annetussa järjestyksessä.`
-        : "Jäsennä tämän sivun resepti.",
+        : "Jäsennä tämän sivun resepti.") +
+      (given === "" ? "" : " Käytä mukana myös yllä annettua tekstiä."),
   });
 
   return content;
@@ -645,7 +718,10 @@ function userContent(source: IntakeSource) {
  */
 function keptSourceText(source: IntakeSource, transcribed: unknown): string {
   if (source.route === "pasted" || source.route === "linked") return source.text;
-  return typeof transcribed === "string" ? transcribed : "";
+  const transcription = typeof transcribed === "string" ? transcribed : "";
+  const given = source.text?.trim() ?? "";
+  if (given === "") return transcription;
+  return transcription === "" ? given : `${given}\n\n${transcription}`;
 }
 
 /**

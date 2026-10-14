@@ -19,7 +19,12 @@ test("intake is an ES5 bundle with no runtime Worker imports", async () => {
     write: false, metafile: true, tsconfig: "tsconfig.client.json",
   });
   assert.equal(result.outputFiles[0]!.text, intakeClient);
-  assert.deepEqual(Object.keys(result.metafile.inputs), ["src/client/intake.ts"]);
+  // The one shared module is how the box is read (#350): plain string code the
+  // server runs too, so the screen and the import agree on what is a link.
+  assert.deepEqual(Object.keys(result.metafile.inputs), [
+    "src/intake-box.ts",
+    "src/client/intake.ts",
+  ]);
   assert.doesNotMatch(intakeClient, /<\/script/i);
 });
 

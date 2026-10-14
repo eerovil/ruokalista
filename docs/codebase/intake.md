@@ -259,10 +259,11 @@ screens, with the stub standing in for what the consumer would have written.
 ### Guidance and visible flavor variants (#219)
 
 Issue #219 proposes two linked refinements to the web-address route. The URL
-field reveals an optional **Lisäohje tuontiin** field once an address is entered.
-The guidance is stored on the queued `intake_job`, not on the recipe, and reaches
-the existing structuring request as a separate user instruction. An empty field
-keeps the old request shape; a filled field does not add a second model call.
+field revealed an optional **Lisäohje tuontiin** field once an address was
+entered. #350 took that field off the screen: a note beside a link is now just
+more text in the one box (below). The server still reads `guidance` from an
+installed app on the old screen, stores it on the queued `intake_job`, and hands
+it to the structuring request as a separate user instruction.
 
 Complete JSON-LD is still the preferred source, but it may flatten a visibly
 structured ingredient list. `readRecipeFromPage` therefore proposes preserving
@@ -486,9 +487,10 @@ and only the first is read. Only the import review offers the tick; the
 editor's compact row is about changing one thing on a recipe that is already
 right, not about checking an import.
 
-Intake requires JavaScript. The form has no server action and its submit button
-is disabled until the island in `src/intake-screens.ts` finds the browser
-features it needs. The island posts the prepared source to
+The import requires JavaScript. On the add screen the form's own action is the
+name-only save (below), so without the island the button can only save a name;
+on the edit screen the button is disabled until the island in
+`src/intake-screens.ts` finds the browser features it needs. The island posts the prepared source to
 `/api/intake/imports`; that route writes an `intake_job`, sends its id to
 `INTAKE_QUEUE`, and returns before the model call begins. The import screen
 lists queued/running, ready and failed jobs for the signed-in household. A
@@ -496,9 +498,64 @@ ready row opens the same server-rendered review used by the development sample,
 and saving removes the job. The camera route still needs the island because
 downscaling a photograph is a canvas job.
 
+## One box: a name, a link or a recipe (issue #350)
+
+*Lisää resepti* used to stack four ways in — a text box, a separate address
+field, a camera input and a library input — and a folded *Muistatko vain
+nimen?* form below them. Only one source was used per import: photographs won
+over an address and an address over text. #350 replaced that with one box and
+two photo tiles, and every source given is now material for **one** recipe.
+
+- **The box** (`intakeForm`) takes a name, a link, or a whole recipe, with
+  links anywhere in it. It starts one line tall and grows with what it holds.
+  `src/intake-box.ts` decides what it holds — `boxKind`, `linksIn`,
+  `withoutLinks` — and both the island and `createIntakeJob` use it, so a box
+  the screen calls "a link" is one the import fetches. It is bundled into the
+  ES5 client, which is why it is written in `var`s (esbuild will not lower
+  `const` to ES5) and `dev/check-intake-bundle.ts` allows it as the one import.
+- **The button says what it will do**: *Tallenna nimellä* for one short line
+  and nothing else, *Hae resepti sivulta* for a lone link, *Lue resepti
+  kuvista* for photographs alone, *Muodosta resepti* for anything combined. A
+  line under the box says what will be sent (*Mukana: 1 kuva, 2 linkkiä ja
+  oma teksti.*).
+- **A name is a short single line with no link and no photographs.** The
+  island lets that submit go to the form's own action, `/intake/keskeneras`,
+  which is also what makes it work without JavaScript. A longer text reaching
+  that route is refused with the box kept.
+- **Everything goes in one request**: `sourceText` as typed and `images`.
+  `createIntakeJob` finds up to `MAX_LINKS` (3) links in the text; a written
+  token that does not normalise as an address stays words rather than refusing
+  the import. Only a K-Ruoka link with nothing else given is refused up front.
+- **The consumer reads every link** (`readLinks`) and writes `link_reads`. One
+  failed link does not fail the import; `unreadLinks` names it on the review.
+  A retry does not read a page already read, but does read again a link that
+  failed in a way that may pass (`readAgain`: anything but K-Ruoka and a
+  non-address). `source_url` keeps the link as given, so the list of links is
+  the same on every retry; the recipe's source is the first page read.
+- **Only links actually read are taken out of the text** (`withoutLinks` with
+  `takenBy`): a fourth link, or one that is no public address, stays as words.
+  A box of nothing but such non-addresses is refused with the address refusal.
+  If nothing was readable and what the member typed (links removed) is not
+  more than one line, the job fails with the first link's own refusal, as a
+  lone link always did.
+- **What the model is given** (`composedSource`, `givenMaterial`): a single
+  piece is passed through exactly as before, so a plain paste or a plain link
+  is the same prompt. More than one piece is headed (*Käyttäjän kirjoittama
+  teksti:*, *Sivu osoitteesta …:*) and gets `COMBINED_RULES`: one dish, the
+  member's words may be a wish to carry out with a note on each changed line,
+  and they win a conflict. With photographs the text goes first and the kept
+  `source_text` is that text followed by the transcription.
+- The edit screen (`/intake?recipe=`) has the same box and tiles but no name
+  save; a short line there is a change request.
+
+`dev/check-intake-box.ts` covers the box rules and the prompt shape, and
+`dev/check-intake-jobs.ts` the combined job, all without a model call.
+
 ## Two ways off this screen (issue #211)
 
-Proposed here. *Lisää resepti* used to offer one thing, behind a button that
+#350 folded the quick save below into the one box above; the route and what it
+saves are unchanged, but there is no separate form or *Tallenna
+keskeneräisenä* button any more. *Lisää resepti* used to offer one thing, behind a button that
 said **Jäsennä** — a word this codebase uses among itself and one no household
 reads anywhere else. This pull request renames it to **Muodosta resepti**
 (`STRUCTURE_LABEL` in `src/intake-screens.ts`) and puts a sentence under it
