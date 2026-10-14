@@ -52,6 +52,13 @@ const S_OSTOSLISTA_FIXTURE = `http://127.0.0.1:${
 }`;
 const writeScreenshots = process.env["PLAYWRIGHT_SCREENSHOTS"] === "1";
 
+/**
+ * Some flows here only photograph what a behaviour spec already asserts. Those
+ * run when pictures are being written and are skipped otherwise, so the gate
+ * does not pay for the same check twice (#347). Each one names its spec.
+ */
+const ONLY_A_PICTURE = "covered by a behaviour spec; runs with PLAYWRIGHT_SCREENSHOTS=1";
+
 async function capture(
   page: Page,
   options: Parameters<Page["screenshot"]>[0],
@@ -313,6 +320,9 @@ test.describe("signed in", () => {
   test("amounts the model wrote unsavably are repaired for review", async ({
     page,
   }) => {
+    // Only a picture here: the behaviour is asserted in
+    // intake.spec.ts "a model's unsavable amounts are repaired before the review (#233)".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await stubStructuring(page, UNSAVABLE_AMOUNT_DRAFT);
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Pippurikaali");
@@ -345,6 +355,9 @@ test.describe("signed in", () => {
   });
 
   test("a duplicated ingredient reveals all its amounts", async ({ page }) => {
+    // Only a picture here: the behaviour is asserted in
+    // ingredient-mentions.spec.ts "duplicate ingredient lines reveal all useful amounts before and after an edit".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
     await page.goto("/intake");
     await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
@@ -519,6 +532,9 @@ test.describe("signed in", () => {
   });
 
   test("unfinished imports can be thrown away", async ({ page }) => {
+    // Only a picture here: the behaviour is asserted in
+    // intake.spec.ts "a failed or unreviewed import can be thrown away, a running one cannot".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     executeLocalSql(
       `INSERT INTO intake_job
         (id, household_id, created_by, status, source_route, source_url,
@@ -763,6 +779,9 @@ test.describe("signed in", () => {
   });
 
   test("a picture found on the linked page", async ({ page }) => {
+    // Only a picture here: the behaviour is asserted in
+    // intake.spec.ts "a picture found on the page is shown, and saved with the recipe".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     // The consumer would have fetched this off the page and stored it under the
     // job; the stub puts the same bytes in the same place, so the review screen
     // and the save below are the real ones (#205).
@@ -1030,6 +1049,9 @@ test.describe("signed in", () => {
   test("an empty recipe on the list, and the switch that finds them (#340)", async ({
     page,
   }) => {
+    // Only a picture here: the behaviour is asserted in
+    // empty-recipes.spec.ts, the list badge and switch, and the refused publish.
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     // Made and removed here: every other shot shares this database.
     executeLocalSql(`
       INSERT INTO recipe
@@ -1968,6 +1990,9 @@ test.describe("removing an established member", () => {
   test("the household loses them, the recipes keep their name", async ({
     page,
   }) => {
+    // Only a picture here: the behaviour is asserted in
+    // household-admin.spec.ts "an established member is removed, keeps their history, and can be invited elsewhere".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await page.goto("/admin/households/1");
     const row = page.locator("details.rename").filter({ hasText: "Eero" });
     await row.locator("summary").click();
@@ -2156,6 +2181,9 @@ test.describe("ingredient alternatives", () => {
     page,
     context,
   }) => {
+    // Only a picture here: the behaviour is asserted in
+    // alternatives.spec.ts, the one `tai` line and its first option on the shopping list.
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await context.addCookies([sessionCookie(1)]);
 
     // The choice is built the way a member builds one: two ordinary rows given
@@ -2210,6 +2238,9 @@ test.describe("ingredient alternatives", () => {
   });
 
   test("an imported choice, doubled (#183 review)", async ({ page, context }) => {
+    // Only a picture here: the behaviour is asserted in
+    // alternatives.spec.ts "a scaled imported alternative states its source sentence once".
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await context.addCookies([sessionCookie(1)]);
 
     // Import gives every option of a group the same source sentence, so this
@@ -2802,6 +2833,9 @@ test.describe("editing a part from the dish's editor (#231)", () => {
   test("the dish's parts, one of them open, and the dish after it is saved", async ({
     page,
   }) => {
+    // Only a picture here: the behaviour is asserted in
+    // parts.spec.ts, the dish's editor linking into a part and editing one part (#231).
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await page.goto("/recipes/3/edit");
     await expect(page.locator(".recipe-parts li")).toHaveCount(2);
     await expect(page.locator(".recipe-parts")).toContainText("Juustokastike");

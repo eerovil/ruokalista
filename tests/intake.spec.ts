@@ -493,7 +493,11 @@ test("a page with no recipe on it fails the import in Finnish, with a retry", as
   // The list opens by itself after the member's own import (#341), so the
   // failure is in front of them without a tap.
   await expect(page).toHaveURL(/\/intake\?started=/);
-  const job = page.locator("[data-intake-job]").first();
+  // Found by its site, not its place: this file reseeds once, and an earlier
+  // import updated in the same second can sort either side of it.
+  const job = page
+    .locator("[data-intake-job]")
+    .filter({ hasText: "kotikokki.example" });
   await expect(job.locator(".refused")).toHaveText(
     "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
   );

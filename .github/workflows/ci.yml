@@ -77,22 +77,52 @@ jobs:
       - name: Restore round-trip
         if: steps.roundtrip.outputs.needed == 'true'
         run: npm run check:restore-roundtrip
-      # Every behavioural spec, on every pull request — this is the gate.
-      # tests/screenshots.spec.ts still runs its flows and assertions; only its
-      # review-artifact writes are opt-in.
+
+  # Every behavioural spec, on every pull request — this is the gate.
+  # tests/screenshots.spec.ts still runs its flows and assertions; only its
+  # review-artifact writes are opt-in.
+  #
+  # The suite is most of CI's time, and every test in one run shares one local
+  # D1, so one run cannot use more than one worker. Each shard is its own job
+  # with its own container and database, which keeps that rule inside a job
+  # while the shards run side by side. The config is not fullyParallel, so
+  # Playwright splits by spec file and each spec still reseeds once.
+  browser:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    strategy:
+      # Let every shard finish, so one failure does not hide another's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: Local development values
+        run: |
+          {
+            printf 'SESSION_SECRET="%s"\n' "$(openssl rand -base64 32)"
+            printf 'GOOGLE_CLIENT_ID="ci.apps.googleusercontent.com"\n'
+            printf 'GOOGLE_CLIENT_SECRET="ci-not-a-real-secret"\n'
+          } > .dev.vars
+      - name: Migrate the local database
+        run: npx wrangler d1 migrations apply ruokalista --local
       - name: Browser tests
-        run: npx playwright test
+        run: npx playwright test --shard=${{ matrix.shard }}/4
       - name: Keep the traces from a failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: check
+    needs: [check, browser]
     runs-on: ubuntu-latest
     environment: production
     permissions:

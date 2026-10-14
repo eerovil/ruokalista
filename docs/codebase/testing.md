@@ -49,6 +49,19 @@ reviewed repoint whose exact-name resolution changed between review and
 confirmation) is a second example of exercising the real save path without
 spending on the model.
 
+A reseed (`tests/support/seed.ts::reseed`) and a fixture write
+(`executeLocalSql`) run their SQL straight against the local D1 file over
+`node:sqlite`, in one transaction with foreign keys on. They used to go through
+`wrangler d1 execute --local`, which booted Wrangler every time: about 2.4 s a
+call against about 90 ms, and the specs that reseed before every test spent most
+of their time there (#347). So reseeding before every test is cheap now; prefer
+it to a test that depends on what the one before it left.
+
+Some `screenshots.spec.ts` flows only photograph what a behaviour spec already
+asserts. They are skipped unless `PLAYWRIGHT_SCREENSHOTS=1`, and each names the
+spec that covers it; a new screenshot flow that only repeats one should do the
+same.
+
 Every spec reseeds in `beforeAll`. Skipping that is not a shortcut — it makes a
 spec depend on rows an earlier run happened to leave, which passes locally and
 fails on a fresh database. `dev/seed.sql` keeps two households on purpose, plus
@@ -113,10 +126,8 @@ used across the image specs — `onePixelPng()` (the smallest real upload) and
 `tests/walkthrough.spec.ts` is a
 hand-walk of the whole product, not an assertion suite, and does not reseed on
 purpose — it is meant to be pointed at whatever the development database
-already holds; its own docstring says it is "kept out of `npm run check` and
-CI", but nothing in `playwright.config.ts` or `.github/workflows/ci.yml`
-actually excludes it, so it currently runs as part of any full
-`npx playwright test` alongside the real specs.
+already holds; `playwright.config.ts` ignores it unless
+`PLAYWRIGHT_WALKTHROUGH=1` is set, so neither CI nor an ordinary run includes it.
 
 **Focused locally, complete in CI.** A change runs the typecheck, the checks and
 the specs that cover what it touched, and lets CI run everything else. This
@@ -180,7 +191,12 @@ page; that is the screenshot, not the app. Regenerating after a copy tweak and
 re-reading the result is a normal loop here, not a wasted step.
 
 CI (`.github/workflows/ci.yml`) runs typecheck, the checks and the browser suite
-on every pull request, in the same pinned Playwright image. It writes a
+on every pull request, in the same pinned Playwright image. The browser suite
+runs as four `browser` jobs side by side (`--shard=i/4`), each with its own
+container and local D1, so `workers: 1` still holds inside each one; the
+typecheck, the checks and the restore round-trip run once, in `check`. Playwright
+splits by spec file, so a spec that grows very long makes its shard the slow one.
+A failing shard uploads its traces as `playwright-traces-<shard>`. It writes a
 throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
 is calling the model, and that is a test that should not exist.
 
