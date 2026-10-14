@@ -130,3 +130,5 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |
 | `116-nested-part-refused.png` | Proposed atomic refusal when an AI edit gives a recipe part another named part: the Finnish explanation and the submitted section, ingredient, quantity and note remain on the review screen (#258) |
 | `130-recipe-tail.png` | The bottom of a recipe on a dark-mode phone (#351): **Näytä määrät** beside **Valmistus**, then **Meidän taloudessa** and **Resepti** as lists of rows, each with its current value or a note and a chevron |
+| `140-dark-recipes.png` | The recipe list on a phone set to dark mode (#355): the app takes the device's own setting, older iPads included |
+| `141-dark-recipe.png` | One recipe on a phone set to dark mode (#355): the picture placeholder, the size chips with the chosen one lit, and the ingredients |
