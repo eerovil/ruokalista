@@ -997,7 +997,7 @@ function recipeTopActions(
       ><span aria-hidden="true">⋯</span></a
     >
   </div>
-  ${topModal(SIZE_ID, "Koko", sizeChooser(recipe, multiplier, view.preference), "toiminnot", "Sulje")}
+  ${topModal(SIZE_ID, "Koko", sizeChooser(recipe, multiplier), "toiminnot", null)}
   ${topModal(
     MORE_ID,
     "Lisää valintoja",
@@ -1081,16 +1081,18 @@ function topModal(
   title: string,
   body: Raw,
   closeTo = "toiminnot",
-  close = "Valmis",
+  close: string | null = "Valmis",
 ): Raw {
   return html`<div class="edit-modal top-modal" id="${id}">
     <a class="edit-modal-back" href="#${closeTo}" tabindex="-1" aria-hidden="true"></a>
     <div class="edit-modal-card" role="group" aria-label="${title}">
       <p class="edit-modal-title">${title}</p>
       ${body}
-      <div class="edit-modal-actions">
-        <a class="edit-done" href="#${closeTo}">${close}</a>
-      </div>
+      ${close === null
+        ? ""
+        : html`<div class="edit-modal-actions">
+            <a class="edit-done" href="#${closeTo}">${close}</a>
+          </div>`}
     </div>
   </div>`;
 }
@@ -1127,7 +1129,7 @@ const SIZE_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6];
  * amounts change the moment one is tapped, with no script. A size of one's own
  * goes through a plain GET form to the same page.
  */
-function sizeChooser(recipe: Recipe, multiplier: number, preference: number | null): Raw {
+function sizeChooser(recipe: Recipe, multiplier: number): Raw {
   return html`<div class="size-choices">
       ${[0.5, 1, 1.5, 2, 3].map((choice) => html`<a
         class="size-choice ${choice === multiplier ? "is-current" : ""}"
@@ -1141,9 +1143,9 @@ function sizeChooser(recipe: Recipe, multiplier: number, preference: number | nu
         inputmode="decimal"
         placeholder="Muu kerroin"
         aria-label="Muu kerroin"
+        enterkeyhint="go"
         value="${[0.5, 1, 1.5, 2, 3].includes(multiplier) ? "" : formatMultiplier(multiplier).slice(0, -1)}"
       />
-      <button type="submit">Näytä</button>
     </form>`;
 }
 
@@ -1469,7 +1471,7 @@ const PUBLISH_STYLE = html`<style>
     font-weight: 600; text-decoration: none; }
   .size-choice.is-current { background: var(--accent); color: var(--accent-fg);
     border-color: var(--accent); }
-  .size-typed { display: flex; gap: .5rem; margin: .5rem 0 0; }
+  .size-typed { display: flex; margin: .5rem 0 0; }
   .size-typed input { flex: 1 1 auto; min-width: 0; }
   .size-usual { margin: .75rem 0 0; }
   .top-modal .tail-heading { margin-top: 1.1rem; }
