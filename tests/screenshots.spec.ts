@@ -2101,7 +2101,9 @@ test.describe("public recipes", () => {
       "Tämä resepti on jaettu: Naapuri.",
     );
     await openEditBlock(page, "sharing-open");
-    const sharing = page.locator(".recipe-sharing");
+    // The form is in a fixed modal since #317, so it is measured against the
+    // open card, not against the section the card is drawn from (#351).
+    const sharing = page.locator("#sharing-open .edit-modal-card");
     const search = sharing.getByLabel("Hae vastaanottavaa taloutta");
     const recipient = sharing.getByLabel("Naapuri");
     const saveSharing = sharing.getByRole("button", { name: "Tallenna jako" });
