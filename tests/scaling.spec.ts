@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
-import { openCookAdd } from "./support/blocks";
+import { addAtSize } from "./support/blocks";
 
 /**
  * A recipe opened from a planned batch shows the amounts that cooking actually
@@ -24,7 +24,7 @@ test("from the recipe list, a recipe reads exactly as written", async ({
   await page.goto("/recipes/1");
 
   // Unscaled, the page says nothing about size at all (#354).
-  await expect(page.locator(".yield")).toHaveCount(0);
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
   const lines = page.locator(".lines li");
   await expect(lines.nth(0)).toContainText("½ dl");
   await expect(lines.nth(1)).toContainText("1–1½ l");
@@ -45,7 +45,7 @@ test("what the source said it makes is metadata, not a control", async ({
 test("at 1,5× the amounts follow", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=1.5");
 
-  await expect(page.locator(".yield")).toHaveText("1,5×");
+  await expect(page.locator(".recipe-top-size")).toContainText("1,5×");
 
   const lines = page.locator(".lines li");
   await expect(lines.nth(0)).toContainText("¾ dl");
@@ -78,16 +78,16 @@ test("which amounts you are looking at is obvious from the top", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
-  await expect(page.locator(".yield.is-scaled")).toHaveCount(0);
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
 
   await page.goto("/recipes/1?multiplier=1.5");
-  await expect(page.locator(".yield.is-scaled")).toBeVisible();
-  await expect(page.locator(".yield.is-scaled")).toHaveText("1,5×");
+  await expect(page.locator(".recipe-top-size")).not.toContainText(/^1×/);
+  await expect(page.locator(".recipe-top-size")).toContainText("1,5×");
 });
 
 test("1× is the recipe as written", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=1");
-  await expect(page.locator(".yield")).toHaveCount(0);
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
@@ -97,11 +97,11 @@ test("a recipe with no stated yield scales like any other (#165)", async ({
   // Öljykastike: the source never said what it makes. Before #165 this screen
   // could only apologise; now the recipe as written is 1× and 2× is 2×.
   await page.goto("/recipes/2");
-  await expect(page.locator(".yield")).toHaveCount(0);
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
   await expect(page.locator(".lines li").nth(1)).toContainText("2 dl");
 
   await page.goto("/recipes/2?multiplier=2");
-  await expect(page.locator(".yield")).toHaveText("2×");
+  await expect(page.locator(".recipe-top-size")).toContainText("2×");
   await expect(page.locator(".lines li").nth(1)).toContainText("4 dl");
   // The line the source gave no amount for is still left alone.
   await expect(page.locator(".lines li").nth(0)).toContainText("öljy");
@@ -111,7 +111,7 @@ test("a nonsense multiplier is ignored rather than obeyed", async ({ page }) => 
   // One bad value proves the screen falls back; which values are bad is
   // dev/check-scaling.ts's job (#347).
   await page.goto("/recipes/1?multiplier=puoltatoista");
-  await expect(page.locator(".yield")).toHaveCount(0);
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
@@ -148,30 +148,28 @@ test("the to-do list carries a dish's multiplier into the recipe", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
-  await openCookAdd(page);
-  await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
+  await addAtSize(page, "1,5×");
 
   // The newest dish is at the end: the list is in the order dishes were added.
   await page.locator(".cook-dish").last().click();
 
   await expect(page).toHaveURL(/\/recipes\/1\?multiplier=1\.5$/);
-  await expect(page.locator(".yield")).toHaveText("1,5×");
+  await expect(page.locator(".recipe-top-size")).toContainText("1,5×");
   await expect(page.locator(".lines li").first()).toContainText("¾ dl");
 });
 
 test("a recipe opened scaled is added at that size", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=2");
   await expect(
-    page.locator(".cook-add .multiplier-choice .is-current"),
-  ).toHaveText("2×");
+    page.getByRole("button", { name: "Lisää kokattaviin · 2×" }),
+  ).toBeVisible();
 });
 
 test("changing a dish's multiplier changes what the recipe opens at", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
-  await openCookAdd(page);
-  await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
+  await addAtSize(page, "1×");
 
   await page.locator(".cook-edit").last().click();
   await page.locator(".multiplier-choice").getByRole("button", { name: "0,5×" }).click();
@@ -186,12 +184,15 @@ test("a multiplier the chips do not offer can still be typed", async ({
   page,
 }) => {
   await page.goto("/recipes/1");
-  await openCookAdd(page);
-  const add = page.locator(".cook-add");
-  // The Finnish comma, the way every other number field in the app takes it.
-  await add.locator("input[name=multiplier]").fill("2,5");
-  await add.getByRole("button", { name: "Lisää", exact: true }).click();
+  await page.locator(".recipe-top-size").click();
+  // The Finnish comma, the way every other number field in the app takes it,
+  // and the keyboard's own Enter rather than a button (#364).
+  const typed = page.locator("#koko input[name=multiplier]");
+  await typed.fill("2,5");
+  await typed.press("Enter");
+  await expect(page.locator(".recipe-top-size")).toContainText("2,5×");
+  await page.getByRole("button", { name: /Lisää kokattaviin/ }).click();
 
   await page.locator(".cook-dish").last().click();
-  await expect(page.locator(".yield")).toHaveText("2,5×");
+  await expect(page.locator(".recipe-top-size")).toContainText("2,5×");
 });

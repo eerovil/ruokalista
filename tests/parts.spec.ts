@@ -84,7 +84,7 @@ test("parts are not dishes, so they are not listed or addable", async ({
 
   // A part's own page offers nothing to put on the to-do list.
   await page.goto("/recipes/5");
-  await expect(page.locator(".cook-add")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Lisää kokattaviin/ })).toHaveCount(0);
 });
 
 test("a part can still be opened and edited on its own", async ({ page }) => {

@@ -358,7 +358,6 @@ const STYLES = `
   .cook-edit { display: inline-flex; align-items: center;
     min-height: var(--tap-compact); font-size: .85rem; color: var(--muted); }
   .cook-more { text-align: center; font-size: .9rem; }
-  .cook-add { margin: .75rem 0 .75rem; }
   .chosen { list-style: none; margin: .25rem 0 0; padding: 0; }
   .chosen li {
     display: flex; align-items: center; gap: .75rem;

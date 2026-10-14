@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AGENTDECK_BATCH } from "./support/batch";
-import { closeEditBlock, openEditBlock, openCookAdd, setProductPicks } from "./support/blocks";
+import { closeEditBlock, openEditBlock, setProductPicks, addAtSize } from "./support/blocks";
 import {
   DRAFT_FIXTURE,
   DUPLICATE_AMOUNT_DRAFT,
@@ -242,9 +242,8 @@ test.describe("signed in", () => {
   });
 
   test("what you can do to a dish on the list", async ({ page }) => {
-    await page.goto("/recipes/1#kokattaviin");
-    await openCookAdd(page);
-    await page.locator(".cook-add").getByRole("button", { name: "1,5×", exact: true }).click();
+    await page.goto("/recipes/1");
+    await addAtSize(page, "1,5×");
     await page.locator(".cook-edit").first().click();
     await expect(page.getByRole("link", { name: "Avaa resepti" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Kokattu" })).toHaveCount(0);
@@ -311,7 +310,8 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/130-recipe-top.png` });
     await page.getByRole("link", { name: "Lisää valintoja" }).click();
     await capture(page, { path: `${SHOTS}/131-recipe-more.png` });
-    await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
+    await page.locator("#lisavalinnat .edit-done").click();
+    await page.locator(".recipe-top-size").click();
     await capture(page, { path: `${SHOTS}/132-recipe-add-size.png` });
   });
 
@@ -562,7 +562,7 @@ test.describe("signed in", () => {
     page,
   }) => {
     await page.goto("/recipes/2?multiplier=2");
-    await expect(page.locator(".yield")).toHaveText("2×");
+    await expect(page.locator(".recipe-top-size")).toContainText("2×");
     await capture(page, { path: `${SHOTS}/06-recipe-no-yield.png`, fullPage: true });
   });
 
@@ -2197,8 +2197,7 @@ test.describe("public recipes", () => {
 
     // Naapuri puts it on its list, which is what puts the refusal below
     // within reach.
-    await openCookAdd(page);
-    await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
+    await addAtSize(page, "1×");
 
     // And Koti, trying to take it back while somebody is about to cook it.
     await context.clearCookies();

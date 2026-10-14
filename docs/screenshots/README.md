@@ -129,8 +129,8 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `114-s-ostoslista-note-replaced.png` | Proposed juusto sent as text and then given a product: the S-ostoslista panel holds one product row, and the words the earlier send left there are gone (#244) |
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |
 | `116-nested-part-refused.png` | Proposed atomic refusal when an AI edit gives a recipe part another named part: the Finnish explanation and the submitted section, ingredient, quantity and note remain on the review screen (#258) |
-| `130-recipe-top.png` | The top of a dish in parts on a dark-mode phone (#354): the 2:1 picture, the title, one grey line, **＋ Lisää kokattaviin** and **⋯**, then every ingredient before the method |
-| `131-recipe-more.png` | The same recipe with **⋯** open (#354): **Lisää eri koolla**, **Meidän taloudessa** (Oletuskerroin, Jakaminen) and **Resepti** (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen resepti) |
-| `132-recipe-add-size.png` | **Lisää eri koolla** open (#354): four size buttons that add at once, then **Muu kerroin** and **Lisää** |
+| `130-recipe-top.png` | The top of a dish in parts on a dark-mode phone (#354): the 2:1 picture, the title, one grey line, the size, **＋ Lisää kokattaviin** and **⋯**, then every ingredient before the method |
+| `131-recipe-more.png` | The same recipe with **⋯** open (#354): product picks, **Meidän taloudessa** (Oletuskerroin, Jakaminen) and **Resepti** (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen resepti) |
+| `132-recipe-add-size.png` | The **Koko** modal (#364), opened from the size beside **＋ Lisää kokattaviin**: five sizes that rescale the page at once, and **Muu kerroin** |
 | `140-dark-recipes.png` | The recipe list on a phone set to dark mode (#355): the app takes the device's own setting, older iPads included |
 | `141-dark-recipe.png` | One recipe on a phone set to dark mode (#355): the picture placeholder, **＋ Lisää kokattaviin** and **⋯** (#354), and the ingredients |

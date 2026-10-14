@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { reseed } from "./support/seed";
+import { addAtSize } from "./support/blocks";
 import { sessionCookie } from "./support/session";
 
 /**
@@ -14,12 +15,10 @@ test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
 });
 
-// A size other than the usual one is behind ⋯ since #354: Lisää eri koolla.
+// The size beside the button, then the button (#364).
 async function addFromRecipe(page: Page, recipeId: number, size: string): Promise<void> {
   await page.goto(`/recipes/${recipeId}`);
-  await page.getByRole("link", { name: "Lisää valintoja" }).click();
-  await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
-  await page.locator(".cook-add").getByRole("button", { name: size, exact: true }).click();
+  await addAtSize(page, size);
   await expect(page).toHaveURL(/\/$/);
 }
 
@@ -47,7 +46,7 @@ test("a dish goes on the list from its recipe page, at the size tapped", async (
   // The row's own tap is the recipe, at this dish's size.
   await row(page, "Kaalilaatikko").locator(".cook-dish").click();
   await expect(page).toHaveURL(/\/recipes\/1\?multiplier=1\.5$/);
-  await expect(page.locator(".yield")).toContainText("1,5×");
+  await expect(page.locator(".recipe-top-size")).toContainText("1,5×");
 });
 
 test("one tap on the recipe page adds the dish at its usual size (#354)", async ({ page }) => {
@@ -65,20 +64,26 @@ test("the same dish twice is two cookings", async ({ page }) => {
 
 test("a part has nothing to add, it is cooked as part of its dish", async ({ page }) => {
   await page.goto("/recipes/4");
-  await expect(page.locator(".cook-add")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Lisää kokattaviin/ })).toHaveCount(0);
   const response = await page.request.post("/recipes/4/kokattaviin", {
     form: { preset: "1" },
   });
   expect(response.status()).toBe(404);
 });
 
-test("a nonsense size keeps you on the recipe, with the reason", async ({ page }) => {
-  await page.goto("/recipes/1#kokattaviin");
-  const add = page.locator(".cook-add");
-  await add.locator("input[name=multiplier]").fill("0");
-  await add.getByRole("button", { name: "Lisää", exact: true }).click();
-  await expect(page.locator(".refused")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Kaalilaatikko");
+test("a nonsense size is shown as the usual one, and never added", async ({ page }) => {
+  // Typed into the size box it is ignored rather than obeyed (#364)...
+  await page.goto("/recipes/1#koko");
+  const typed = page.locator("#koko input[name=multiplier]");
+  await typed.fill("0");
+  await typed.press("Enter");
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
+
+  // ...and posted straight at the add route it is refused.
+  const response = await page.request.post("/recipes/1/kokattaviin", {
+    form: { preset: "0" },
+  });
+  expect(response.status()).toBe(400);
 
   await page.goto("/");
   await expect(page.locator(".cook-item")).toHaveCount(0);

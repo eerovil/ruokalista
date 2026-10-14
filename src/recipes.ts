@@ -456,13 +456,8 @@ export async function recipeScreen(
   }
 
   const asked = parseMultiplier(url.searchParams.get("multiplier") ?? "");
-  // PROTOTYPE (#364): which placement of the size control to draw.
-  const named = url.searchParams.get("proto");
-  const variant = sizeVariant(
-    named ?? cookieValue(ctx.request.headers.get("Cookie"), "koko-proto"),
-  );
 
-  const response = await renderRecipe(
+  return renderRecipe(
     env.DB,
     member,
     recipe,
@@ -471,21 +466,7 @@ export async function recipeScreen(
     env.CAST_APP_ID,
     undefined,
     externalClient(env, member) !== null,
-    variant,
   );
-  if (named !== null) {
-    response.headers.append(
-      "Set-Cookie",
-      `koko-proto=${variant}; Path=/; Max-Age=2592000; SameSite=Lax`,
-    );
-  }
-  return response;
-}
-
-type SizeVariant = "a" | "b" | "c";
-
-function sizeVariant(value: string | null): SizeVariant {
-  return value === "b" || value === "c" ? value : "a";
 }
 
 /**
@@ -515,7 +496,6 @@ export async function renderRecipe(
   castApplicationId?: string,
   sharingDraft?: SharingDraft,
   external = false,
-  variant: SizeVariant = "a",
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
   const [preference, sharing, vocabulary, products] = await Promise.all([
@@ -542,7 +522,6 @@ export async function renderRecipe(
       sharing,
       vocabulary,
       products,
-      variant,
     }, castApplicationId),
     "recipes",
     member,
@@ -864,8 +843,6 @@ interface RecipeView {
   vocabulary: Vocabulary;
   /** Null for every household without the S-ostoslista integration (#302). */
   products: RecipeProductState | null;
-  /** PROTOTYPE (#364): where the size control sits. */
-  variant: SizeVariant;
 }
 
 function recipeBody(
@@ -882,7 +859,6 @@ function recipeBody(
       : { dish: recipe, state: view.products, anchored: new Set<number>() };
 
   return html`<div class="recipe-view">
-    ${prototypeSwitch(recipe, multiplier, view.variant)}
     <div class="recipe-summary">
       ${recipeImage(recipe)}
       <div class="recipe-intro">
@@ -902,7 +878,6 @@ function recipeBody(
     </div>
 
     <div class="recipe-cooking">
-      ${view.variant === "c" ? sizeStepper(recipe, multiplier) : ""}
       ${canRevealAmounts
         ? html`<input
               type="checkbox"
@@ -938,9 +913,6 @@ function recipeBody(
  */
 function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
   const parts: Raw[] = [];
-  if (view.variant === "b") {
-    parts.push(sizeOpener(multiplier, "size-pill"));
-  }
   if (recipe.yieldPortions !== null) {
     parts.push(html`<span class="source-yield">Lähteessä ${recipe.yieldPortions} annosta</span>`);
   }
@@ -991,7 +963,7 @@ function recipeTopActions(
   const viewRows = picks || (castApplicationId?.trim() ?? "") !== "";
 
   return html`<div class="recipe-top" id="toiminnot">
-    ${view.variant === "a" ? sizeOpener(multiplier, "recipe-top-size") : ""}
+    ${sizeOpener(multiplier)}
     ${adding ? quickAdd(recipe, multiplier) : ""}
     <a class="recipe-top-more" href="#${MORE_ID}" aria-label="Lisää valintoja"
       ><span aria-hidden="true">⋯</span></a
@@ -1115,14 +1087,15 @@ function quickAdd(recipe: Recipe, multiplier: number): Raw {
   </form>`;
 }
 
-/** What opens the size modal, wherever the variant puts it. */
-function sizeOpener(multiplier: number, className: string): Raw {
-  return html`<a class="${className}" href="#${SIZE_ID}" aria-label="Koko: ${formatMultiplier(multiplier)}, muuta"
+/**
+ * The size the page shows (#364), beside the button that adds at it. Tapping
+ * it opens the size modal.
+ */
+function sizeOpener(multiplier: number): Raw {
+  return html`<a class="recipe-top-size" href="#${SIZE_ID}" aria-label="Koko: ${formatMultiplier(multiplier)}, muuta"
     >${formatMultiplier(multiplier)} <span aria-hidden="true">▾</span></a
   >`;
 }
-
-const SIZE_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6];
 
 /**
  * The size modal (#364): each size is a link to this page at that size, so the
@@ -1147,35 +1120,6 @@ function sizeChooser(recipe: Recipe, multiplier: number): Raw {
         value="${[0.5, 1, 1.5, 2, 3].includes(multiplier) ? "" : formatMultiplier(multiplier).slice(0, -1)}"
       />
     </form>`;
-}
-
-/** PROTOTYPE (#364), variant C: a stepper above the ingredients. */
-function sizeStepper(recipe: Recipe, multiplier: number): Raw {
-  const smaller = [...SIZE_STEPS].reverse().find((step) => step < multiplier);
-  const larger = SIZE_STEPS.find((step) => step > multiplier);
-  const step = (to: number | undefined, sign: string, label: string) =>
-    to === undefined
-      ? html`<span class="size-step is-off" aria-hidden="true">${sign}</span>`
-      : html`<a class="size-step" href="/recipes/${recipe.id}?multiplier=${String(to)}" aria-label="${label}">${sign}</a>`;
-  return html`<div class="size-stepper">
-    <span class="size-stepper-label">Koko</span>
-    ${step(smaller, "−", "Pienempi")}
-    ${sizeOpener(multiplier, "size-stepper-value")}
-    ${step(larger, "+", "Suurempi")}
-  </div>`;
-}
-
-/** PROTOTYPE (#364): the switcher between the three placements. */
-function prototypeSwitch(recipe: Recipe, multiplier: number, variant: SizeVariant): Raw {
-  const names: Array<[SizeVariant, string]> = [["a", "A · napin vieressä"], ["b", "B · harmaalla rivillä"], ["c", "C · ainesten yllä"]];
-  return html`<nav class="proto-switch" aria-label="Prototyyppi">
-    <span>Prototyyppi:</span>
-    ${names.map(([key, name]) => html`<a
-      class="${key === variant ? "is-on" : ""}"
-      href="/recipes/${recipe.id}?proto=${key}&multiplier=${String(multiplier)}"
-      >${name}</a
-    >`)}
-  </nav>`;
 }
 
 /**
@@ -1437,32 +1381,11 @@ const PUBLISH_STYLE = html`<style>
   .recipe-top-add:focus-visible, .recipe-top-more:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
-  .top-modal .cook-add { margin: 0; }
-  /* PROTOTYPE (#364): the size control in its three places, and its modal. */
-  .proto-switch { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center;
-    margin: 0 0 .75rem; padding: .4rem .6rem; border-radius: var(--radius);
-    background: #f5d04a; color: #222; font-size: .8rem; font-weight: 600; }
-  .proto-switch a { color: #222; text-decoration: none; padding: .15rem .55rem;
-    border: 1px solid #222; border-radius: 999px; }
-  .proto-switch a.is-on { background: #222; color: #f5d04a; }
+  /* The size the page shows, and its modal (#364). */
   .recipe-top-size { display: inline-flex; align-items: center; justify-content: center;
     gap: .25rem; min-height: var(--tap); padding: 0 .8rem; border-radius: var(--radius);
     border: 1px solid var(--edge); background: var(--surface); color: var(--fg);
     font-weight: 600; text-decoration: none; }
-  .size-pill { display: inline-flex; align-items: center; gap: .2rem;
-    min-height: var(--tap-compact); padding: 0 .6rem; border-radius: 999px;
-    border: 1px solid var(--accent); color: var(--accent); font-weight: 600;
-    text-decoration: none; }
-  .size-stepper { display: flex; align-items: center; gap: .5rem; margin: 1rem 0 0; }
-  .size-stepper-label { flex: 1 1 auto; color: var(--muted); font-size: .8rem;
-    font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
-  .size-step, .size-stepper-value { display: inline-flex; align-items: center;
-    justify-content: center; min-width: var(--tap); min-height: var(--tap);
-    border-radius: var(--radius); border: 1px solid var(--edge);
-    background: var(--surface); color: var(--fg); font-size: 1.2rem;
-    text-decoration: none; }
-  .size-stepper-value { padding: 0 .8rem; font-size: 1rem; font-weight: 600; }
-  .size-step.is-off { opacity: .35; }
   .size-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: .5rem; margin: 0; }
   .size-choice { display: flex; align-items: center; justify-content: center;
@@ -1476,7 +1399,6 @@ const PUBLISH_STYLE = html`<style>
   .size-usual { margin: .75rem 0 0; }
   .top-modal .tail-heading { margin-top: 1.1rem; }
   .top-modal .edit-modal-title + .tail-heading { margin-top: 0; }
-  .top-modal .cook-add .empty { margin: 0 0 .75rem; }
   .top-modal .multiplier-choice + .empty { margin-top: .75rem; }
   /* The sizes as four equal buttons, then the typed size on a line of its own
      with its own button, so it does not read as a fifth size (#354). */
