@@ -126,12 +126,8 @@ test.describe("our household", () => {
     page,
   }) => {
     await chooseFromRecipe(page, LASAGNE, MAITO, "maito", RASVATON);
-
-    const date = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
     const cooking = await page.request.post("/api/batches", {
-      data: { date, slot: "dinner", recipeId: LASAGNE, multiplier: 1 },
+      data: { recipeId: LASAGNE, multiplier: 1 },
     });
     expect(cooking.status()).toBe(201);
 
@@ -173,11 +169,8 @@ test.describe("our household", () => {
     // It was written as this dish's own exception rather than as the
     // ingredient's product — which is the whole point of the two scopes (#161),
     // and the shopping list is where the difference shows.
-    const date = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
     const cooking = await page.request.post("/api/batches", {
-      data: { date, slot: "dinner", recipeId: LASAGNE, multiplier: 1 },
+      data: { recipeId: LASAGNE, multiplier: 1 },
     });
     expect(cooking.status()).toBe(201);
 
@@ -263,11 +256,8 @@ test.describe("our household", () => {
 
     // And it moved the dish's own product, not the ingredient's: the shopping
     // list still draws this as the dish's exception.
-    const date = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Helsinki",
-    }).format(new Date());
     const cooking = await page.request.post("/api/batches", {
-      data: { date, slot: "dinner", recipeId: LASAGNE, multiplier: 1 },
+      data: { recipeId: LASAGNE, multiplier: 1 },
     });
     expect(cooking.status()).toBe(201);
 

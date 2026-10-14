@@ -33,7 +33,7 @@ test.describe("signed in", () => {
       ["Reseptit", "Reseptit"],
       ["Lisää", "Lisää resepti"],
       ["Ainekset", "Ainekset"],
-      ["Viikko", "Viikko"],
+      ["Kokattavat", "Kokattavat"],
     ] as const) {
       await page.locator("nav.tabs").getByRole("link", { name: label }).click();
       await expect(
@@ -84,7 +84,7 @@ test.describe("signed in", () => {
     const screens = [
       "/",
       "/ostoslista",
-      "/picker?date=2026-10-05&slot=lunch",
+      "/batches/999999",
       "/recipes",
       "/recipes/1",
       "/recipes/1/edit",

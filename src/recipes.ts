@@ -782,6 +782,7 @@ function recipeBody(
               Lähteessä ${recipe.yieldPortions} annosta
             </p>`}
         ${categoryTags(view.vocabulary, recipe.categories)}
+        ${cookListAdd(recipe, multiplier, view.preference)}
         ${sharingShortcut(recipe, view)}
         ${castSender(recipe, multiplier, castApplicationId)}
       </div>
@@ -848,6 +849,36 @@ function recipeBody(
   </div>`;
 }
 
+/**
+ * Put this dish on the to-do list (#345), which is how a dish gets there now
+ * that the calendar is gone. Each size chip adds at that size in one tap; the
+ * one already lit is the size on screen if the reader scaled the recipe, else
+ * the household's own default for it.
+ */
+function cookListAdd(
+  recipe: Recipe,
+  multiplier: number,
+  preference: number | null,
+): Raw {
+  if (recipe.parentId !== null) return raw("");
+  const current = multiplier !== DEFAULT_MULTIPLIER
+    ? multiplier
+    : preference ?? DEFAULT_MULTIPLIER;
+  return html`<form
+    method="post"
+    action="/recipes/${recipe.id}/kokattaviin"
+    class="stacked cook-add"
+  >
+    <p class="preference-label">Lisää kokattaviin</p>
+    ${multiplierField({
+      current,
+      typed: formatMultiplier(current).slice(0, -1),
+      label: "Lisää kokattaviin kertoimella",
+      submit: "Lisää",
+    })}
+  </form>`;
+}
+
 function sharingSection(recipe: Recipe, view: RecipeView): Raw {
   if (recipe.parentId !== null) return raw("");
 
@@ -877,8 +908,8 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
           submit: "Tallenna",
         })}
         <p class="empty" id="preferredMultiplierHelp">
-          Millä kertoimella ruokalista aloittaa, kun tämä resepti lisätään
-          viikolle. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
+          Mikä kerroin on valmiiksi valittuna, kun tämä resepti lisätään
+          kokattaviin. Tyhjä ja Tallenna poistaa oletuksen, jolloin aloitetaan
           reseptistä sellaisenaan. Tämä on vain meidän talouden asetus.
         </p>
       </form>`,

@@ -53,14 +53,20 @@ occurrence; lunch and dinner do not otherwise need to be contiguous. Portions
 are display/scaling context and never determine coverage. See
 [ADR-0004](../adr/0004-a-planned-batch-owns-its-occurrences.md).
 
-Routes moved with the model: `/meal-entries/:id` no longer exists. Planning
-goes through `/batches/:id`, `/batches/:id/day`, `/batches/:id/multiplier`,
-`/batches/:id/recipe`, `/batches/:id/delete`, plus the matching
-`/api/batches...` JSON routes in `src/index.ts`. Since #309 the screen edits a
-planned dish's day by moving the whole cooking to a date
-(`src/menu.ts::moveBatchTo`); the free-form coverage editor is gone from the
-UI, but `replaceOccurrences` and the multi-occurrence model it writes are
-unchanged and still reachable through `PATCH /api/batches/:id`.
+Issue #345 replaced the calendar with a to-do list of dishes
+([ADR-0017](../adr/0017-the-menu-is-a-to-do-list-not-a-calendar.md)). A dish on
+the list is a `planned_batch` row with **no** occurrences;
+`migrations/0027_cook_list.sql` adds `planned_batch.cooked_on`, the day it was
+ticked as cooked, which takes it off the list. Nothing writes occurrences any
+more, and the calendar's old rows stay where they are: the cooking history
+(`src/cook-history.ts`) counts a batch on `cooked_on` if it has one, else on its
+first occurrence, as before. `src/batch-state.ts` is the one place that says
+what "on the list" and "still somebody's plan" mean in SQL; unsharing and
+deleting a recipe both ask the second, and a recipe's batches that are already
+cooked are deleted with it. The routes are `/batches/:id`,
+`/batches/:id/multiplier`, `/batches/:id/cooked`, `/batches/:id/delete`,
+`/recipes/:id/kokattaviin`, and `/api/batches` (`GET`, `POST`, `PATCH`,
+`DELETE`). `dev/check-cook-list.ts` runs them against the real migrations.
 
 Issue #255 proposes adding `planned_batch.instance_key` in
 `migrations/0024_planned_batch_instance_key.sql`. The integer id remains the
@@ -387,9 +393,10 @@ the rebuild sequence 0011 documents: it is not always needed.
 The migration converts `portions / yield_portions` where the dish stores a
 usable positive integer yield, preserving the ratio rather than rounding it.
 Where it cannot, it invents nothing: the batch goes to 1× and its old number is
-kept in `planned_batch.legacy_portions`, which
-`week-screens.ts::batchCard` prints on the card so a cook corrects it rather
-than finding out at the hob. `menu.ts::changeMultiplier` clears the column,
+kept in `planned_batch.legacy_portions`, which the calendar's card printed so a
+cook corrected it rather than finding out at the hob. Only a calendar batch can
+carry one, and since #345 nothing shows those. `cook-list.ts::changeMultiplier`
+clears the column,
 because once somebody has chosen there is nothing left to warn about. An
 unconvertible `recipe_preference` row is deleted instead — under the old rules
 it produced no factor at all, so it was already inert.

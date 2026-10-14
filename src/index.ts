@@ -64,11 +64,19 @@ import {
 } from "./recipe-products.ts";
 import { preferredMultiplierForm, publishForm } from "./publish-screens.ts";
 import {
-  apiAddPlannedBatch,
-  apiMenu,
-  apiRemovePlannedBatch,
-  apiUpdatePlannedBatch,
-} from "./menu.ts";
+  apiAddToCookList,
+  apiCookList,
+  apiRemoveFromCookList,
+  apiUpdateCookList,
+} from "./cook-list.ts";
+import {
+  addToCookListForm,
+  changeListedMultiplierForm,
+  cookListScreen,
+  listedDishScreen,
+  markCookedForm,
+  removeListedForm,
+} from "./cook-list-screens.ts";
 import {
   apiDeleteRecipe,
   confirmDeleteScreen,
@@ -122,16 +130,6 @@ import {
   signOut,
   startSignIn,
 } from "./signin.ts";
-import {
-  addBatchForm,
-  changeBatchMultiplierForm,
-  changeBatchRecipeForm,
-  moveBatchDayForm,
-  pickerScreen,
-  plannedBatchScreen,
-  removeBatchForm,
-  weekScreen,
-} from "./week-screens.ts";
 
 /**
  * The Worker. One fetch handler, one router, one Env — the whole app hangs off
@@ -153,14 +151,11 @@ const router = new Router()
   .get("/icon-maskable-512.png", maskableIcon)
   .get("/apple-touch-icon.png", appleIcon)
   .get("/cast/receiver", castReceiver)
-  .get("/", requireMemberScreen(weekScreen))
-  .get("/picker", requireMemberScreen(pickerScreen))
-  .post("/batches", requireMemberScreen(addBatchForm))
-  .get("/batches/:id", requireMemberScreen(plannedBatchScreen))
-  .post("/batches/:id/day", requireMemberScreen(moveBatchDayForm))
-  .post("/batches/:id/multiplier", requireMemberScreen(changeBatchMultiplierForm))
-  .post("/batches/:id/recipe", requireMemberScreen(changeBatchRecipeForm))
-  .post("/batches/:id/delete", requireMemberScreen(removeBatchForm))
+  .get("/", requireMemberScreen(cookListScreen))
+  .get("/batches/:id", requireMemberScreen(listedDishScreen))
+  .post("/batches/:id/multiplier", requireMemberScreen(changeListedMultiplierForm))
+  .post("/batches/:id/cooked", requireMemberScreen(markCookedForm))
+  .post("/batches/:id/delete", requireMemberScreen(removeListedForm))
   .get("/ostoslista", requireMemberScreen(shoppingScreen))
   .post("/ostoslista/kaappi", requireMemberScreen(shoppingPantryForm))
   .post("/ostoslista/laheta", requireMemberScreen(sendShoppingListForm))
@@ -172,10 +167,10 @@ const router = new Router()
   .post("/ostoslista/s-lista/poista", requireMember(removeCurrentItemForm))
   .get("/kaappi", requireMemberScreen(pantryScreen))
   .post("/kaappi/:id/poista", requireMemberScreen(pantryRemoveForm))
-  .get("/api/menu", requireMember(apiMenu))
-  .post("/api/batches", requireMember(apiAddPlannedBatch))
-  .patch("/api/batches/:id", requireMember(apiUpdatePlannedBatch))
-  .delete("/api/batches/:id", requireMember(apiRemovePlannedBatch))
+  .get("/api/batches", requireMember(apiCookList))
+  .post("/api/batches", requireMember(apiAddToCookList))
+  .patch("/api/batches/:id", requireMember(apiUpdateCookList))
+  .delete("/api/batches/:id", requireMember(apiRemoveFromCookList))
   .get("/signin", signInScreen)
   .get("/auth/google", startSignIn)
   .get("/auth/google/callback", completeSignIn)
@@ -191,6 +186,7 @@ const router = new Router()
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
   .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))
+  .post("/recipes/:id/kokattaviin", requireMemberScreen(addToCookListForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
   .post("/recipes/:id/image/delete", requireMemberScreen(deleteRecipeImageForm))
   .get("/recipes/:id/delete", requireMemberScreen(confirmDeleteScreen))

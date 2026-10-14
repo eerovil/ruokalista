@@ -47,7 +47,7 @@ test.describe("a product picture is sized and cropped to its slot (#204)", () =>
   test("every slot asks the CDN for its own width and fills its box", async ({
     page,
   }) => {
-    await createBatch(page, todayInHelsinki(), LASAGNE, 1);
+    await createBatch(page, LASAGNE, 1);
     await page.goto("/ostoslista");
 
     const milk = row(page, "maito");
@@ -142,18 +142,12 @@ async function shot(page: Page, name: string): Promise<void> {
 
 async function createBatch(
   page: Page,
-  date: string,
   recipeId: number,
   multiplier: number,
 ): Promise<void> {
   const response = await page.request.post("/api/batches", {
-    data: { date, slot: "dinner", recipeId, multiplier },
+    data: { recipeId, multiplier },
   });
   expect(response.status()).toBe(201);
 }
 
-function todayInHelsinki(): string {
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Helsinki" }).format(
-    new Date(),
-  );
-}

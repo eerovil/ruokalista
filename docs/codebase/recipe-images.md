@@ -25,13 +25,13 @@ read-only by construction, which is what keeps the upload control in the
 editor and nowhere else.
 
 Two sizes serve one object: `hero` above a title (recipe screen, planned meal,
-editor), `thumb` at the start of a row (recipe list, picker, week). Both crop
+editor), `thumb` at the start of a row (recipe list, the to-do list). Both crop
 rather than squash. The picture is decorative — the title is always beside it
 — so it carries no alt text and is hidden from a screen reader.
 
 Anything that renders a picture needs `imageKey` on the row it already loads:
-`recipeSummaries`/`findRecipe` in `src/recipes.ts`, `PlannedBatch` in
-`src/menu.ts`. Nothing does a second query for it.
+`recipeSummaries`/`findRecipe` in `src/recipes.ts`, `ListedDish` in
+`src/cook-list.ts`. Nothing does a second query for it.
 
 **Nothing trusts the content type a caller declares.** `src/image-bytes.ts`
 reads the signature and pixel size out of the file's own header, and that

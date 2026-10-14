@@ -163,11 +163,11 @@ test("the household's own settings are two lines and two modals", async ({
   );
   await expect(sharing).toContainText("näkyy vain omalle taloudelle");
   // Neither form is on the screen until it is asked for.
-  await expect(page.locator(".multiplier-choice")).toBeHidden();
+  await expect(page.locator(".recipe-sharing .multiplier-choice")).toBeHidden();
   await expect(page.locator(".sharing-form")).toBeHidden();
 
   await openEditBlock(page, "preference-open");
-  await page.locator(".multiplier-choice").getByRole("button", { name: "2×" }).click();
+  await page.locator(".recipe-sharing .multiplier-choice").getByRole("button", { name: "2×" }).click();
   await expect(sharing.locator(".preference-value")).toHaveText("2×");
 
   // And the line under the title still opens the sharing modal in one tap.

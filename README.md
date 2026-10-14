@@ -2,8 +2,8 @@
 
 A recipe store.
 
-A household plans the week's meals together. Recipes exist in order to be placed
-on days.
+A household keeps a list of the dishes it means to cook. Recipes exist in order
+to be put on that list, cooked, and shopped for.
 
 Nothing is built yet. The expensive-to-reverse decisions have been made and are
 recorded on [the wayfinder map](https://github.com/eerovil/ruokalista/issues/1),

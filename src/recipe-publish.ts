@@ -1,3 +1,4 @@
+import { stillPlannedSql } from "./batch-state.ts";
 import { today } from "./dates.ts";
 import type { Member } from "./members.ts";
 import { boundedInChunks } from "./d1-query.ts";
@@ -6,7 +7,7 @@ import { boundedInChunks } from "./d1-query.ts";
  * Publishing a recipe, and taking it back.
  *
  * Publication is a property of a dish: `recipe.published_at` set means every
- * signed-in household may read it and put it on their week. Nothing else moves.
+ * signed-in household may read it and put it on their to-do list. Nothing else moves.
  * The owning household keeps editing it, and an edit is immediately what
  * everyone else sees, because there is one recipe row and no copies — that is
  * the whole reason this is a flag rather than a share-a-duplicate feature.
@@ -14,10 +15,10 @@ import { boundedInChunks } from "./d1-query.ts";
  * Two rules make it safe to take back, and they are the same rule seen twice:
  *
  * - **Unpublishing is refused while another household has a future plan on it.**
- *   Somebody has decided to cook this on Thursday; pulling the recipe out from
- *   under them on Wednesday is the failure this prevents. A plan already in the
- *   past does not block anything — the cooking happened, the week is a record
- *   now, and the batch keeps rendering its title either way.
+ *   Somebody has put this on their to-do list (#345); pulling the recipe out
+ *   from under them before they cook it is the failure this prevents. A dish
+ *   already cooked does not block anything — the cooking happened, and the
+ *   batch is only a record now.
  * - **A published recipe cannot be deleted at all.** Deleting is unpublishing
  *   plus more, so it asks for the unpublish first and inherits the check rather
  *   than repeating it.
@@ -57,7 +58,7 @@ export interface SharingDraft {
 export interface PublishBlock {
   id: number;
   title: string;
-  /** How many *other* households have it on a week that has not happened yet. */
+  /** How many *other* households still mean to cook it. */
   households: number;
 }
 
@@ -119,7 +120,7 @@ export function emptyDishSql(alias = "recipe"): string {
  * An empty dish (#340) is not readable outside its own household, even when
  * it was published or shared before it was emptied: what another household
  * would find there is a name and nothing to cook. The one exception is a
- * household that already has it on its week — emptying it must not strand
+ * household that already has it planned — emptying it must not strand
  * their meal unopenable and unmovable, the same stranding that
  * `futurePlansElsewhere` stops an unpublish from causing.
  */
@@ -422,10 +423,8 @@ export async function setRecipeSharing(
               AND NOT EXISTS (
                     SELECT 1
                       FROM planned_batch
-                      JOIN batch_occurrence
-                        ON batch_occurrence.batch_id = planned_batch.id
                      WHERE planned_batch.household_id <> ?
-                       AND batch_occurrence.date >= ?
+                       AND ${STILL_PLANNED}
                        AND planned_batch.recipe_id IN (
                              SELECT id FROM recipe WHERE id = ? OR parent_id = ?
                            )
@@ -495,6 +494,9 @@ export async function setRecipeSharing(
   }
 }
 
+/** Another household's dish they still mean to cook; takes today. */
+const STILL_PLANNED = stillPlannedSql();
+
 function noLosingFuturePlans(
   ownerHouseholdId: number,
   recipeId: number,
@@ -507,10 +509,8 @@ function noLosingFuturePlans(
     sql: `NOT EXISTS (
             SELECT 1
               FROM planned_batch
-              JOIN batch_occurrence
-                ON batch_occurrence.batch_id = planned_batch.id
              WHERE planned_batch.household_id <> ?
-               AND batch_occurrence.date >= ?
+               AND ${STILL_PLANNED}
                AND planned_batch.recipe_id IN (
                      SELECT id FROM recipe WHERE id = ? OR parent_id = ?
                    )
@@ -530,9 +530,8 @@ async function futurePlansLosingAccess(
     .prepare(
       `SELECT DISTINCT planned_batch.household_id
          FROM planned_batch
-         JOIN batch_occurrence ON batch_occurrence.batch_id = planned_batch.id
         WHERE planned_batch.household_id <> ?
-          AND batch_occurrence.date >= ?
+          AND ${STILL_PLANNED}
           AND planned_batch.recipe_id IN (
                 SELECT id FROM recipe WHERE id = ? OR parent_id = ?
               )`,
@@ -543,13 +542,10 @@ async function futurePlansLosingAccess(
 }
 
 /**
- * How many other households have this dish on a day that has not passed.
+ * How many other households still mean to cook this dish: it is on their
+ * to-do list (#345), or on an old calendar day that has not passed.
  *
- * Counted over occurrences rather than batches, and `>= today` rather than
- * `> today`: a batch being cooked this evening is still somebody's dinner
- * tonight. "Today" is today in the kitchen (`src/dates.ts`), not in UTC.
- *
- * A batch can only ever name a dish — `requireDish` refuses a part — but the
+ * A batch can only ever name a dish — `addToCookList` refuses a part — but the
  * subquery includes parts anyway, so the answer does not quietly depend on that
  * rule staying true somewhere else.
  */
@@ -562,9 +558,8 @@ export async function futurePlansElsewhere(
     .prepare(
       `SELECT count(DISTINCT planned_batch.household_id) AS households
          FROM planned_batch
-         JOIN batch_occurrence ON batch_occurrence.batch_id = planned_batch.id
         WHERE planned_batch.household_id <> ?
-          AND batch_occurrence.date >= ?
+          AND ${STILL_PLANNED}
           AND planned_batch.recipe_id IN (
                 SELECT id FROM recipe WHERE id = ? OR parent_id = ?
               )`,
@@ -593,7 +588,7 @@ export function blockedMessage(blocked: PublishBlock[]): string {
     const only = blocked[0]!;
     return `${only.title} on ${
       only.households === 1 ? "toisen talouden" : `${only.households} talouden`
-    } tulevalla ruokalistalla, joten julkaisua ei voi poistaa vielä. Se onnistuu, kun ne ateriat on syöty tai poistettu.`;
+    } kokattavien listalla, joten julkaisua ei voi poistaa vielä. Se onnistuu, kun se on kokattu tai otettu pois listalta.`;
   }
 
   return `${blocked

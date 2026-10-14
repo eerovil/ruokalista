@@ -182,7 +182,7 @@ async function withCategories(
   }));
 }
 
-/** Everything this household may put on its week: own dishes first, then shared. */
+/** Everything this household may cook: own dishes first, then shared. */
 export async function plannableRecipeSummaries(
   db: D1Database,
   householdId: number,

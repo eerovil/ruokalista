@@ -30,24 +30,15 @@ test("import the sample and cook what it made", async ({ page }) => {
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
   await page.screenshot({ path: `${SHOTS}/2-saved.png`, fullPage: true });
 
-  // Plan it, then open it from the day and check it scaled.
-  await page.goto("/picker?date=2026-09-07&slot=dinner");
-  await page
-    .locator(".pick li", { hasText: "Uunikaali" })
-    .first()
-    .locator("input[name=multiplier]")
-    .fill("2");
-  await page
-    .locator(".pick li", { hasText: "Uunikaali" })
-    .first()
-    .getByRole("button", { name: "Lisää" })
-    .click();
+  // Put it on the to-do list at 2×, then open it from there and check it
+  // scaled.
+  await page.locator(".cook-add").getByRole("button", { name: "2×", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/\?week=/);
-  await page.screenshot({ path: `${SHOTS}/3-week.png`, fullPage: true });
+  await expect(page).toHaveURL(/\/$/);
+  await page.screenshot({ path: `${SHOTS}/3-list.png`, fullPage: true });
 
-  await page.locator(".day .batch-edit").first().click();
-  await page.screenshot({ path: `${SHOTS}/4-meal.png`, fullPage: true });
+  await page.locator(".cook-edit").first().click();
+  await page.screenshot({ path: `${SHOTS}/4-dish.png`, fullPage: true });
 
   await page.getByRole("link", { name: "Avaa resepti" }).click();
   await expect(page.locator(".yield.is-scaled")).toBeVisible();

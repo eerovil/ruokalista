@@ -139,13 +139,8 @@ test("only the first option of a group reaches the shopping list", async ({
 }) => {
   await addMargarine(page, { oilGroup: "1", margarineGroup: "1" });
 
-  const today = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Helsinki",
-  }).format(new Date());
   const created = await page.request.post("/api/batches", {
     data: {
-      date: today,
-      slot: "dinner",
       recipeId: KAALILAATIKKO,
       multiplier: 1,
     },

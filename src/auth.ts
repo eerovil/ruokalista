@@ -101,8 +101,8 @@ export function adminNotFound(member: Member): Response {
     "Ei löytynyt",
     html`<h1>Ei löytynyt</h1>
       <p class="empty">Tätä sivua ei ole.</p>
-      <p><a href="/">Takaisin viikkoon</a></p>`,
-    "week",
+      <p><a href="/">Takaisin kokattaviin</a></p>`,
+    "cook-list",
     member,
     404,
   );
