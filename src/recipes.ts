@@ -645,6 +645,7 @@ function body(
   picker: RecipePicker | null,
   phases?: RecipePhase[],
   bucket = "a",
+  reveal: RevealSlot | null = null,
 ): Raw {
   const lines = phases === undefined
     ? recipe.lines
@@ -724,7 +725,7 @@ function body(
           </ul>`}
     ${steps.length === 0
       ? ""
-      : html`<h3 class="method-heading">Valmistus</h3>
+      : html`${methodHeading(reveal)}
           <ol class="steps recipe-method">
             ${steps.map(
               (step, index) => html`<li>
@@ -733,6 +734,30 @@ function body(
             )}
           </ol>`}
   </section>`;
+}
+
+/**
+ * Where the recipe-wide amounts toggle goes: beside the first "Valmistus" the
+ * page draws (#351), whichever body that turns out to be — a dish in parts may
+ * have no steps of its own before its first part. One toggle per page, so the
+ * first body with steps takes it and marks the slot used.
+ */
+interface RevealSlot {
+  placed: boolean;
+}
+
+function methodHeading(reveal: RevealSlot | null): Raw {
+  if (reveal === null || reveal.placed) {
+    return html`<h3 class="method-heading">Valmistus</h3>`;
+  }
+  reveal.placed = true;
+  return html`<div class="method-heading method-heading-row">
+    <h3>Valmistus</h3>
+    <label for="reveal-all-amounts" class="reveal-all-label"
+      ><span class="reveal-all-show">Näytä määrät</span
+      ><span class="reveal-all-hide">Piilota määrät</span></label
+    >
+  </div>`;
 }
 
 interface RecipeView {
@@ -752,6 +777,7 @@ function recipeBody(
   castApplicationId?: string,
 ): Raw {
   const canRevealAmounts = hasRevealableMention(recipe, multiplier);
+  const reveal: RevealSlot | null = canRevealAmounts ? { placed: false } : null;
   const picker: RecipePicker | null =
     view.products === null
       ? null
@@ -800,31 +826,18 @@ function recipeBody(
         : ""}
 
       ${recipe.parts.length === 0
-        ? body(recipe, multiplier, picker)
-        : body(recipe, multiplier, picker, [null, "before_parts"])}
+        ? body(recipe, multiplier, picker, undefined, "a", reveal)
+        : body(recipe, multiplier, picker, [null, "before_parts"], "a", reveal)}
       ${recipe.parts.map(
         (part) => html`<section class="part">
           <h2>${part.title}</h2>
-          ${body(part, multiplier, picker)}
+          ${body(part, multiplier, picker, undefined, "a", reveal)}
         </section>`,
       )}
       ${recipe.parts.length === 0
         ? ""
-        : body(recipe, multiplier, picker, ["after_parts"], "b")}
-
-      ${canRevealAmounts
-        ? html`<label for="reveal-all-amounts" class="reveal-all-label"
-            ><span class="reveal-all-show">Näytä kaikki määrät</span
-            ><span class="reveal-all-hide">Piilota määrät</span></label
-          >`
-        : ""}
+        : body(recipe, multiplier, picker, ["after_parts"], "b", reveal)}
     </div>
-
-    <details class="source-original">
-      <summary>Näytä alkuperäinen</summary>
-      ${sourceLink(recipe)}
-      <p class="source-text">${recipe.sourceText}</p>
-    </details>
 
     ${keepAwake()}
     ${RECIPE_VIEW_STYLE}
@@ -839,13 +852,7 @@ function recipeBody(
           <script>${raw(recipeProductsClient)}</script>`}
 
     ${sharingSection(recipe, view)}
-
-    ${view.owned
-      ? html`<p class="recipe-edit">
-          <a href="/recipes/${recipe.id}/edit">Muokkaa reseptiä</a>
-          <a href="/intake?recipe=${recipe.id}">Täydennä AI:lla</a>
-        </p>`
-      : ""}
+    ${recipeActions(recipe, view)}
   </div>`;
 }
 
@@ -884,15 +891,16 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
 
   const preference = view.preference;
 
-  return html`<section class="recipe-sharing" id="jakaminen">
-    <h2>Tämä resepti taloudessamme</h2>
+  return html`<section class="recipe-sharing tail-group" id="jakaminen">
+    <h2 class="tail-heading">Meidän taloudessa</h2>
+    <div class="tail-list">
 
     <!-- Both of these are settings: chosen once, then read for months. Since
          #317 each is one line and a Muokkaa, with its form in a modal behind
          it — the same checkbox-driven overlay the editor's ingredient rows use,
          and the same promise that none of it needs a script. -->
     ${editBlock(
-      { id: "preference-open", title: "Oletuskerroin" },
+      { id: "preference-open", title: "Oletuskerroin", trigger: ROW_OPENER },
       html`<p class="block-label" id="preferredMultiplierLabel">Oletuskerroin</p>
         <p class="block-value preference-value">
           ${preference === null
@@ -920,6 +928,7 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
           {
             id: "sharing-open",
             title: "Jakaminen",
+            trigger: ROW_OPENER,
             // Opened from two places a screen apart — here, and the line under
             // the recipe's title. Only a fragment reaches both (#317 review).
             openedBy: "fragment",
@@ -974,7 +983,69 @@ function sharingSection(recipe: Recipe, view: RecipeView): Raw {
             <script>${raw(RECIPIENT_SEARCH_ISLAND)}</script>`,
         )
       : ""}
+    </div>
   </section>`;
+}
+
+/**
+ * A settings row's opener (#351): the whole row is the tap target, and what
+ * shows at its end is a chevron. The word stays for anyone who cannot see it,
+ * since the opener is what names the control.
+ */
+const ROW_OPENER = html`<span class="visually-hidden">Muokkaa</span
+  ><span class="tail-chevron" aria-hidden="true">›</span>`;
+
+/**
+ * The recipe's own rows under the household's (#351): changing it, filling it
+ * in with AI, and the text it was imported from. The first two are the owner's
+ * alone; the original is anybody's who can read the recipe, and it unfolds in
+ * place rather than in a modal because a long import reads better scrolling
+ * with the page.
+ */
+function recipeActions(recipe: Recipe, view: RecipeView): Raw {
+  const host = sourceHost(recipe);
+  return html`<section class="tail-group recipe-actions">
+    <h2 class="tail-heading">Resepti</h2>
+    <div class="tail-list">
+      ${view.owned
+        ? html`<a class="tail-row is-action" href="/recipes/${recipe.id}/edit"
+              ><span class="tail-row-text"
+                ><span class="tail-row-title">Muokkaa reseptiä</span></span
+              ><span class="tail-chevron" aria-hidden="true">›</span></a
+            >
+            <a class="tail-row is-action" href="/intake?recipe=${recipe.id}"
+              ><span class="tail-row-text"
+                ><span class="tail-row-title">Täydennä AI:lla</span
+                ><span class="tail-row-note">Lisää puuttuvat tiedot lähteestä</span></span
+              ><span class="tail-chevron" aria-hidden="true">›</span></a
+            >`
+        : ""}
+      <details class="source-original">
+        <summary class="tail-row"
+          ><span class="tail-row-text"
+            ><span class="tail-row-title">Alkuperäinen resepti</span
+            >${host === null
+              ? ""
+              : html`<span class="tail-row-note">${host}</span>`}</span
+          ><span class="tail-chevron" aria-hidden="true">›</span></summary
+        >
+        <div class="source-original-body">
+          ${sourceLink(recipe)}
+          <p class="source-text">${recipe.sourceText}</p>
+        </div>
+      </details>
+    </div>
+  </section>`;
+}
+
+function sourceHost(recipe: Recipe): string | null {
+  const address = recipe.sourceUrl;
+  if (address === null || address.trim() === "") return null;
+  try {
+    return normaliseRecipeUrl(address).hostname;
+  } catch {
+    return null;
+  }
 }
 
 function sharingShortcut(recipe: Recipe, view: RecipeView): Raw {
@@ -1067,12 +1138,68 @@ const PUBLISH_STYLE = html`<style>
     background: var(--surface); border: 1px solid var(--accent);
     border-radius: var(--radius);
   }
-  .recipe-sharing { margin: 2rem 0 1rem; padding: .8rem;
+  /* The page's tail since #351: grouped lists of rows, each a label, its
+     current value or a note, and a chevron, the whole row one tap. */
+  .tail-group { margin: 2rem 0 0; }
+  .tail-group + .tail-group { margin-top: 1.5rem; }
+  .tail-heading {
+    margin: 0 0 .4rem .2rem; color: var(--muted);
+    font-size: .8rem; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .tail-list {
     background: var(--surface); border: 1px solid var(--edge);
-    border-radius: var(--radius); }
-  .recipe-sharing h2 { margin: 0 0 .4rem; font-size: 1rem; }
-  .recipe-sharing p { margin: 0 0 .6rem; }
+    border-radius: .75rem;
+  }
+  .tail-list > * + * { border-top: 1px solid var(--edge); }
+  .tail-list > .edit-block { margin: 0; }
+  .tail-list .edit-summary, .tail-row {
+    position: relative; display: flex; align-items: center; gap: .75rem;
+    flex-wrap: nowrap; min-height: 3.5rem; padding: .6rem 1rem;
+  }
+  .tail-list .edit-summary { display: grid;
+    grid-template-columns: minmax(0, 1fr) auto; gap: .1rem .75rem;
+    align-content: center; }
+  .tail-list .edit-summary > .block-label {
+    grid-column: 1; color: var(--fg); font-size: 1rem; font-weight: 600;
+  }
+  .tail-list .edit-summary > .block-value {
+    grid-column: 1; color: var(--muted); font-size: .9rem; font-weight: 400;
+  }
+  .tail-list .edit-trigger {
+    grid-column: 2; grid-row: 1 / span 2; min-height: 0; padding: 0;
+    background: none; border: 0;
+  }
+  /* The opener stretches over its row, so a tap anywhere on it opens. */
+  .tail-list .edit-trigger::after { content: ""; position: absolute; inset: 0; }
+  .tail-list .edit-open:focus-visible ~ .edit-summary .edit-trigger,
+  .tail-list .edit-trigger:focus-visible { outline: 0; }
+  .tail-list .edit-open:focus-visible ~ .edit-summary,
+  .tail-list .edit-summary:focus-within, .tail-row:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+    border-radius: .75rem;
+  }
+  .tail-row { text-decoration: none; color: var(--fg); cursor: pointer; }
+  .tail-row-text { flex: 1 1 auto; min-width: 0; display: flex;
+    flex-direction: column; }
+  .tail-row-title { font-weight: 600; }
+  .tail-row.is-action .tail-row-title { color: var(--accent); }
+  .tail-row-note { color: var(--muted); font-size: .9rem;
+    overflow-wrap: anywhere; }
+  .tail-chevron { flex: 0 0 auto; color: var(--muted); font-size: 1.4rem;
+    line-height: 1; }
+  .source-original > summary { list-style: none; }
+  .source-original > summary::-webkit-details-marker { display: none; }
+  .source-original[open] .tail-chevron { transform: rotate(90deg); }
+  .source-original-body { padding: 0 1rem .8rem; }
+  .source-original-body > :first-child { margin-top: 0; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .recipe-sharing p { margin: 0; }
   .recipe-sharing form { margin: 0; }
+  .recipe-sharing .edit-modal-card p { margin: 0 0 .6rem; }
   .visibility-choices { display: flex; flex-wrap: wrap; gap: .35rem .8rem;
     padding: 0; margin: .8rem 0; border: 0; }
   .visibility-choices legend { width: 100%; margin-bottom: .25rem;
@@ -1096,9 +1223,6 @@ const PUBLISH_STYLE = html`<style>
     font-weight: 600; cursor: pointer; text-decoration: underline;
   }
   .preference-label { margin: 0 0 .4rem; font-weight: 600; }
-  .recipe-sharing .edit-block:last-child { margin-bottom: 0; }
-  .recipe-sharing .block-value { font-weight: 600; }
-  .recipe-sharing .block-value.empty { font-weight: 400; }
   .source-yield { margin: .1rem 0 0; }
 </style>`;
 
@@ -1189,7 +1313,6 @@ const RECIPE_VIEW_STYLE = html`<style>
     .recipe-section > h3 { margin-top: 0; }
     .recipe-section .lines li { padding: .35rem 0; font-size: 1rem; }
     .recipe-section .steps li { padding: .25rem 0; line-height: 1.45; }
-    .recipe-cooking > .reveal-all-label { margin-top: .5rem; }
   }
 </style>`;
 
@@ -1305,17 +1428,24 @@ const MENTION_STYLE = html`<style>
     margin: 0; padding: 0; opacity: 0; pointer-events: none;
   }
   .reveal-all { position: fixed; left: 0; bottom: 0; }
+  /* Beside the first "Valmistus" since #351, rather than a button of its own
+     under the whole method. */
+  .method-heading-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .75rem; margin: 1.25rem 0 .35rem;
+  }
+  .method-heading-row > h3 { margin: 0; }
   .reveal-all-label {
     display: inline-flex; align-items: center; min-height: var(--tap-compact);
-    padding: 0 .75rem; margin: 0 0 .65rem; cursor: pointer;
+    padding: 0 .75rem; cursor: pointer; font-size: .9rem; white-space: nowrap;
     scroll-margin-bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom) + 1rem);
     border: 1px solid var(--edge); border-radius: var(--radius);
     background: var(--surface); font-weight: 600;
   }
   .reveal-all-hide { display: none; }
-  .reveal-all:checked ~ .reveal-all-label .reveal-all-show { display: none; }
-  .reveal-all:checked ~ .reveal-all-label .reveal-all-hide { display: inline; }
-  .reveal-all:focus ~ .reveal-all-label {
+  .reveal-all:checked ~ * .reveal-all-label .reveal-all-show { display: none; }
+  .reveal-all:checked ~ * .reveal-all-label .reveal-all-hide { display: inline; }
+  .reveal-all:focus ~ * .reveal-all-label {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .mention > label {

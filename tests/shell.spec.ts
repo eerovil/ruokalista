@@ -74,8 +74,20 @@ test.describe("signed in", () => {
     // selector pierces open shadow roots, and the Cast launcher has one — the
     // deepest last child then becomes a hidden icon path inside it rather than
     // the last thing the page actually shows.
-    const last = page.locator("css:light=main :last-child").last();
+    // Visible only: the page can end in a closed <details> — a recipe's
+    // "Alkuperäinen resepti" since #351 — whose text is never on screen.
+    const last = page
+      .locator("css:light=main :last-child")
+      .filter({ visible: true })
+      .last();
     await expect(last).toBeInViewport();
+
+    // And that last row clears the bar rather than sitting under it.
+    const row = await page.locator(".source-original > summary").boundingBox();
+    const tabs = await page.locator("nav.tabs").boundingBox();
+    expect(row).not.toBeNull();
+    expect(tabs).not.toBeNull();
+    expect(row!.y + row!.height).toBeLessThanOrEqual(tabs!.y);
   });
 
   // The shell is only coherent if it is actually on every screen. This walks

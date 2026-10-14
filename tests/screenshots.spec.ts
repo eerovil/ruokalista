@@ -263,9 +263,20 @@ test.describe("signed in", () => {
     await expect(page.locator(".lines li").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Valmistus" })).toBeVisible();
     await expect(page.locator(".steps li").last()).toBeInViewport();
-    await expect(page.getByText("Näytä kaikki määrät", { exact: true }))
+    await expect(page.getByText("Näytä määrät", { exact: true }))
       .toBeInViewport();
     await capture(page, { path: `${SHOTS}/05-recipe.png` });
+  });
+
+  test("the bottom of a recipe on a phone (#351)", async ({ page }) => {
+    // Only a picture here: the rows are asserted in recipes.spec.ts,
+    // recipe-blocks-317.spec.ts and ingredient-mentions.spec.ts.
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
+    await page.setViewportSize({ width: 412, height: 900 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/recipes/1");
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await capture(page, { path: `${SHOTS}/130-recipe-tail.png` });
   });
 
   /**
@@ -286,13 +297,12 @@ test.describe("signed in", () => {
 
     await expect(kaali.locator(".mention-amount")).toBeHidden();
     await expect(revealAll).toBeVisible();
-    const methodBox = await page.locator(".steps").last().boundingBox();
+    // Beside the first "Valmistus" since #351, above the steps it reveals.
+    const methodBox = await page.locator(".steps").first().boundingBox();
     const toggleBox = await revealAll.boundingBox();
     expect(methodBox).not.toBeNull();
     expect(toggleBox).not.toBeNull();
-    expect(toggleBox!.y).toBeGreaterThanOrEqual(
-      methodBox!.y + methodBox!.height,
-    );
+    expect(toggleBox!.y + toggleBox!.height).toBeLessThanOrEqual(methodBox!.y);
     await capture(page, {
       path: `${SHOTS}/38-step-mentions-closed.png`,
       fullPage: true,
@@ -762,7 +772,7 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
-    await page.getByText("Näytä alkuperäinen").click();
+    await page.getByText("Alkuperäinen resepti").click();
     await expect(page.locator(".source-link a")).toHaveText("kotikokki.example");
     // Not full-page: the tab strip is position: fixed and a full-page shot
     // paints it over whatever the viewport was showing, which here is the one
@@ -2084,7 +2094,9 @@ test.describe("public recipes", () => {
       "Tämä resepti on jaettu: Naapuri.",
     );
     await openEditBlock(page, "sharing-open");
-    const sharing = page.locator(".recipe-sharing");
+    // The form is in a fixed modal since #317, so it is measured against the
+    // open card, not against the section the card is drawn from (#351).
+    const sharing = page.locator("#sharing-open .edit-modal-card");
     const search = sharing.getByLabel("Hae vastaanottavaa taloutta");
     const recipient = sharing.getByLabel("Naapuri");
     const saveSharing = sharing.getByRole("button", { name: "Tallenna jako" });

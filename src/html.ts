@@ -232,12 +232,6 @@ const STYLES = `
   .source-text { white-space: pre-wrap; color: var(--muted); font-size: .85rem;
     margin: .5rem 0 0; }
   .source-link { margin: .5rem 0 0; font-size: .85rem; word-break: break-all; }
-  .source-original { margin: 2rem 0 1rem; }
-  .source-original > summary {
-    display: inline-flex; align-items: center;
-    min-height: var(--tap-compact); cursor: pointer;
-    color: var(--muted); font-size: .9rem;
-  }
   .yield { margin: 0 0 1rem; }
   .yield.is-scaled {
     display: inline-block; padding: .3rem .6rem;
@@ -1257,7 +1251,7 @@ export function editBlock(
     /** Accessible name for the card. The title, unless something else reads better. */
     label?: string;
     /** The opener's words, or `null` when the summary carries its own. */
-    trigger?: string | null;
+    trigger?: string | Raw | null;
     /** Open on arrival. */
     open?: boolean;
     /** An extra class on the block, for a screen that needs to reach into it. */
@@ -1312,7 +1306,7 @@ export function editBlock(
  */
 function fragmentBlock(
   options: { id: string; title: string; label?: string; className?: string },
-  trigger: string | null,
+  trigger: string | Raw | null,
   summary: Raw | string,
   body: Raw | string,
 ): Raw {

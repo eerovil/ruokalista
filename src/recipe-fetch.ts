@@ -511,7 +511,7 @@ function typeIncludes(value: unknown, wanted: string): boolean {
  *
  * Deliberately not JSON: the model's whole prompt is written for a recipe as it
  * reads on a page, and `source_text` is kept forever as the record of what
- * arrived. A household opening "Näytä alkuperäinen" years later should find a
+ * arrived. A household opening "Alkuperäinen resepti" years later should find a
  * recipe there, not a data structure.
  */
 export function recipeText(recipe: JsonObject): string {
