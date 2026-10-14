@@ -147,6 +147,9 @@ test("a recipe can be saved from its name alone, with no model call", async ({
   // Nothing stubs the model here on purpose: a call would fail this test rather
   // than be answered, which is the acceptance criterion.
   await page.goto("/intake");
+  // Folded by default (#341): the import form is what the screen is for.
+  await expect(page.getByLabel("Reseptin nimi")).toBeHidden();
+  await page.getByText("Muistatko vain nimen?").click();
   await page.getByLabel("Reseptin nimi").fill("Mummin lihapullat");
   await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
 
@@ -178,11 +181,14 @@ test("the quick save refuses a nameless recipe and keeps the screen", async ({
   page,
 }) => {
   await page.goto("/intake");
+  await page.getByText("Muistatko vain nimen?").click();
   await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
 
   await expect(page.locator(".refused")).toContainText(
     "Reseptillä pitää olla nimi.",
   );
+  // The refused form comes back open, so the member sees where to type.
+  await expect(page.getByLabel("Reseptin nimi")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Muodosta resepti" }),
   ).toBeVisible();
@@ -485,6 +491,7 @@ test("a page with no recipe on it fails the import in Finnish, with a retry", as
   // The failure lives on the import list, like every other background failure,
   // rather than as a message that disappears with the page.
   await expect(page).toHaveURL(/\/intake/);
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   const job = page.locator("[data-intake-job]").first();
   await expect(job.locator(".refused")).toHaveText(
     "Sivulta ei löytynyt reseptiä. Voit liittää tekstin itse tuontilomakkeelle.",
@@ -1170,6 +1177,7 @@ test("an import survives leaving and opens later without a second model call", a
   );
 
   await page.goto("/intake");
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   const completed = page.locator('[data-intake-job="background-return"]');
   await expect(completed.getByText("Valmis tarkistettavaksi")).toBeVisible();
   await completed.getByRole("link", { name: "Tarkista resepti" }).click();
@@ -1198,6 +1206,7 @@ test("another household cannot see an import or its status", async ({ browser, p
   const retry = await neighbour.request.post("/intake/imports/private-import/retry");
   expect(retry.status()).toBe(404);
   await page.goto("/intake");
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   await expect(page.locator('[data-intake-job="private-import"] .refused'))
     .toBeVisible();
   executeLocalSql("DELETE FROM intake_job WHERE id = 'private-import'");
@@ -1249,6 +1258,8 @@ test("a failed import keeps its source and offers an explicit retry", async ({
 
   await page.goto("/intake");
   await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
+  await expect(page.locator(".refused")).toBeHidden();
+  await page.getByText(/^Keskeneräiset tuonnit/).click();
   await page.getByText("Alkuperäinen teksti").click();
   await expect(page.getByText("Uunikaali\n½ dl öljyä")).toBeVisible();
   await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
