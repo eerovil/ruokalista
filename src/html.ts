@@ -1610,8 +1610,10 @@ export function saveBar(
 }
 
 /**
- * Which bottom-tab destination a screen belongs to. `signed-out` is the shell
- * for a browser with nowhere to navigate yet — no tabs, no sign-out.
+ * Which destination a screen belongs to. Most are bottom tabs; `ingredients`
+ * lives in the account menu instead (#357), since a household visits it rarely.
+ * `signed-out` is the shell for a browser with nowhere to navigate yet — no
+ * tabs, no sign-out.
  */
 export type Shell =
   | "cook-list"
@@ -1635,8 +1637,7 @@ const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
     shell: "shopping",
     href: "/ostoslista",
     label: "Ostokset",
-    // A trolley, not a basket: the Ainekset tab is already a jar-shaped
-    // container, and two containers side by side read as the same tab twice.
+    // A trolley: it says "the shop" more plainly than a basket or a bag.
     icon: `<circle cx="9.5" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.5 10.2a1.5 1.5 0 0 0 1.5 1.1h7.6a1.5 1.5 0 0 0 1.5-1.2L20 8H6"/>`,
   },
   {
@@ -1650,12 +1651,6 @@ const TABS: { shell: Shell; href: string; label: string; icon: string }[] = [
     href: "/intake",
     label: "Lisää",
     icon: `<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>`,
-  },
-  {
-    shell: "ingredients",
-    href: "/ingredients",
-    label: "Ainekset",
-    icon: `<path d="M5 9h14l-1.2 10.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z"/><path d="M9 9a3 3 0 0 1 6 0"/>`,
   },
 ];
 
@@ -1692,16 +1687,20 @@ export interface Viewer {
 
 /**
  * The account affordance: small, out of the way, and the way out of the app —
- * and, for an admin, the one way in to the admin panel. It lives here rather
+ * and the way in to the rarely visited screens: the ingredient list for every
+ * member (#357) and, for an admin, the admin panel. It lives here rather
  * than on the home screen so that every screen offers it, which is what #106
  * asked for and what #94 deliberately deferred.
  */
-function accountMenu(viewer: Viewer | null): Raw {
+function accountMenu(viewer: Viewer | null, current: Shell): Raw {
   return html`<details class="account">
   <summary role="button" aria-label="Tili">
     ${icon(`<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>`)}
   </summary>
   <div class="account-menu">
+    <a href="/ingredients"${current === "ingredients"
+      ? raw(' aria-current="page"')
+      : ""}>Ainekset</a>
     ${viewer?.isAdmin ? html`<a href="/admin">Ylläpito</a>` : ""}
     <form method="post" action="/auth/signout">
       <button type="submit" class="quiet">Kirjaudu ulos</button>
@@ -1750,7 +1749,7 @@ function pageHead(title: string, shell: Shell, viewer: Viewer | null): Raw {
 ${signedIn
     ? html`<header class="topbar">
   <a class="wordmark" href="/">Ruokalista</a>
-  ${accountMenu(viewer)}
+  ${accountMenu(viewer, shell)}
 </header>`
     : ""}
 <main>`;

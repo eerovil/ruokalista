@@ -8,9 +8,11 @@ The one HTML shell, and the standing rules for what a screen may assume about th
 every interpolated value. `raw()` is the only way past that escaping, so it is
 also the only thing to check when reviewing for injection.
 
-`page()` takes a `Shell` — `week`, `recipes`, `intake`, `ingredients`, or
-`signed-out` — which is the bottom-tab destination the screen belongs to, so an
-inner screen like a recipe still lights up `Reseptit`. Issue #106 proposes that
+`page()` takes a `Shell` — `cook-list`, `shopping`, `recipes`, `intake`,
+`ingredients`, or `signed-out` — which is the destination the screen belongs
+to, so an inner screen like a recipe still lights up `Reseptit`. `ingredients`
+is not a bottom tab: Ainekset sits in the account menu next to Ylläpito (#357),
+and its menu entry is the one marked current. Issue #106 proposes that
 it also take a viewer so the shared account menu can offer the admin panel only
 to an admin. `signed-out` renders no tabs or account button, because there is
 nowhere to navigate yet.
@@ -554,7 +556,7 @@ worked out, because "why does this week need oregano at all" is worth being
 able to answer about a staple too. With an empty cupboard there are no section
 headings at all — one list needs no heading saying it is the list.
 
-There is no sixth bottom tab: the cupboard hangs off the Ainekset screen, which
+There is no tab of its own: the cupboard hangs off the Ainekset screen, which
 is the same ingredients seen another way, and off the `Löytyy` section itself.
 The split rule is `src/pantry.ts::splitByPantry`, tested directly in
 `dev/check-pantry.ts`.
