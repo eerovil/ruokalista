@@ -278,11 +278,13 @@ function intakeForm(
  *
  * It is deliberately below the import form and headed by its own question, so
  * the choice on this screen reads as two whole things rather than one thing
- * with an escape hatch on it.
+ * with an escape hatch on it. It starts folded (#341): the import form is what
+ * almost every visit is for. A refused save re-renders it open, so the member
+ * sees the refusal's field with what they typed.
  */
-function quickSaveForm(title = ""): Raw {
-  return html`<section aria-labelledby="quick-save-title">
-    <h2 id="quick-save-title">Muistatko vain nimen?</h2>
+function quickSaveForm(title = "", open = false): Raw {
+  return html`<details class="fold" ${open ? "open" : ""}>
+    <summary>Muistatko vain nimen?</summary>
     <form method="post" action="/intake/keskeneras" class="stacked">
       <label for="quickTitle">Reseptin nimi</label>
       <input
@@ -299,10 +301,10 @@ function quickSaveForm(title = ""): Raw {
         ei tarvita, eikä resepti käy mallilla — voit täydentää sen myöhemmin.
       </p>
     </form>
-  </section>`;
+  </details>`;
 }
 
-function intakeJobs(jobs: IntakeJob[]): Raw {
+function intakeJobs(jobs: IntakeJob[], open = false): Raw {
   if (jobs.length === 0) return html``;
 
   const state = (job: IntakeJob): Raw => {
@@ -319,8 +321,11 @@ function intakeJobs(jobs: IntakeJob[]): Raw {
     return html`<p><strong>Käsitellään taustalla</strong></p>`;
   };
 
-  return html`<section aria-labelledby="intake-jobs-title">
-    <h2 id="intake-jobs-title">Keskeneräiset tuonnit</h2>
+  // Folded by default (#341), with the count on the fold so a waiting import
+  // is not invisible. Open right after the member started one, so if it has
+  // already failed they see why and can retry without hunting for it.
+  return html`<details class="fold" ${open ? "open" : ""}>
+    <summary>Keskeneräiset tuonnit (${jobs.length})</summary>
     <ul class="recipes">
       ${jobs.map((job) => html`<li
         data-intake-job="${job.id}"
@@ -360,7 +365,7 @@ function intakeJobs(jobs: IntakeJob[]): Raw {
         }, 3000);
       })();
     `)}</script>
-  </section>`;
+  </details>`;
 }
 
 function sourceRouteLabel(route: SourceRoute): string {
@@ -428,8 +433,8 @@ export async function intakeScreen(
         ? ""
         : html`<p class="refused">${refusal.message}</p>`}
       ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
-      ${target === null ? quickSaveForm(refusal?.title ?? "") : ""}
-      ${intakeJobs(jobs)}
+      ${target === null ? quickSaveForm(refusal?.title ?? "", refusal !== undefined) : ""}
+      ${intakeJobs(jobs, confirmed)}
       ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
     "intake",

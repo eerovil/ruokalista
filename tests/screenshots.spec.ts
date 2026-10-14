@@ -927,6 +927,7 @@ test.describe("signed in", () => {
          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
     await page.goto("/intake");
+    await page.getByText(/^Keskeneräiset tuonnit/).click();
     await expect(page.locator(".refused")).toContainText("jäsennys ei onnistunut");
     await expect(page.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
     await page.getByText("Alkuperäinen teksti").click();
@@ -2906,6 +2907,7 @@ test.describe("saving a recipe from its name alone (#211)", () => {
     await expect(
       page.getByRole("button", { name: "Muodosta resepti" }),
     ).toBeVisible();
+    await page.getByText("Muistatko vain nimen?").click();
     await expect(
       page.getByRole("button", { name: "Tallenna keskeneräisenä" }),
     ).toBeVisible();
