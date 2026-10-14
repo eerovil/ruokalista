@@ -203,7 +203,7 @@ test("one toggle covers a multipart dish and survives back-forward restore", asy
   await expect(revealAllByName).toBeVisible();
   await page.locator(".reveal-all-label").click();
   await expect(revealAll).toBeChecked();
-  const partAmounts = page.locator(".part .mention-amount");
+  const partAmounts = page.locator(".part-method .mention-amount");
   expect(await partAmounts.count()).toBeGreaterThan(0);
   for (let index = 0; index < await partAmounts.count(); index += 1) {
     await expect(partAmounts.nth(index)).toBeVisible();
@@ -213,7 +213,7 @@ test("one toggle covers a multipart dish and survives back-forward restore", asy
   await page.goto("/recipes");
   await page.goBack();
   await expect(page.locator(".reveal-all")).toBeChecked();
-  await expect(page.locator(".part .mention-amount")).toBeVisible();
+  await expect(page.locator(".part-method .mention-amount")).toBeVisible();
 });
 
 test.describe("without JavaScript", () => {

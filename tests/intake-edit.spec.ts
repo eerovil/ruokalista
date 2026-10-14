@@ -168,9 +168,11 @@ test("a valid top-level multipart AI edit still saves every part", async ({
   const parts = page.locator(".part");
   await expect(parts).toHaveCount(2);
   await expect(parts.nth(0)).toContainText("400 g");
-  await expect(parts.nth(0)).toContainText("Ruskista jauheliha.");
   await expect(parts.nth(1)).toContainText("5 dl");
-  await expect(parts.nth(1)).toContainText("Kuumenna maito");
+  // A part's steps are its own section of the method since #354.
+  const methods = page.locator(".part-method");
+  await expect(methods.nth(0)).toContainText("Ruskista jauheliha.");
+  await expect(methods.nth(1)).toContainText("Kuumenna maito");
 });
 
 test("a web address is available in the same existing-recipe mode", async ({ page }) => {
@@ -262,11 +264,12 @@ test("case variants replace one existing part without losing children", async ({
   await expect(sauce.locator("h2")).toHaveText("Juustokastike");
   await expect(sauce.locator(".lines li")).toHaveCount(1);
   await expect(sauce.locator(".lines")).toContainText("5 dl maito tai 2 dl juusto");
-  await expect(sauce.locator(".steps li")).toHaveCount(2);
-  await expect(sauce.locator(".steps li").first())
+  const sauceMethod = page.locator(".part-method", { hasText: "Juustokastike" });
+  await expect(sauceMethod.locator(".steps li")).toHaveCount(2);
+  await expect(sauceMethod.locator(".steps li").first())
     .toContainText("Kuumenna");
-  await expect(sauce).toContainText("Sekoita tasaiseksi.");
-  await expect(sauce.locator(".mention")).toHaveCount(2);
+  await expect(sauceMethod).toContainText("Sekoita tasaiseksi.");
+  await expect(sauceMethod.locator(".mention")).toHaveCount(2);
 
   await page.goto("/recipes/5/edit");
   await expect(page.locator('input[name="revision"]')).toHaveValue("1");
