@@ -180,7 +180,12 @@ page; that is the screenshot, not the app. Regenerating after a copy tweak and
 re-reading the result is a normal loop here, not a wasted step.
 
 CI (`.github/workflows/ci.yml`) runs typecheck, the checks and the browser suite
-on every pull request, in the same pinned Playwright image. It writes a
+on every pull request, in the same pinned Playwright image. The browser suite
+runs as four `browser` jobs side by side (`--shard=i/4`), each with its own
+container and local D1, so `workers: 1` still holds inside each one; the
+typecheck, the checks and the restore round-trip run once, in `check`. Playwright
+splits by spec file, so a spec that grows very long makes its shard the slow one.
+A failing shard uploads its traces as `playwright-traces-<shard>`. It writes a
 throwaway `.dev.vars` with no `ANTHROPIC_API_KEY` — if a test ever needs one, it
 is calling the model, and that is a test that should not exist.
 
