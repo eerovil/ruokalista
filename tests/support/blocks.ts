@@ -117,8 +117,6 @@ export async function addAtSize(page: Page, size: string): Promise<void> {
   await chooseSize(page, size);
   await page.getByRole("button", { name: /Lisää kokattaviin/ }).click();
 }
-  await expect(add).toBeVisible();
-}
 
 /**
  * The recipe screen's Näytä tuotevalinnat switch, a row of its ⋯ modal since
