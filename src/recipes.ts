@@ -128,6 +128,7 @@ function summaryForApi(summary: RecipeSummary): object {
     publishedAt: _publishedAt,
     shareCount: _shareCount,
     categories: _categories,
+    empty: _empty,
     ...wire
   } = summary;
   return wire;
@@ -155,6 +156,7 @@ function recipeForApi(recipe: Recipe, viewerHouseholdId: number): object {
     publishedAt: _publishedAt,
     shareCount: _shareCount,
     categories: _categories,
+    empty: _empty,
     parentId: _parentId,
     parentTitle: _parentTitle,
     ...wire
