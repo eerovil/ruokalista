@@ -1128,10 +1128,7 @@ const SIZE_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6];
  * goes through a plain GET form to the same page.
  */
 function sizeChooser(recipe: Recipe, multiplier: number, preference: number | null): Raw {
-  const usual = preference ?? DEFAULT_MULTIPLIER;
-  return html`<p class="empty">Ainesten määrät lasketaan tällä kertoimella, ja
-      Lisää kokattaviin lisää tämän kokoisena.</p>
-    <div class="size-choices">
+  return html`<div class="size-choices">
       ${[0.5, 1, 1.5, 2, 3].map((choice) => html`<a
         class="size-choice ${choice === multiplier ? "is-current" : ""}"
         href="/recipes/${recipe.id}?multiplier=${String(choice)}"
@@ -1147,9 +1144,7 @@ function sizeChooser(recipe: Recipe, multiplier: number, preference: number | nu
         value="${[0.5, 1, 1.5, 2, 3].includes(multiplier) ? "" : formatMultiplier(multiplier).slice(0, -1)}"
       />
       <button type="submit">Näytä</button>
-    </form>
-    <p class="empty size-usual">Meillä yleensä ${formatMultiplier(usual)} — sen voi
-      vaihtaa kohdasta ⋯ → Oletuskerroin.</p>`;
+    </form>`;
 }
 
 /** PROTOTYPE (#364), variant C: a stepper above the ingredients. */
@@ -1467,7 +1462,7 @@ const PUBLISH_STYLE = html`<style>
   .size-stepper-value { padding: 0 .8rem; font-size: 1rem; font-weight: 600; }
   .size-step.is-off { opacity: .35; }
   .size-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: .5rem; margin: .75rem 0 0; }
+    gap: .5rem; margin: 0; }
   .size-choice { display: flex; align-items: center; justify-content: center;
     min-height: 3.25rem; border-radius: var(--radius); border: 1px solid var(--edge);
     background: var(--surface); color: var(--fg); font-size: 1.05rem;
