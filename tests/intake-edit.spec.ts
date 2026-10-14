@@ -180,14 +180,15 @@ test("a web address is available in the same existing-recipe mode", async ({ pag
     linkedUrl: "https://example.com/resepti",
   });
   await page.goto("/intake?recipe=1");
-  await page.getByLabel("…tai hae resepti nettiosoitteesta")
+  await page.getByLabel("Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa")
     .fill("https://example.com/resepti");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
+  // The link goes in the box, like on the add screen (#350).
   expect(calls[0]?.body).toMatchObject({
     recipeId: "1",
     mode: "extend",
-    url: "https://example.com/resepti",
+    sourceText: "https://example.com/resepti",
   });
   await expect(page.getByRole("heading", { name: "Tarkista reseptin muutokset" }))
     .toBeVisible();

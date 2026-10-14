@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
  * serves it too — one draft, so the thing tested by hand and the thing tested
  * by CI cannot drift apart.
  */
+import { linksIn } from "../../src/intake-box.ts";
 import { SAMPLE_DRAFT } from "../../src/sample-draft.ts";
 import { executeLocalSql, putLocalObject } from "./seed";
 
@@ -140,19 +141,31 @@ export async function stubStructuring(
 
     const id = `test-${randomUUID()}`;
     const photographed = Array.isArray(body.images) && body.images.length > 0;
-    const linked = !photographed && typeof body.url === "string" && body.url !== "";
-    // A linked job's text is what the consumer read off the page, so the
-    // fixture stands in for the page rather than for anything the browser sent.
-    const sourceText = linked
-      ? options.linkedText ?? ""
-      : typeof body.sourceText === "string"
-        ? body.sourceText
-        : "";
+    // The links the server would find in the box (#350), read the same way.
+    const typed = typeof body.sourceText === "string" && body.sourceText.trim() !== ""
+      ? body.sourceText.trim()
+      : null;
+    const links = [
+      ...(typeof body.url === "string" && body.url !== "" ? [body.url] : []),
+      ...linksIn(typed ?? ""),
+    ];
+    const linked = links.length > 0;
     const imageRefs = photographed
       ? body.images!.map((image, index) => ({
           key: `test/${id}/${index + 1}`,
           mediaType: image.mediaType ?? "image/jpeg",
         }))
+      : null;
+    // What the consumer would have read off the pages: the fixture's text for
+    // the first link, and any failures the test asked for after it. A failed
+    // job never got as far as reading.
+    const reads = linked && options.failWith === undefined
+      ? [
+          ...(options.linkedText === undefined
+            ? []
+            : [{ url: options.linkedUrl ?? links[0]!, text: options.linkedText }]),
+          ...(options.unreadLinks ?? []),
+        ]
       : null;
 
     // The picture the consumer would have found on the page and stored (#205),
@@ -164,47 +177,34 @@ export async function stubStructuring(
       putLocalObject(pageImageKey, options.linkedImage!, "image/png");
     }
     const route_ = photographed ? "photographed" : linked ? "linked" : "pasted";
+    const failed = options.failWith !== undefined;
 
-    if (options.failWith !== undefined) {
+    executeLocalSql(
+      `INSERT INTO intake_job
+        (id, household_id, created_by, status, source_route, source_text,
+         source_url, import_guidance, link_reads, image_refs, page_image_key,
+         page_image_type, ${failed ? "error_message" : "draft_json"},
+         created_at, updated_at)
+       VALUES (${sql(id)}, 1, 1, ${failed ? "'failed'" : "'ready'"}, ${sql(route_)},
+         ${typed === null ? (route_ === "pasted" ? "''" : "NULL") : sql(typed)},
+         ${linked ? sql(options.linkedUrl ?? links[0]!) : "NULL"},
+         ${linked && body.guidance ? sql(body.guidance) : "NULL"},
+         ${reads === null ? "NULL" : sql(JSON.stringify(reads))},
+         ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
+         ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
+         ${pageImageKey === null ? "NULL" : "'image/png'"},
+         ${sql(failed ? options.failWith! : JSON.stringify(draft))},
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    );
+    if (!failed && body.recipeId !== undefined && options.targetRecipe !== undefined) {
       executeLocalSql(
-        `INSERT INTO intake_job
-          (id, household_id, created_by, status, source_route, source_text,
-           source_url, import_guidance, image_refs, page_image_key, page_image_type,
-           error_message, created_at, updated_at)
-         VALUES (${sql(id)}, 1, 1, 'failed', ${sql(route_)},
-           ${linked ? "NULL" : sql(sourceText)},
-           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
-           ${linked && body.guidance ? sql(body.guidance) : "NULL"},
-           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
-           ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
-           ${pageImageKey === null ? "NULL" : "'image/png'"},
-           ${sql(options.failWith)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        `UPDATE intake_job
+            SET target_recipe_id = ${Number(body.recipeId)},
+                target_revision = ${Number((options.targetRecipe as { revision?: number }).revision ?? 0)},
+                edit_mode = ${sql(body.mode ?? "extend")},
+                target_recipe_json = ${sql(JSON.stringify(options.targetRecipe))}
+          WHERE id = ${sql(id)}`,
       );
-    } else {
-      executeLocalSql(
-        `INSERT INTO intake_job
-          (id, household_id, created_by, status, source_route, source_text,
-           source_url, import_guidance, image_refs, page_image_key, page_image_type,
-           draft_json, created_at, updated_at)
-         VALUES (${sql(id)}, 1, 1, 'ready', ${sql(route_)},
-           ${photographed ? "NULL" : sql(sourceText)},
-           ${linked ? sql(options.linkedUrl ?? body.url!) : "NULL"},
-           ${linked && body.guidance ? sql(body.guidance) : "NULL"},
-           ${imageRefs === null ? "NULL" : sql(JSON.stringify(imageRefs))},
-           ${pageImageKey === null ? "NULL" : sql(pageImageKey)},
-           ${pageImageKey === null ? "NULL" : "'image/png'"},
-           ${sql(JSON.stringify(draft))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      );
-      if (body.recipeId !== undefined && options.targetRecipe !== undefined) {
-        executeLocalSql(
-          `UPDATE intake_job
-              SET target_recipe_id = ${Number(body.recipeId)},
-                  target_revision = ${Number((options.targetRecipe as { revision?: number }).revision ?? 0)},
-                  edit_mode = ${sql(body.mode ?? "extend")},
-                  target_recipe_json = ${sql(JSON.stringify(options.targetRecipe))}
-            WHERE id = ${sql(id)}`,
-        );
-      }
     }
 
     await route.fulfill({
@@ -227,10 +227,12 @@ export async function stubStructuring(
  * `dev/check-intake-jobs.ts`.
  */
 export interface StubOptions {
-  /** The text the consumer read off the page, for a linked import. */
+  /** The text the consumer read off the first link's page. */
   linkedText?: string;
   /** The address it finally read, after any redirect. */
   linkedUrl?: string;
+  /** Links the consumer could not read, recorded after the first one (#350). */
+  unreadLinks?: Array<{ url: string; failure: string }>;
   /** Finnish failure wording, when the job should land as failed instead. */
   failWith?: string;
   /**

@@ -186,12 +186,12 @@ test("overlong linked guidance is refused before a job is written", async () => 
   );
 });
 
-test("pasted text replaces a preserved unsupported K-Ruoka address", async () => {
+test("pasted text beside an unsupported K-Ruoka address is kept with it", async () => {
   const database = intakeDatabase({
     status: "queued",
-    source_route: "pasted",
+    source_route: "linked",
     source_text: "Uunikaali\n½ dl öljyä",
-    source_url: null,
+    source_url: "https://www.k-ruoka.fi/reseptit/helppo-texmex-broilerilasagne",
   });
   const queued: string[] = [];
 
@@ -209,12 +209,131 @@ test("pasted text replaces a preserved unsupported K-Ruoka address", async () =>
     },
   );
 
+  // Everything given is kept (#350); the consumer is what finds the K-Ruoka
+  // address unreadable and goes on with the text.
   const inserted = database.insertedValues();
   assert.ok(inserted);
-  assert.equal(inserted[3], "pasted");
+  assert.equal(inserted[3], "linked");
   assert.equal(inserted[4], "Uunikaali\n½ dl öljyä");
-  assert.equal(inserted[5], null);
+  assert.equal(inserted[5], "https://www.k-ruoka.fi/reseptit/helppo-texmex-broilerilasagne");
   assert.equal(queued.length, 1);
+});
+
+test("a K-Ruoka address and nothing else is refused before a job exists", async () => {
+  const database = intakeDatabase({ status: "queued" });
+  await assert.rejects(
+    createIntakeJob(
+      database.env,
+      { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+      { sourceText: "https://www.k-ruoka.fi/reseptit/helppo-texmex-broilerilasagne" },
+    ),
+    (error: Error) => error instanceof IntakeRefused && /K-Ruoka/.test(error.message),
+  );
+  assert.equal(database.insertedValues(), null);
+});
+
+test("text, links and photographs are one job, links found in the text", async () => {
+  const database = intakeDatabase({ status: "queued" });
+  const stored: string[] = [];
+  await createIntakeJob(
+    {
+      ...database.env,
+      RECIPE_IMAGES: { put: async (key: string) => { stored.push(key); } },
+      INTAKE_QUEUE: { send: async () => {} },
+    } as unknown as import("../src/env.ts").Env,
+    { id: 1, householdId: 1 } as unknown as import("../src/members.ts").Member,
+    {
+      sourceText: "Tämä, mutta puolet sokeria: kotikokki.example/a ja (https://b.example/b).",
+      images: [{ image: png(40, 40).toString("base64"), mediaType: "image/jpeg" }],
+    },
+  );
+  const inserted = database.insertedValues();
+  assert.ok(inserted);
+  assert.equal(inserted[3], "photographed");
+  assert.equal(
+    inserted[4],
+    "Tämä, mutta puolet sokeria: kotikokki.example/a ja (https://b.example/b).",
+  );
+  assert.equal(inserted[5], "https://kotikokki.example/a");
+  assert.equal(stored.length, 1);
+});
+
+test("every link is read and the model gets the text, the pages and the photos", async () => {
+  const db = intakeDatabase({
+    source_route: "photographed",
+    source_text: "Puolet sokeria https://kotikokki.example/uunikaali https://dead.example/x",
+    source_url: "https://kotikokki.example/uunikaali",
+    image_refs: JSON.stringify([{ key: "intake/owned/1", mediaType: "image/jpeg" }]),
+  });
+  db.env.RECIPE_IMAGES.get = (async () => ({
+    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+  })) as never;
+  const requests: string[] = [];
+
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async (url) => {
+      requests.push(url);
+      return url.includes("dead.example")
+        ? new Response("", { status: 404 })
+        : new Response(RECIPE_PAGE, {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+    },
+    structure: async (_env, _job, source) => {
+      assert.equal(source.route, "photographed");
+      if (source.route === "photographed") {
+        assert.equal(source.images.length, 1);
+        assert.equal(source.fromPages, true);
+        assert.match(source.text ?? "", /^Käyttäjän kirjoittama teksti:\nPuolet sokeria\n/);
+        assert.match(source.text ?? "", /Sivu osoitteesta https:\/\/kotikokki\.example\/uunikaali:\n/);
+        assert.match(source.text ?? "", /valkokaalia/);
+        assert.doesNotMatch(source.text ?? "", /dead\.example/);
+      }
+      return JSON.stringify(SAMPLE_DRAFT);
+    },
+  });
+
+  assert.deepEqual(requests, [
+    "https://kotikokki.example/uunikaali",
+    "https://dead.example/x",
+  ]);
+  // One dead link does not fail the import; it is recorded for the review.
+  assert.equal(db.claimLease(), db.readyLease());
+  const reads = JSON.parse(db.storedText() ?? "[]") as Array<Record<string, string>>;
+  assert.equal(reads.length, 2);
+  assert.match(reads[0]!["text"] ?? "", /valkokaalia/);
+  assert.deepEqual(reads[1], { url: "https://dead.example/x", failure: "unreachable" });
+});
+
+test("a dead link with only a short note beside it fails in Finnish", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: "puolet sokeria https://www.k-ruoka.fi/reseptit/lasagne",
+    source_url: "https://www.k-ruoka.fi/reseptit/lasagne",
+  });
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async () => { throw new Error("nothing may be fetched"); },
+    structure: async () => { throw new Error("the model must not run"); },
+  });
+  assert.equal(db.claimLease(), db.failedLease());
+  assert.match(db.failureMessage() ?? "", /K-Ruoka-linkkejä ei tueta/);
+});
+
+test("a pasted recipe beside a dead link is imported from the text", async () => {
+  const db = intakeDatabase({
+    source_route: "linked",
+    source_text: "https://www.k-ruoka.fi/reseptit/lasagne\nUunikaali\n½ dl öljyä",
+    source_url: "https://www.k-ruoka.fi/reseptit/lasagne",
+  });
+  await processIntakeJob(db.env, "owned", {
+    fetchPage: async () => { throw new Error("nothing may be fetched"); },
+    structure: async (_env, _job, source) => {
+      assert.deepEqual(source, { route: "pasted", text: "Uunikaali\n½ dl öljyä" });
+      return JSON.stringify(SAMPLE_DRAFT);
+    },
+  });
+  assert.equal(db.claimLease(), db.readyLease());
 });
 
 test("maintenance recreates lost messages and deletes only real R2 orphans", async () => {
@@ -312,6 +431,9 @@ test("a linked job reads its page in the consumer, not in the request", async ()
       if (source.route === "linked") {
         assert.equal(source.url, "https://kotikokki.example/uunikaali");
         assert.match(source.text, /valkokaalia/);
+        // One link and nothing typed is the prompt it always was: no headings.
+        assert.equal(source.mixed, false);
+        assert.doesNotMatch(source.text, /Sivu osoitteesta/);
         assert.equal(
           source.guidance,
           "Sivulla on kaksi reseptiä; lue vain alempi.",
@@ -333,8 +455,11 @@ test("a linked job reads its page in the consumer, not in the request", async ()
 test("a linked job that already read its page does not read it again", async () => {
   const db = intakeDatabase({
     source_route: "linked",
-    source_text: "Uunikaali\n500 g valkokaalia",
+    source_text: null,
     source_url: "https://kotikokki.example/uunikaali",
+    link_reads: JSON.stringify([
+      { url: "https://kotikokki.example/uunikaali", text: "Uunikaali\n500 g valkokaalia" },
+    ]),
   });
   const server = pageServer(RECIPE_PAGE);
 
@@ -534,6 +659,7 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
     source_text: SAMPLE_DRAFT.source_text,
     source_url: null,
     import_guidance: null,
+    link_reads: null,
     image_refs: null,
     page_image_key: null,
     page_image_type: null,
@@ -562,7 +688,8 @@ function intakeDatabase(overrides: Record<string, unknown> = {}): {
           } else if (sql.includes("SET status = 'failed'")) {
             failedLease = String(values[2]);
             failureMessage = String(values[0]);
-          } else if (sql.includes("SET source_text = ?, source_url = ?")) {
+          } else if (sql.includes("SET link_reads = ?, source_url = ?")) {
+            // What the links gave up, as the JSON the consumer wrote.
             storedText = String(values[0]);
           } else if (sql.includes("SET page_image_key = ?")) {
             storedPageImage = { key: String(values[0]), type: String(values[1]) };

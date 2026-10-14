@@ -1,7 +1,9 @@
 import type { Env } from "./env.ts";
 import { ingredientsFor } from "./ingredients.ts";
+import { linksIn, MAX_LINKS, withoutLinks } from "./intake-box.ts";
 import {
   draftFromJson,
+  givenMaterial,
   importFailureMessage,
   MAX_IMAGES,
   MAX_PAGE_BASE64_BYTES,
@@ -11,6 +13,7 @@ import {
   type DraftStreamRecord,
   type IntakeImage,
   type IntakeSource,
+  type ReadPage,
 } from "./intake.ts";
 import type { Member } from "./members.ts";
 import { extensionFor } from "./image-bytes.ts";
@@ -30,6 +33,14 @@ export type IntakeJobStatus = "queued" | "running" | "ready" | "failed";
 /** The three ways a recipe arrives (#192 added the third). */
 export type IntakeJobRoute = "pasted" | "photographed" | "linked";
 
+/** Why one link gave up no page: the fetch's own word, or K-Ruoka's block. */
+export type LinkFailure = FetchFailure | "blocked";
+
+/** One link of a job as the consumer read it (#350). */
+export type LinkRead =
+  | { url: string; text: string }
+  | { url: string; failure: LinkFailure };
+
 /** An image object in R2 that belongs to a job and dies with it. */
 export interface StoredImageRef {
   key: string;
@@ -46,6 +57,7 @@ interface IntakeJobRow {
   source_text: string | null;
   source_url: string | null;
   import_guidance: string | null;
+  link_reads: string | null;
   image_refs: string | null;
   page_image_key: string | null;
   page_image_type: string | null;
@@ -65,9 +77,16 @@ export interface IntakeJob {
   createdBy: number;
   status: IntakeJobStatus;
   sourceRoute: IntakeJobRoute;
+  /** What the member typed in the box, links and all; null if nothing. */
   sourceText: string | null;
-  /** The address a linked import reads, and null on every other route. */
+  /**
+   * The first link given, and once the links are read, the first one that
+   * gave up a page — the address the recipe will point back at. Null when the
+   * box held no link.
+   */
   sourceUrl: string | null;
+  /** The links as the consumer read them; null until it has (#350). */
+  linkReads: LinkRead[] | null;
   /** Optional member guidance for structuring a linked page (#219). */
   importGuidance: string | null;
   imageRefs: StoredImageRef[];
@@ -195,26 +214,30 @@ export async function createIntakeJob(
 
   const sourceText =
     typeof body.sourceText === "string" && body.sourceText.trim() !== ""
-      ? body.sourceText
+      ? body.sourceText.trim()
       : null;
 
-  // A photograph wins over an address and an ordinary address over an
-  // already-pasted box, so the recipe that gets imported is the newest thing
-  // the member reached for. The one exception is a preserved, unsupported
-  // K-Ruoka address once the member follows its refusal by pasting the recipe.
-  // The address is checked here rather than in the consumer: an address that
-  // could never be fetched should be refused while the member is still looking
-  // at the field they typed it into.
-  const sourceUrl = images.length === 0
-    ? readIntakeUrl(body.url, sourceText !== null)
-    : null;
+  // Everything given is material for one recipe (#350): the box's text, the
+  // links written in it, and the photographs. A separate `url` is what an
+  // installed app still running yesterday's screen sends, and it is read as
+  // one more link in front of the box's own.
+  const links = intakeLinks(body.url, sourceText);
+  const typed = sourceText === null ? "" : withoutLinks(sourceText);
 
-  if (images.length === 0 && sourceUrl === null && sourceText === null) {
+  if (images.length === 0 && links.length === 0 && sourceText === null) {
     throw new IntakeRefused("Anna reseptin osoite, tekstiä tai kuva.");
   }
+  // Only a link that cannot be read and nothing else besides: refused while
+  // the member is still looking at it, rather than as a job certain to fail.
+  // With anything else given, the import goes on without it.
+  if (images.length === 0 && typed === "" && links.every(isBlockedLink)) {
+    throw new IntakeRefused(K_RUOKA_REFUSAL);
+  }
 
+  // The main way in, which is what the saved recipe records as its route:
+  // photographs, else a link, else text.
   const route: IntakeJobRoute =
-    images.length > 0 ? "photographed" : sourceUrl !== null ? "linked" : "pasted";
+    images.length > 0 ? "photographed" : links.length > 0 ? "linked" : "pasted";
   const importGuidance = route === "linked" ? readImportGuidance(body.guidance) : null;
 
   const id = crypto.randomUUID();
@@ -242,10 +265,8 @@ export async function createIntakeJob(
         member.householdId,
         member.id,
         route,
-        // A linked job starts with no text at all: the page has not been read
-        // yet, and it is the consumer that reads it.
-        route === "pasted" ? sourceText : null,
-        sourceUrl,
+        sourceText,
+        links[0] ?? null,
         importGuidance,
         route === "photographed" ? JSON.stringify(imageRefs) : null,
         targetRecipe?.id ?? null,
@@ -309,35 +330,48 @@ function readTargetRecipeId(value: unknown): number | null {
   return id;
 }
 
+const K_RUOKA_REFUSAL =
+  "K-Ruoka-linkkejä ei tueta. Liitä reseptin teksti tai tuo resepti kuvasta.";
+
 /**
- * The address a linked import will read, or null when none was given.
+ * The links an import will read, normalised, each once, at most `MAX_LINKS`.
  *
- * `normaliseRecipeUrl` is the same check the fetch itself goes through, so an
- * address that could not be fetched is refused here rather than becoming a job
- * that is certain to fail. It also fills in a missing scheme, which is what
- * lets a member paste `kotikokki.fi/resepti` the way people actually do.
+ * `normaliseRecipeUrl` is the same check the fetch itself goes through. A
+ * written link that fails it is just words in the box — the box is free text,
+ * and "esim.fi" in a sentence is not worth refusing an import over. A separate
+ * `url` field (an older screen) is different: the member typed it as an
+ * address, so one that is not an address is refused as it always was.
  */
-function readIntakeUrl(value: unknown, hasPastedText = false): string | null {
-  if (typeof value !== "string" || value.trim() === "") return null;
-  try {
-    const url = normaliseRecipeUrl(value);
-    const host = url.hostname.toLowerCase();
-    // K-Ruoka challenge-blocks server fetches. Do not work around that browser
-    // challenge or depend on its undocumented frontend API (#246).
-    if (host === "k-ruoka.fi" || host === "www.k-ruoka.fi") {
-      // The screen preserves a refused address. If the member follows the
-      // guidance by pasting the recipe, that text must win without making them
-      // notice and clear the address first.
-      if (hasPastedText) return null;
-      throw new IntakeRefused(
-        "K-Ruoka-linkkejä ei tueta. Liitä reseptin teksti tai tuo resepti kuvasta.",
-      );
+function intakeLinks(url: unknown, text: string | null): string[] {
+  const links: string[] = [];
+  const add = (address: string) => {
+    if (links.length < MAX_LINKS && !links.includes(address)) links.push(address);
+  };
+  if (typeof url === "string" && url.trim() !== "") {
+    try {
+      add(normaliseRecipeUrl(url).toString());
+    } catch {
+      throw new IntakeRefused(LINK_REFUSALS.invalid_url);
     }
-    return url.toString();
-  } catch (error) {
-    if (error instanceof IntakeRefused) throw error;
-    throw new IntakeRefused(LINK_REFUSALS.invalid_url);
   }
+  for (const written of linksIn(text ?? "")) {
+    try {
+      add(normaliseRecipeUrl(written).toString());
+    } catch {
+      // Not an address after all; it stays in the text as words.
+    }
+  }
+  return links;
+}
+
+/**
+ * K-Ruoka challenge-blocks server fetches. Do not work around that browser
+ * challenge or depend on its undocumented frontend API (#246); its link is
+ * simply not read.
+ */
+function isBlockedLink(address: string): boolean {
+  const host = new URL(address).hostname.toLowerCase();
+  return host === "k-ruoka.fi" || host === "www.k-ruoka.fi";
 }
 
 /**
@@ -347,7 +381,8 @@ function readIntakeUrl(value: unknown, hasPastedText = false): string | null {
  * one place each becomes something a household reads. A page's own error text
  * never becomes a Finnish message, and never reaches a screen.
  */
-const LINK_REFUSALS: Record<FetchFailure, string> = {
+const LINK_REFUSALS: Record<LinkFailure, string> = {
+  blocked: K_RUOKA_REFUSAL,
   invalid_url: "Osoite ei näytä nettiosoitteelta. Tarkista linkki.",
   unreachable:
     "Sivua ei saatu auki. Tarkista linkki tai kokeile hetken kuluttua uudelleen.",
@@ -576,61 +611,21 @@ export async function processIntakeJob(
 /**
  * What the model will be given, assembled at the moment the job runs.
  *
- * A linked job is read here rather than when it was created, which is the
- * whole reason it is a job: fetching in the request would hold that request
- * open for a slow site, and #186 moved imports off the request precisely so a
- * member could navigate away. The text it reads is written back onto the job,
- * so a retry after a *model* failure reuses it instead of asking the site
- * again, and so a failed import can still show what it did manage to read.
+ * Links are read here rather than when the job was created, which is the whole
+ * reason it is a job: fetching in the request would hold that request open for
+ * a slow site, and #186 moved imports off the request precisely so a member
+ * could navigate away. What was read is written back onto the job as
+ * `link_reads`, so a retry after a *model* failure reuses it instead of asking
+ * the sites again, and the review can say which link could not be read.
  */
 async function sourceForJob(
   env: Env,
   job: IntakeJob,
   fetchPage?: PageFetcher,
 ): Promise<IntakeSource> {
-  if (job.sourceRoute === "pasted") {
-    return { route: "pasted", text: job.sourceText ?? "" };
-  }
-
-  if (job.sourceRoute === "linked") {
-    const address = job.sourceUrl ?? "";
-    if (job.sourceText !== null && job.sourceText.trim() !== "") {
-      return {
-        route: "linked",
-        url: address,
-        text: job.sourceText,
-        guidance: job.importGuidance ?? undefined,
-      };
-    }
-
-    const page = fetchPage
-      ? await fetchRecipePage(address, fetchPage)
-      : await fetchRecipePage(address);
-    console.log(JSON.stringify({
-      event: "intake.page_fetched",
-      job_id: job.id,
-      host: new URL(page.url).hostname,
-      structured: page.structured,
-      characters: page.sourceText.length,
-    }));
-
-    // Written before the model runs, so the text survives a model failure and
-    // the retry is of the structuring rather than of the whole read.
-    await env.DB.prepare(
-      `UPDATE intake_job SET source_text = ?, source_url = ? WHERE id = ?`,
-    )
-      .bind(page.sourceText, page.url, job.id)
-      .run();
-
-    await keepPageImage(env, job, page.imageUrls, fetchPage);
-
-    return {
-      route: "linked",
-      url: page.url,
-      text: page.sourceText,
-      guidance: job.importGuidance ?? undefined,
-    };
-  }
+  const reads = job.linkReads ?? await readLinks(env, job, fetchPage);
+  const pages = readPages(reads);
+  const typed = typedMaterial(job);
 
   const images: IntakeImage[] = [];
   for (const ref of job.imageRefs) {
@@ -641,8 +636,167 @@ async function sourceForJob(
       mediaType: ref.mediaType,
     });
   }
-  if (images.length === 0) throw new Error("The photographed intake has no pages.");
-  return { route: "photographed", images };
+  if (job.sourceRoute === "photographed" && images.length === 0) {
+    throw new Error("The photographed intake has no pages.");
+  }
+
+  // Nothing readable at all: the first link's own refusal, which is what a
+  // lone link that failed has always said. A single short line next to a dead
+  // link is a wish about a recipe that never arrived, not a recipe.
+  if (images.length === 0 && pages.length === 0 && !isRecipeText(typed)) {
+    const failed = reads.find((read) => "failure" in read);
+    if (failed !== undefined && "failure" in failed) {
+      throw new LinkUnread(failed.failure);
+    }
+  }
+
+  return composedSource(job, pages, images);
+}
+
+/**
+ * The source a job's material makes, shared by the consumer and the review
+ * screen so both see the same text. The review has no photographs to hand
+ * over (they are gone once a draft exists), and does not need them: the
+ * draft already carries their transcription.
+ */
+export function composedSource(
+  job: IntakeJob,
+  pages: ReadPage[],
+  images: IntakeImage[],
+): IntakeSource {
+  const typed = typedMaterial(job);
+  if (job.sourceRoute === "photographed") {
+    const text = givenMaterial(typed, pages, true);
+    return text === ""
+      ? { route: "photographed", images }
+      : { route: "photographed", images, text, fromPages: pages.length > 0 };
+  }
+  if (pages.length > 0) {
+    return {
+      route: "linked",
+      url: pages[0]!.url,
+      text: givenMaterial(typed, pages, false),
+      guidance: job.importGuidance ?? undefined,
+      mixed: pages.length + (typed === null ? 0 : 1) > 1,
+    };
+  }
+  return { route: "pasted", text: typed ?? job.sourceText ?? "" };
+}
+
+/** The pages a job's links gave up, in the order the links were written. */
+export function readPages(reads: LinkRead[] | null): ReadPage[] {
+  return (reads ?? []).flatMap((read): ReadPage[] =>
+    "text" in read ? [{ url: read.url, text: read.text }] : []
+  );
+}
+
+/** The links a job's review should say were not read. */
+export function unreadLinks(job: IntakeJob): Array<{ url: string; message: string }> {
+  return (job.linkReads ?? []).flatMap((read) =>
+    "failure" in read ? [{ url: read.url, message: LINK_REFUSALS[read.failure] }] : []
+  );
+}
+
+/**
+ * What the member wrote, with the links taken out, or null if that leaves
+ * nothing. The links are read as pages; leaving them in the text as well
+ * would only show the model the same address twice.
+ */
+function typedMaterial(job: IntakeJob): string | null {
+  const typed = withoutLinks(job.sourceText ?? "");
+  return typed === "" ? null : typed;
+}
+
+/** More than one line: a recipe someone pasted, not a note beside a link. */
+function isRecipeText(text: string | null): boolean {
+  return text !== null && text.split("\n").filter((line) => line.trim() !== "").length > 1;
+}
+
+/** A link that could not be read, when it is the only thing there was. */
+class LinkUnread extends Error {
+  reason: LinkFailure;
+
+  constructor(reason: LinkFailure) {
+    super(`The only link could not be read: ${reason}`);
+    this.reason = reason;
+  }
+}
+
+/** Every link the job has, in order: the stored first one, then the box's. */
+function jobLinks(job: IntakeJob): string[] {
+  const links = job.sourceUrl === null ? [] : [job.sourceUrl];
+  for (const written of linksIn(job.sourceText ?? "")) {
+    if (links.length >= MAX_LINKS) break;
+    try {
+      const address = normaliseRecipeUrl(written).toString();
+      if (!links.includes(address)) links.push(address);
+    } catch {
+      // Words, not an address — the same call `createIntakeJob` made.
+    }
+  }
+  return links;
+}
+
+/**
+ * Read each link once, in order, and write what came back onto the job.
+ *
+ * One link failing does not fail the others or the import (#350): it is
+ * recorded with its reason and the review names it. The picture is taken from
+ * the first page that offers one, after that page's text is safely written.
+ */
+async function readLinks(
+  env: Env,
+  job: IntakeJob,
+  fetchPage?: PageFetcher,
+): Promise<LinkRead[]> {
+  const links = jobLinks(job);
+  if (links.length === 0) return [];
+
+  const reads: LinkRead[] = [];
+  const pictures: string[][] = [];
+  for (const address of links) {
+    if (isBlockedLink(address)) {
+      reads.push({ url: address, failure: "blocked" });
+      continue;
+    }
+    try {
+      const page = fetchPage
+        ? await fetchRecipePage(address, fetchPage)
+        : await fetchRecipePage(address);
+      console.log(JSON.stringify({
+        event: "intake.page_fetched",
+        job_id: job.id,
+        host: new URL(page.url).hostname,
+        structured: page.structured,
+        characters: page.sourceText.length,
+      }));
+      reads.push({ url: page.url, text: page.sourceText });
+      pictures.push(page.imageUrls);
+    } catch (error) {
+      if (!(error instanceof PageRefused)) throw error;
+      console.log(JSON.stringify({
+        event: "intake.page_refused",
+        job_id: job.id,
+        reason: error.reason,
+      }));
+      reads.push({ url: address, failure: error.reason });
+    }
+  }
+
+  // Written before the model runs, so the text survives a model failure and
+  // the retry is of the structuring rather than of the whole read. The first
+  // page that was read is the address the recipe will point back at.
+  const firstRead = readPages(reads)[0];
+  await env.DB.prepare(
+    "UPDATE intake_job SET link_reads = ?, source_url = ? WHERE id = ?",
+  )
+    .bind(JSON.stringify(reads), firstRead?.url ?? job.sourceUrl, job.id)
+    .run();
+
+  const offered = pictures.find((candidates) => candidates.length > 0);
+  if (offered !== undefined) await keepPageImage(env, job, offered, fetchPage);
+
+  return reads;
 }
 
 /**
@@ -707,7 +861,7 @@ async function keepPageImage(
 }
 
 /**
- * The picture a linked job found, ready to become the recipe's own.
+ * The picture a job's page offered, ready to become the recipe's own.
  *
  * Household-scoped like every other read here, and null whenever there is no
  * picture to hand over — including for a photographed job, whose stored images
@@ -727,10 +881,13 @@ export async function readIntakeJobImage(
   return { bytes: await object.arrayBuffer(), mediaType: ref.mediaType };
 }
 
-/** The one image a linked job may carry, or null on every other route. */
+/**
+ * The dish's picture found on one of the job's pages, or null. Any route may
+ * have one now that photographs and links go together (#350); a photographed
+ * job's own pages are its input, never this.
+ */
 export function intakeJobImageRef(job: IntakeJob | null): StoredImageRef | null {
-  if (job === null || job.sourceRoute !== "linked") return null;
-  return job.pageImage;
+  return job?.pageImage ?? null;
 }
 
 /**
@@ -787,6 +944,7 @@ export async function collectValidatedDraft(
  * The English detail still only goes to the log.
  */
 function jobFailureMessage(error: unknown): string {
+  if (error instanceof LinkUnread) return LINK_REFUSALS[error.reason];
   if (error instanceof PageRefused) {
     console.log(JSON.stringify({
       event: "intake.page_refused",
@@ -932,6 +1090,7 @@ function toJob(row: IntakeJobRow): IntakeJob {
     sourceText: row.source_text,
     sourceUrl: row.source_url,
     importGuidance: row.import_guidance ?? null,
+    linkReads: parseLinkReads(row.link_reads ?? null),
     imageRefs: parseImageRefs(row.image_refs),
     pageImage: row.page_image_key === null || row.page_image_type === null
       ? null
@@ -946,6 +1105,26 @@ function toJob(row: IntakeJobRow): IntakeJob {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseLinkReads(json: string | null): LinkRead[] | null {
+  if (json === null) return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry): LinkRead[] => {
+      const read = (entry ?? {}) as Record<string, unknown>;
+      const url = read["url"];
+      if (typeof url !== "string") return [];
+      if (typeof read["text"] === "string") return [{ url, text: read["text"] }];
+      if (typeof read["failure"] === "string") {
+        return [{ url, failure: read["failure"] as LinkFailure }];
+      }
+      return [];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function parseTargetRecipe(json: string | null): Recipe | null {

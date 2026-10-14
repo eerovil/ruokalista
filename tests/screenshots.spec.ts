@@ -191,9 +191,9 @@ test("intake requires JavaScript", async ({ browser }) => {
 
   await page.goto("/intake");
   await expect(page.locator("#status")).toHaveText(
-    "Reseptin tuonti tarvitsee JavaScriptin.",
+    "Reseptin tuonti tarvitsee JavaScriptin. Ilman sitä voit tallentaa reseptin nimen.",
   );
-  await expect(page.getByRole("button", { name: "Muodosta resepti" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Tallenna nimellä" })).toBeEnabled();
   await page.locator("#status").evaluate((element) =>
     element.scrollIntoView({ block: "center" }),
   );
@@ -325,7 +325,7 @@ test.describe("signed in", () => {
     test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await stubStructuring(page, UNSAVABLE_AMOUNT_DRAFT);
     await page.goto("/intake");
-    await page.getByLabel("Liitä reseptin teksti").fill("Pippurikaali");
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Pippurikaali\n1 tl pippuria");
     await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await expect(
       page.getByRole("heading", { name: "Tarkista resepti" }),
@@ -360,7 +360,7 @@ test.describe("signed in", () => {
     test.skip(!writeScreenshots, ONLY_A_PICTURE);
     await stubStructuring(page, DUPLICATE_AMOUNT_DRAFT);
     await page.goto("/intake");
-    await page.getByLabel("Liitä reseptin teksti").fill("Perunasalaatti");
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Perunasalaatti\n500 g perunaa");
     await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await page.getByRole("button", { name: "Tallenna resepti" }).click();
     await expect(page).toHaveURL(/\/recipes\/\d+$/);
@@ -523,10 +523,10 @@ test.describe("signed in", () => {
   test("intake", async ({ page }) => {
     await page.goto("/intake");
     await expect(
-      page.getByLabel("…tai ota kuva painetusta sivusta"),
+      page.getByLabel("Ota kuva"),
     ).toBeVisible();
     await expect(
-      page.getByLabel("…tai valitse kuvia kuvakirjastosta"),
+      page.getByLabel("Valitse kuvista"),
     ).toBeVisible();
     await capture(page, { path: `${SHOTS}/07-intake.png`, fullPage: true });
   });
@@ -670,7 +670,7 @@ test.describe("signed in", () => {
       "Sivu 4",
     ]);
     await expect(
-      page.getByRole("button", { name: "Muodosta resepti" }),
+      page.getByRole("button", { name: "Lue resepti kuvista" }),
     ).toBeEnabled();
     await capture(page, {
       path: `${SHOTS}/108-intake-four-pages.png`,
@@ -713,7 +713,7 @@ test.describe("signed in", () => {
     });
 
     await expect(page.locator("#chosen li .page-name")).toHaveText(["Sivu 1"]);
-    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await page.getByRole("button", { name: "Lue resepti kuvista" }).click();
 
     // Assert the wording is on screen before the picture is taken, so the
     // screenshot cannot be of a screen that has not failed yet.
@@ -721,7 +721,7 @@ test.describe("signed in", () => {
       "Reseptin lähetys ei onnistunut tällä laitteella. Tarkista verkkoyhteys ja yritä uudelleen.",
     );
     await expect(
-      page.getByRole("button", { name: "Muodosta resepti" }),
+      page.getByRole("button", { name: "Lue resepti kuvista" }),
     ).toBeEnabled();
     await capture(page, {
       path: `${SHOTS}/109-intake-send-failed.png`,
@@ -743,26 +743,19 @@ test.describe("signed in", () => {
 
     await page.goto("/intake");
     await page
-      .getByLabel("…tai hae resepti nettiosoitteesta")
+      .getByLabel("Reseptin nimi, linkki tai koko teksti")
       .fill("https://kotikokki.example/reseptit/uunikaali");
-    await page
-      .getByLabel("Lisäohje tuontiin (valinnainen)")
-      .fill("Sivulla on kaksi reseptiä; lue vain alempi.");
-    await expect(
-      page.getByLabel("Lisäohje tuontiin (valinnainen)"),
-    ).toBeVisible();
-    // The helper text is the point of the picture: the field is a clarification
-    // for an unusual page, not where a member asks for the default reading.
-    await expect(page.locator("#guidance-help")).toHaveText(
-      "Käytä tätä vain, jos haluat tarkentaa sivun tulkintaa. Selkeät reseptin " +
-        "osat ja maku-/versiovaihtoehdot tunnistetaan automaattisesti.",
+    // The line under the box is the point of the picture: a pasted link reads
+    // as a link, and the button says what it will do with it (#350).
+    await expect(page.locator("#box-kind")).toHaveText(
+      "Linkki: kotikokki.example. Sivu luetaan taustalla.",
     );
     await capture(page, {
       path: `${SHOTS}/79-intake-from-link.png`,
       fullPage: true,
     });
 
-    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await page.getByRole("button", { name: "Hae resepti sivulta" }).click();
     await expect(
       page.getByRole("heading", { name: "Tarkista resepti" }),
     ).toBeVisible();
@@ -798,9 +791,9 @@ test.describe("signed in", () => {
 
     await page.goto("/intake");
     await page
-      .getByLabel("…tai hae resepti nettiosoitteesta")
+      .getByLabel("Reseptin nimi, linkki tai koko teksti")
       .fill("https://kotikokki.example/reseptit/uunikaali");
-    await page.getByRole("button", { name: "Muodosta resepti" }).click();
+    await page.getByRole("button", { name: "Hae resepti sivulta" }).click();
 
     const shown = page.locator(".found-image img");
     await expect(shown).toBeVisible();
@@ -819,7 +812,7 @@ test.describe("signed in", () => {
   test("check and correct", async ({ page }) => {
     await stubStructuring(page);
     await page.goto("/intake");
-    await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Uunikaali\n½ dl öljyä");
     await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
     await capture(page, { path: `${SHOTS}/08-correct.png`, fullPage: true });
@@ -850,7 +843,7 @@ test.describe("signed in", () => {
   test("the approval gate refusing", async ({ page }) => {
     await stubStructuring(page);
     await page.goto("/intake");
-    await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Uunikaali\n½ dl öljyä");
     await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await openDraftEditor(page);
     await page.locator(".line.is-new select").selectOption("");
@@ -916,7 +909,7 @@ test.describe("signed in", () => {
     await stubStructuring(page);
 
     await page.goto("/intake");
-    await page.getByLabel("Liitä reseptin teksti").fill(DRAFT_FIXTURE.source_text);
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill(DRAFT_FIXTURE.source_text);
     await page.getByRole("button", { name: "Muodosta resepti" }).click();
     await expect(page.getByRole("heading", { name: "Tarkista resepti" }))
       .toBeVisible();
@@ -2782,31 +2775,22 @@ test.describe("saving a recipe from its name alone (#211)", () => {
     await context.addCookies([sessionCookie(1)]);
   });
 
-  test("the two ways out of Lisää resepti, and the recipe one of them makes", async ({
-    browser,
+  test("a name alone in the box, and the recipe it makes", async ({
+    page,
   }) => {
-    // JavaScript off, because the quick save is the path that does not need it
-    // — and with it off the import button is disabled, which is exactly the
-    // contrast the shot is here to show.
-    const context = await browser.newContext({ javaScriptEnabled: false });
-    await context.addCookies([sessionCookie(1)]);
-    const page = await context.newPage();
-
+    // One short line is a name (#350): the button says so, and pressing it
+    // saves an empty recipe without a model call.
     await page.goto("/intake");
+    await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Mummin lihapullat");
     await expect(
-      page.getByRole("button", { name: "Muodosta resepti" }),
+      page.getByRole("button", { name: "Tallenna nimellä" }),
     ).toBeVisible();
-    await page.getByText("Muistatko vain nimen?").click();
-    await expect(
-      page.getByRole("button", { name: "Tallenna keskeneräisenä" }),
-    ).toBeVisible();
-    await page.getByLabel("Reseptin nimi").fill("Mummin lihapullat");
     await capture(page, {
       path: `${SHOTS}/99-intake-quick-save.png`,
       fullPage: true,
     });
 
-    await page.getByRole("button", { name: "Tallenna keskeneräisenä" }).click();
+    await page.getByRole("button", { name: "Tallenna nimellä" }).click();
     await expect(
       page.getByRole("heading", { name: "Mummin lihapullat" }),
     ).toBeVisible();
@@ -2818,8 +2802,6 @@ test.describe("saving a recipe from its name alone (#211)", () => {
       path: `${SHOTS}/100-wip-recipe.png`,
       fullPage: true,
     });
-
-    await context.close();
   });
 });
 

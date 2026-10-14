@@ -350,6 +350,35 @@ const STYLES = `
     border-radius: var(--radius); background: var(--surface);
   }
   .chosen .page-name { flex: 1; }
+  /* The add screen's one box (#350): one line tall until something is typed
+     or pasted, then as tall as what it holds, up to most of a phone screen.
+     field-sizing does it where the browser knows it; the island does it
+     everywhere else. */
+  textarea.grow { resize: none; overflow-y: auto; max-height: 60vh;
+    field-sizing: content; }
+  .box-kind { min-height: 1.3rem; margin: .35rem 0 .5rem; }
+  .intake-go { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .intake-go button[type=submit] { flex: 1; }
+  .intake-or { display: flex; align-items: center; gap: .75rem;
+    margin: 1.75rem 0 .75rem; color: var(--muted); font-size: .85rem; }
+  .intake-or::before, .intake-or::after { content: ""; flex: 1;
+    border-top: 1px solid var(--edge); }
+  /* A file input is drawn as the label beside it: the browser's own control
+     says "Choose File" in the browser's language, and is a poor thumb target. */
+  form.stacked label.photo-tile {
+    display: flex; align-items: center; gap: .9rem;
+    margin: 0 0 .5rem; padding: .9rem 1rem; font-size: 1rem; font-weight: 400;
+    background: var(--surface); border: 1px solid var(--edge);
+    border-radius: var(--radius); cursor: pointer;
+  }
+  label.photo-tile svg { flex: none; width: 1.5rem; height: 1.5rem; }
+  label.photo-tile strong { display: block; }
+  label.photo-tile .meta { display: block; color: var(--muted); font-size: .85rem; }
+  .photo-input { position: absolute; width: 1px; height: 1px; opacity: 0;
+    overflow: hidden; }
+  .photo-input:focus-visible + label.photo-tile { outline: 2px solid var(--accent);
+    outline-offset: 2px; }
+  .photo-input:disabled + label.photo-tile { opacity: .5; cursor: default; }
   .status { margin: .5rem 0 0; color: var(--fg); font-size: .9rem; font-weight: 600; }
   /* What an assisted edit proposes to change (#208), on the intake review. */
   .prompt-changes { list-style: disc; margin: .35rem 0 1rem; padding-left: 1.1rem; }

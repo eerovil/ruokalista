@@ -246,6 +246,23 @@ structuring call; it is not source text and does not belong on the saved recipe.
 This is another column-only migration: the existing table checks do not name the
 field, while its own length check travels with the column.
 
+`migrations/0028_combined_intake.sql` (#350) lets one import carry text, links
+and photographs together. `source_text` now always means what the member typed
+in the add screen's box, links included, on every route; a photographed job may
+carry it and a `source_url` too, so the route CHECK is relaxed for that arm.
+`source_route` still names the main way in — photographs, else a link, else
+text — because `recipe.source_route` keeps its three values. The pages read
+from the links move to a new JSON column, `link_reads` (`{url, text}` or
+`{url, failure}` per link), written by the consumer before the model runs; a
+non-null value means the links were read, so a retry does not fetch again. The
+migration moves an already-read linked job's page text out of `source_text`
+into `link_reads`. It is a rebuild for 0018's reason, with the same plain
+sequence.
+
+`import_guidance` stays readable for an installed app still showing the old
+screen, but the new screen never sends it: a note beside a link is now just
+more text in the box.
+
 ## Admin
 
 `migrations/0007_member_admin.sql` adds `member.is_admin` (default 0). One

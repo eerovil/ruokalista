@@ -210,7 +210,7 @@ test("an already-new line is unchanged by the tick (#298)", async ({ page }) => 
 
 async function pasteAndStructure(page: Page): Promise<void> {
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill(DRAFT_FIXTURE.title);
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill(`${DRAFT_FIXTURE.title}\n½ dl öljyä`);
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(
     page.getByRole("heading", { name: "Tarkista resepti" }),
