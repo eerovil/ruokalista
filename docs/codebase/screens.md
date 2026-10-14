@@ -1112,8 +1112,10 @@ fourth.
   checkbox is a sibling of the row's link rather than inside it, so tapping a
   row still opens the recipe; `.recipes.is-selectable` is the rule that lays
   those two out side by side. A published row carries a `.badge.is-published`.
-- **`/recipes/julkiset` is a separate section**, not a filter on the list, and
-  it excludes this household's own published recipes.
+- **Shared recipes sit in the `/recipes` list** since #335, with a
+  `.badge.is-shared` and an invisible `.recipe-pick-gap` in place of the tick,
+  so the rows still line up. **Piilota jaetut reseptit** filters them out and
+  is remembered per browser; `/recipes/julkiset` redirects to the list.
 - **The recipe screen ends in `.recipe-sharing`**, which holds both this
   household's default portions and — for the owner only — the publish control.
   Both are about this household's relationship to the recipe rather than about

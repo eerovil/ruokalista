@@ -43,7 +43,17 @@ export interface BrowseState {
   query: string;
   category: string | null;
   sort: SortKey;
+  /**
+   * Whether the reader has asked to see only this household's own recipes
+   * (#335). Only `/recipes` mixes shared dishes in and offers the switch; the
+   * picker keeps its own order and ignores this.
+   */
+  hideShared: boolean;
 }
+
+/** The query value that hides shared recipes, and the one that shows them. */
+export const HIDE_SHARED = "piilota";
+export const SHOW_SHARED = "nayta";
 
 /**
  * The category a list was asked to show, or null for all of them.
@@ -73,6 +83,7 @@ export function browseState(
     query: read("q") ?? "",
     category: askedCategory(vocabulary, read("kategoria")),
     sort: askedSort(read("jarjestys")),
+    hideShared: read("jaetut") === HIDE_SHARED,
   };
 }
 
@@ -96,7 +107,10 @@ export function browseFields(state: BrowseState): Raw {
       : html`<input type="hidden" name="kategoria" value="${state.category}" />`}
     ${state.sort === DEFAULT_SORT
       ? ""
-      : html`<input type="hidden" name="jarjestys" value="${state.sort}" />`}`;
+      : html`<input type="hidden" name="jarjestys" value="${state.sort}" />`}
+    ${state.hideShared
+      ? html`<input type="hidden" name="jaetut" value="${HIDE_SHARED}" />`
+      : ""}`;
 }
 
 function inCategory(
@@ -163,6 +177,8 @@ export interface BrowseOptions {
   row: (recipe: RecipeSummary, card: Raw) => Raw;
   /** What surrounds the list here — the recipe list's bulk form, or nothing. */
   wrap?: (list: Raw) => Raw;
+  /** Any further control this screen adds under the order chips. */
+  filters?: Raw;
   /** Said between the filters and the list, after a bulk action. */
   notice?: Raw;
   /** What this list calls its contents in a refusal. */
@@ -213,6 +229,9 @@ export function recipeBrowser(
       ${state.sort === DEFAULT_SORT
         ? ""
         : html`<input type="hidden" name="jarjestys" value="${state.sort}" />`}
+      ${state.hideShared
+        ? html`<input type="hidden" name="jaetut" value="${HIDE_SHARED}" />`
+        : ""}
       <input
         type="search"
         name="q"
@@ -229,6 +248,7 @@ export function recipeBrowser(
       availableCategories(options.matching),
     )}
     ${sortFilter(link, state.sort)}
+    ${options.filters ?? ""}
     ${options.notice ?? ""}
     ${recipes.length === 0
       ? html`<div class="nothing">
@@ -364,6 +384,7 @@ export function browseHref(screen: BrowseScreen, state: BrowseState): string {
   if (state.query.trim() !== "") params.set("q", state.query);
   if (state.category !== null) params.set("kategoria", state.category);
   if (state.sort !== DEFAULT_SORT) params.set("jarjestys", state.sort);
+  if (state.hideShared) params.set("jaetut", HIDE_SHARED);
   const search = params.toString();
   return search === "" ? screen.path : `${screen.path}?${search}`;
 }

@@ -17,11 +17,15 @@ test.beforeEach(async ({ context }) => {
 test("the list shows the household's recipes, newest first", async ({ page }) => {
   await page.goto("/recipes");
 
-  const titles = page.locator(".recipes a");
-  await expect(titles.first()).toContainText("Lasagne");
-  await expect(titles.nth(1)).toContainText("Öljykastike");
-  // Three dishes. The lasagne's two parts are not dishes and are not listed.
-  await expect(page.locator(".recipes li")).toHaveCount(3);
+  // Koti's three dishes with Naapuri's published one mixed in (#335). The seed
+  // adds them all at the same moment, so the newer id goes first.
+  await expect(page.locator(".recipes-title")).toHaveText([
+    "Naapurin uunikala",
+    "Lasagne",
+    "Öljykastike",
+    "Kaalilaatikko",
+  ]);
+  // The lasagne's two parts are not dishes and are not listed.
 });
 
 test("search matches regardless of case", async ({ page }) => {

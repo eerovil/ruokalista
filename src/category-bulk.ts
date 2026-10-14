@@ -7,7 +7,7 @@ import { page } from "./html.ts";
 import type { Member } from "./members.ts";
 import { ownedDishes } from "./recipe-publish.ts";
 import { browseState, type BrowseState } from "./recipe-browser.ts";
-import { ownRecipeList, type ListNotice } from "./recipes.ts";
+import { recipeList, type ListNotice } from "./recipes.ts";
 import type { RouteContext } from "./router.ts";
 
 /**
@@ -243,7 +243,7 @@ async function list(
 ): Promise<Response> {
   return page(
     "Reseptit",
-    await ownRecipeList(
+    await recipeList(
       env.DB,
       vocabulary,
       member,
