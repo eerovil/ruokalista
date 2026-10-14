@@ -111,7 +111,6 @@ interface BeforeProduct {
 }
 
 var IMAGE_BASE = "https://cdn.s-cloud.fi/v1/";
-var SIZE_UNITS = ["g", "kg", "ml", "dl", "l", "kpl"];
 
 // ------------------------------------------------------- shared DOM helpers
 
@@ -391,13 +390,50 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     return products;
   }
 
-  function price(product: PickedProduct): string | null {
-    if (typeof product.price !== "number") return null;
-    var text = product.price.toFixed(2).split(".").join(",") + " euroa";
-    if (typeof product.priceUnit === "string" && product.priceUnit !== "") {
-      text += " / " + product.priceUnit.toLowerCase();
+  // --------------------------------------------- the sheet's list (#358)
+
+  /** Price per litre or kilo, when the packet size is known. */
+  function unitPrice(product: PickedProduct): string | null {
+    if (typeof product.price !== "number" || typeof product.packageQuantity !== "number") return null;
+    var unit = (product.packageUnit || "").toLowerCase();
+    var base = unit === "l" ? 1 : unit === "dl" ? 0.1 : unit === "ml" ? 0.001
+      : unit === "kg" ? 1 : unit === "g" ? 0.001 : 0;
+    if (base === 0 || product.packageQuantity <= 0) return null;
+    var per = product.price / (product.packageQuantity * base);
+    return per.toFixed(2).split(".").join(",") + (unit === "kg" || unit === "g" ? " €/kg" : " €/l");
+  }
+  /**
+   * Which recipes the pick is for, as one-tap buttons beside the hidden
+   * select, which stays the value the save reads (#358). Drawn next to the
+   * select rather than inside it, because the select's label is what hides.
+   */
+  function scopePills(choice: HTMLElement): void {
+    var slot = choice.parentNode as HTMLElement | null;
+    if (!slot) return;
+    var old = slot.querySelector(".s-scope-pills");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var select = choice.querySelector("select");
+    if (!select) return;
+    var chosen: HTMLSelectElement = select;
+    var pills = el("div", "s-scope-pills");
+    pills.appendChild(el("span", "meta", "Valinta koskee"));
+    for (var index = 0; index < chosen.options.length; index += 1) {
+      (function (option: HTMLOptionElement) {
+        var text = option.value === "aines"
+          ? "Kaikkia reseptejä"
+          : "Vain " + option.text.replace(/^\s*Käytä tässä reseptissä:\s*/, "").trim();
+        var pill = el("button", option.value === chosen.value ? "is-on" : "", text);
+        pill.type = "button";
+        pill.addEventListener("click", function () {
+          chosen.value = option.value;
+          var all = pills.querySelectorAll("button");
+          for (var at = 0; at < all.length; at += 1) all[at]!.className = "";
+          pill.className = "is-on";
+        });
+        pills.appendChild(pill);
+      })(chosen.options[index]!);
     }
-    return text;
+    slot.appendChild(pills);
   }
 
   // ---------------------------------------------------------------- the sheet
@@ -420,20 +456,25 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     var title = el("h2", "s-sheet-name", "");
     title.id = "s-sheet-title";
     titles.appendChild(title);
-    var sub = el("p", "s-sheet-sub", "");
-    titles.appendChild(sub);
     head.appendChild(titles);
-    var close = el("button", "quiet s-sheet-close", "Sulje");
+    var close = el("button", "quiet s-sheet-close", "✕");
+    close.setAttribute("aria-label", "Sulje");
     close.type = "button";
     close.addEventListener("click", closeSheet);
     head.appendChild(close);
     panel.appendChild(head);
 
+    // What the row is buying now, drawn as a row of the same list (#358).
+    var sub = el("div", "s-sheet-current", "");
+    panel.appendChild(sub);
+
     var form = el("form", "s-product-search");
-    var label = el("label", "", "Haku ");
+    var label = el("label", "", "");
     var input = document.createElement("input");
     input.type = "search";
     input.name = "haku";
+    input.placeholder = "Hae tuotetta";
+    input.setAttribute("aria-label", "Hae tuotetta");
     label.appendChild(input);
     form.appendChild(label);
     var go = el("button", "", "Hae");
@@ -446,6 +487,17 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
       if (wanted === "") return;
       openRow.query = wanted;
       runSearch(openRow);
+    });
+    var typing: number | null = null;
+    input.addEventListener("input", function () {
+      if (typing !== null) window.clearTimeout(typing);
+      typing = window.setTimeout(function () {
+        typing = null;
+        var wanted = input.value.trim ? input.value.trim() : input.value;
+        if (!openRow || wanted === "" || wanted === openRow.query) return;
+        openRow.query = wanted;
+        runSearch(openRow);
+      }, 350);
     });
     panel.appendChild(form);
 
@@ -470,12 +522,20 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     return sheet;
   }
 
-  function subtitle(row: PickerRow): string {
-    if (row.mode === "lisaa") return row.total + " · Lisää pakkauskoko";
-    var chosen = row.block.querySelector<HTMLElement>(".s-shopping-product-copy strong");
-    var mapped = row.block.className.indexOf("is-mapped") !== -1;
-    if (mapped && chosen) return row.total + " · Nyt: " + (chosen.textContent || "");
-    return row.total + " · Ei valittua tuotetta";
+  /**
+   * Only what the list below cannot say (#358): a row that has no product
+   * goes as text. A row that has one finds it at the top of the results,
+   * ticked, so a second copy up here would only repeat it.
+   */
+  function drawCurrent(slot: HTMLElement, row: PickerRow, mode: string): void {
+    if (mode === "lisaa") {
+      slot.appendChild(el("p", "meta", "Lisää toinen pakkauskoko"));
+      return;
+    }
+    if (row.block.className.indexOf("is-mapped") !== -1) return;
+    slot.appendChild(
+      el("p", "meta", "Ei tuotetta – lähtee tekstinä: " + row.name + " — " + row.total),
+    );
   }
 
   function returnScope(row: PickerRow): void {
@@ -492,18 +552,22 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
 
     clear(it.title);
     it.title.appendChild(document.createTextNode(row.name));
+    it.title.appendChild(el("span", "s-sheet-amount", row.total));
     clear(it.sub);
-    it.sub.appendChild(document.createTextNode(subtitle(row)));
+    drawCurrent(it.sub, row, mode);
     it.input.value = row.query;
 
     if (row.scope && mode !== "lisaa") {
       it.scopeSlot.appendChild(row.scope);
+      scopePills(row.scope);
       it.scopeSlot.hidden = false;
     } else {
       it.scopeSlot.hidden = true;
     }
 
     it.node.hidden = false;
+    // Another row's answer is not this row's to dim.
+    clear(it.results);
     runSearch(row);
     prefetchNext(row);
   }
@@ -529,15 +593,41 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     sheet.state.hidden = false;
   }
 
+  /**
+   * While a search runs nothing on the sheet moves (#358): results already
+   * there stay put, dimmed, and an empty sheet gets grey rows the size of
+   * real ones, so the answer replaces them in place instead of pushing the
+   * sheet around.
+   */
+  function showSearching(): void {
+    if (!sheet) return;
+    clear(sheet.state);
+    sheet.state.hidden = true;
+    if (sheet.results.querySelector(".s-product-results > li:not(.is-placeholder)")) {
+      sheet.results.className = "s-product-panel-results is-loading";
+      return;
+    }
+    clear(sheet.results);
+    var list = el("ul", "s-product-results");
+    for (var index = 0; index < 6; index += 1) {
+      var item = el("li", "is-placeholder");
+      item.appendChild(el("span", "s-placeholder-picture"));
+      item.appendChild(el("span", "s-placeholder-line"));
+      list.appendChild(item);
+    }
+    sheet.results.appendChild(list);
+  }
+
   function runSearch(row: PickerRow): void {
     var query = row.query;
-    if (sheetIsOpenFor(row) && sheet) clear(sheet.results);
-    say(row, "Haetaan tuotteita…", true);
+    if (sheetIsOpenFor(row)) showSearching();
     search(query, function (ok, payload) {
+      if (sheet) sheet.results.className = "s-product-panel-results";
       if (row.query !== query || !sheetIsOpenFor(row) || !sheet) return;
       var record = isRecord(payload) ? payload : null;
       var results = record ? readProducts(record["results"]) : null;
       if (!ok || !record || !results) {
+        clear(sheet.results);
         say(
           row,
           record && typeof record["error"] === "string"
@@ -549,6 +639,7 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
       }
       if (record["query"] !== query) return;
       if (results.length === 0) {
+        clear(sheet.results);
         say(row, "Haulla ei löytynyt tuotteita.", false);
         return;
       }
@@ -561,34 +652,26 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
   function showResults(row: PickerRow, query: string, results: PickedProduct[]): void {
     if (!sheetIsOpenFor(row) || !sheet) return;
     clear(sheet.results);
+    var ordered = results;
     var list = el("ul", "s-product-results");
-    for (var index = 0; index < results.length; index += 1) {
-      list.appendChild(resultRow(row, query, results[index]!));
+    // The product this row buys now is ticked where it appears (#358).
+    var bought = row.block.className.indexOf("is-mapped") !== -1
+      ? (row.block.textContent || "").match(/EAN\s*(\d+)/) : null;
+    if (bought) {
+      // The current product first, wherever the search put it.
+      for (var at2 = 0; at2 < ordered.length; at2 += 1) {
+        if (ordered[at2]!.ean === bought[1]) {
+          ordered = [ordered[at2]!].concat(ordered.slice(0, at2), ordered.slice(at2 + 1));
+          break;
+        }
+      }
+    }
+    for (var index = 0; index < ordered.length; index += 1) {
+      var item = resultRow(row, query, ordered[index]!);
+      if (bought && ordered[index]!.ean === bought[1]) item.className = "is-current";
+      list.appendChild(item);
     }
     sheet.results.appendChild(list);
-  }
-
-  function sizeFields(item: HTMLElement): SizeFields {
-    var wrap = el("span", "s-product-size-entry");
-    var amountLabel = el("label", "", "Pakkauskoko ");
-    var amount = document.createElement("input");
-    amount.type = "text";
-    amount.setAttribute("inputmode", "decimal");
-    amount.size = 5;
-    amountLabel.appendChild(amount);
-    wrap.appendChild(amountLabel);
-
-    var unitLabel = el("label", "", "Yksikkö ");
-    var unit = document.createElement("select");
-    unit.appendChild(new Option("–", ""));
-    for (var index = 0; index < SIZE_UNITS.length; index += 1) {
-      unit.appendChild(new Option(SIZE_UNITS[index]!, SIZE_UNITS[index]!));
-    }
-    unitLabel.appendChild(unit);
-    wrap.appendChild(unitLabel);
-
-    item.appendChild(wrap);
-    return { amount: amount, unit: unit };
   }
 
   function resultRow(
@@ -600,28 +683,28 @@ export function startProductPicker(given?: PickerHooks): PickerHandle | null {
     item.appendChild(productImage(product.imageUrl, PICTURE.result));
     var copy = el("div", "s-product-result-copy");
     copy.appendChild(el("strong", "", product.name));
-    copy.appendChild(el("span", "meta", "EAN " + product.ean));
-    var priceText = price(product);
-    if (priceText) copy.appendChild(el("span", "meta", priceText));
+    // A price per kilo is said as one, or a kilo of cabbage reads as a head.
+    var per = typeof product.priceUnit === "string" ? product.priceUnit.toLowerCase() : "kpl";
+    var short = typeof product.price === "number"
+      ? product.price.toFixed(2).split(".").join(",") + (per === "kpl" || per === "" ? " €" : " €/" + per)
+      : null;
+    if (short) {
+      var tag = el("span", "s-product-tag", short);
+      var each = per === "kpl" || per === "" ? unitPrice(product) : null;
+      if (each) tag.appendChild(el("small", "", each));
+      copy.appendChild(tag);
+    }
     if (product.available === false) {
       copy.appendChild(el("span", "meta", "Ei saatavilla valitussa kaupassa"));
     }
-    var known = typeof product.packageQuantity === "number" && !!product.packageUnit;
-    if (known) {
-      copy.appendChild(
-        el(
-          "span",
-          "meta s-product-size",
-          "Pakkaus " +
-            String(product.packageQuantity).split(".").join(",") +
-            " " +
-            product.packageUnit,
-        ),
-      );
-    }
     item.appendChild(copy);
-    var fields = known ? null : sizeFields(item);
-    var choose = el("button", "primary", "Valitse");
+    // No packet-size entry on the list (#358): the owner does not use package
+    // sizes, and a size the name does not say is simply left unknown, which
+    // only means no packet count for that product.
+    var fields: SizeFields | null = null;
+    // The whole row is the button: it is laid over the row, invisible, so a
+    // tap anywhere chooses and a keyboard still has a real button (#358).
+    var choose = el("button", "s-product-choose", "Valitse");
     choose.type = "button";
     choose.addEventListener("click", function () {
       chooseProduct(row, query, product, fields);

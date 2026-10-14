@@ -272,6 +272,13 @@ createServer(async (request, response) => {
     if (typeof record["quantity"] === "number") found.quantity = record["quantity"];
     return send(response, 200, found);
   }
+  if (request.method === "DELETE" && url.pathname.startsWith("/items/")) {
+    const id = decodeURIComponent(url.pathname.slice("/items/".length));
+    const found = items.find((item) => item.id === id);
+    if (!found) return send(response, 404, { error: "item not found" });
+    items.splice(items.indexOf(found), 1);
+    return send(response, 200, { deleted: id });
+  }
   if (request.method === "DELETE" && url.pathname === "/items") {
     const ean = url.searchParams.get("ean");
     const note = url.searchParams.get("note");

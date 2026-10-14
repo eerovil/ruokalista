@@ -98,3 +98,20 @@ export function forgetSentNoteStatement(
     )
     .bind(householdId, rowKey);
 }
+
+/**
+ * Forget every remembered note with exactly these words (#358).
+ *
+ * A text row taken off the S-list by hand is no longer this app's. Left
+ * remembered, its words would make "remove Ruokalista's rows" take a row the
+ * household later typed on the phone with the same text.
+ */
+export function forgetSentNoteWordsStatement(
+  db: D1Database,
+  householdId: number,
+  note: string,
+): D1PreparedStatement {
+  return db
+    .prepare("DELETE FROM s_ostoslista_sent_note WHERE household_id = ? AND note = ?")
+    .bind(householdId, note);
+}

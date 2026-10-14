@@ -61,9 +61,9 @@ which is a thing a member is allowed to mean.
 
 That encoding is what keeps the screen a plain GET form with no JavaScript at
 all, which the browser-compatibility rule below asks for. The picker is a
-`<details>` that stays closed unless nothing is selected, and each ingredient
-row opens into a modal of its own whose body names the contributing cookings —
-see #321 below for why that is a modal rather than a second `<details>`.
+`<details>` that stays closed unless nothing is selected. A tap on an
+ingredient row opens the product sheet — see #358 below; it replaced #321's
+in-page row window.
 
 Issue #313 adds a third parameter to that same query string: one `pois=<row
 key>` per row the member has taken off *this* list. A row key is what
@@ -72,6 +72,13 @@ product — and `src/shopping.ts::isRowKey` is what stops anything else reaching
 a link. The whole toggle is a link to the next URL, so it needs no script, no
 write, and no table; `src/shopping.ts::splitByExcluded` does the split, after
 the cupboard's, and `dev/check-shopping-exclusion.ts` tests both straight.
+
+Since #358 the tick sits at the right end of the row and, with scripts, never
+loads a page: `src/client/shopping-rows.ts` (loaded on every shopping list,
+not only the S-ostoslista household's) flips the row, rewrites the address,
+every selection-carrying form's hidden `pois` fields and every link back to the
+list, recounts the send panel from the rows, and scrolls back by however far
+the left-off sentence above the list moved the tapped row.
 
 `shoppingState` then narrows that set to the rows the list it just computed
 actually has (`rowsThatExist`), and everything the screen emits is built from
@@ -130,6 +137,40 @@ it was. Two consequences worth knowing: the product sheet (`.s-sheet`) sits at
 `z-index: 40`, above the row modal's 30, because it now opens out of one; and
 `tests/support/shopping-rows.ts` is how a test opens a row, since an open row's
 backdrop swallows a tap meant for another.
+
+### A row tap opens the product sheet (issue #358)
+
+The row window from #321 is gone. The owner redesigned the shopping list's
+product picking around what a tap on a row is for, most common first: check or
+change the product, say the household has it, and — rarely — see where the
+amount comes from. So a row is a `.shopping-summary` (no checkbox, no label)
+and everything the window used to show sits in a hidden `.row-data` the browser
+reads from. `src/client/shopping-rows.ts` opens the S-ostoslista picker's sheet
+straight from the tap and adds the row's own few things to it: the amount in
+the heading opens the breakdown, a dish's own product shows at the top with
+**Kaikille samaksi** to undo it, and **Löytyy jo kaapista** sits at the foot.
+Each of those submits the row's *own* hidden form, so the scroll keeper still
+sees a press inside the list.
+
+What opens nothing, on purpose: a cupboard row (its one action is the **Osta**
+button on the row), and every row of a household without the S-ostoslista,
+which has nothing to choose — those households reach the cupboard from its own
+screen. Rows that open nothing draw no chevron (`.is-static`).
+
+The sheet itself (`src/client/product-picker.ts`, shared with the recipe
+page's picker) is a compact list: search as you type, the current product first
+with a ✓, a tap anywhere on a row chooses it (the row's **Valitse** button is
+laid invisibly over it), prices with per-litre or per-kilo, and the scope
+select shown as **Kaikkia reseptejä** / **Vain <dish>** buttons. It opens at
+full height and holds still while a search runs: grey placeholder rows, or the
+previous results dimmed, instead of a line of text that the answer pushes
+away. Package sizes are no longer offered — the owner never used them — but
+sizes already stored keep counting packets, and the plain product screen still
+handles them.
+
+Sending warns first when a trip row has no product (`.s-warn`): those go to the
+S-ostoslista as text, so the dialog lists them with **Valitse tuotteet** (opens
+the first) and **Lähetä silti**.
 
 The arithmetic lives in `src/shopping.ts::shoppingList`, apart from the markup
 and tested directly in `dev/check-shopping.ts`. Three rules the proposal treats
@@ -1032,6 +1073,11 @@ enhancements through feature detection and compatible syntax, add a modest
 fallback when it preserves an important flow, and let unsupported extras fail
 quietly without taking the page with them. Inline browser scripts are delivered
 without transpilation, so write them for the oldest target they need to serve.
+
+The owner narrowed the no-script part in #358: only the recipe reading page has
+to work without JavaScript. The shopping list requires it: a row opens only
+with scripts (#358), though the tick link, the send form and the plain product
+screen still work as plain HTML.
 
 ## The recipe-image admin screen
 

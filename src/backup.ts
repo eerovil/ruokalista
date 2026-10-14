@@ -141,6 +141,14 @@ export const BACKUP_TABLES = [
     targetStart: "empty",
   },
   {
+    // Which S-list rows this app created (#358): the only record of what the
+    // "remove Ruokalista's rows" button may take off.
+    name: "s_ostoslista_sent_item",
+    orderBy: "id",
+    restoreAfter: ["household"],
+    targetStart: "empty",
+  },
+  {
     // Committed image deletions must remain retryable across a database restore.
     name: "recipe_image_cleanup",
     orderBy: "image_key",

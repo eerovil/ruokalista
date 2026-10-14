@@ -3,6 +3,7 @@ import {
   type SOstoslistaItem,
   type SOstoslistaKey,
 } from "./s-ostoslista.ts";
+import { rememberSentItemStatement } from "./s-ostoslista-sent-items.ts";
 import {
   forgetSentNoteStatement,
   rememberSentNoteStatement,
@@ -293,7 +294,10 @@ export async function sendToSOstoslista(
   const opening = await heldByService(client);
   if (opening.ceiling) return nothingSent();
   const held = opening.held;
-
+  // Rows this send creates, by the id the service gave them (#358). Only when
+  // the opening read worked: without it an add may have been answered with a
+  // row the household already had, and that row is not this app's.
+  const created: string[] | null = opening.read ? [] : null;
 
   let retriesLeft = RETRY_BUDGET;
   let ceiling = false;
@@ -307,6 +311,7 @@ export async function sendToSOstoslista(
       outdated,
       outstanding,
       held,
+      created,
     });
 
     // Approved before it is begun, against the most it can cost. This is the
@@ -350,6 +355,7 @@ export async function sendToSOstoslista(
           outdated,
           outstanding,
           held,
+          created,
         });
         if (!budget.canAfford(planned.steps[0]?.cost ?? 0)) break;
         retriesLeft -= 1;
@@ -387,14 +393,22 @@ export async function sendToSOstoslista(
   // A product the shop said it no longer knows is written down in the same
   // batch, and shown as such on the screen this send renders (#333).
   const outdatedWrites = markOutdated(db, householdId, items, outdated);
+  const createdWrites = (created ?? []).map((id) =>
+    rememberSentItemStatement(db, householdId, id),
+  );
 
   // The reserved tail, spent by the batch itself. A send that stopped at the
   // wall still gets here, which is the point of having held it: the rows that
   // went out are written down, so the next press knows about them.
-  if (bookkeeping.length > 0 || outdatedWrites.length > 0) {
+  if (bookkeeping.length > 0 || outdatedWrites.length > 0 || createdWrites.length > 0) {
     const lost = await budget.within(
       tail,
-      () => flush(db, [...bookkeeping.map((receipt) => receipt.statement), ...outdatedWrites]),
+      () =>
+        flush(db, [
+          ...bookkeeping.map((receipt) => receipt.statement),
+          ...outdatedWrites,
+          ...createdWrites,
+        ]),
     );
     if (lost !== null && !isCeiling(lost) && !(lost instanceof SubrequestBudgetSpent)) {
       // A lost receipt is this app losing track of a row it did put on the
@@ -561,6 +575,8 @@ interface RowPlanContext {
   outdated: Set<string>;
   outstanding: Map<string, string>;
   held: readonly SOstoslistaItem[];
+  /** Where a created row's id is written down; null when it cannot be told. */
+  created: string[] | null;
 }
 
 /**
@@ -586,7 +602,7 @@ function planRow(
   householdId: number,
   client: SOstoslistaSyncClient,
   item: SOstoslistaSendItem,
-  { packets, addedProducts, outdated, outstanding, held }: RowPlanContext,
+  { packets, addedProducts, outdated, outstanding, held, created }: RowPlanContext,
 ): PlannedRow {
   const previous = outstanding.get(item.key) ?? null;
   const steps: PlannedStep[] = [];
@@ -600,7 +616,7 @@ function planRow(
 
   if (item.chosen.length === 0) {
     const note = `${item.name} — ${item.total}`;
-    for (const call of callsFor(client, held, { note }, null)) {
+    for (const call of callsFor(client, held, { note }, null, null, created)) {
       steps.push({
         operation: { kind: "note", note },
         cost: call.cost,
@@ -623,7 +639,7 @@ function planRow(
   for (const { product } of item.chosen) {
     if (addedProducts.has(product.ean)) continue;
     const count = packets.get(product.ean) ?? 1;
-    const calls = callsFor(client, held, { ean: product.ean }, count, product.name);
+    const calls = callsFor(client, held, { ean: product.ean }, count, product.name, created);
     // A product the list already holds correctly costs nothing, and is done
     // the moment it is planned.
     if (calls.length === 0) {
@@ -718,6 +734,7 @@ function callsFor(
   key: SOstoslistaKey,
   quantity: number | null,
   productName: string | null = null,
+  created: string[] | null = null,
 ): Array<{ cost: number; run: () => Promise<unknown> }> {
   const matching = held.filter((row) =>
     "ean" in key ? row.ean === key.ean : row.ean === null && row.name === key.note,
@@ -733,7 +750,19 @@ function callsFor(
     // needs the pair — looked like one that never does. Reserving the worst
     // case and handing back the spare call needs no such inference, and the
     // reservation makes the spare call free to give back.
-    return [{ cost: 2, run: () => client.add(key, quantity, productName) }];
+    return [
+      {
+        cost: 2,
+        run: async () => {
+          const added: unknown = await client.add(key, quantity, productName);
+          // The list did not hold this key, so the add made the row.
+          if (created !== null && isRecord(added) && typeof added["id"] === "string") {
+            created.push(added["id"]);
+          }
+          return added;
+        },
+      },
+    ];
   }
   return matching
     .filter((row) => !agrees(row, quantity))

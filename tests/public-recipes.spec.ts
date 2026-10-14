@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { openEditBlock, openCookAdd } from "./support/blocks";
 import { onePixelPng } from "./support/png";
-import { openShoppingRow } from "./support/shopping-rows";
+import { putInCupboard } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
 
@@ -140,8 +140,16 @@ test("selected households can be found, added and safely removed", async ({
   await page.goto("/ostoslista");
   const cabbage = page.locator(".shopping-list > li", { hasText: "valkokaali" });
   await expect(cabbage).toHaveCount(1);
-  await openShoppingRow(cabbage);
-  await cabbage.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+  // Naapuri has no S-ostoslista, so since #358 its rows open nothing and the
+  // list offers no cupboard button. The row still carries its cupboard form,
+  // and that form is the write under test: the shared recipe's ingredient can
+  // go in this household's own cupboard.
+  await Promise.all([
+    page.waitForEvent("load"),
+    cabbage
+      .locator("form.pantry-action")
+      .evaluate((form) => (form as HTMLFormElement).submit()),
+  ]);
   await page.goto("/kaappi");
   await expect(page.locator("body")).toContainText("valkokaali");
 
@@ -605,9 +613,8 @@ test("a public recipe feeds the other household's shopping list and cupboard", a
 
   // The cupboard covers it by ingredient id, which is the same id in both
   // households now — that is the whole reason the dictionary went global. The
-  // row opens into a modal, so its buttons exist to a person only after that.
-  await openShoppingRow(salt);
-  await salt.getByRole("button", { name: "Löytyy jo kaapista" }).click();
+  // cupboard button is on the row's sheet (#358).
+  await putInCupboard(salt);
   await page.goto("/kaappi");
   await expect(page.locator("body")).toContainText("naapurin suola");
 });

@@ -3,6 +3,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   closeShoppingRow,
   openShoppingRow,
+  productSheet,
+  sheetResults,
 } from "./support/shopping-rows";
 import { reseed } from "./support/seed";
 import { sessionCookie } from "./support/session";
@@ -50,10 +52,9 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
     const cheese = row(page, "juusto");
     const next = row(page, "lasagnelevy");
 
+    // Since #358 the tap opens the product sheet straight away.
     await openShoppingRow(cheese);
-    await expect(
-      cheese.getByRole("button", { name: "Lisää toinen pakkauskoko" }),
-    ).toBeVisible();
+    await expect(sheetResults(page).first()).toBeVisible();
     await shot(page, "1-row-open-before-choosing");
 
     const saved = page.waitForResponse(
@@ -61,18 +62,15 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
         response.request().method() === "POST" &&
         response.url().includes("/ostoslista/tuote"),
     );
-    await cheese.getByRole("button", { name: "Valitse tuote" }).click();
-    await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
-    await page
-      .locator(".s-sheet .s-product-results > li")
+    await sheetResults(page)
       .filter({ hasText: "Kotimaista juustoraaste" })
       .getByRole("button", { name: "Valitse" })
       .click();
     await saved;
     await expect(cheese.locator(".s-status .spinner")).toHaveCount(0);
 
-    // The row is closed, and what it chose is still on it.
-    await expect(cheese.locator(".s-shopping-product-summary")).toBeHidden();
+    // The sheet is closed, and what it chose is on the row.
+    await expect(productSheet(page)).toBeHidden();
     await expect(cheese.locator(".shopping-thumb img")).toHaveCount(1);
     // On a list this size nothing scrolled at all, in either direction. The
     // browser only hands scroll back when the document was taller than the
@@ -84,7 +82,9 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
     // scrolling and without hunting for it.
     await expect(next).toBeInViewport();
     await openShoppingRow(next);
-    await expect(next.getByRole("button", { name: "Valitse tuote" })).toBeVisible();
+    await expect(productSheet(page).locator(".s-sheet-name")).toContainText(
+      "lasagnelevy",
+    );
     await shot(page, "3-straight-on-to-the-next");
     await closeShoppingRow(next);
 
@@ -99,16 +99,13 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
         response.url().includes("/ostoslista/tuote"),
     );
     await openShoppingRow(milk);
-    await milk.getByRole("button", { name: "Valitse tuote" }).click();
-    await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
-    await page
-      .locator(".s-sheet .s-product-results > li")
+    await sheetResults(page)
       .filter({ hasText: "Kotimaista rasvaton maito" })
       .getByRole("button", { name: "Valitse" })
       .click();
     await savedMilk;
     await expect(milk.locator(".s-status .spinner")).toHaveCount(0);
-    await expect(milk.locator(".s-shopping-product-summary")).toBeHidden();
+    await expect(productSheet(page)).toBeHidden();
     await expect
       .poll(() =>
         milk
@@ -119,10 +116,11 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
     await shot(page, "4-two-done-and-the-list-still-whole");
   });
 
-  // The other half of the same rule, and the half a modal could quietly lose:
-  // only a save that worked closes the row. A refused one has an error and a
-  // retry in it, and closing the row would carry both off the screen.
-  test("a refused save leaves the row open", async ({ page }) => {
+  // The other half of the same rule: only a save that worked is finished. The
+  // sheet closes on the tap (the choice is drawn at once), so a refused save
+  // has to leave its error and its retry on the screen, and the row back to
+  // what the server holds — not a closed sheet and a quiet row.
+  test("a refused save keeps its error and retry on screen", async ({ page }) => {
     await createBatch(page, KAALILAATIKKO, 2);
     await createBatch(page, LASAGNE, 1);
     await page.goto("/ostoslista");
@@ -139,19 +137,16 @@ test.describe("a finished ingredient gets out of the way (#204)", () => {
 
     const cheese = row(page, "juusto");
     await openShoppingRow(cheese);
-    await cheese.getByRole("button", { name: "Valitse tuote" }).click();
-    await expect(page.locator(".s-sheet .s-product-results > li").first()).toBeVisible();
-    await page
-      .locator(".s-sheet .s-product-results > li")
+    await sheetResults(page)
       .filter({ hasText: "Kotimaista juustoraaste" })
       .getByRole("button", { name: "Valitse" })
       .click();
 
-    await expect(page.locator(".s-toast")).toContainText(
-      "Tuotetta ei voitu varmistaa",
-    );
-    await expect(cheese.locator("input.row-open")).toBeChecked();
-    await expect(cheese.locator(".line-modal-card")).toBeVisible();
+    const toast = page.locator(".s-toast");
+    await expect(toast).toContainText("Tuotetta ei voitu varmistaa");
+    await expect(toast.getByRole("button", { name: "Yritä uudelleen" })).toBeVisible();
+    await expect(cheese.locator(".s-shopping-product")).toHaveClass(/is-note/);
+    await expect(cheese.locator(".shopping-thumb img")).toHaveCount(0);
   });
 });
 

@@ -449,8 +449,8 @@ const STYLES = `
      The link is a whole tap target tall and the box is drawn inside it, so a
      thumb hits it without the box having to be finger-sized and shout. */
   .row-tick {
-    flex: none; display: flex; align-items: center; justify-content: center;
-    width: 2rem; min-height: var(--tap); text-decoration: none;
+    flex: none; display: flex; align-items: center; justify-content: flex-end;
+    width: var(--tap); min-height: var(--tap); text-decoration: none;
   }
   .row-tick::before {
     content: ""; display: flex; align-items: center; justify-content: center;
@@ -888,7 +888,8 @@ const STYLES = `
   .shopping-list > li { border-bottom: 1px solid var(--edge); }
   /* The tick sits beside the whole row rather than inside it (#318): it has to
      be one tap without opening the row, and the row's own summary already owns
-     every tap inside itself. */
+     every tap inside itself. It is the row's last thing, at the thumb's edge
+     of the screen (#358). */
   .shopping-row { display: flex; align-items: flex-start; gap: .2rem; }
   .shopping-row > .shopping-item { flex: 1 1 auto; min-width: 0; }
   /* The row line: a label for the checkbox that opens the row's modal (#321),
@@ -962,6 +963,9 @@ const STYLES = `
   .s-shopping-send h2 { margin: 0; }
   .s-shopping-send p { margin: .25rem 0 .7rem; color: var(--muted); }
   .s-shopping-send button { width: 100%; }
+  /* Clearing this app's own rows off the S-list (#358): under the send, and
+     quieter than it. */
+  .s-remove-ours { margin-top: .6rem; }
   .shopping-sent {
     padding: .7rem .8rem; margin: 0 0 1rem;
     background: var(--surface); border: 1px solid var(--accent);
@@ -1135,8 +1139,6 @@ const STYLES = `
   }
   .s-sheet-titles { flex: 1; min-width: 0; }
   .s-sheet-name { margin: 0; font-size: 1.05rem; overflow-wrap: break-word; }
-  .s-sheet-sub { margin: .15rem 0 0; color: var(--muted); font-size: .85rem;
-    overflow-wrap: break-word; }
   .s-sheet-close { flex: 0 0 auto; min-height: var(--tap-compact); }
   .s-sheet-scope[hidden] { display: none; }
 
@@ -1176,6 +1178,87 @@ const STYLES = `
   }
   .s-product-results form { flex: 0 0 auto; margin-left: auto; }
   .s-product-results > li > button { flex: 0 0 auto; margin-left: auto; }
+
+  /* The product sheet, redesigned around what a row tap is for (#358): the
+     ingredient and its amount (which opens where it comes from), a dish's own
+     product when there is one, search as you type, a compact list where a tap
+     on a row chooses it, and the cupboard at the foot. It opens at full height
+     and holds still while results arrive. */
+  .s-sheet-panel { padding-bottom: 0; }
+  @media (max-width: 47.99rem) { .s-sheet-panel { height: 88vh; max-height: 88vh; } }
+  .s-sheet-head { align-items: center; padding: .7rem .8rem; }
+  .s-sheet-name { display: flex; align-items: baseline; gap: .6rem; font-size: 1.3rem; font-weight: 500; }
+  .s-sheet-amount { font-size: .9rem; font-weight: 400; color: var(--muted); padding: .1rem .55rem;
+    border: 1px solid var(--edge); border-radius: 2rem; }
+  .s-sheet-amount.is-open-able { cursor: pointer; }
+  .s-sheet-amount-caret { font-size: .75rem; }
+  .s-sheet-close { width: var(--tap); min-height: var(--tap); padding: 0; border-radius: 50%;
+    font-size: 1.1rem; }
+  .s-sheet-breakdown { margin: .8rem 0 0; padding: .5rem .7rem; font-size: .9rem;
+    background: var(--surface); border-radius: var(--radius); }
+  .s-sheet-breakdown .shopping-from { margin: 0; }
+  .s-sheet-current { margin: 0; padding-top: .8rem; }
+  .s-sheet-current .meta { margin: 0 0 .5rem; }
+  .s-sheet-pinned { display: flex; align-items: center; gap: .6rem; margin: 0 0 .6rem;
+    padding: .5rem .7rem; font-size: .9rem; background: var(--surface);
+    border: 1px solid var(--accent); border-radius: var(--radius); }
+  .s-sheet-pinned > span { flex: 1; min-width: 0; }
+  .s-sheet-pinned form { margin: 0; flex: none; }
+  .s-sheet-pinned button { min-height: 2.2rem; font-size: .85rem; border-radius: 2rem; }
+
+  .s-sheet .s-product-search { margin-bottom: .5rem; }
+  .s-sheet .s-product-search input { border-radius: 2rem; padding-left: 1rem; }
+  .s-sheet .s-product-search button { display: none; }
+  .s-scope-pills { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0 0 .6rem; }
+  .s-scope-pills .meta { flex-basis: 100%; font-size: .8rem; }
+  .s-scope-pills button { flex: 1 1 auto; min-height: 2.4rem; font-size: .85rem; border-radius: 2rem; }
+  .s-scope-pills button.is-on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .s-sheet-scope:has(.s-scope-pills) > label { display: none; }
+
+  .s-sheet .s-product-results { gap: 0; }
+  .s-sheet .s-product-results > li { position: relative; flex-wrap: nowrap; min-height: 4.2rem;
+    padding: .55rem .2rem; background: none; border: 0; border-bottom: 1px solid var(--edge);
+    border-radius: 0; }
+  .s-sheet .s-product-results img { width: 3rem; height: 3rem; }
+  .s-sheet .s-product-result-copy { flex-direction: row; align-items: center; gap: .6rem; }
+  .s-sheet .s-product-result-copy strong { flex: 1; font-weight: 400; }
+  .s-product-tag { font-weight: 600; white-space: nowrap; text-align: right; }
+  .s-product-tag small { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
+  /* The row's button lies over the whole row, so a tap anywhere chooses. */
+  .s-sheet .s-product-results > li > .s-product-choose {
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0; margin: 0;
+    width: 100%; min-height: 0; opacity: 0; cursor: pointer; }
+  .s-sheet .s-product-results > li > .s-product-choose:focus-visible { opacity: .15; }
+  .s-sheet .s-product-results > li.is-current { background: var(--surface); }
+  .s-sheet .s-product-results > li.is-current .s-product-result-copy strong::after {
+    content: " ✓"; color: var(--accent); }
+  .s-product-panel-results.is-loading { opacity: .45; transition: opacity .15s; }
+  .s-product-results > li.is-placeholder { cursor: default; }
+  .s-placeholder-picture { width: 3rem; height: 3rem; border-radius: .35rem; background: var(--surface); flex: none; }
+  .s-placeholder-line { flex: 1; height: 1rem; border-radius: .5rem; background: var(--surface); }
+
+  .s-sheet-foot { margin: 1.2rem 0 0; padding: .8rem 0 calc(1rem + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--edge); display: grid; gap: .6rem; }
+  .s-sheet-foot-line { display: flex; align-items: center; gap: .7rem; }
+  .s-sheet-foot-line .pantry-action { margin: 0; flex: none; }
+  .s-sheet-foot-line button { min-height: 2.2rem; font-size: .85rem; padding: .2rem .8rem;
+    border-radius: 2rem; white-space: nowrap; }
+  .s-sheet-foot-line .meta { font-size: .8rem; }
+
+  /* A cupboard row's one action, on the row itself; and a row that opens
+     nothing does not draw the chevron that says it does (#358). */
+  .row-unpantry { flex: none; align-self: center; margin: 0; }
+  .row-unpantry button { min-height: 2.2rem; padding: .1rem .8rem; font-size: .85rem; border-radius: 2rem; }
+  .shopping-item.is-static .shopping-summary { cursor: default; }
+  .shopping-item.is-static .shopping-summary::after { content: none; }
+
+  /* The warning before a send with text rows (#358): a small card. */
+  .s-warn .s-sheet-panel { height: auto; max-height: 80vh; padding: 1.1rem 1rem calc(1rem + env(safe-area-inset-bottom)); }
+  .s-warn-title { margin: 0 0 .3rem; font-size: 1.15rem; font-weight: 500; }
+  .s-warn-list { margin: .6rem 0 1rem; padding-left: 1.2rem; max-height: 30vh; overflow-y: auto; }
+  .s-warn-list li { padding: .15rem 0; }
+  .s-warn-actions { display: grid; gap: .5rem; }
+  .s-warn-actions button { width: 100%; min-height: var(--tap); border-radius: 2rem; }
 
   .refused {
     padding: .7rem .8rem; margin: 0 0 1rem;

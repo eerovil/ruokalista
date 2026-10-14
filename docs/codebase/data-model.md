@@ -479,6 +479,17 @@ cannot tell a row this app sent from one the household typed on its phone.
 pinned to one recipe. It points at `household` and nothing else. Another table
 addition, so it goes through the lockstep below too.
 
+`s_ostoslista_sent_item` (#358, `migrations/0029_s_ostoslista_sent_item.sql`)
+is its sibling for the "Poista Ruokalistan lisäämät" button: the service's row
+id of every S-list row a send *created* — a key the list it read first did not
+hold — so the button can take exactly those off and leave the household's
+own. Ids, not keys, because the service's keyed delete takes every copy of a
+product. Rows sent before the table existed are guessed instead (a chosen
+product's EAN, or a remembered note); the owner accepted that the guess also
+takes a phone-added row of the same product. The logic is
+`src/s-ostoslista-sent-items.ts`. `UNIQUE (household_id, item_id)`, pointing
+at `household` only.
+
 Both product values are still written only after a fresh S-ostoslista search
 confirms the submitted EAN, and the image is still the stable public CDN URL
 derived from that EAN. Unlike #147, this **is** a table addition, so it goes
@@ -636,7 +647,7 @@ currently `household`, `member`, `intake_job`, `member_invitation`, `ingredient`
 `batch_occurrence`, `pantry_entry`, `recipe_preference`, `ingredient_product`,
 `recipe_ingredient_product`, — proposed by #196 — `recipe_category`, —
 proposed by #199 — `category`, and — proposed by #244 —
-`s_ostoslista_sent_note`.
+`s_ostoslista_sent_note`, and — #358 — `s_ostoslista_sent_item`.
 `scripts/check-backup-schema.ts` fails the build if the live migrated tables
 and `BACKUP_TABLES` disagree; that diff *is* the check, there is no separate
 "did you forget the new table" step.

@@ -1,5 +1,6 @@
 import { problem } from "./auth.ts";
 import shoppingClient from "./generated/shopping.ts";
+import shoppingRows from "./generated/shopping-rows.ts";
 import { html, page, raw, type Raw } from "./html.ts";
 import type { Member } from "./members.ts";
 import { cookList, type ListedDish } from "./cook-list.ts";
@@ -32,6 +33,12 @@ import {
 } from "./product-picker.ts";
 import type { RouteContext } from "./router.ts";
 import { formatMultiplier } from "./scaling.ts";
+import { forgetSentNoteWordsStatement } from "./s-ostoslista-notes.ts";
+import {
+  appRows,
+  forgetSentItemStatement,
+  removeAppRows,
+} from "./s-ostoslista-sent-items.ts";
 import {
   sendToSOstoslista,
   type SOstoslistaRowFailure,
@@ -184,7 +191,8 @@ export async function shoppingScreen(
               ${groupingPills(selection)}
               ${sections(listed, atHome, selected, selection, external)}
               ${external ? currentListPanel() : ""}
-              ${KEEP_PLACE}`}
+              ${KEEP_PLACE}
+              <script>${raw(shoppingRows)}</script>`}
       ${external ? html`<script>${raw(shoppingClient)}</script>` : ""}`,
     "shopping",
     member,
@@ -588,8 +596,12 @@ export async function currentListJson(
   if (client === null) return new Response("Not found", { status: 404 });
 
   try {
-    const items = (await client.list()).filter((item) => !item.collected);
-    return Response.json({ items });
+    const list = await client.list();
+    const items = list.filter((item) => !item.collected);
+    // How many rows the "remove Ruokalista's rows" button would take, ticked
+    // ones included (#358).
+    const ours = (await appRows(ctx.env.DB, member.householdId, list)).rows.length;
+    return Response.json({ items, ours });
   } catch (error) {
     console.error(`S-ostoslista list read failed: ${reason(error)}`);
     return problem(502, "S-ostoslistan sisältöä ei saatu luettua.");
@@ -644,6 +656,23 @@ export async function removeCurrentItemForm(
       return problem(502, "Rivin poisto S-ostoslistalta ei onnistunut. Yritä uudelleen.");
     }
   }
+  // A row taken off by hand is not this app's to count any more (#358): not
+  // by its id, and — for a text row — not by its words either, or a row the
+  // household later types on the phone with the same text would be taken for
+  // this app's by the next "remove Ruokalista's rows". A 404 is the row
+  // already gone, which is the same answer.
+  const db = meteredDatabase(budget, ctx.env.DB);
+  const forget = [
+    ...deleted.map((id) => forgetSentItemStatement(db, member.householdId, id)),
+    ...("note" in key ? [forgetSentNoteWordsStatement(db, member.householdId, key.note)] : []),
+  ];
+  if (forget.length > 0) {
+    try {
+      await db.batch(forget);
+    } catch (error) {
+      console.error(`S-ostoslista sent-row bookkeeping failed: ${reason(error)}`);
+    }
+  }
 
   /**
    * The phone is pushed for the reason a finished send pushes it, and at the
@@ -659,6 +688,46 @@ export async function removeCurrentItemForm(
   }
 
   return Response.json({ deleted });
+}
+
+/**
+ * `POST /ostoslista/s-lista/tyhjenna` — take every row this app put on the
+ * S-ostoslista off it, and nothing the household added themselves (#358).
+ *
+ * JSON only: the button is drawn by the shopping client, and the owner has
+ * said the shopping list does not need to work without scripts. What counts
+ * as this app's row is `s-ostoslista-sent-items.ts::appRows`.
+ */
+export async function removeAppRowsJson(
+  ctx: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const budget = new SubrequestBudget(SUBREQUEST_CEILING - SESSION_LOOKUP);
+  const client = externalClient(ctx.env, member, budget);
+  if (client === null) return new Response("Not found", { status: 404 });
+
+  try {
+    const outcome = await removeAppRows(
+      meteredDatabase(budget, ctx.env.DB),
+      member.householdId,
+      client,
+      budget,
+    );
+    return Response.json({ ...outcome, message: removedMessage(outcome) });
+  } catch (error) {
+    console.error(`S-ostoslista bulk removal failed: ${reason(error)}`);
+    return problem(502, "S-ostoslistalta ei saatu poistettua rivejä. Yritä uudelleen.");
+  }
+}
+
+function removedMessage({ removed, total }: { removed: number; total: number }): string {
+  if (total === 0) return "S-ostoslistalla ei ole Ruokalistan lisäämiä rivejä.";
+  if (removed < total) {
+    return `Poistettiin ${removed}/${total} riviä — paina uudelleen, niin loput poistetaan.`;
+  }
+  return removed === 1
+    ? "Poistettiin 1 rivi S-ostoslistalta."
+    : `Poistettiin ${removed} riviä S-ostoslistalta.`;
 }
 
 /** The typed shopping client asks for JSON, so one route serves both callers. */
@@ -1008,6 +1077,7 @@ const rawOpen = raw("open");
 const rawChecked = raw("checked");
 const rawCurrent = raw('aria-current="page"');
 const rawDisabled = raw("disabled");
+const rawHidden = raw("hidden");
 
 /**
  * How the list is cut up, as two pills above it (#318).
@@ -1063,7 +1133,7 @@ function sections(
   selection: Selection,
   external: boolean,
 ): Raw {
-  const note = selection.excluded.size === 0 ? html`` : excludedNote();
+  const note = excludedNote(selection.excluded.size === 0);
 
   // With nothing in the cupboard there is only one list, and a lone
   // "Ostettavat" heading under a heading that already says Ostoslista is a
@@ -1093,8 +1163,10 @@ function sections(
  * that it is *not* the cupboard, and a greyed-out row on its own does not say
  * which of the two sentences it is.
  */
-function excludedNote(): Raw {
-  return html`<p class="empty shopping-excluded-note">
+function excludedNote(hidden: boolean): Raw {
+  // Drawn hidden rather than left out, so the tick client can show it on the
+  // first tick without a round-trip (#358).
+  return html`<p class="empty shopping-excluded-note" ${hidden ? rawHidden : ""}>
     Rastitut rivit jäävät pois tältä listalta eikä niitä lähetetä
     S-ostoslistaan. Tämä ei kerro mitään <a href="/kaappi">kaapista</a>, ja
     seuraava lista laskee ne taas mukaan.
@@ -1183,22 +1255,18 @@ function itemList(
   return html`<ul class="shopping-list" data-lista="${listName}">
     ${items.map((item) => {
       const excluded = kind === "buy" && selection.excluded.has(item.key);
-      const toggle = rowToggleId(item, kind);
       return html`<li class="shopping-row">
-        ${excludeTick(item, selection, kind, excluded)}
         <div
           class="${excluded ? "shopping-item is-excluded" : "shopping-item"}"
           data-product-row
           data-aines="${item.ingredientId}"
           data-rivi="${item.key}"
           data-haku="${item.name}"
+          data-kind="${kind}"
         >
-          <!-- No name, so it is never submitted: this is screen state, not
-               data. Kept off screen rather than display:none so the row stays
-               reachable by keyboard. -->
-          <input type="checkbox" class="row-open" id="${toggle}" />
-
-          <label class="shopping-summary" for="${toggle}">
+          <!-- A tap opens the row's sheet (src/client/shopping-rows.ts);
+               the old in-page window is gone (#358). -->
+          <div class="shopping-summary" role="button" tabindex="0">
             <span class="shopping-thumb">${productThumbnail(item)}</span>
             <span class="shopping-line">
               <span class="shopping-name">${item.name}</span>
@@ -1208,59 +1276,38 @@ function itemList(
                 >${item.total}</span
               >
             </span>
-          </label>
+          </div>
 
-          <div class="line-modal">
-            <!-- Tapping the dimmed area closes the row, because that is what a
-                 tapped-away modal does. It is the same label as the summary. -->
-            <label class="line-modal-back" for="${toggle}" aria-hidden="true"></label>
-
-            <div class="line-modal-card" role="group" aria-label="${item.name}">
-              <p class="line-modal-title">
-                ${item.name} <span class="meta">${item.total}</span>
-              </p>
-              <ul class="shopping-from">
-                ${item.contributions.map(
-                  (one) => html`<li>
-                    <span class="shopping-from-what"
-                      >${one.batchTitle}${one.partTitle === null
-                        ? ""
-                        : ` · ${one.partTitle}`}</span
-                    >
-                    <span class="shopping-from-amount"
-                      >${one.amount === "" ? AMOUNT_IN_RECIPE : one.amount}</span
-                    >
-                    ${one.sourceLine === ""
+          <!-- What the sheet draws from: where the amount comes from, the
+               product block the picker drives, and the cupboard form. -->
+          <div class="row-data" hidden>
+            <ul class="shopping-from">
+              ${item.contributions.map(
+                (one) => html`<li>
+                  <span class="shopping-from-what"
+                    >${one.batchTitle}${one.partTitle === null
                       ? ""
-                      : html`<span class="source">${one.sourceLine}</span>`}
-                  </li>`,
-                )}
-              </ul>
-              ${externalProductBlock(item, selection, excluded, kind, external)}
-              <div class="line-modal-actions">
-                ${pantryButton(item, selection, kind === "pantry")}
-                <label class="line-done" for="${toggle}">Valmis</label>
-              </div>
-            </div>
+                      : ` · ${one.partTitle}`}</span
+                  >
+                  <span class="shopping-from-amount"
+                    >${one.amount === "" ? AMOUNT_IN_RECIPE : one.amount}</span
+                  >
+                  ${one.sourceLine === ""
+                    ? ""
+                    : html`<span class="source">${one.sourceLine}</span>`}
+                </li>`,
+              )}
+            </ul>
+            ${externalProductBlock(item, selection, excluded, kind, external)}
+            ${pantryButton(item, selection, kind === "pantry")}
           </div>
         </div>
+        ${excludeTick(item, selection, kind, excluded)}
       </li>`;
     })}
   </ul>`;
 }
 
-/**
- * The id that ties a row's summary, its dimmed backdrop and its `Valmis` to the
- * one checkbox that opens it.
- *
- * A row key can name a dish as well as an ingredient — `12:r7` — and the kind
- * is in there because the cupboard list is drawn by the same function on the
- * same screen. The colon goes because an id with one in it is a selector nobody
- * can write without escaping it.
- */
-function rowToggleId(item: ShoppingItem, kind: RowKind): string {
-  return `rivi-${kind}-${item.key.split(":").join("-")}`;
-}
 
 /**
  * Keeps the list exactly where it was across a round-trip that leaves the page
@@ -1606,6 +1653,12 @@ function externalSendPanel(
             ${selectionFields(selection)}
             <button type="submit" class="primary">Lähetä S-ostoslistaan</button>
           </form>`}
+    <!-- Filled by the shopping client once the S-list has been read, with how
+         many rows it would take (#358). Script-only by the owner's word. -->
+    <div class="s-remove-ours" hidden>
+      <button type="button" hidden>Poista Ruokalistan lisäämät</button>
+      <p class="s-remove-ours-state" hidden></p>
+    </div>
   </section>`;
 }
 
@@ -1661,7 +1714,10 @@ function externalProductBlock(
   external: boolean,
 ): Raw {
   if (!external) return html``;
-  if (kind !== "buy" || excluded) {
+  // A ticked-off row is still a product the household may want to change,
+  // so it opens the same picker as any other (#358). Only a cupboard row has
+  // nothing to choose.
+  if (kind !== "buy") {
     return item.chosen.length > 0 ? productSummary(item) : html``;
   }
   return productBlock(item, shoppingRoutes(selection));
@@ -1755,7 +1811,16 @@ function excludeTick(
   kind: RowKind,
   excluded: boolean,
 ): Raw {
-  if (kind === "pantry") return html`<span class="row-tick is-absent"></span>`;
+  // A cupboard row's one action sits on the row itself, so it needs no
+  // window at all (#358).
+  if (kind === "pantry") {
+    return html`<form method="post" action="/ostoslista/kaappi" class="inline row-unpantry">
+      <input type="hidden" name="aines" value="${item.ingredientId}" />
+      <input type="hidden" name="toiminto" value="poista" />
+      ${selectionFields(selection)}
+      <button type="submit" aria-label="${`Osta ${item.name}: poista kaapista`}">Osta</button>
+    </form>`;
+  }
 
   const next = new Set(selection.excluded);
   if (excluded) next.delete(item.key);
@@ -1768,6 +1833,8 @@ function excludeTick(
   return html`<a
     class="${excluded ? "row-tick is-on" : "row-tick"}"
     href="${listLocation({ ...selection, excluded: next })}"
+    data-rivi="${item.key}"
+    data-nimi="${item.name}"
     aria-label="${label}"
     title="${label}"
   ></a>`;
