@@ -901,11 +901,7 @@ function recipeTopActions(
   const viewRows = picks || (castApplicationId?.trim() ?? "") !== "";
 
   return html`<div class="recipe-top" id="toiminnot">
-    ${adding
-      ? html`<a class="recipe-top-add" href="#${COOK_ADD_ID}"
-          ><span aria-hidden="true">＋</span> Lisää kokattaviin</a
-        >`
-      : ""}
+    ${adding ? quickAdd(recipe, multiplier, view.preference) : ""}
     <a class="recipe-top-more" href="#${MORE_ID}" aria-label="Lisää valintoja"
       ><span aria-hidden="true">⋯</span></a
     >
@@ -913,17 +909,25 @@ function recipeTopActions(
   ${adding
     ? topModal(
         COOK_ADD_ID,
-        "Lisää kokattaviin",
+        "Lisää eri koolla",
         cookListAdd(recipe, multiplier, view.preference),
-        "toiminnot",
+        MORE_ID,
         "Sulje",
       )
     : ""}
   ${topModal(
     MORE_ID,
     "Lisää valintoja",
-    html`${viewRows
+    html`${adding || viewRows
       ? html`<div class="tail-list">
+          ${adding
+            ? html`<a class="tail-row" href="#${COOK_ADD_ID}"
+                ><span class="tail-row-text"
+                  ><span class="tail-row-title">Lisää eri koolla</span
+                  ><span class="tail-row-note">Kokattaviin esimerkiksi tupla-annos</span></span
+                ><span class="tail-chevron" aria-hidden="true">›</span></a
+              >`
+            : ""}
           ${picks
             ? html`<label class="tail-row picks-row" for="show-product-picks"
                 ><span class="tail-row-text"
@@ -1022,6 +1026,35 @@ function topModal(
 }
 
 /**
+ * The size a dish goes onto the list at when nobody picks one: the size on
+ * screen if the reader scaled the recipe, else the household's own default.
+ */
+function addSize(multiplier: number, preference: number | null): number {
+  return multiplier !== DEFAULT_MULTIPLIER
+    ? multiplier
+    : preference ?? DEFAULT_MULTIPLIER;
+}
+
+/**
+ * The page's main button (#354): one tap puts the dish on the list at its
+ * usual size. A size is chosen so rarely that the choice lives behind ⋯.
+ */
+function quickAdd(recipe: Recipe, multiplier: number, preference: number | null): Raw {
+  const size = addSize(multiplier, preference);
+  return html`<form
+    method="post"
+    action="/recipes/${recipe.id}/kokattaviin"
+    class="recipe-top-add-form"
+  >
+    <button type="submit" name="preset" value="${String(size)}" class="recipe-top-add"
+      ><span aria-hidden="true">＋</span> Lisää kokattaviin${size === DEFAULT_MULTIPLIER
+        ? ""
+        : ` · ${formatMultiplier(size)}`}</button
+    >
+  </form>`;
+}
+
+/**
  * Put this dish on the to-do list (#345). Each size chip adds at that size in
  * one tap; the one already lit is the size on screen if the reader scaled the
  * recipe, else the household's own default for it. Since #354 it sits in the
@@ -1032,9 +1065,7 @@ function cookListAdd(
   multiplier: number,
   preference: number | null,
 ): Raw {
-  const current = multiplier !== DEFAULT_MULTIPLIER
-    ? multiplier
-    : preference ?? DEFAULT_MULTIPLIER;
+  const current = addSize(multiplier, preference);
   return html`<form
     method="post"
     action="/recipes/${recipe.id}/kokattaviin"
@@ -1301,8 +1332,10 @@ const PUBLISH_STYLE = html`<style>
     min-height: var(--tap); border-radius: var(--radius);
     font-weight: 600; text-decoration: none;
   }
-  .recipe-top-add { flex: 1 1 auto; padding: 0 1rem;
-    color: var(--accent-fg); background: var(--accent); }
+  .recipe-top-add-form { flex: 1 1 auto; display: flex; margin: 0; }
+  .recipe-top-add { flex: 1 1 auto; width: 100%; padding: 0 1rem; font: inherit;
+    font-weight: 600; color: var(--accent-fg); background: var(--accent);
+    border: 1px solid var(--accent); cursor: pointer; }
   .recipe-top-more { flex: 0 0 auto; width: var(--tap); color: var(--fg);
     background: var(--surface); border: 1px solid var(--edge); font-size: 1.2rem; }
   .recipe-top-add:focus-visible, .recipe-top-more:focus-visible {
