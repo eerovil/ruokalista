@@ -38,6 +38,8 @@ test("a multiplier that is not one is refused rather than repaired", () => {
   assert.equal(parseMultiplier("0"), null);
   assert.equal(parseMultiplier("-2"), null);
   assert.equal(parseMultiplier("puolikas"), null);
+  assert.equal(parseMultiplier("-3"), null);
+  assert.equal(parseMultiplier("Infinity"), null);
 });
 
 test("the domain accepts every finite positive multiplier without rounding it", () => {

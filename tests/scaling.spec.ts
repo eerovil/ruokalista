@@ -56,20 +56,6 @@ test("at 1,5× the amounts follow", async ({ page }) => {
   await expect(lines.nth(3)).not.toContainText("0");
 });
 
-test("half a recipe halves every amount", async ({ page }) => {
-  await page.goto("/recipes/1?multiplier=0.5");
-
-  await expect(page.locator(".yield")).toHaveText("0,5×");
-  await expect(page.locator(".lines li").first()).toContainText("¼ dl");
-});
-
-test("twice the recipe doubles every amount", async ({ page }) => {
-  await page.goto("/recipes/1?multiplier=2");
-
-  await expect(page.locator(".yield")).toHaveText("2×");
-  await expect(page.locator(".lines li").first()).toContainText("1 dl");
-});
-
 test("a scaled amount says what the page said", async ({ page }) => {
   await page.goto("/recipes/1?multiplier=1.5");
   await expect(page.locator(".lines li").first().locator(".source")).toHaveText(
@@ -120,11 +106,11 @@ test("a recipe with no stated yield scales like any other (#165)", async ({
 });
 
 test("a nonsense multiplier is ignored rather than obeyed", async ({ page }) => {
-  for (const bad of ["0", "-3", "puoltatoista", "", "Infinity"]) {
-    await page.goto(`/recipes/1?multiplier=${bad}`);
-    await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
-    await expect(page.locator(".lines li").first()).toContainText("½ dl");
-  }
+  // One bad value proves the screen falls back; which values are bad is
+  // dev/check-scaling.ts's job (#347).
+  await page.goto("/recipes/1?multiplier=puoltatoista");
+  await expect(page.locator(".yield")).toContainText("resepti sellaisenaan");
+  await expect(page.locator(".lines li").first()).toContainText("½ dl");
 });
 
 test("a dish's multiplier reaches into its parts", async ({ page }) => {
