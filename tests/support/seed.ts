@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 type CommandRunner = (
   command: string,
@@ -40,14 +43,64 @@ export function runLocalWrangler(
 }
 
 /**
+ * Where `wrangler dev` keeps the local D1 database: Wrangler's default
+ * persistence, one SQLite file per database. There is one database binding, so
+ * there must be exactly one file; anything else means the layout moved and
+ * writing to a guess would be worse than stopping.
+ */
+const LOCAL_D1_DIR = join(".wrangler", "state", "v3", "d1", "miniflare-D1DatabaseObject");
+
+function localD1File(): string {
+  const files = readdirSync(join(process.cwd(), LOCAL_D1_DIR)).filter(
+    (name) => name.endsWith(".sqlite") && name !== "metadata.sqlite",
+  );
+  if (files.length !== 1) {
+    throw new Error(
+      `Expected one local D1 database in ${LOCAL_D1_DIR}, found ${files.length}.`,
+    );
+  }
+  return join(process.cwd(), LOCAL_D1_DIR, files[0]!);
+}
+
+/**
+ * Run SQL against the local D1 file directly, in one transaction.
+ *
+ * This used to go through `wrangler d1 execute --local`, which writes the same
+ * file but boots Wrangler every time: about 2.4 s against about 90 ms here
+ * (#347). Specs that reseed before every test spent most of their time on that.
+ * The running `wrangler dev` sees the write the way it saw Wrangler's, as
+ * another SQLite connection to the same file. Foreign keys are on, as in D1.
+ */
+function runLocalSql(sql: string, action: string): void {
+  const db = new DatabaseSync(localD1File(), { enableForeignKeyConstraints: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(sql);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } catch (error) {
+    throw new Error(
+      `${action} failed.\n\n${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? { cause: error } : undefined,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+const SEED_SQL = readFileSync(join(process.cwd(), "dev", "seed.sql"), "utf8");
+
+/**
  * Put the local database back to dev/seed.sql. Called before each spec file so
  * a test that saves a recipe cannot change what a later test sees.
  */
 export function reseed(): void {
-  runLocalWrangler(
-    ["d1", "execute", "ruokalista", "--local", "--file", "dev/seed.sql"],
-    "Resetting local D1 before a browser test",
-  );
+  runLocalSql(SEED_SQL, "Resetting local D1 before a browser test");
 }
 
 /**
@@ -78,8 +131,5 @@ export function putLocalObject(key: string, file: string, contentType: string): 
 
 /** Add one test's focused fixture rows without changing the shared seed. */
 export function executeLocalSql(sql: string): void {
-  runLocalWrangler(
-    ["d1", "execute", "ruokalista", "--local", "--command", sql],
-    "Writing focused local D1 browser fixtures",
-  );
+  runLocalSql(sql, "Writing focused local D1 browser fixtures");
 }
