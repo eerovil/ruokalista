@@ -637,27 +637,26 @@ function productPicksToggle(): Raw {
   />`;
 }
 
-function body(
+function phaseFilter<T extends { phase: RecipePhase }>(
+  rows: readonly T[],
+  phases?: RecipePhase[],
+): T[] {
+  return phases === undefined ? [...rows] : rows.filter((row) => phases.includes(row.phase));
+}
+
+/**
+ * One recipe's ingredient lines — the dish's own or one part's — as a list.
+ * `recipe` is the row's own recipe row, which is half of what names a line
+ * for the product picker.
+ */
+function ingredientList(
   recipe: Recipe,
+  lines: Recipe["lines"],
   multiplier: number,
   picker: RecipePicker | null,
-  phases?: RecipePhase[],
-  bucket = "a",
-  reveal: RevealSlot | null = null,
 ): Raw {
-  const lines = phases === undefined
-    ? recipe.lines
-    : recipe.lines.filter((line) => phases.includes(line.phase));
-  const steps = phases === undefined
-    ? recipe.steps
-    : recipe.steps.filter((step) => phases.includes(step.phase));
-  const amounts = amountsByIngredient(recipe.lines, multiplier);
-
-  return html`<section class="recipe-section">
-    ${lines.length === 0
-      ? ""
-      : html`<h3 class="ingredients-heading">Ainekset</h3>
-          <ul class="lines recipe-ingredients">
+  if (lines.length === 0) return raw("");
+  return html`<ul class="lines recipe-ingredients">
             ${alternativeSets(lines).map((set) => {
               const shown = set.options[0]!;
               const shared = sharedSource(set.options, (line) =>
@@ -720,17 +719,79 @@ function body(
                     })}
               </li>`;
             })}
-          </ul>`}
-    ${steps.length === 0
-      ? ""
-      : html`${methodHeading(reveal)}
-          <ol class="steps recipe-method">
+          </ul>`;
+}
+
+/** One recipe's steps — the dish's own or one part's — as a numbered list. */
+function stepList(
+  recipe: Recipe,
+  steps: Recipe["steps"],
+  multiplier: number,
+  bucket: string,
+): Raw {
+  if (steps.length === 0) return raw("");
+  const amounts = amountsByIngredient(recipe.lines, multiplier);
+  return html`<ol class="steps recipe-method">
             ${steps.map(
               (step, index) => html`<li>
                 ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
-          </ol>`}
+          </ol>`;
+}
+
+/**
+ * The ingredients and the method (#354): every ingredient first, the dish's
+ * own and then each part's under its name, and then the whole method in the
+ * same order — so a cook reads the shopping half and the cooking half of a
+ * dish in parts each in one go. Steps the dish does after its parts get their
+ * own heading, or they would read as the last part's.
+ */
+function cooking(
+  recipe: Recipe,
+  multiplier: number,
+  picker: RecipePicker | null,
+  reveal: RevealSlot | null,
+): Raw {
+  const parted = recipe.parts.length > 0;
+  const before = parted ? phaseFilter(recipe.steps, [null, "before_parts"]) : recipe.steps;
+  const after = parted ? phaseFilter(recipe.steps, ["after_parts"]) : [];
+  const hasLines = recipe.lines.length > 0 ||
+    recipe.parts.some((part) => part.lines.length > 0);
+  const hasSteps = recipe.steps.length > 0 ||
+    recipe.parts.some((part) => part.steps.length > 0);
+
+  return html`<section class="recipe-section">
+    ${hasLines
+      ? html`<div class="recipe-ingredients-column">
+          <h3 class="ingredients-heading">Ainekset</h3>
+          ${ingredientList(recipe, recipe.lines, multiplier, picker)}
+          ${recipe.parts.map((part) => part.lines.length === 0
+            ? ""
+            : html`<section class="part">
+                <h2>${part.title}</h2>
+                ${ingredientList(part, part.lines, multiplier, picker)}
+              </section>`)}
+        </div>`
+      : ""}
+    ${hasSteps
+      ? html`<div class="recipe-method-column">
+          ${methodHeading(reveal)}
+          ${stepList(recipe, before, multiplier, "a")}
+          ${recipe.parts.map((part) => part.steps.length === 0
+            ? ""
+            : html`<section class="part">
+                <h2>${part.title}</h2>
+                ${stepList(part, part.steps, multiplier, "a")}
+              </section>`)}
+          ${after.length === 0
+            ? ""
+            : html`<section class="part part-finish">
+                <h2>Lopuksi</h2>
+                ${stepList(recipe, after, multiplier, "b")}
+              </section>`}
+        </div>`
+      : ""}
   </section>`;
 }
 
@@ -810,18 +871,7 @@ function recipeBody(
             />`
         : ""}
 
-      ${recipe.parts.length === 0
-        ? body(recipe, multiplier, picker, undefined, "a", reveal)
-        : body(recipe, multiplier, picker, [null, "before_parts"], "a", reveal)}
-      ${recipe.parts.map(
-        (part) => html`<section class="part">
-          <h2>${part.title}</h2>
-          ${body(part, multiplier, picker, undefined, "a", reveal)}
-        </section>`,
-      )}
-      ${recipe.parts.length === 0
-        ? ""
-        : body(recipe, multiplier, picker, ["after_parts"], "b", reveal)}
+      ${cooking(recipe, multiplier, picker, reveal)}
     </div>
 
     ${keepAwake()}
@@ -1458,16 +1508,11 @@ const RECIPE_VIEW_STYLE = html`<style>
     .recipe-section {
       display: grid;
       grid-template-columns: minmax(14rem, .8fr) minmax(0, 1.2fr);
-      grid-template-areas:
-        "ingredients-heading method-heading"
-        "ingredients method";
       column-gap: 2rem;
       align-items: start;
     }
-    .recipe-section > .ingredients-heading { grid-area: ingredients-heading; }
-    .recipe-section > .recipe-ingredients { grid-area: ingredients; }
-    .recipe-section > .method-heading { grid-area: method-heading; }
-    .recipe-section > .recipe-method { grid-area: method; }
+    .recipe-section > div > h3:first-child,
+    .recipe-section > div > .method-heading:first-child { margin-top: 0; }
     .recipe-section > h3 { margin-top: 0; }
     .recipe-section .lines li { padding: .35rem 0; font-size: 1rem; }
     .recipe-section .steps li { padding: .25rem 0; line-height: 1.45; }
