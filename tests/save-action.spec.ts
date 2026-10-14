@@ -32,7 +32,7 @@ test.beforeEach(async ({ context }) => {
 async function reviewAnImport(page: Page): Promise<void> {
   await stubStructuring(page);
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill(DRAFT_FIXTURE.source_text);
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill(DRAFT_FIXTURE.source_text);
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" }))
     .toBeVisible();

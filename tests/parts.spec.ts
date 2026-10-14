@@ -233,7 +233,7 @@ test("importing a page with sub-headings creates the parts", async ({ page }) =>
 
   await stubStructuring(page, draft);
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Lasagne");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Lasagne\n500 g jauhelihaa");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
 
@@ -309,7 +309,7 @@ test("case and whitespace variants save as one complete part", async ({ page }) 
 
   await stubStructuring(page, draft);
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Täytetty kaali");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Täytetty kaali\n1 kaali");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
   const reviewedPart = page.locator("section.part");
   await expect(reviewedPart).toHaveCount(1);
@@ -343,7 +343,7 @@ test("correcting a part name before saving moves the lines", async ({ page }) =>
   });
 
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Uunikaali\n½ dl öljyä");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
 
   // Rename the part on both of its lines.
@@ -396,7 +396,7 @@ test("the editor preserves and can change parent cooking phases", async ({
 test("a dish with no sub-headings makes no parts", async ({ page }) => {
   await stubStructuring(page);
   await page.goto("/intake");
-  await page.getByLabel("Liitä reseptin teksti").fill("Uunikaali");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Uunikaali\n½ dl öljyä");
   await page.getByRole("button", { name: "Muodosta resepti" }).click();
   await page.getByRole("button", { name: "Tallenna resepti" }).click();
 

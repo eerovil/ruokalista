@@ -128,7 +128,7 @@ test("a photographed import keeps its route when it is saved", async ({ page }) 
   await page.goto("/intake");
   await choosePhoto(page);
 
-  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await page.getByRole("button", { name: "Lue resepti kuvista" }).click();
   await expect(page.getByRole("heading", { name: "Tarkista resepti" })).toBeVisible();
   await openDraftEditor(page);
   await page.locator(".line.is-new select").selectOption("new");

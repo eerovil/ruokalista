@@ -1,4 +1,5 @@
 import { problem } from "./auth.ts";
+import { boxKind, withoutLinks } from "./intake-box.ts";
 import intakeClient from "./generated/intake.ts";
 import { html, page, raw, type Raw, saveBar } from "./html.ts";
 import { encodeDraftRefs } from "./ingredient-refs.ts";
@@ -10,9 +11,11 @@ import {
   findIntakeJob,
   intakeJobImageRef,
   IntakeRefused,
+  composedSource,
   listIntakeJobs,
-  MAX_IMPORT_GUIDANCE,
   readIntakeJobImage,
+  readPages,
+  unreadLinks,
   retryIntakeJob,
   type IntakeJob,
 } from "./intake-jobs.ts";
@@ -94,7 +97,15 @@ import { findRecipe, type Recipe } from "./recipes.ts";
 
 type SourceRoute = "pasted" | "photographed" | "linked";
 
+type UnreadLink = { url: string; message: string };
+
 interface CorrectionView {
+  /**
+   * The links this import could not read (#350). The recipe was made from
+   * the rest, so the member is told which address is missing from it. Shown
+   * once, with the model's proposal; a re-render after a refused save has none.
+   */
+  unread?: UnreadLink[];
   title: string;
   yieldValue: string;
   sourceText: string;
@@ -161,18 +172,41 @@ function sampleDraftForm(): Raw {
  */
 const STRUCTURE_LABEL = "Muodosta resepti";
 
-/** The JavaScript-owned intake form, optionally with a paste kept for retry. */
+const CAMERA_ICON = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>`);
+const PICTURES_ICON = raw(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>`);
+
+/**
+ * The add screen's form (#350): one box and the photographs beside it.
+ *
+ * The box takes a name, a link or a whole recipe — links anywhere in a longer
+ * text — and photographs may be added to any of it. Everything given is
+ * material for one recipe. Which of these the box holds is read by
+ * `intake-box.ts`, the same function the server reads it with, and the button
+ * says what pressing it will do.
+ *
+ * On the add screen the form's own action is the name-only save, and its
+ * button works before any script has run, so *Tallenna nimellä* needs no
+ * JavaScript, as the separate name form it replaces did not. The island takes
+ * every other press and sends it to the import queue. The edit screen
+ * (`target`) has no name-only save, so there the button waits for the island.
+ */
 function intakeForm(
   sourceText = "",
-  submitLabel: string = STRUCTURE_LABEL,
-  sourceUrl = "",
+  fixedLabel?: string,
   target?: Recipe,
 ): Raw {
+  const adding = target === undefined;
+  // Before the island runs, the add screen's button can only save a name, so
+  // it says so; the island re-words it for what the box holds. A retry
+  // screen's own wording is fixed.
+  const label = fixedLabel ?? (adding ? "Tallenna nimellä" : STRUCTURE_LABEL);
   return html`<form class="stacked" id="intake"
+      ${adding ? raw('method="post" action="/intake/keskeneras"') : ""}
+      data-names="${adding ? "yes" : "no"}"
       data-max-pages="${MAX_IMAGES}"
       data-max-page-bytes="${MAX_PAGE_BASE64_BYTES}"
       data-max-pages-bytes="${MAX_PAGES_BASE64_BYTES}">
-      ${target === undefined
+      ${adding
         ? ""
         : html`<input type="hidden" name="recipeId" value="${target.id}" />
           <fieldset class="prompt-modes">
@@ -182,126 +216,53 @@ function intakeForm(
               <span><strong>${MODE_LABEL[mode]}</strong></span>
             </label>`)}
           </fieldset>`}
-      <label for="sourceText">${target === undefined
-        ? "Liitä reseptin teksti"
+      <label for="sourceText">${adding
+        ? "Reseptin nimi, linkki tai koko teksti"
         : "Kirjoita muutospyyntö tai liitä uutta reseptiaineistoa"}</label>
       <textarea
         id="sourceText"
         name="sourceText"
-        rows="14"
-        placeholder="${target === undefined
-          ? "Liitä tähän resepti sellaisenaan."
-          : "Esimerkiksi: Lisää puuttuva lisuke."}"
-      >${sourceText}</textarea>
-
-      <label for="sourceUrl">…tai hae resepti nettiosoitteesta</label>
-      <!-- Deliberately not type="url": that refuses an address with no scheme,
-           and pasting "kotikokki.fi/resepti" is exactly what people do. The
-           browser would then block the submit before the island ever ran.
-           recipe-fetch.ts fills the scheme in and checks the address. -->
-      <input
-        id="sourceUrl"
-        name="sourceUrl"
-        type="text"
-        inputmode="url"
+        class="grow"
+        rows="1"
         autocomplete="off"
-        value="${sourceUrl}"
-        placeholder="https://…"
-      />
-      <p class="empty" id="link-help">
-        ${target === undefined
-          ? "Sivu haetaan taustalla ja siitä luetaan resepti. Osoite jää talteen reseptin lähteeksi."
-          : "Sivu haetaan taustalla ja sen sisältöä käytetään muutosehdotuksessa."}
-      </p>
+        placeholder="${adding
+          ? "Esim. kotikokki.net/… tai mummin lihapullat"
+          : "Esim. lisää puuttuva lisuke"}"
+      >${sourceText}</textarea>
+      <p class="empty box-kind" id="box-kind" aria-live="polite"></p>
 
-      <div id="guidance-fields" hidden>
-        <label for="importGuidance">Lisäohje tuontiin (valinnainen)</label>
-        <textarea
-          id="importGuidance"
-          name="importGuidance"
-          rows="3"
-          maxlength="${MAX_IMPORT_GUIDANCE}"
-          aria-describedby="guidance-help"
-        ></textarea>
-        <p class="empty" id="guidance-help">
-          Käytä tätä vain, jos haluat tarkentaa sivun tulkintaa. Selkeät reseptin
-          osat ja maku-/versiovaihtoehdot tunnistetaan automaattisesti.
-        </p>
+      <div class="intake-go">
+        <button type="submit" class="primary" ${adding ? "" : "disabled"}
+          ${fixedLabel === undefined ? "" : raw("data-fixed-label")}>${label}</button>
+        <button type="button" id="paste" class="quiet" hidden>Liitä leikepöydältä</button>
       </div>
 
-      <label for="camera">…tai ota kuva painetusta sivusta</label>
-      <input
-        id="camera"
-        name="camera"
-        type="file"
-        accept="image/*"
-        capture="environment"
-      />
-
-      <label for="photo">…tai valitse kuvia kuvakirjastosta</label>
-      <input id="photo" name="photo" type="file" accept="image/*" multiple />
+      <div class="intake-or">${adding ? "tai kuvaa painettu resepti" : "tai lisää kuvia"}</div>
+      <input id="camera" name="camera" class="photo-input" type="file"
+        accept="image/*" capture="environment" />
+      <label for="camera" class="photo-tile">${CAMERA_ICON}
+        <span><strong>Ota kuva</strong>
+          <span class="meta">Keittokirjan sivu tai lehtileike</span></span></label>
+      <input id="photo" name="photo" class="photo-input" type="file"
+        accept="image/*" multiple />
+      <label for="photo" class="photo-tile">${PICTURES_ICON}
+        <span><strong>Valitse kuvista</strong>
+          <span class="meta">Enintään ${MAX_IMAGES} sivua samasta reseptistä</span></span></label>
 
       <ul id="chosen" class="chosen" hidden></ul>
-
-      <p class="empty" id="photo-help">
-        Voit lisätä saman reseptin sivuja useita, enintään ${MAX_IMAGES} —
-        niitä käytetään annetussa järjestyksessä. Kuvat pienennetään selaimessa
-        ja säilytetään yksityisesti jäsennyksen ajan.
-      </p>
-
-      <button type="submit" disabled>${submitLabel}</button>
-
-      <p class="empty" id="structure-help">
-        ${target === undefined
-          ? "Yllä oleva teksti, osoite tai kuvat luetaan ja niistä kootaan resepti aineksineen ja valmistusohjeineen. Se kestää hetken."
-          : "Yllä oleva teksti, osoite tai kuvat yhdistetään nykyiseen reseptiin. Saat kokonaisen ehdotuksen tarkistettavaksi. Se kestää hetken."}
-      </p>
+      <p class="empty" id="photo-help" hidden></p>
     </form>
 
     <p id="status" class="status" aria-live="polite">
-      Reseptin tuonti tarvitsee JavaScriptin.
+      ${adding
+        ? "Reseptin tuonti tarvitsee JavaScriptin. Ilman sitä voit tallentaa reseptin nimen."
+        : "Reseptin tuonti tarvitsee JavaScriptin."}
     </p>
     <p id="progress" class="progress" aria-live="polite" hidden></p>
 
     <script>
       ${raw(intakeClient)}
     </script>`;
-}
-
-/**
- * Save a recipe that is nothing but its name yet (#211).
- *
- * The whole point of it is that it is *not* the form above: an ordinary
- * `method="post"` form, no JavaScript, no model call, no waiting. Somebody who
- * remembers the name of a dish and has the recipe nowhere near them gets it
- * into the store now and fills it in later, from the ordinary editor.
- *
- * It is deliberately below the import form and headed by its own question, so
- * the choice on this screen reads as two whole things rather than one thing
- * with an escape hatch on it. It starts folded (#341): the import form is what
- * almost every visit is for. A refused save re-renders it open, so the member
- * sees the refusal's field with what they typed.
- */
-function quickSaveForm(title = "", open = false): Raw {
-  return html`<details class="fold" ${open ? "open" : ""}>
-    <summary>Muistatko vain nimen?</summary>
-    <form method="post" action="/intake/keskeneras" class="stacked">
-      <label for="quickTitle">Reseptin nimi</label>
-      <input
-        id="quickTitle"
-        name="title"
-        type="text"
-        autocomplete="off"
-        value="${title}"
-        placeholder="Esim. mummin lihapullat"
-      />
-      <button type="submit">Tallenna keskeneräisenä</button>
-      <p class="empty">
-        Tallentaa reseptin heti pelkällä nimellä. Aineksia ja valmistusohjetta
-        ei tarvita, eikä resepti käy mallilla — voit täydentää sen myöhemmin.
-      </p>
-    </form>
-  </details>`;
 }
 
 function intakeJobs(jobs: IntakeJob[], open = false): Raw {
@@ -384,12 +345,13 @@ function intakeSourceLabel(job: IntakeJob): string {
       ? "Kuvattu resepti"
       : `Kuvattu resepti (${job.imageRefs.length} sivua)`;
   }
-  // A linked job has no text at all until the consumer has read the page, so
-  // until then the address is the only thing there is to name it by.
-  if (job.sourceRoute === "linked" && (job.sourceText ?? "").trim() === "") {
+  // What the member typed besides the links names it; a box that was only a
+  // link is named by the link's site.
+  const typed = withoutLinks(job.sourceText ?? "");
+  if (job.sourceRoute === "linked" && typed === "") {
     return hostOf(job.sourceUrl) ?? "Linkitetty resepti";
   }
-  const firstLine = (job.sourceText ?? "").split("\n")[0]?.trim();
+  const firstLine = typed.split("\n")[0]?.trim();
   return firstLine || "Liitetty resepti";
 }
 
@@ -436,8 +398,7 @@ export async function intakeScreen(
       ${refusal === undefined
         ? ""
         : html`<p class="refused">${refusal.message}</p>`}
-      ${intakeForm("", STRUCTURE_LABEL, "", target ?? undefined)}
-      ${target === null ? quickSaveForm(refusal?.title ?? "", refusal !== undefined) : ""}
+      ${intakeForm(refusal?.title ?? "", undefined, target ?? undefined)}
       ${intakeJobs(jobs, confirmed || url.searchParams.has("imports"))}
       ${target === null && isLocalOrigin(url) ? sampleDraftForm() : ""}
       `,
@@ -462,7 +423,18 @@ export async function quickSaveScreen(
   member: Member,
 ): Promise<Response> {
   const form = await ctx.request.formData();
-  const title = String(form.get("title") ?? "");
+  // The add screen's box posts here when scripts are off or it holds a name
+  // (#350); `title` is what an installed app on yesterday's screen sends.
+  const boxed = form.get("title") === null;
+  const title = String(form.get("title") ?? form.get("sourceText") ?? "");
+  if (boxed && boxKind(title) !== "name" && boxKind(title) !== "empty") {
+    // A link or a whole recipe reached the name-only save: the island did not
+    // run, so nothing could import it. Said, with the box kept as typed.
+    return intakeScreen(ctx, member, {
+      message: "Reseptin tuonti tarvitsee JavaScriptin. Ilman sitä voit tallentaa vain reseptin nimen.",
+      title,
+    });
+  }
 
   try {
     const recipeId = await saveRecipe(
@@ -621,14 +593,12 @@ export async function intakeJobReviewScreen(
     return intakeNotFound(member);
   }
 
-  // The address the consumer finally read, after any redirect — that is what
-  // was structured, and what the recipe should point back at.
-  const address = job.sourceRoute === "linked" ? job.sourceUrl ?? "" : "";
-  const source: IntakeSource = job.sourceRoute === "photographed"
-    ? { route: "photographed", images: [] }
-    : job.sourceRoute === "linked"
-      ? { route: "linked", url: address, text: job.sourceText ?? "" }
-      : { route: "pasted", text: job.sourceText ?? "" };
+  // The first page the consumer read, after any redirect — that is what was
+  // structured, and what the recipe should point back at. A job whose every
+  // link failed has none, whatever its route.
+  const pages = readPages(job.linkReads);
+  const address = pages[0]?.url ?? "";
+  const source: IntakeSource = composedSource(job, pages, []);
   const [ingredients, vocabulary] = await Promise.all([
     ingredientsFor(env.DB, member.householdId),
     loadVocabulary(env.DB),
@@ -662,6 +632,7 @@ export async function intakeJobReviewScreen(
         intakeJobImageRef(job) !== null,
         target,
         job.editMode,
+        unreadLinks(job),
       ),
       "intake",
       member,
@@ -962,6 +933,7 @@ function correctionForm(
   intakeImage = false,
   target: Recipe | null = null,
   targetMode: PromptMode | null = null,
+  unread: UnreadLink[] = [],
 ): Raw {
   const rows = [
     ...draft.lines,
@@ -1005,6 +977,7 @@ function correctionForm(
         revision: part.revision,
       })) ?? [],
       changes: target === null ? [] : proposalChanges(draft, target),
+      unread,
     },
     ingredients,
     vocabulary,
@@ -1205,6 +1178,22 @@ function newIngredientsNotice(rows: LineFormValues[]): Raw {
 }
 
 /** The model's own doubts, gathered where they cannot be scrolled past. */
+/** Which links gave up nothing, so the member knows what the recipe lacks. */
+function unreadNotice(unread: UnreadLink[]): Raw {
+  if (unread.length === 0) return html``;
+  return html`<div class="needs-answer is-doubt" data-unread-links>
+    <div>
+      <strong>${unread.length === 1
+        ? "Yhtä linkkiä ei saatu luettua:"
+        : `${unread.length} linkkiä ei saatu luettua:`}</strong>
+      <ul class="plain">
+        ${unread.map((link) => html`<li>${hostOf(link.url) ?? link.url} — ${link.message}</li>`)}
+      </ul>
+      <p class="empty">Resepti koottiin muusta annetusta aineistosta.</p>
+    </div>
+  </div>`;
+}
+
 function notesNotice(rows: LineFormValues[]): Raw {
   const noted = rows.filter((row) => row.note !== "");
   if (noted.length === 0) return html``;
@@ -1316,6 +1305,7 @@ function renderCorrection(
       ? ""
       : html`<p class="status"><strong>${MODE_LABEL[view.targetMode]}</strong> — tallennus päivittää nykyisen reseptin.</p>
         ${proposedChanges(view.changes)}`}
+    ${unreadNotice(view.unread ?? [])}
     <form method="post" action="/recipes" class="stacked">
       <input type="hidden" name="sourceText" value="${view.sourceText}" />
       <input type="hidden" name="sourceRoute" value="${view.sourceRoute}" />
@@ -1427,7 +1417,7 @@ function failed(
     "Jäsennys epäonnistui",
     html`<h1>Jäsennys epäonnistui</h1>
       <p class="refused">${message}</p>
-      ${intakeForm(sourceText, "Yritä uudelleen", sourceUrl)}`,
+      ${intakeForm([sourceUrl, sourceText].filter((part) => part !== "").join("\n\n"), "Yritä uudelleen")}`,
     "intake",
     member,
     400,

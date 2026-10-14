@@ -5,6 +5,8 @@
  * Keep feature detection and the serial photograph pipeline: one full-size
  * bitmap at a time, discarded before encoding, and only small JPEGs retained.
  */
+import { boxKind, linksIn, MAX_LINKS, withoutLinks } from '../intake-box.ts';
+
 interface PreparedPage {
   image: string;
   thumb: string;
@@ -13,9 +15,7 @@ interface PreparedPage {
 
 interface IntakeBody {
   images?: Array<{ image: string; mediaType: string }>;
-  url?: string;
   sourceText?: string;
-  guidance?: string;
   recipeId?: string;
   mode?: string;
 }
@@ -32,8 +32,9 @@ interface IntakeFailure extends Error {
   var status = document.getElementById('status') as HTMLElement;
   var photoHelp = document.getElementById('photo-help') as HTMLElement;
   var chosenList = document.getElementById('chosen') as HTMLElement;
-  var guidanceFields = document.getElementById('guidance-fields') as HTMLElement;
-  if (!form || !progress || !status || !photoHelp || !chosenList || !window.fetch || !window.Promise) return;
+  var kindLine = document.getElementById('box-kind') as HTMLElement;
+  var pasteButton = document.getElementById('paste') as HTMLButtonElement | null;
+  if (!form || !progress || !status || !photoHelp || !chosenList || !kindLine || !window.fetch || !window.Promise) return;
 
   var button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
   if (!button) return;
@@ -41,8 +42,9 @@ interface IntakeFailure extends Error {
   var camera = form.elements.namedItem('camera') as HTMLInputElement;
   var photo = form.elements.namedItem('photo') as HTMLInputElement;
   if (!textField || !camera || !photo) return;
-  var linkField = form.elements.namedItem('sourceUrl') as HTMLInputElement | null;
-  var guidance = form.elements.namedItem('importGuidance') as HTMLTextAreaElement | null;
+  // Only the add screen saves a bare name; on the edit screen a short line is
+  // a change request.
+  var names = form.getAttribute('data-names') === 'yes';
   var recipeId = form.elements.namedItem('recipeId') as HTMLInputElement | null;
   var mode = form.elements.namedItem('mode') as RadioNodeList | HTMLInputElement | null;
 
@@ -54,13 +56,6 @@ interface IntakeFailure extends Error {
   if (![MAX_PAGES, MAX_PAGE_BYTES, MAX_PAGES_BYTES].every(function (value) {
     return isFinite(value) && value > 0 && value % 1 === 0;
   })) return;
-  function showGuidance() {
-    if (guidanceFields) guidanceFields.hidden = !linkField || !linkField.value.trim();
-  }
-  if (linkField && linkField.addEventListener) {
-    linkField.addEventListener('input', showGuidance);
-  }
-  showGuidance();
   button.disabled = false;
   status.textContent = '';
   var photosWork = typeof window.createImageBitmap === 'function' && !!window.URL &&
@@ -69,6 +64,7 @@ interface IntakeFailure extends Error {
     camera.disabled = true;
     photo.disabled = true;
     photoHelp.textContent = 'Kuvan tuonti ei ole käytettävissä tässä selaimessa.';
+    photoHelp.hidden = false;
   }
   var LONG_EDGE = 1500;
   var THUMB_EDGE = 192;
@@ -139,8 +135,81 @@ interface IntakeFailure extends Error {
   // handler works it out, so a report says which import gave way.
   function currentRoute() {
     if (pages.length > 0) return 'photographed';
-    return linkField && linkField.value.trim() ? 'linked' : 'pasted';
+    return linksIn(textField.value).length > 0 ? 'linked' : 'pasted';
   }
+
+  // A bare name, saved by the form's own action rather than imported.
+  function savingName() {
+    return names && pages.length === 0 && boxKind(textField.value) === 'name';
+  }
+
+  function hostOf(address: string): string {
+    var rest = address;
+    var scheme = rest.indexOf('://');
+    if (scheme >= 0) rest = rest.slice(scheme + 3);
+    var end = rest.search(/[/?#]/);
+    if (end >= 0) rest = rest.slice(0, end);
+    return rest.toLowerCase().indexOf('www.') === 0 ? rest.slice(4) : rest;
+  }
+
+  // The box as tall as what it holds, where the browser cannot do it itself.
+  function grow() {
+    textField.style.height = 'auto';
+    textField.style.height = (textField.scrollHeight + 2) + 'px';
+  }
+
+  // What is about to be sent, said under the box, and the button worded for
+  // it — so a pasted link reads as a link before anything is pressed.
+  function describe() {
+    var text = textField.value;
+    var kind = boxKind(text);
+    var links = linksIn(text);
+    var typed = withoutLinks(text) !== '';
+    var parts: string[] = [];
+    if (pages.length) parts.push(pages.length === 1 ? '1 kuva' : pages.length + ' kuvaa');
+    if (links.length === 1) parts.push('linkki ' + hostOf(links[0]!));
+    else if (links.length > 1) parts.push(Math.min(links.length, MAX_LINKS) + ' linkkiä');
+    if (typed) parts.push('oma teksti');
+
+    var line = '';
+    var label = 'Muodosta resepti';
+    if (savingName()) {
+      line = 'Pelkkä nimi — reseptin voi täydentää myöhemmin.';
+      label = 'Tallenna nimellä';
+    } else if (parts.length > 1) {
+      line = 'Mukana: ' + parts.slice(0, -1).join(', ') + ' ja ' + parts[parts.length - 1] + '.';
+    } else if (kind === 'link') {
+      line = 'Linkki: ' + hostOf(links[0]!) + '. Sivu luetaan taustalla.';
+      if (names) label = 'Hae resepti sivulta';
+    } else if (pages.length && names) {
+      label = 'Lue resepti kuvista';
+    }
+    if (links.length > MAX_LINKS) {
+      line += ' Vain ' + MAX_LINKS + ' ensimmäistä linkkiä luetaan.';
+    }
+    kindLine.textContent = line;
+    if (!button.hasAttribute('data-fixed-label')) button.textContent = label;
+    if (pasteButton) pasteButton.hidden = !canPaste || text.trim() !== '';
+  }
+
+  var canPaste = !!pasteButton && !!navigator.clipboard &&
+    typeof navigator.clipboard.readText === 'function';
+  if (pasteButton && canPaste) {
+    pasteButton.addEventListener('click', function () {
+      navigator.clipboard.readText().then(function (text) {
+        textField.value = text;
+        grow();
+        describe();
+      }, function () {
+        // Refused or empty: the box is still there to paste into by hand.
+        textField.focus();
+      });
+    });
+  }
+  textField.addEventListener('input', function () {
+    grow();
+    describe();
+  });
 
   // Tell the Worker that this import gave way here, so the log line names the
   // step rather than only the fact (#222). Best-effort by construction:
@@ -222,6 +291,7 @@ interface IntakeFailure extends Error {
   // this is the part that takes a moment.
   function refresh() {
     renderPages();
+    describe();
     button.disabled = reading > 0;
     if (photosWork) {
       camera.disabled = reading > 0;
@@ -283,16 +353,15 @@ interface IntakeFailure extends Error {
   });
 
   form.addEventListener('submit', function (event) {
+    // A bare name goes to the form's own action, the name-only save. Nothing
+    // to import, so nothing to wait for.
+    if (savingName()) return;
     var text = textField.value.trim();
-    var link = linkField ? linkField.value.trim() : '';
     var photographed = pages.length > 0;
-    // A photograph wins over an address and an address over an already-pasted
-    // box, so the import is the newest thing the member reached for. The
-    // server applies the same order; this only keeps the wording honest.
-    var linked = !photographed && !!link;
+    var linked = linksIn(text).length > 0;
     event.preventDefault();
-    if (!photographed && !linked && !text) {
-      status.textContent = 'Anna reseptin osoite, liitä sen teksti tai valitse kuva.';
+    if (!photographed && !text) {
+      status.textContent = 'Kirjoita nimi, liitä linkki tai teksti, tai lisää kuva.';
       return;
     }
     button.disabled = true;
@@ -302,27 +371,18 @@ interface IntakeFailure extends Error {
     progress.hidden = false;
     progress.textContent = 'Luetaan reseptiä…';
 
-    // The pages are already shrunk — that happened as each one was chosen —
-    // so pressing the button decodes nothing and costs no memory. Nor is a
-    // linked page fetched here: the address goes into the job and the queue
-    // consumer reads the site, so a slow page cannot hold this request open
-    // and navigating away does not lose the import.
-    var body: IntakeBody;
+    // Everything goes together (#350): the box as typed, links and all, and
+    // every page. The pages are already shrunk — that happened as each one was
+    // chosen — so pressing the button decodes nothing and costs no memory. Nor
+    // is a linked page fetched here: the server finds the links in the text
+    // and the queue consumer reads the sites, so a slow page cannot hold this
+    // request open and navigating away does not lose the import.
+    var body: IntakeBody = {};
+    if (text) body.sourceText = text;
     if (photographed) {
-      body = { images: pages.map(function (page) {
+      body.images = pages.map(function (page) {
         return { image: page.image, mediaType: 'image/jpeg' };
-      }) };
-    } else if (linked) {
-      body = { url: link };
-      // Keep pasted text in the request even while an address is present. The
-      // server still gives ordinary links precedence, but can use this text
-      // immediately when the preserved address is an unsupported K-Ruoka link.
-      if (text) body.sourceText = text;
-      if (guidance && guidance.value.trim()) {
-        body.guidance = guidance.value.trim();
-      }
-    } else {
-      body = { sourceText: text };
+      });
     }
 
     Promise.resolve(body)
@@ -403,6 +463,9 @@ interface IntakeFailure extends Error {
         button.disabled = false;
       });
   });
+
+  grow();
+  describe();
 })();
 
 export {};
