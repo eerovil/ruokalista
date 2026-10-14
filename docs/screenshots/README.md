@@ -43,7 +43,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `10-recipes-search.png` | Search results |
 | `11-editor.png` | The recipe editor: proposed compact ingredient rows and the always-visible `+ Lisää aines` |
 | `12-ingredients.png` | The shared ingredient list, with usage counts |
-| `13-dish-in-parts.png` | Proposed semantic order: pre-work, two sauces, assembly |
+| `13-dish-in-parts.png` | A dish in parts: every ingredient, then the whole method, each in cooking order — the parts by name, the assembly under Lopuksi (#354) |
 | `14-scaled.png` | Proposed same lasagne at 1,5×, amounts rounded for a kitchen |
 | `15-dish-actions.png` | Proposed screen behind a listed dish's Muokkaa: open the recipe, change the size, or take it off uncooked (#345) |
 | `18-keep-awake-fallback.png` | An older iPad's gesture-started keep-awake confirmation |
@@ -120,7 +120,7 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `103-intake-edit.png` | Issue #215's shared **Lisää resepti** screen in existing-recipe mode: the owned recipe is named, complete/replace is explicit, and text, URL and photograph inputs are the ordinary intake controls |
 | `104-intake-edit-review.png` | The ordinary intake draft review for an existing recipe, stating that save updates the current recipe and offering **Tallenna muutokset** rather than creating another recipe |
 | `105-review-save-bar.png` | Proposed import review with the draft opened and its name changed: the save bar rides the scroll saying there are unsaved changes, instead of sitting several screens above (#217) |
-| `106-sharing-shortcut.png` | Proposed recipe screen saying who can see the dish under its title, with the way to change it — so nobody opens the editor for a control it does not have (#217) |
+| `106-sharing-shortcut.png` | The recipe screen saying who can see the dish in the grey line under its title (#217); since #354 it is changed from ⋯ → Jakaminen |
 | `107-sharing-save-bar.png` | The sharing control one tap later: the visibility choice and **Tallenna jako** on screen together, in the same bar the editor and the import review use |
 | `108-intake-four-pages.png` | Proposed import with four photographed pages chosen: each one already shrunk to what will be sent, so the list holds small copies rather than the photographs (#218) |
 | `109-intake-send-failed.png` | Proposed wording for a photographed import whose request never left the phone: it names the device and the connection rather than reading like the server's refusal, and the pages stay chosen so the same import can be sent again (#222) |
@@ -129,4 +129,6 @@ rasterised at the ratio that makes the file six inches wide at 96 dpi: looked at
 | `114-s-ostoslista-note-replaced.png` | Proposed juusto sent as text and then given a product: the S-ostoslista panel holds one product row, and the words the earlier send left there are gone (#244) |
 | `115-intake-k-ruoka-unsupported.png` | Proposed K-Ruoka link refusal on the intake screen: the entered address remains in place and the guidance points to pasted text or an image (#246) |
 | `116-nested-part-refused.png` | Proposed atomic refusal when an AI edit gives a recipe part another named part: the Finnish explanation and the submitted section, ingredient, quantity and note remain on the review screen (#258) |
-| `130-recipe-tail.png` | The bottom of a recipe on a dark-mode phone (#351): **Näytä määrät** beside **Valmistus**, then **Meidän taloudessa** and **Resepti** as lists of rows, each with its current value or a note and a chevron |
+| `130-recipe-top.png` | The top of a dish in parts on a dark-mode phone (#354): the 2:1 picture, the title, one grey line, **＋ Lisää kokattaviin** and **⋯**, then every ingredient before the method |
+| `131-recipe-more.png` | The same recipe with **⋯** open (#354): **Lisää eri koolla**, **Meidän taloudessa** (Oletuskerroin, Jakaminen) and **Resepti** (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen resepti) |
+| `132-recipe-add-size.png` | **Lisää eri koolla** open (#354): four size buttons that add at once, then **Muu kerroin** and **Lisää** |
