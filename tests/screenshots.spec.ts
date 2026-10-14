@@ -1655,6 +1655,7 @@ test.describe("signed in", () => {
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("button", { name: "Kirjaudu ulos" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Ainekset" })).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/28-home-not-admin.png`,
       fullPage: true,
@@ -1673,6 +1674,7 @@ test.describe("signed in as an admin", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Tili" }).click();
     await expect(page.getByRole("link", { name: "Ylläpito" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Ainekset" })).toBeVisible();
     await capture(page, {
       path: `${SHOTS}/29-home-admin.png`,
       fullPage: true,
