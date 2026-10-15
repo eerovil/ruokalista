@@ -62,7 +62,11 @@ import {
   recipeProductScreen,
   saveRecipeProductForm,
 } from "./recipe-products.ts";
-import { preferredMultiplierForm, publishForm } from "./publish-screens.ts";
+import {
+  preferredMultiplierForm,
+  publishForm,
+  resetCookCountForm,
+} from "./publish-screens.ts";
 import {
   apiAddToCookList,
   apiCookList,
@@ -188,6 +192,7 @@ const router = new Router()
   .get("/recipes/:id/edit", requireMemberScreen(editorScreen))
   .post("/recipes/:id", requireMemberScreen(saveEditForm))
   .post("/recipes/:id/kerroin", requireMemberScreen(preferredMultiplierForm))
+  .post("/recipes/:id/kokattu/nollaa", requireMemberScreen(resetCookCountForm))
   .post("/recipes/:id/kokattaviin", requireMemberScreen(addToCookListForm))
   .post("/recipes/:id/image", requireMemberScreen(uploadRecipeImageForm))
   .post("/recipes/:id/image/delete", requireMemberScreen(deleteRecipeImageForm))

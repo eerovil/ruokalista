@@ -1,4 +1,5 @@
 import { loadVocabulary, type Vocabulary } from "./categories.ts";
+import { resetCookHistory } from "./cook-history.ts";
 import { html, page } from "./html.ts";
 import type { Member } from "./members.ts";
 import { externalClient } from "./product-picker.ts";
@@ -161,6 +162,26 @@ export async function preferredMultiplierForm(
     );
   }
 
+  return seeOther(`/recipes/${recipe.id}`);
+}
+
+/**
+ * `POST /recipes/:id/kokattu/nollaa` — start this household's count of the dish
+ * over (#366). Any dish this household can read, because the count is its own
+ * even on a recipe another household shared.
+ */
+export async function resetCookCountForm(
+  { env, params }: RouteContext,
+  member: Member,
+): Promise<Response> {
+  const recipe = await findReadableRecipe(
+    env.DB,
+    member.householdId,
+    Number(params["id"]),
+  );
+  if (recipe === null || recipe.parentId !== null) return notFound(member);
+
+  await resetCookHistory(env.DB, member.householdId, recipe.id);
   return seeOther(`/recipes/${recipe.id}`);
 }
 

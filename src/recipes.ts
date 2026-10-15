@@ -12,7 +12,13 @@ import {
   loadVocabulary,
   type Vocabulary,
 } from "./categories.ts";
-import { cookHistory } from "./cook-history.ts";
+import {
+  cookHistory,
+  cookRecordFor,
+  NEVER_COOKED,
+  type CookRecord,
+} from "./cook-history.ts";
+import { shortDate } from "./dates.ts";
 import {
   browseFields,
   browseHref,
@@ -498,7 +504,7 @@ export async function renderRecipe(
   external = false,
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
-  const [preference, sharing, vocabulary, products] = await Promise.all([
+  const [preference, sharing, vocabulary, products, cooked] = await Promise.all([
     preferredMultiplierFor(db, member.householdId, recipe.id),
     owned && recipe.parentId === null
       ? recipeSharingState(db, member.householdId, recipe.id, sharingDraft)
@@ -507,6 +513,9 @@ export async function renderRecipe(
     external
       ? recipeProductState(db, member.householdId, recipe)
       : Promise.resolve(null),
+    recipe.parentId === null
+      ? cookRecordFor(db, member.householdId, recipe.id)
+      : Promise.resolve(NEVER_COOKED),
   ]);
 
   // The page opens at the household's own size for the dish (#364), so what
@@ -522,6 +531,7 @@ export async function renderRecipe(
       sharing,
       vocabulary,
       products,
+      cooked,
     }, castApplicationId),
     "recipes",
     member,
@@ -843,6 +853,8 @@ interface RecipeView {
   vocabulary: Vocabulary;
   /** Null for every household without the S-ostoslista integration (#302). */
   products: RecipeProductState | null;
+  /** This household's own cooking of the dish; never for a part. */
+  cooked: CookRecord;
 }
 
 function recipeBody(
@@ -991,6 +1003,9 @@ function recipeTopActions(
               "preference-value",
             )}
             ${sharing ? settingsRow(SHARING_ID, "Jakaminen", sharingSummary(view.sharing!)) : ""}
+            ${view.cooked.times > 0
+              ? settingsRow(COOKED_ID, "Kokattu", cookedSummary(view.cooked))
+              : ""}
           </div>`
       : ""}
     <h2 class="tail-heading">Resepti</h2>
@@ -1036,7 +1051,15 @@ function settingsRow(id: string, title: string, value: string, valueClass = ""):
   >`;
 }
 
+/** `3× · viimeksi 12.3.2026`, as the ⋯ modal's row reads it. */
+function cookedSummary(cooked: CookRecord): string {
+  return cooked.lastCooked === null
+    ? `${cooked.times}×`
+    : `${cooked.times}× · viimeksi ${shortDate(cooked.lastCooked)}`;
+}
+
 const SIZE_ID = "koko";
+const COOKED_ID = "kokattu";
 const MORE_ID = "lisavalinnat";
 // Named as #317's blocks named them, so a bookmark or a test that opened the
 // sharing modal still does.
@@ -1153,6 +1176,22 @@ function settingsModals(recipe: Recipe, view: RecipeView): Raw {
       </form>`,
       MORE_ID,
     )}
+    ${view.cooked.times > 0
+      ? topModal(
+          COOKED_ID,
+          "Kokattu",
+          html`<form method="post" action="/recipes/${recipe.id}/kokattu/nollaa" class="stacked">
+            <p>Meidän taloudessa kokattu ${cookedSummary(view.cooked)}</p>
+            <p>
+              Nollaus unohtaa nämä kokkauskerrat, ja resepti näkyy taas
+              kokkaamattomana. Kokattavien listalla olevat jäävät listalle.
+            </p>
+            <button type="submit" class="danger">Nollaa kokkauskerrat</button>
+          </form>`,
+          MORE_ID,
+          "Peruuta",
+        )
+      : ""}
     ${view.owned && view.sharing !== null
       ? topModal(
           SHARING_ID,
