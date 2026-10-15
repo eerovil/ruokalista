@@ -81,3 +81,41 @@ export async function cookHistory(
     ]),
   );
 }
+
+/** This household's cooking of one recipe. */
+export async function cookRecordFor(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<CookRecord> {
+  return cookedRecord(await cookHistory(db, householdId), recipeId);
+}
+
+/**
+ * Start a recipe's count over for this household (#366).
+ *
+ * The history is the batches themselves, so forgetting it is deleting the ones
+ * the count reads: a dish ticked as cooked, or an old calendar batch whose
+ * first day has come — exactly what `cookHistory` counts, and nothing else. A
+ * dish still on the to-do list stays, and so does any other household's
+ * cooking of the same shared recipe.
+ */
+export async function resetCookHistory(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+  upTo: string = today(),
+): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM planned_batch
+        WHERE household_id = ? AND recipe_id = ?
+          AND coalesce(cooked_on,
+                       (SELECT min(batch_occurrence.date)
+                          FROM batch_occurrence
+                         WHERE batch_occurrence.batch_id = planned_batch.id))
+              <= ?`,
+    )
+    .bind(householdId, recipeId, upTo)
+    .run();
+}

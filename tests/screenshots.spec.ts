@@ -304,6 +304,24 @@ test.describe("signed in", () => {
     await capture(page, { path: `${SHOTS}/05-recipe.png` });
   });
 
+  test("starting a dish's cooking count over (#366)", async ({ page }) => {
+    // Only a picture here: the reset is asserted in cook-list.spec.ts.
+    test.skip(!writeScreenshots, ONLY_A_PICTURE);
+    await page.setViewportSize({ width: 412, height: 900 });
+    await createBatch(page, 3, 1);
+    await createBatch(page, 3, 1);
+    executeLocalSql(
+      "UPDATE planned_batch SET cooked_on = '2026-10-02' WHERE household_id = 1",
+    );
+    await page.goto("/recipes/3#lisavalinnat");
+    await expect(page.locator(".household-settings a[href='#kokattu']")).toContainText("2×");
+    await capture(page, { path: `${SHOTS}/133-recipe-more-cooked.png` });
+    await page.locator(".household-settings a[href='#kokattu']").click();
+    await expect(page.getByRole("button", { name: "Nollaa kokkauskerrat" })).toBeVisible();
+    await capture(page, { path: `${SHOTS}/134-recipe-reset-cooked.png` });
+    clearList();
+  });
+
   test("the recipe page on a phone, and what is behind ⋯ (#354)", async ({ page }) => {
     // Only a picture here: the page is asserted in recipes.spec.ts,
     // recipe-blocks-317.spec.ts, cook-list.spec.ts and parts.spec.ts.

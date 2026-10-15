@@ -128,6 +128,36 @@ test("Kokattu takes the dish off and counts it as cooked", async ({ page }) => {
   ).toContainText("Kokattu 1×");
 });
 
+test("the recipe's ⋯ can start its cooking count over (#366)", async ({ page, browser }) => {
+  await addFromRecipe(page, 1, "1×");
+  await row(page, "Kaalilaatikko").getByRole("button", { name: "Kokattu: Kaalilaatikko" }).click();
+  // On the list again: a plan, which the reset leaves alone.
+  await addFromRecipe(page, 1, "1×");
+
+  await page.goto("/recipes/1#lisavalinnat");
+  const cooked = page.locator(".household-settings a[href='#kokattu']");
+  await expect(cooked).toContainText("1× · viimeksi");
+  await cooked.click();
+  await page.getByRole("button", { name: "Nollaa kokkauskerrat" }).click();
+
+  await expect(page).toHaveURL(/\/recipes\/1$/);
+  await expect(page.locator(".household-settings a[href='#kokattu']")).toHaveCount(0);
+  await page.goto("/recipes");
+  await expect(
+    page.locator(".recipes li", { hasText: "Kaalilaatikko" }).locator(".meta").first(),
+  ).toContainText("Ei vielä kokattu");
+  await page.goto("/");
+  await expect(row(page, "Kaalilaatikko")).toHaveCount(1);
+
+  // Another household's private dish is a 404 here too.
+  const context = await browser.newContext();
+  await context.addCookies([sessionCookie(2)]);
+  const neighbour = await context.newPage();
+  const response = await neighbour.request.post("/recipes/1/kokattu/nollaa");
+  expect(response.status()).toBe(404);
+  await context.close();
+});
+
 test("the shopping list starts from every dish on the list, and can leave one out", async ({ page }) => {
   await addFromRecipe(page, 1, "1×");
   await addFromRecipe(page, 3, "1×");
