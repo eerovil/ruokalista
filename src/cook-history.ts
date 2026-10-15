@@ -16,7 +16,8 @@ import { today } from "./dates.ts";
  * never cooked it.
  *
  * A dish taken off the list without being cooked leaves nothing, because
- * `removeFromCookList` is a real delete.
+ * `removeFromCookList` is a real delete. A batch whose count the household
+ * started over (#366) is kept but no longer counted.
  */
 export interface CookRecord {
   /** How many times this household has cooked it. One batch is one cooking. */
@@ -67,6 +68,7 @@ export async function cookHistory(
                  LEFT JOIN batch_occurrence
                    ON batch_occurrence.batch_id = planned_batch.id
                 WHERE planned_batch.household_id = ?
+                  AND planned_batch.count_reset = 0
                 GROUP BY planned_batch.id)
         WHERE started <= ?
         GROUP BY recipe_id`,
@@ -94,11 +96,12 @@ export async function cookRecordFor(
 /**
  * Start a recipe's count over for this household (#366).
  *
- * The history is the batches themselves, so forgetting it is deleting the ones
- * the count reads: a dish ticked as cooked, or an old calendar batch whose
- * first day has come — exactly what `cookHistory` counts, and nothing else. A
- * dish still on the to-do list stays, and so does any other household's
- * cooking of the same shared recipe.
+ * The history is the batches themselves, so this marks the ones the count
+ * has read so far — a dish ticked as cooked, or an old calendar batch whose
+ * first day has come — and `cookHistory` skips them from then on. Nothing is
+ * deleted: an old calendar batch keeps its days. A dish still on the to-do
+ * list is not marked, so it counts once it is cooked, and no other
+ * household's cooking of the same shared recipe is touched.
  */
 export async function resetCookHistory(
   db: D1Database,
@@ -108,8 +111,8 @@ export async function resetCookHistory(
 ): Promise<void> {
   await db
     .prepare(
-      `DELETE FROM planned_batch
-        WHERE household_id = ? AND recipe_id = ?
+      `UPDATE planned_batch SET count_reset = 1
+        WHERE household_id = ? AND recipe_id = ? AND count_reset = 0
           AND coalesce(cooked_on,
                        (SELECT min(batch_occurrence.date)
                           FROM batch_occurrence

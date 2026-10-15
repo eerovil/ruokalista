@@ -60,7 +60,10 @@ the list is a `planned_batch` row with **no** occurrences;
 ticked as cooked, which takes it off the list. Nothing writes occurrences any
 more, and the calendar's old rows stay where they are: the cooking history
 (`src/cook-history.ts`) counts a batch on `cooked_on` if it has one, else on its
-first occurrence, as before. `src/batch-state.ts` is the one place that says
+first occurrence, as before. `migrations/0030_cook_count_reset.sql` adds
+`planned_batch.count_reset`: starting a recipe's count over (#366) sets it on
+the batches counted so far, so they stop counting but are not deleted.
+`src/batch-state.ts` is the one place that says
 what "on the list" and "still somebody's plan" mean in SQL; unsharing and
 deleting a recipe both ask the second, and a recipe's batches that are already
 cooked are deleted with it. The routes are `/batches/:id`,

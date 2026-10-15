@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cookHistory } from "../src/cook-history.ts";
+import { cookHistory, resetCookHistory } from "../src/cook-history.ts";
 import {
   addToCookList,
   changeMultiplier,
@@ -137,6 +137,43 @@ test("ticking a dish takes it off the list and counts it as cooked today", async
   // Ticked once is cooked once.
   assert.equal(await markCooked(fake.db, HOME, listed.id, listed.instanceKey), false);
   assert.equal((await cookHistory(fake.db, 1)).get(1)?.times, 2);
+});
+
+test("starting the count over keeps every batch, and a later cooking counts (#366)", async () => {
+  const fake = migratedDatabase();
+  fixtures(fake);
+  calendarBatch(fake, 7, 1, 1, addDays(today(), -10));
+  // A calendar day still to come is a plan, not a cooking, and stays unmarked.
+  calendarBatch(fake, 8, 1, 1, addDays(today(), 3));
+  const cooked = await addToCookList(fake.db, HOME, { recipeId: 1, multiplier: 1 });
+  await markCooked(fake.db, HOME, cooked.id, cooked.instanceKey);
+  const listed = await addToCookList(fake.db, HOME, { recipeId: 1, multiplier: 1 });
+
+  await resetCookHistory(fake.db, 1, 1);
+  assert.equal((await cookHistory(fake.db, 1)).get(1), undefined);
+
+  // Nothing is deleted: the calendar batch keeps its day.
+  const kept = fake.sql
+    .prepare(
+      `SELECT planned_batch.id, count_reset, count(batch_occurrence.date) AS days
+         FROM planned_batch
+         LEFT JOIN batch_occurrence ON batch_occurrence.batch_id = planned_batch.id
+        GROUP BY planned_batch.id ORDER BY planned_batch.id`,
+    )
+    .all() as { id: number; count_reset: number; days: number }[];
+  assert.deepEqual(
+    kept.map((row) => ({ ...row })),
+    [
+      { id: 7, count_reset: 1, days: 1 },
+      { id: 8, count_reset: 0, days: 1 },
+      { id: cooked.id, count_reset: 1, days: 0 },
+      { id: listed.id, count_reset: 0, days: 0 },
+    ],
+  );
+
+  // The dish that was still on the list counts once it is cooked.
+  assert.equal(await markCooked(fake.db, HOME, listed.id, listed.instanceKey), true);
+  assert.deepEqual((await cookHistory(fake.db, 1)).get(1), { times: 1, lastCooked: today() });
 });
 
 test("taking a dish off uncooked leaves nothing for the history", async () => {
