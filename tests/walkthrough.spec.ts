@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { sessionCookie } from "./support/session";
-import { openCookAdd } from "./support/blocks";
+import { addAtSize } from "./support/blocks";
 
 /**
  * A hand-walk of the whole product, kept out of `npm run check` and CI — this
@@ -33,8 +33,7 @@ test("import the sample and cook what it made", async ({ page }) => {
 
   // Put it on the to-do list at 2×, then open it from there and check it
   // scaled.
-  await openCookAdd(page);
-  await page.locator(".cook-add").getByRole("button", { name: "2×", exact: true }).click();
+  await addAtSize(page, "2×");
 
   await expect(page).toHaveURL(/\/$/);
   await page.screenshot({ path: `${SHOTS}/3-list.png`, fullPage: true });
@@ -43,6 +42,6 @@ test("import the sample and cook what it made", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/4-dish.png`, fullPage: true });
 
   await page.getByRole("link", { name: "Avaa resepti" }).click();
-  await expect(page.locator(".yield.is-scaled")).toBeVisible();
+  await expect(page.locator(".recipe-top-size")).not.toContainText(/^1×/);
   await page.screenshot({ path: `${SHOTS}/5-cooking.png`, fullPage: true });
 });

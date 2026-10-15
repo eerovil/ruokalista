@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { openEditBlock, openCookAdd } from "./support/blocks";
+import { openEditBlock, addAtSize } from "./support/blocks";
 import { onePixelPng } from "./support/png";
 import { putInCupboard } from "./support/shopping-rows";
 import { executeLocalSql, reseed } from "./support/seed";
@@ -83,8 +83,7 @@ test("a published recipe reaches the other household, and can be planned", async
   await expect(page.locator(".lines li").first()).toContainText("½ dl");
 
   // And it can go on the to-do list, the same as an own recipe.
-  await openCookAdd(page);
-  await page.locator(".cook-add").getByRole("button", { name: "1×", exact: true }).click();
+  await addAtSize(page, "1×");
   await expect(page.locator(".cook-item")).toContainText("Kaalilaatikko");
 });
 
@@ -671,12 +670,12 @@ test("each household keeps its own default multiplier for the same recipe", asyn
     .getByRole("button", { name: "0,5×" })
     .click();
 
-  // Each household's own default is the size its add button starts at.
-  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("0,5×");
+  // Each household's own default is the size its page opens at (#364).
+  await expect(page.locator(".recipe-top-size")).toContainText("0,5×");
 
   await signIn(page, 1);
   await page.goto("/recipes/1");
-  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("2×");
+  await expect(page.locator(".recipe-top-size")).toContainText("2×");
   // And the one-tap button adds at it, saying so (#354).
   await expect(page.getByRole("button", { name: "Lisää kokattaviin · 2×" })).toBeVisible();
 });
@@ -700,6 +699,6 @@ test("a household's default is cleared by an empty box, not guessed at", async (
     .click();
 
   await expect(page.locator(".recipe-sharing .multiplier-choice button.is-current")).toHaveCount(0);
-  await expect(page.locator(".cook-add .multiplier-choice .is-current")).toHaveText("1×");
+  await expect(page.locator(".recipe-top-size")).toContainText("1×");
 });
 

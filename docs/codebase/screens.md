@@ -36,12 +36,14 @@ list, and counted in the recipe's cooking history on that day), and the quiet
 taken off without cooking. The order is the order dishes were added.
 
 A dish gets on the list from its recipe page: **＋ Lisää kokattaviin** under
-the title (`recipes.ts::quickAdd`) adds it in one tap at the size the reader
-scaled the recipe to, else the household's own default (#354). Another size is
-behind ⋯ → *Lisää eri koolla*, a modal holding the same `multiplierField` the
-household default uses (`recipes.ts::cookListAdd`, `.cook-add`), where each
-chip adds at that size. A part's page has neither — a part is cooked as part
-of its dish. Tests reach the sizes with `tests/support/blocks.ts::openCookAdd`.
+the title (`recipes.ts::quickAdd`) adds it in one tap at the size the page
+shows. The page opens at the household's own default for the dish, else 1×
+(`recipes.ts::renderRecipe`, #364), and the size button beside it
+(`recipes.ts::sizeOpener`) opens the **Koko** modal (`recipes.ts::sizeChooser`):
+five sizes, each a link to the page at that size, and a typed size sent by a
+GET form on Enter — so the amounts change at once with no script. A part's
+page has no add button — a part is cooked as part of its dish. Tests choose a
+size with `tests/support/blocks.ts::chooseSize` and add with `addAtSize`.
 
 The calendar's screens — the week, `/picker`, the day move — are gone, along
 with their styles and their inline scroll-to-today script. `/` ignores a
@@ -719,7 +721,7 @@ line (`recipes.ts::recipeMeta`: the size if scaled, the source's portions, the
 category names, and the visibility for the owner), and two buttons
 (`recipes.ts::recipeTopActions`) — the owner's pick of three prototypes, then
 shaped on local dev against production data. **＋ Lisää kokattaviin** adds in
-one tap; **⋯** opens one modal of #351's rows: Lisää eri koolla, the
+one tap; **⋯** opens one modal of #351's rows: the
 product-picks switch, the Cast launcher, *Meidän taloudessa* (Oletuskerroin,
 Jakaminen) and *Resepti* (Muokkaa reseptiä, Täydennä AI:lla, Alkuperäinen
 resepti). Nothing of it is under the method any more.

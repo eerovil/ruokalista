@@ -461,7 +461,7 @@ export async function recipeScreen(
     env.DB,
     member,
     recipe,
-    asked ?? DEFAULT_MULTIPLIER,
+    asked,
     null,
     env.CAST_APP_ID,
     undefined,
@@ -490,7 +490,8 @@ export async function renderRecipe(
   db: D1Database,
   member: Member,
   recipe: Recipe,
-  multiplier: number,
+  /** Null is "as this household usually cooks it" (#364). */
+  multiplier: number | null,
   refusal: string | null,
   castApplicationId?: string,
   sharingDraft?: SharingDraft,
@@ -508,9 +509,13 @@ export async function renderRecipe(
       : Promise.resolve(null),
   ]);
 
+  // The page opens at the household's own size for the dish (#364), so what
+  // it shows is what Lisää kokattaviin adds.
+  const shown = multiplier ?? preference ?? DEFAULT_MULTIPLIER;
+
   return page(
     recipe.title,
-    recipeBody(recipe, multiplier, {
+    recipeBody(recipe, shown, {
       owned,
       preference,
       refusal,
@@ -908,9 +913,6 @@ function recipeBody(
  */
 function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
   const parts: Raw[] = [];
-  if (multiplier !== DEFAULT_MULTIPLIER) {
-    parts.push(html`<span class="yield is-scaled">${formatMultiplier(multiplier)}</span>`);
-  }
   if (recipe.yieldPortions !== null) {
     parts.push(html`<span class="source-yield">Lähteessä ${recipe.yieldPortions} annosta</span>`);
   }
@@ -961,33 +963,18 @@ function recipeTopActions(
   const viewRows = picks || (castApplicationId?.trim() ?? "") !== "";
 
   return html`<div class="recipe-top" id="toiminnot">
-    ${adding ? quickAdd(recipe, multiplier, view.preference) : ""}
+    ${sizeOpener(multiplier)}
+    ${adding ? quickAdd(recipe, multiplier) : ""}
     <a class="recipe-top-more" href="#${MORE_ID}" aria-label="Lisää valintoja"
       ><span aria-hidden="true">⋯</span></a
     >
   </div>
-  ${adding
-    ? topModal(
-        COOK_ADD_ID,
-        "Lisää eri koolla",
-        cookListAdd(recipe, multiplier, view.preference),
-        MORE_ID,
-        "Sulje",
-      )
-    : ""}
+  ${topModal(SIZE_ID, "Koko", sizeChooser(recipe, multiplier), "toiminnot", null)}
   ${topModal(
     MORE_ID,
     "Lisää valintoja",
-    html`${adding || viewRows
+    html`${viewRows
       ? html`<div class="tail-list">
-          ${adding
-            ? html`<a class="tail-row" href="#${COOK_ADD_ID}"
-                ><span class="tail-row-text"
-                  ><span class="tail-row-title">Lisää eri koolla</span
-                  ><span class="tail-row-note">Kokattaviin esimerkiksi tupla-annos</span></span
-                ><span class="tail-chevron" aria-hidden="true">›</span></a
-              >`
-            : ""}
           ${picks
             ? productPicksRow()
             : ""}
@@ -1049,7 +1036,7 @@ function settingsRow(id: string, title: string, value: string, valueClass = ""):
   >`;
 }
 
-const COOK_ADD_ID = "kokattaviin";
+const SIZE_ID = "koko";
 const MORE_ID = "lisavalinnat";
 // Named as #317's blocks named them, so a bookmark or a test that opened the
 // sharing modal still does.
@@ -1066,75 +1053,73 @@ function topModal(
   title: string,
   body: Raw,
   closeTo = "toiminnot",
-  close = "Valmis",
+  close: string | null = "Valmis",
 ): Raw {
   return html`<div class="edit-modal top-modal" id="${id}">
     <a class="edit-modal-back" href="#${closeTo}" tabindex="-1" aria-hidden="true"></a>
     <div class="edit-modal-card" role="group" aria-label="${title}">
       <p class="edit-modal-title">${title}</p>
       ${body}
-      <div class="edit-modal-actions">
-        <a class="edit-done" href="#${closeTo}">${close}</a>
-      </div>
+      ${close === null
+        ? ""
+        : html`<div class="edit-modal-actions">
+            <a class="edit-done" href="#${closeTo}">${close}</a>
+          </div>`}
     </div>
   </div>`;
 }
 
 /**
- * The size a dish goes onto the list at when nobody picks one: the size on
- * screen if the reader scaled the recipe, else the household's own default.
+ * The page's main button (#354): one tap puts the dish on the list at the
+ * size the page shows (#364), which opens at the household's own size.
  */
-function addSize(multiplier: number, preference: number | null): number {
-  return multiplier !== DEFAULT_MULTIPLIER
-    ? multiplier
-    : preference ?? DEFAULT_MULTIPLIER;
-}
-
-/**
- * The page's main button (#354): one tap puts the dish on the list at its
- * usual size. A size is chosen so rarely that the choice lives behind ⋯.
- */
-function quickAdd(recipe: Recipe, multiplier: number, preference: number | null): Raw {
-  const size = addSize(multiplier, preference);
+function quickAdd(recipe: Recipe, multiplier: number): Raw {
   return html`<form
     method="post"
     action="/recipes/${recipe.id}/kokattaviin"
     class="recipe-top-add-form"
   >
-    <button type="submit" name="preset" value="${String(size)}" class="recipe-top-add"
-      ><span aria-hidden="true">＋</span> Lisää kokattaviin${size === DEFAULT_MULTIPLIER
+    <button type="submit" name="preset" value="${String(multiplier)}" class="recipe-top-add"
+      ><span aria-hidden="true">＋</span> Lisää kokattaviin${multiplier === DEFAULT_MULTIPLIER
         ? ""
-        : ` · ${formatMultiplier(size)}`}</button
+        : ` · ${formatMultiplier(multiplier)}`}</button
     >
   </form>`;
 }
 
 /**
- * Put this dish on the to-do list (#345). Each size chip adds at that size in
- * one tap; the one already lit is the size on screen if the reader scaled the
- * recipe, else the household's own default for it. Since #354 it sits in the
- * Lisää kokattaviin modal rather than on the page.
+ * The size the page shows (#364), beside the button that adds at it. Tapping
+ * it opens the size modal.
  */
-function cookListAdd(
-  recipe: Recipe,
-  multiplier: number,
-  preference: number | null,
-): Raw {
-  const current = addSize(multiplier, preference);
-  return html`<form
-    method="post"
-    action="/recipes/${recipe.id}/kokattaviin"
-    class="stacked cook-add"
-  >
-    <p class="empty">Napauta kokoa, niin resepti lisätään kokattaviin.</p>
-    ${multiplierField({
-      current,
-      typed: "",
-      placeholder: "Muu kerroin",
-      label: "Lisää kokattaviin kertoimella",
-      submit: "Lisää",
-    })}
-  </form>`;
+function sizeOpener(multiplier: number): Raw {
+  return html`<a class="recipe-top-size" href="#${SIZE_ID}" aria-label="Koko: ${formatMultiplier(multiplier)}, muuta"
+    >${formatMultiplier(multiplier)} <span aria-hidden="true">▾</span></a
+  >`;
+}
+
+/**
+ * The size modal (#364): each size is a link to this page at that size, so the
+ * amounts change the moment one is tapped, with no script. A size of one's own
+ * goes through a plain GET form to the same page.
+ */
+function sizeChooser(recipe: Recipe, multiplier: number): Raw {
+  return html`<div class="size-choices">
+      ${[0.5, 1, 1.5, 2, 3].map((choice) => html`<a
+        class="size-choice ${choice === multiplier ? "is-current" : ""}"
+        href="/recipes/${recipe.id}?multiplier=${String(choice)}"
+        >${formatMultiplier(choice)}</a
+      >`)}
+    </div>
+    <form method="get" action="/recipes/${recipe.id}" class="size-typed">
+      <input
+        name="multiplier"
+        inputmode="decimal"
+        placeholder="Muu kerroin"
+        aria-label="Muu kerroin"
+        enterkeyhint="go"
+        value="${[0.5, 1, 1.5, 2, 3].includes(multiplier) ? "" : formatMultiplier(multiplier).slice(0, -1)}"
+      />
+    </form>`;
 }
 
 /**
@@ -1396,10 +1381,24 @@ const PUBLISH_STYLE = html`<style>
   .recipe-top-add:focus-visible, .recipe-top-more:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
-  .top-modal .cook-add { margin: 0; }
+  /* The size the page shows, and its modal (#364). */
+  .recipe-top-size { display: inline-flex; align-items: center; justify-content: center;
+    gap: .25rem; min-height: var(--tap); padding: 0 .8rem; border-radius: var(--radius);
+    border: 1px solid var(--edge); background: var(--surface); color: var(--fg);
+    font-weight: 600; text-decoration: none; }
+  .size-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .5rem; margin: 0; }
+  .size-choice { display: flex; align-items: center; justify-content: center;
+    min-height: 3.25rem; border-radius: var(--radius); border: 1px solid var(--edge);
+    background: var(--surface); color: var(--fg); font-size: 1.05rem;
+    font-weight: 600; text-decoration: none; }
+  .size-choice.is-current { background: var(--accent); color: var(--accent-fg);
+    border-color: var(--accent); }
+  .size-typed { display: flex; margin: .5rem 0 0; }
+  .size-typed input { flex: 1 1 auto; min-width: 0; }
+  .size-usual { margin: .75rem 0 0; }
   .top-modal .tail-heading { margin-top: 1.1rem; }
   .top-modal .edit-modal-title + .tail-heading { margin-top: 0; }
-  .top-modal .cook-add .empty { margin: 0 0 .75rem; }
   .top-modal .multiplier-choice + .empty { margin-top: .75rem; }
   /* The sizes as four equal buttons, then the typed size on a line of its own
      with its own button, so it does not read as a fifth size (#354). */

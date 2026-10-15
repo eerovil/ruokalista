@@ -103,16 +103,19 @@ export async function focusRing(page: Page, selector: string): Promise<string> {
 }
 
 /**
- * The recipe screen's sizes for Lisää kokattaviin, behind ⋯ → Lisää eri koolla
- * since #354 (the main button adds at the usual size in one tap).
+ * The recipe screen's size (#364): the button beside Lisää kokattaviin opens
+ * the Koko modal, and a size there reloads the page at that size.
  */
-export async function openCookAdd(page: Page): Promise<void> {
-  const add = page.locator(".cook-add");
-  if (!(await add.isVisible())) {
-    await page.getByRole("link", { name: "Lisää valintoja" }).click();
-    await page.getByRole("link", { name: /Lisää eri koolla/ }).click();
-  }
-  await expect(add).toBeVisible();
+export async function chooseSize(page: Page, size: string): Promise<void> {
+  await page.locator(".recipe-top-size").click();
+  await page.locator("#koko .size-choice").getByText(size, { exact: true }).click();
+  await expect(page.locator(".recipe-top-size")).toContainText(size);
+}
+
+/** And Lisää kokattaviin at that size. */
+export async function addAtSize(page: Page, size: string): Promise<void> {
+  await chooseSize(page, size);
+  await page.getByRole("button", { name: /Lisää kokattaviin/ }).click();
 }
 
 /**
