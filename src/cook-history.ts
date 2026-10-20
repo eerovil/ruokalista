@@ -122,3 +122,82 @@ export async function resetCookHistory(
     .bind(householdId, recipeId, upTo)
     .run();
 }
+
+/**
+ * What every household's cooking says about a recipe (#368).
+ *
+ * The same batches as `cookHistory`, read across all households: how many
+ * times the dish has been cooked anywhere, ours included, and the most recent
+ * day some *other* household cooked it — which is what the "muut kokanneet
+ * viimeksi" order sorts by. A batch a household started its count over on
+ * (#366) counts nowhere, here included.
+ *
+ * Nothing here says which household cooked what. It is only ever looked up for
+ * a recipe the reader can already see, so a private dish of another household
+ * never reaches the screen through it.
+ */
+export interface EveryoneCookRecord {
+  /** How many times any household, this one included, has cooked it. */
+  times: number;
+  /** The most recent day another household cooked it, or null. */
+  othersLastCooked: string | null;
+}
+
+export const NOBODY_COOKED: EveryoneCookRecord = { times: 0, othersLastCooked: null };
+
+export type EveryoneCookHistory = ReadonlyMap<number, EveryoneCookRecord>;
+
+export function everyoneRecord(
+  history: EveryoneCookHistory,
+  recipeId: number,
+): EveryoneCookRecord {
+  return history.get(recipeId) ?? NOBODY_COOKED;
+}
+
+interface EveryoneRow {
+  recipe_id: number;
+  times: number;
+  others_last_cooked: string | null;
+}
+
+export async function everyoneCookHistory(
+  db: D1Database,
+  householdId: number,
+  upTo: string = today(),
+): Promise<EveryoneCookHistory> {
+  const { results } = await db
+    .prepare(
+      `SELECT recipe_id, count(*) AS times,
+              max(CASE WHEN household_id <> ? THEN started END)
+                AS others_last_cooked
+         FROM (SELECT planned_batch.recipe_id AS recipe_id,
+                      planned_batch.household_id AS household_id,
+                      coalesce(planned_batch.cooked_on,
+                               min(batch_occurrence.date)) AS started
+                 FROM planned_batch
+                 LEFT JOIN batch_occurrence
+                   ON batch_occurrence.batch_id = planned_batch.id
+                WHERE planned_batch.count_reset = 0
+                GROUP BY planned_batch.id)
+        WHERE started <= ?
+        GROUP BY recipe_id`,
+    )
+    .bind(householdId, upTo)
+    .all<EveryoneRow>();
+
+  return new Map(
+    results.map((row) => [
+      row.recipe_id,
+      { times: row.times, othersLastCooked: row.others_last_cooked },
+    ]),
+  );
+}
+
+/** Every household's cooking of one recipe. */
+export async function everyoneRecordFor(
+  db: D1Database,
+  householdId: number,
+  recipeId: number,
+): Promise<EveryoneCookRecord> {
+  return everyoneRecord(await everyoneCookHistory(db, householdId), recipeId);
+}

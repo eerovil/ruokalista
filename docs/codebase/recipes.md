@@ -357,12 +357,20 @@ Two consequences worth knowing before trusting the number: taking a dish off the
 list without cooking it is a real delete, so it leaves nothing behind; and a
 recipe with no history at all is an ordinary state, not missing data.
 
-That is also why there are three orders rather than one. **Uusimmat** is the
+That is also why there are several orders rather than one. **Uusimmat** is the
 order the query already returns. **Viimeksi kokatut** puts the most recent
 cooking first and a never-cooked dish last, because there is nothing recent about
 it. **Kauan kokkaamatta** is the one somebody planning a week actually wants, and
 it puts never-cooked first, because nothing has been longer than never. The sort
 is stable, so inside either group the list keeps the order it arrived in.
+
+**Muut kokanneet viimeksi** (#368) is the one exception to "only this kitchen
+counts": it orders by the latest day any *other* household cooked the dish,
+from `cook-history.ts::everyoneCookHistory`. The same query gives the total
+the list row and the recipe page show as **kaikkiaan N×** — every household's
+cookings, ours included. A batch whose count a household started over (#366)
+counts nowhere, the total included. The row leaves the total off when nobody
+else has cooked the dish, because it would only repeat this kitchen's count.
 
 ### The search is the browser's, and the server's
 

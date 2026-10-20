@@ -11,7 +11,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cookHistory, resetCookHistory } from "../src/cook-history.ts";
+import {
+  cookHistory,
+  everyoneCookHistory,
+  resetCookHistory,
+} from "../src/cook-history.ts";
 import {
   addToCookList,
   changeMultiplier,
@@ -174,6 +178,34 @@ test("starting the count over keeps every batch, and a later cooking counts (#36
   // The dish that was still on the list counts once it is cooked.
   assert.equal(await markCooked(fake.db, HOME, listed.id, listed.instanceKey), true);
   assert.deepEqual((await cookHistory(fake.db, 1)).get(1), { times: 1, lastCooked: today() });
+});
+
+test("every household's cooking adds up, and only the others' sets their latest day (#368)", async () => {
+  const fake = migratedDatabase();
+  fixtures(fake);
+  calendarBatch(fake, 7, 1, 2, addDays(today(), -2));
+  calendarBatch(fake, 8, 2, 2, addDays(today(), -20));
+  calendarBatch(fake, 9, 2, 2, addDays(today(), -5));
+  // Still to come: a plan, and nobody's cooking yet.
+  calendarBatch(fake, 10, 2, 2, addDays(today(), 3));
+  // Our own dish, cooked only by us: no other household's day.
+  calendarBatch(fake, 11, 1, 1, addDays(today(), -1));
+
+  const seen = await everyoneCookHistory(fake.db, 1);
+  assert.deepEqual(seen.get(2), { times: 3, othersLastCooked: addDays(today(), -5) });
+  assert.deepEqual(seen.get(1), { times: 1, othersLastCooked: null });
+  // The same cooking, read by the neighbour: our day is now the others' one.
+  assert.deepEqual((await everyoneCookHistory(fake.db, 2)).get(2), {
+    times: 3,
+    othersLastCooked: addDays(today(), -2),
+  });
+
+  // A count started over is gone from the total too.
+  await resetCookHistory(fake.db, 2, 2);
+  assert.deepEqual((await everyoneCookHistory(fake.db, 1)).get(2), {
+    times: 1,
+    othersLastCooked: null,
+  });
 });
 
 test("taking a dish off uncooked leaves nothing for the history", async () => {

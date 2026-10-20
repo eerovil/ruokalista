@@ -1,5 +1,10 @@
 import { CATEGORY_STYLE, categoryFilter, type Vocabulary } from "./categories.ts";
-import { cookedRecord, type CookHistory } from "./cook-history.ts";
+import {
+  cookedRecord,
+  everyoneRecord,
+  type CookHistory,
+  type EveryoneCookHistory,
+} from "./cook-history.ts";
 import { shortDate } from "./dates.ts";
 import recipeBrowserClient from "./generated/recipe-browser.ts";
 import { html, raw, type Raw } from "./html.ts";
@@ -32,7 +37,7 @@ import type { RecipeSummary } from "./recipe-read.ts";
  * nothing away when it is absent.
  */
 
-export const SORTS = ["uusin", "kokattu", "unohtuneet"] as const;
+export const SORTS = ["uusin", "kokattu", "muut", "unohtuneet"] as const;
 export type SortKey = (typeof SORTS)[number];
 
 export const DEFAULT_SORT: SortKey = "uusin";
@@ -40,6 +45,7 @@ export const DEFAULT_SORT: SortKey = "uusin";
 const SORT_LABELS: Record<SortKey, string> = {
   uusin: "Uusimmat",
   kokattu: "Viimeksi kokatut",
+  muut: "Muut kokanneet viimeksi",
   unohtuneet: "Kauan kokkaamatta",
 };
 
@@ -148,25 +154,33 @@ function inCategory(
  * "kauan kokkaamatta", because nothing has been longer. The sort is stable, so
  * within either group the list keeps the order it arrived in — newest first for
  * a household's own dishes, and its own recipes still ahead of shared ones.
+ *
+ * "Muut kokanneet viimeksi" (#368) is "viimeksi kokatut" read off the other
+ * households' cooking instead of this one's: what the neighbours made lately
+ * comes first, and a dish no other household has cooked goes last.
  */
 export function sortRecipes(
   recipes: readonly RecipeSummary[],
   sort: SortKey,
   history: CookHistory,
+  everyone: EveryoneCookHistory = new Map(),
 ): RecipeSummary[] {
   const ordered = [...recipes];
   if (sort === DEFAULT_SORT) return ordered;
 
+  const recentFirst = sort !== "unohtuneet";
   const cooked = (recipe: RecipeSummary) =>
-    cookedRecord(history, recipe.id).lastCooked;
+    sort === "muut"
+      ? everyoneRecord(everyone, recipe.id).othersLastCooked
+      : cookedRecord(history, recipe.id).lastCooked;
 
   return ordered.sort((a, b) => {
     const left = cooked(a);
     const right = cooked(b);
     if (left === right) return 0;
-    if (left === null) return sort === "kokattu" ? 1 : -1;
-    if (right === null) return sort === "kokattu" ? -1 : 1;
-    return sort === "kokattu" ? right.localeCompare(left) : left.localeCompare(right);
+    if (left === null) return recentFirst ? 1 : -1;
+    if (right === null) return recentFirst ? -1 : 1;
+    return recentFirst ? right.localeCompare(left) : left.localeCompare(right);
   });
 }
 
@@ -184,6 +198,8 @@ export interface BrowseOptions {
   /** Everything matching the text search, before the category narrows it. */
   matching: readonly RecipeSummary[];
   history: CookHistory;
+  /** Every household's cooking (#368): the total, and the others' latest. */
+  everyone: EveryoneCookHistory;
   /** Whose screen this is, so another household's recipe says whose it is. */
   viewerHouseholdId: number;
   /** The `<ul>`'s classes: the list's own look is the screen's to keep. */
@@ -222,6 +238,7 @@ export function recipeBrowser(
     inCategory(options.matching, state.category),
     state.sort,
     history,
+    options.everyone,
   );
   const link = (changed: Partial<BrowseState>) =>
     browseHref(screen, { ...state, ...changed });
@@ -300,7 +317,9 @@ function recipeCard(options: BrowseOptions, recipe: RecipeSummary): Raw {
   return html`${recipeImage(recipe, "thumb")}
     <span class="recipes-text">
       <span class="recipes-title">${recipe.title}</span>
-      <span class="meta">${cookLine(options.history, recipe)}</span>
+      <span class="meta"
+        >${cookLine(options.history, recipe, options.everyone, options.state.sort)}</span
+      >
       <span class="meta">${metaLine(options, recipe)}</span>
     </span>`;
 }
@@ -337,15 +356,32 @@ function finnishDate(timestamp: string): string {
   return `${Number(day)}.${Number(month)}.${year}`;
 }
 
-/** How this kitchen's own cooking of a recipe reads on a row. */
-
+/**
+ * How a recipe's cooking reads on a row: this kitchen's own first, then how
+ * many times it has been cooked everywhere (#368).
+ *
+ * The total is left off when it says nothing new — when nobody else has
+ * cooked the dish, it is this kitchen's own count again. Under "muut
+ * kokanneet viimeksi" the row also says the day the order is sorted by, or
+ * the list would look shuffled.
+ */
 export function cookLine(
   history: CookHistory,
   recipe: RecipeSummary,
+  everyone: EveryoneCookHistory = new Map(),
+  sort: SortKey = DEFAULT_SORT,
 ): string {
   const record = cookedRecord(history, recipe.id);
-  if (record.times === 0 || record.lastCooked === null) return "Ei vielä kokattu";
-  return `Kokattu ${record.times}× · viimeksi ${shortDate(record.lastCooked)}`;
+  const all = everyoneRecord(everyone, recipe.id);
+  const parts =
+    record.times === 0 || record.lastCooked === null
+      ? ["Ei vielä kokattu"]
+      : [`Kokattu ${record.times}×`, `viimeksi ${shortDate(record.lastCooked)}`];
+  if (all.times > record.times) parts.push(`kaikkiaan ${all.times}×`);
+  if (sort === "muut" && all.othersLastCooked !== null) {
+    parts.push(`muut viimeksi ${shortDate(all.othersLastCooked)}`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -374,8 +410,8 @@ function availableCategories(recipes: readonly RecipeSummary[]): string[] {
 /**
  * The order chips, drawn as the category chips are and for the same reason: a
  * chosen order is a place, so it survives a reload and needs no script. Three
- * of them, because the fourth way to order a list of dinners is the one nobody
- * asked for.
+ * of them, and a fourth since #368 asked for it: what other households
+ * cooked lately.
  */
 function sortFilter(
   link: (changed: Partial<BrowseState>) => string,
