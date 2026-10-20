@@ -162,6 +162,10 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   `<p class="refused">` and the member's input intact. `problem()` is the JSON
   API's refusal helper — using it on a screen dumps the member into raw JSON and
   loses what they typed.
+- **A change that folds, hides or restructures a screen breaks specs far from
+  it.** Grep every spec for the affected text and counts, and run those whole
+  spec files, plus `tests/shell.spec.ts` and `tests/screenshots.spec.ts`, before
+  marking ready.
 - **Cite `file.ts::symbol`, never a line number.** Line numbers rot at the next
   refactor. Issue and PR numbers and commit shas are fine.
 - **A decision that outlives its PR goes in `docs/adr/`**, and a term the
