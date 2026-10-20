@@ -15,8 +15,12 @@ import {
 import {
   cookHistory,
   cookRecordFor,
+  everyoneCookHistory,
+  everyoneRecordFor,
   NEVER_COOKED,
+  NOBODY_COOKED,
   type CookRecord,
+  type EveryoneCookRecord,
 } from "./cook-history.ts";
 import { shortDate } from "./dates.ts";
 import {
@@ -255,10 +259,11 @@ export async function recipeList(
   notice: ListNotice | null,
   bulkCategory: string | null = null,
 ): Promise<Raw> {
-  const [own, shared, history] = await Promise.all([
+  const [own, shared, history, everyone] = await Promise.all([
     recipeSummaries(db, member.householdId, state.query),
     publicRecipeSummaries(db, member.householdId, state.query),
     cookHistory(db, member.householdId),
+    everyoneCookHistory(db, member.householdId),
   ]);
   const everything = state.hideShared ? own : newestFirst([...own, ...shared]);
   // Another household's empty dish never reaches this list (the readable
@@ -276,6 +281,7 @@ export async function recipeList(
         vocabulary,
         matching,
         history,
+        everyone,
         viewerHouseholdId: member.householdId,
         filters: html`${shared.length > 0 || state.hideShared
           ? sharedToggle(state)
@@ -504,7 +510,7 @@ export async function renderRecipe(
   external = false,
 ): Promise<Response> {
   const owned = recipe.householdId === member.householdId;
-  const [preference, sharing, vocabulary, products, cooked] = await Promise.all([
+  const [preference, sharing, vocabulary, products, cooked, cookedEverywhere] = await Promise.all([
     preferredMultiplierFor(db, member.householdId, recipe.id),
     owned && recipe.parentId === null
       ? recipeSharingState(db, member.householdId, recipe.id, sharingDraft)
@@ -516,6 +522,9 @@ export async function renderRecipe(
     recipe.parentId === null
       ? cookRecordFor(db, member.householdId, recipe.id)
       : Promise.resolve(NEVER_COOKED),
+    recipe.parentId === null
+      ? everyoneRecordFor(db, member.householdId, recipe.id)
+      : Promise.resolve(NOBODY_COOKED),
   ]);
 
   // The page opens at the household's own size for the dish (#364), so what
@@ -532,6 +541,7 @@ export async function renderRecipe(
       vocabulary,
       products,
       cooked,
+      cookedEverywhere,
     }, castApplicationId),
     "recipes",
     member,
@@ -855,6 +865,8 @@ interface RecipeView {
   products: RecipeProductState | null;
   /** This household's own cooking of the dish; never for a part. */
   cooked: CookRecord;
+  /** Every household's cooking of the dish (#368); never for a part. */
+  cookedEverywhere: EveryoneCookRecord;
 }
 
 function recipeBody(
@@ -919,9 +931,10 @@ function recipeBody(
 
 /**
  * The grey line under the title (#354): the size, if the page is scaled, where
- * the source put its portions, the categories, and for the owner who can see
- * the dish. One line rather than a stack of them, so the ingredients start
- * under the buttons rather than a screen further down.
+ * the source put its portions, the categories, how many times every household
+ * together has cooked it (#368), and for the owner who can see the dish. One
+ * line rather than a stack of them, so the ingredients start under the buttons
+ * rather than a screen further down.
  */
 function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
   const parts: Raw[] = [];
@@ -932,6 +945,9 @@ function recipeMeta(recipe: Recipe, multiplier: number, view: RecipeView): Raw {
     parts.push(html`<span class="category-tags">${recipe.categories
       .map((slug) => view.vocabulary.label(slug))
       .join(" · ")}</span>`);
+  }
+  if (view.cookedEverywhere.times > 0) {
+    parts.push(html`<span class="cooked-everywhere">Kokattu kaikkiaan ${view.cookedEverywhere.times}×</span>`);
   }
   const visibility = visibilityWord(recipe, view);
   if (visibility !== null) {

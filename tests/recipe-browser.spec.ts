@@ -26,7 +26,18 @@ test.beforeAll(async ({ browser }) => {
   await cookedOn(page, 1, daysAgo(10));
   await cookedOn(page, 2, daysAgo(20));
   await context.close();
+
+  // Naapuri cooks its own shared uunikala twice (#368), which Koti never has.
+  const neighbour = await browser.newContext();
+  await neighbour.addCookies([sessionCookie(2)]);
+  const theirs = await neighbour.newPage();
+  await cookedOn(theirs, NAAPURIN_UUNIKALA, daysAgo(40));
+  await cookedOn(theirs, NAAPURIN_UUNIKALA, daysAgo(5));
+  await neighbour.close();
 });
+
+/** Naapuri's published dish in the seed. */
+const NAAPURIN_UUNIKALA = 6;
 
 test.beforeEach(async ({ context }) => {
   await context.addCookies([sessionCookie(1)]);
@@ -87,6 +98,37 @@ test("the list can be ordered by when it was last cooked", async ({ page }) => {
     "Öljykastike",
     "Kaalilaatikko",
   ]);
+});
+
+test("the list can be ordered by what other households cooked lately (#368)", async ({
+  page,
+}) => {
+  await page.goto("/recipes");
+
+  await page
+    .locator(".browse-sort")
+    .getByRole("link", { name: "Muut kokanneet viimeksi" })
+    .click();
+  await expect(page).toHaveURL(/jarjestys=muut/);
+  await expect(page.locator(".recipes-title").first()).toHaveText("Naapurin uunikala");
+  const uunikala = page.locator(".recipes li", { hasText: "Naapurin uunikala" });
+  await expect(uunikala.locator(".meta").first()).toHaveText(
+    /^Ei vielä kokattu · kaikkiaan 2× · muut viimeksi \d+\.\d+\.$/,
+  );
+  // Only Koti has cooked the kaalilaatikko, so it has no total of its own.
+  await expect(
+    page.locator(".recipes li", { hasText: "Kaalilaatikko" }).locator(".meta").first(),
+  ).not.toContainText("kaikkiaan");
+});
+
+test("a recipe says how many times every household has cooked it (#368)", async ({
+  page,
+}) => {
+  await page.goto(`/recipes/${NAAPURIN_UUNIKALA}`);
+  await expect(page.locator(".recipe-meta")).toContainText("Kokattu kaikkiaan 2×");
+
+  await page.goto("/recipes/3");
+  await expect(page.locator(".recipe-meta")).not.toContainText("kaikkiaan");
 });
 
 test("typing filters the list at once, without asking the server", async ({
@@ -241,12 +283,20 @@ test("the browser, on a phone, with cooking behind it", async ({ page }) => {
   await expect(page.locator(".recipes li", { hasText: "Kaalilaatikko" })).toContainText(
     "Kokattu 2×",
   );
-  await expect(page.locator(".browse-sort .chip")).toHaveCount(3);
+  await expect(page.locator(".browse-sort .chip")).toHaveCount(4);
   await captureReview(page, "test-results/307-recipes.png");
 
   await page.locator(".browse-sort").getByRole("link", { name: "Kauan kokkaamatta" }).click();
   await expect(page.locator(".browse-sort .chip.is-on")).toHaveText("Kauan kokkaamatta");
   await expect(page.locator(".recipes-title").nth(1)).toHaveText("Lasagne");
   await captureReview(page, "test-results/307-recipes-jarjestys.png");
+
+  await page.locator(".browse-sort").getByRole("link", { name: "Muut kokanneet viimeksi" }).click();
+  await expect(page.locator(".recipes-title").first()).toHaveText("Naapurin uunikala");
+  await captureReview(page, "test-results/368-recipes-muut.png");
+
+  await page.goto(`/recipes/${NAAPURIN_UUNIKALA}`);
+  await expect(page.locator(".recipe-meta")).toContainText("Kokattu kaikkiaan 2×");
+  await captureReview(page, "test-results/368-recipe-kaikkiaan.png", false);
 
 });

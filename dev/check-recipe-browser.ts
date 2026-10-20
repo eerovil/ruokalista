@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { CookHistory } from "../src/cook-history.ts";
+import type { CookHistory, EveryoneCookHistory } from "../src/cook-history.ts";
 import {
   askedSort,
   browseHref,
@@ -95,6 +95,34 @@ test("a row says how many times this kitchen has cooked it", () => {
   assert.equal(cookLine(HISTORY, LASAGNE), "Kokattu 5× · viimeksi 12.9.");
   assert.equal(cookLine(HISTORY, KEITTO), "Kokattu 1× · viimeksi 3.2.");
   assert.equal(cookLine(HISTORY, UUSI), "Ei vielä kokattu");
+});
+
+const EVERYONE: EveryoneCookHistory = new Map([
+  [1, { times: 5, othersLastCooked: null }],
+  [2, { times: 4, othersLastCooked: "2026-03-01" }],
+  [3, { times: 2, othersLastCooked: "2026-09-30" }],
+]);
+
+test("muut kokanneet viimeksi orders by the other households' latest cooking (#368)", () => {
+  assert.deepEqual(
+    titles(sortRecipes([LASAGNE, KEITTO, UUSI], "muut", HISTORY, EVERYONE)),
+    // Only we have cooked the lasagne, so nothing about it is the others'.
+    ["Uusi tuttavuus", "Kaalikeitto", "Lasagne"],
+  );
+  assert.equal(askedSort("muut"), "muut");
+});
+
+test("a row adds the total when other households have cooked it too (#368)", () => {
+  assert.equal(cookLine(HISTORY, LASAGNE, EVERYONE), "Kokattu 5× · viimeksi 12.9.");
+  assert.equal(
+    cookLine(HISTORY, KEITTO, EVERYONE),
+    "Kokattu 1× · viimeksi 3.2. · kaikkiaan 4×",
+  );
+  assert.equal(cookLine(HISTORY, UUSI, EVERYONE), "Ei vielä kokattu · kaikkiaan 2×");
+  assert.equal(
+    cookLine(HISTORY, UUSI, EVERYONE, "muut"),
+    "Ei vielä kokattu · kaikkiaan 2× · muut viimeksi 30.9.",
+  );
 });
 
 test("the default order and an empty search leave the address bare", () => {
