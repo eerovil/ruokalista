@@ -86,6 +86,8 @@ Each of these has cost somebody real time. The detail is in the linked doc.
   forward that variable into the container until the change proposed in #120,
   so on older checkouts setting it changes nothing.) See
   [testing](docs/codebase/testing.md).
+- **Run the browser tests as `./scripts/playwright.sh npx playwright test
+  <file>`.** The form with only a file path fails.
 - **A new API key needs two places, not one.** A key in `.dev.vars` never
   reaches the Worker unless it is also listed in `wrangler.jsonc`'s
   vars-exposure block. See [deploy-cloudflare](docs/codebase/deploy-cloudflare.md).
