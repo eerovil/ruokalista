@@ -285,6 +285,7 @@ export function castReceiver(): Response {
   <main id="recipe" aria-live="polite">
     <p class="waiting">Odotetaan reseptiä…</p>
   </main>
+  <cast-media-player></cast-media-player>
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <script>${raw(CAST_RECEIVER_ISLAND)}</script>
 </body>
@@ -322,6 +323,11 @@ const CAST_RECEIVER_STYLE = `
     display: grid; grid-template-rows: auto minmax(0, 1fr);
     gap: calc(2.4vh * var(--fit));
   }
+  /*
+    The media player only exists to keep the device awake (#372). It and the
+    touch controls the framework adds on a Nest Hub are never shown.
+  */
+  cast-media-player, touch-controls { display: none !important; }
   .waiting { place-self: center; color: var(--muted); font-size: 3vw; }
   header { display: flex; align-items: baseline; gap: 2vw; min-width: 0; }
   h1 {
@@ -542,8 +548,38 @@ const CAST_RECEIVER_ISLAND = `
 
   if (typeof window.cast === 'undefined' || !cast.framework) return;
   var context = cast.framework.CastReceiverContext.getInstance();
+  var player = context.getPlayerManager();
+  var keepAwakeTimer = null;
+
+  /*
+    disableIdleTimeout below keeps the framework from closing the receiver, but
+    the device has a clock of its own: a Nest Hub, and by Google's issue tracker
+    a Chromecast with Google TV, goes back to its ambient screen about ten
+    minutes after the last media was loaded, whatever the app says (#372). So
+    the receiver loads a picture into a hidden player when a recipe arrives and
+    again every nine minutes — the same keep-alive Home Assistant's own Nest Hub
+    receiver uses. The title is the recipe's, which is what a phone's media
+    notification then shows.
+  */
+  function keepAwake(title) {
+    var request = new cast.framework.messages.LoadRequestData();
+    request.autoplay = true;
+    request.media = new cast.framework.messages.MediaInformation();
+    request.media.contentId = location.origin + '/icon-192.png';
+    request.media.contentType = 'image/png';
+    request.media.streamType = cast.framework.messages.StreamType.NONE;
+    request.media.metadata = new cast.framework.messages.GenericMediaMetadata();
+    request.media.metadata.title = title;
+    request.requestId = 0;
+    player.load(request);
+    if (keepAwakeTimer) clearTimeout(keepAwakeTimer);
+    keepAwakeTimer = setTimeout(function () { keepAwake(title); }, 9 * 60 * 1000);
+  }
+
   context.addCustomMessageListener(namespace, function (event) {
+    if (!valid(event.data)) return;
     render(event.data);
+    keepAwake(event.data.title);
   });
   /*
     A cook puts the phone down, locks it, or closes Ruokalista, and the recipe

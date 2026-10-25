@@ -227,12 +227,27 @@ window.cast = { framework: { CastReceiverContext: { getInstance: function () {
       window.__castReceiverListener = listener;
       window.__castReceiverNamespace = namespace;
     },
+    getPlayerManager: function () {
+      return { load: function (request) {
+        window.__castReceiverLoads.push({
+          contentId: request.media.contentId,
+          streamType: request.media.streamType,
+          title: request.media.metadata.title
+        });
+      } };
+    },
     start: function (options) {
       window.__castReceiverStarted = true;
       window.__castReceiverStartOptions = options || null;
     }
   };
-} } } };`,
+} }, messages: {
+  LoadRequestData: function () {},
+  MediaInformation: function () {},
+  GenericMediaMetadata: function () {},
+  StreamType: { NONE: 'NONE' }
+} } };
+window.__castReceiverLoads = [];`,
     });
   });
 }
@@ -289,6 +304,37 @@ test("the receiver holds the recipe once no sender is left", async ({ page }) =>
   expect(await page.evaluate(() => window.__castReceiverStarted)).toBe(true);
   expect(await page.evaluate(() => window.__castReceiverStartOptions))
     .toMatchObject({ disableIdleTimeout: true });
+});
+
+test("the receiver keeps the device awake while it shows a recipe", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await stubReceiverSdk(page);
+  await page.goto("/cast/receiver");
+  expect(await page.evaluate(() => window.__castReceiverLoads)).toEqual([]);
+
+  // A Nest Hub drops back to its ambient screen about ten minutes after the
+  // last media load, disableIdleTimeout or not (#372). Receiving a recipe
+  // loads a picture into the hidden player, and so does every nine minutes.
+  await receive(page, normalRecipe());
+  const origin = new URL(page.url()).origin;
+  const picture = {
+    contentId: `${origin}/icon-192.png`,
+    streamType: "NONE",
+    title: "Kaalilaatikko",
+  };
+  expect(await page.evaluate(() => window.__castReceiverLoads))
+    .toEqual([picture]);
+
+  await page.clock.runFor(9 * 60 * 1000);
+  await page.clock.runFor(9 * 60 * 1000);
+  expect(await page.evaluate(() => window.__castReceiverLoads))
+    .toEqual([picture, picture, picture]);
+
+  await expect(page.getByRole("heading", { name: "Kaalilaatikko" }))
+    .toBeVisible();
+  await expect(page.locator("cast-media-player")).toBeHidden();
 });
 
 test("a long recipe splits the ingredients in two rather than shrinking to the floor", async ({
@@ -688,5 +734,6 @@ declare global {
     __castReceiverNamespace: string;
     __castReceiverStarted: boolean;
     __castReceiverStartOptions: { disableIdleTimeout?: boolean } | null;
+    __castReceiverLoads: { contentId: string; streamType: string; title: string }[];
   }
 }
