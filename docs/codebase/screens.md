@@ -931,6 +931,15 @@ Reopening Ruokalista does not start a second session: the sender's
 handler pushes the current recipe to it, so the cook can still change what is on
 the TV or stop casting.
 
+The device keeps a clock of its own on top of that. A Nest Hub, and by
+Google's issue tracker a Chromecast with Google TV, goes back to its ambient
+screen about ten minutes after the last media was loaded, however the receiver
+was started (#372). So the receiver carries a hidden `<cast-media-player>` and
+loads the app icon into it, titled with the recipe, whenever a recipe arrives
+and again every nine minutes — the keep-alive Home Assistant's own Nest Hub
+receiver uses. The player and the touch controls the framework adds on a touch
+screen are hidden with an author `!important`.
+
 `GET /cast/receiver` is deliberately public because a Chromecast has none of
 the member's session cookie. It is also deliberately data-free: it reads no D1
 row and accepts no recipe id. `src/cast.ts::castRecipe` removes household,
