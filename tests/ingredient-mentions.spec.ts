@@ -4,6 +4,7 @@ import { closeEditBlock, openEditBlock } from "./support/blocks";
 import {
   ANCHOR_REPOINT_DRAFT,
   DUPLICATE_AMOUNT_DRAFT,
+  GROUP_ONLY_DRAFT,
   GROUP_PHRASE_DRAFT,
   REMOVED_LINE_DRAFT,
   stubStructuring,
@@ -412,6 +413,27 @@ test("a group phrase lists what it stands for, scaled, and keeps it through an e
   await expect(group).toHaveText(
     "kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy)",
   );
+});
+
+test("a recipe whose only link is a group shows the list and no reveal control", async ({
+  page,
+}) => {
+  await stubStructuring(page, GROUP_ONLY_DRAFT);
+  await page.goto("/intake");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Juustoseos\n2 dl juustoa");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  await expect(page.locator(".steps li").nth(0)).toHaveText(
+    "Yhdistä kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy) kulhossa.",
+  );
+  await expect(page.locator(".steps .mention-group-list")).toBeVisible();
+  await expect(page.locator(".steps .mention")).toHaveCount(0);
+  await expect(page.locator(".reveal-all-label")).toHaveCount(0);
 });
 
 /** Import a stubbed draft and save it as it stands. Returns the recipe's URL. */

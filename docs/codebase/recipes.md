@@ -180,8 +180,9 @@ A reference is deliberately thin, and both omissions are the point:
   that was matched and roughly where it was; `resolveMentions` finds it again in
   whatever the text says now, taking the occurrence nearest the recorded
   position. Anything that cannot be placed — wording edited away, two references
-  landing on the same words — is left as plain text, because linking the wrong
-  word is worse than linking no word.
+  that partly overlap — is left as plain text, because linking the wrong word is
+  worse than linking no word. References on exactly the same words are not a
+  clash: since #376 they form one group (see below).
 
 An occurrence has to be a **word of its own**, not a substring: a reference for
 `suola` must not go on matching after the step becomes "Lisää suolakurkut", or

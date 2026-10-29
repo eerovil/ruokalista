@@ -126,6 +126,23 @@ export const GROUP_PHRASE_DRAFT = {
 };
 
 /**
+ * The same dish with nothing linked but the group phrase (#376): a recipe with
+ * no amount to tap open has no use for **Näytä määrät**.
+ */
+export const GROUP_ONLY_DRAFT = {
+  ...GROUP_PHRASE_DRAFT,
+  title: "Juustoseos",
+  steps: [
+    {
+      text: "Yhdistä kuivat aineet kulhossa.",
+      section: null,
+      phase: null,
+      ingredient_refs: GROUP_PHRASE_DRAFT.steps[0]!.ingredient_refs.slice(0, 3),
+    },
+  ],
+};
+
+/**
  * A model that wrote amounts the save would refuse (#233): a flat zero, a
  * pinch written in the wrong unit so that it rounds away, and a range whose
  * upper end is a zero. Every line points at a seeded ingredient, so the review

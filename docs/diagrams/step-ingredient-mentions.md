@@ -42,6 +42,6 @@ flowchart TD
 - **saveRecipe turns line index into ingredient id**: `src/recipe-save.ts::ingredientForRef`, unchanged; each reference of a group is converted on its own.
 - **(recipe_step.ingredient_refs)**: JSON list of `StepIngredientRef`, unchanged shape; a group is several entries with the same `matchedText`.
 - **resolveMentions finds the words again**: `src/ingredient-refs.ts::resolveMentions`.
-- **Several refs on exactly the same words?**: new in #376. Today the second ref on the same words is dropped as stale; after #376 refs landing on the identical span join into one segment with several ingredient ids. A partial overlap is still dropped.
+- **Several refs on exactly the same words?**: new in #376. References landing on the identical span join into one group segment with several ingredient ids. A partial overlap is still a clash: the later reference is dropped as stale.
 - **Group mention: list follows in parentheses**: `src/recipes.ts::stepText` renders "kuivat aineet (3 dl vehnäjauho, 2 tl leivinjauhe, ½ tl suola)", always visible, in ingredient-list order. The list text is `src/ingredient-refs.ts::groupListText`, shared with the cast.
 - **Nest Hub cast: list appended to the step text**: `src/cast.ts::castStepText`, which sends plain strings.
