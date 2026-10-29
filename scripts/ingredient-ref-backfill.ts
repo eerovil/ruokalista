@@ -1,6 +1,7 @@
 import {
   MAX_REFS_PER_STEP,
   mentionResolves,
+  parseStepRefs,
   serializeStepRefs,
   type StepIngredientRef,
 } from "../src/ingredient-refs.ts";
@@ -20,14 +21,27 @@ export interface BackfillSnapshot {
   };
 }
 
+/**
+ * Two jobs share this file. Format 1 fills steps that have no references at
+ * all (#120). Format 2 adds group phrases (#376) — "kuivat aineet", one
+ * reference per line it covers — to every step, marked or not, so it carries
+ * each step's stored references along to keep and to guard on.
+ */
+export type BackfillMode = "unmarked" | "groups";
+
 export interface BackfillExport {
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   snapshotSha256: string;
   capturedAt: string;
   recipes: Array<{
     recipeId: number;
     ingredients: Array<{ position: number; ingredientId: number; name: string }>;
-    steps: Array<{ position: number; text: string }>;
+    steps: Array<{
+      position: number;
+      text: string;
+      /** Format 2 only: the stored column exactly as the snapshot had it. */
+      existingRefs?: string | null;
+    }>;
   }>;
 }
 
@@ -124,7 +138,10 @@ export async function parseSignedBackfillSnapshot(text: string): Promise<Backfil
 }
 
 /** Build the private, minimal handoff file from an already validated backup. */
-export function buildBackfillExport(snapshot: BackfillSnapshot): BackfillExport {
+export function buildBackfillExport(
+  snapshot: BackfillSnapshot,
+  mode: BackfillMode = "unmarked",
+): BackfillExport {
   const recipeIds = new Set<number>();
   snapshot.tables.recipe.forEach((row, index) => {
     const id = positiveInteger(row.id, `recipe row ${index} id`);
@@ -172,7 +189,14 @@ export function buildBackfillExport(snapshot: BackfillSnapshot): BackfillExport 
     // malformed non-NULL value belongs to somebody to inspect, not overwrite.
     // A snapshot captured before #120 has no column at all; every one of its
     // steps is necessarily unmarked and is precisely what this job targets.
-    if ("ingredient_refs" in row && row.ingredient_refs !== null) return;
+    //
+    // The group job (#376) is the one exception: it only ever adds to what a
+    // step holds, and its SQL refuses to run if the column has moved.
+    const stored = "ingredient_refs" in row ? row.ingredient_refs : null;
+    if (stored !== null && typeof stored !== "string") {
+      throw new Error(`recipe_step row ${index} ingredient_refs is invalid`);
+    }
+    if (mode === "unmarked" && stored !== null) return;
     const recipeId = positiveInteger(row.recipe_id, `recipe_step row ${index} recipe_id`);
     if (!recipeIds.has(recipeId)) throw new Error(`recipe_step row ${index} has no recipe`);
     const position = positiveInteger(row.position, `recipe_step row ${index} position`);
@@ -180,10 +204,8 @@ export function buildBackfillExport(snapshot: BackfillSnapshot): BackfillExport 
     if (stepPositions.has(positionKey)) throw new Error(`recipe_step position ${positionKey} is duplicated`);
     stepPositions.add(positionKey);
     const steps = stepsByRecipe.get(recipeId) ?? [];
-    steps.push({
-      position,
-      text: nonemptyString(row.text, `recipe_step row ${index} text`),
-    });
+    const text = nonemptyString(row.text, `recipe_step row ${index} text`);
+    steps.push(mode === "groups" ? { position, text, existingRefs: stored } : { position, text });
     stepsByRecipe.set(recipeId, steps);
   });
 
@@ -197,19 +219,29 @@ export function buildBackfillExport(snapshot: BackfillSnapshot): BackfillExport 
   }
 
   return {
-    formatVersion: 1,
+    formatVersion: mode === "groups" ? 2 : 1,
     snapshotSha256: snapshot.sha256,
     capturedAt: snapshot.captured_at,
     recipes,
   };
 }
 
-/** Validate untrusted marks and emit SQL that can only fill unchanged NULL rows. */
+/**
+ * Validate untrusted marks and emit SQL that can only change a step whose text
+ * and stored references are still what the snapshot said: a NULL row for
+ * format 1, and for format 2 (#376) the exact stored value, with the new group
+ * references added after the ones already there.
+ */
 export function generateBackfillSql(
   exported: BackfillExport,
   rawMarks: unknown,
 ): BackfillResult {
-  const markedRecipes = parseMarksRoot(rawMarks, exported.snapshotSha256);
+  const groups = exported.formatVersion === 2;
+  const markedRecipes = parseMarksRoot(
+    rawMarks,
+    exported.snapshotSha256,
+    exported.formatVersion,
+  );
   const exportedByRecipe = new Map(exported.recipes.map((recipe) => [recipe.recipeId, recipe]));
   const seenRecipes = new Set<number>();
   let acceptedMarks = 0;
@@ -262,10 +294,34 @@ export function generateBackfillSql(
         acceptedMarks += 1;
       }
 
-      if (refs.length === 0) continue;
-      const stored = serializeStepRefs(refs);
+      let written = refs;
+      if (groups) {
+        // Only a group is this job's to add: a wording that, in this step,
+        // stands for two or more ingredients. A lone mark is the #120 job's.
+        const grouped = groupMembers(refs);
+        droppedMarks += refs.length - grouped.length;
+        acceptedMarks -= refs.length - grouped.length;
+        const existing = parseStepRefs(step.existingRefs ?? null);
+        const added = grouped.filter((ref) =>
+          !existing.some((old) =>
+            old.ingredientId === ref.ingredientId &&
+            old.matchedText.toLocaleLowerCase("fi") ===
+              ref.matchedText.toLocaleLowerCase("fi")
+          )
+        );
+        if (added.length === 0) continue;
+        written = [...existing, ...added];
+        if (written.length > MAX_REFS_PER_STEP) {
+          droppedMarks += added.length;
+          acceptedMarks -= added.length;
+          continue;
+        }
+      }
+
+      if (written.length === 0) continue;
+      const stored = serializeStepRefs(written);
       if (stored === null) continue;
-      const requiredIngredients = [...new Set(refs.map((ref) => ref.ingredientId))].sort(
+      const requiredIngredients = [...new Set(written.map((ref) => ref.ingredientId))].sort(
         (a, b) => a - b,
       );
       const guards = requiredIngredients.map(
@@ -277,7 +333,9 @@ export function generateBackfillSql(
         `SET ingredient_refs = ${sqlString(stored)}`,
         `WHERE recipe_id = ${recipe.recipeId} AND position = ${step.position}`,
         `  AND text = ${sqlString(step.text)}`,
-        "  AND ingredient_refs IS NULL",
+        groups && (step.existingRefs ?? null) !== null
+          ? `  AND ingredient_refs = ${sqlString(step.existingRefs as string)}`
+          : "  AND ingredient_refs IS NULL",
         ...guards,
         ";",
       ].join("\n"));
@@ -287,7 +345,9 @@ export function generateBackfillSql(
   const header = [
     "-- Ingredient-reference backfill generated from a validated nightly snapshot.",
     `-- Snapshot SHA-256: ${exported.snapshotSha256}`,
-    "-- Safe to rerun: each statement only fills an unchanged NULL step.",
+    groups
+      ? "-- Safe to rerun: each statement only changes a step whose refs are unchanged."
+      : "-- Safe to rerun: each statement only fills an unchanged NULL step.",
   ];
   return {
     sql: `${[...header, ...updates].join("\n\n")}\n`,
@@ -300,7 +360,10 @@ export function generateBackfillSql(
 export function parseBackfillExport(value: unknown): BackfillExport {
   if (!isRecord(value)) throw new Error("export root must be an object");
   exactKeys(value, ["formatVersion", "snapshotSha256", "capturedAt", "recipes"], "export");
-  if (value.formatVersion !== 1) throw new Error("unsupported export formatVersion");
+  if (value.formatVersion !== 1 && value.formatVersion !== 2) {
+    throw new Error("unsupported export formatVersion");
+  }
+  const formatVersion = value.formatVersion;
   const snapshotSha256 = sha256(value.snapshotSha256, "export snapshotSha256");
   const capturedAt = nonemptyString(value.capturedAt, "export capturedAt");
   if (!Number.isFinite(Date.parse(capturedAt))) throw new Error("export capturedAt is invalid");
@@ -324,21 +387,58 @@ export function parseBackfillExport(value: unknown): BackfillExport {
     });
     const steps = rawRecipe.steps.map((rawStep, stepIndex) => {
       if (!isRecord(rawStep)) throw new Error(`export step ${stepIndex} must be an object`);
-      exactKeys(rawStep, ["position", "text"], `export step ${stepIndex}`);
-      return {
-        position: positiveInteger(rawStep.position, `export step ${stepIndex} position`),
-        text: nonemptyString(rawStep.text, `export step ${stepIndex} text`),
-      };
+      const position = positiveInteger(rawStep.position, `export step ${stepIndex} position`);
+      const text = nonemptyString(rawStep.text, `export step ${stepIndex} text`);
+      if (formatVersion === 1) {
+        exactKeys(rawStep, ["position", "text"], `export step ${stepIndex}`);
+        return { position, text };
+      }
+      exactKeys(rawStep, ["position", "text", "existingRefs"], `export step ${stepIndex}`);
+      const existingRefs = rawStep.existingRefs;
+      if (existingRefs !== null && typeof existingRefs !== "string") {
+        throw new Error(`export step ${stepIndex} existingRefs is invalid`);
+      }
+      return { position, text, existingRefs };
     });
     return { recipeId, ingredients, steps };
   });
-  return { formatVersion: 1, snapshotSha256, capturedAt, recipes };
+  return { formatVersion, snapshotSha256, capturedAt, recipes };
 }
 
-function parseMarksRoot(value: unknown, expectedSha: string): MarkedRecipe[] {
+/**
+ * The marks that form a group: those whose wording, case folded, is shared by
+ * two or more distinct ingredients in the same step. The resolver places each
+ * at its own nearest occurrence, so the shared wording is what counts here.
+ */
+function groupMembers(refs: readonly StepIngredientRef[]): StepIngredientRef[] {
+  const ingredients = new Map<string, Set<number>>();
+  for (const ref of refs) {
+    const key = ref.matchedText.toLocaleLowerCase("fi");
+    const ids = ingredients.get(key) ?? new Set<number>();
+    ids.add(ref.ingredientId);
+    ingredients.set(key, ids);
+  }
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = ref.matchedText.toLocaleLowerCase("fi");
+    if ((ingredients.get(key)?.size ?? 0) < 2) return false;
+    const pair = `${key}\u0000${ref.ingredientId}`;
+    if (seen.has(pair)) return false;
+    seen.add(pair);
+    return true;
+  });
+}
+
+function parseMarksRoot(
+  value: unknown,
+  expectedSha: string,
+  expectedFormat: 1 | 2,
+): MarkedRecipe[] {
   if (!isRecord(value)) throw new Error("marks root must be an object");
   exactKeys(value, ["formatVersion", "snapshotSha256", "recipes"], "marks");
-  if (value.formatVersion !== 1) throw new Error("unsupported marks formatVersion");
+  if (value.formatVersion !== expectedFormat) {
+    throw new Error("marks formatVersion does not match the export");
+  }
   if (sha256(value.snapshotSha256, "marks snapshotSha256") !== expectedSha) {
     throw new Error("marks were made from a different snapshot export");
   }

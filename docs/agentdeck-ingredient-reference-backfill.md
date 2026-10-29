@@ -108,3 +108,53 @@ use, and nothing has to be exported by hand first.
 
 Production execution is a separate, deliberate operator step. This repository
 change does not run it.
+
+## Adding group phrases to existing recipes (#376)
+
+Since #376 a phrase like "kuivat aineet" may stand for several ingredient
+lines: one reference per line, all with the same wording, and the recipe screen
+lists them after the phrase. Recipes imported before that have no such groups,
+and most of their steps already hold single references, so the job above
+(which only fills empty steps) never reaches them. Its second mode does.
+
+Export every step, marked or not, with what it already holds:
+
+```sh
+./scripts/export-ingredient-ref-backfill.sh .generated/ingredient-group-export.json --groups
+```
+
+The export is `formatVersion: 2`, and each step carries `existingRefs`: the
+stored column exactly as the snapshot had it, or `null`.
+
+Ask the AgentDeck session to write `.generated/ingredient-group-marks.json`
+in the same shape as above, but with `"formatVersion": 2`, and with these
+rules on top of the standing ones:
+
+- Mark **only group phrases**: wording that stands for two or more of the
+  recipe's ingredients, such as "kuivat aineet", "märät aineet" or "kastikkeen
+  ainekset". Write one reference per ingredient in the group, all with the same
+  `matchedText` (the whole phrase) and the same `approxPosition`.
+- Leave "lisää loput ainekset" and anything else whose contents depend on what
+  earlier steps used unmarked, and leave a phrase unmarked when unsure which
+  lines it covers.
+- Do not repeat a step's `existingRefs`; they are kept as they are.
+
+Then validate and make SQL with the same apply command, pointing at the group
+files:
+
+```sh
+./scripts/node.sh node --experimental-strip-types \
+  scripts/apply-ingredient-ref-backfill.ts \
+  --export .generated/ingredient-group-export.json \
+  --marks .generated/ingredient-group-marks.json \
+  --output .generated/ingredient-group-backfill.sql
+```
+
+On top of the checks above, it drops any mark whose wording is not shared by
+at least two distinct ingredients in that step, drops a group the step already
+holds, and drops a step's new marks if they would take it past
+`MAX_REFS_PER_STEP`. Each statement writes the existing references followed by
+the new ones, and is guarded on the column still holding exactly what the
+snapshot had, so an edit since the snapshot, or a second run, is a no-op. Apply
+it with the same `wrangler d1 execute` command, with the same caution about open
+editors.
