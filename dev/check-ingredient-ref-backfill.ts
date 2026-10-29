@@ -409,3 +409,19 @@ test("marks must be made for the same job as the export", () => {
     /formatVersion does not match/,
   );
 });
+
+test("a stored value the decoder would not keep whole is never rewritten", () => {
+  for (const damaged of [
+    "{not json",
+    // One good reference and one the decoder would drop.
+    '[{"ingredientId":3,"matchedText":"maito","approxPosition":31},{"ingredientId":0,"matchedText":"x","approxPosition":0}]',
+    "[]",
+  ]) {
+    const snap = groupSnapshot();
+    (snap.tables.recipe_step[0] as Record<string, unknown>).ingredient_refs = damaged;
+    const result = generateBackfillSql(buildBackfillExport(snap, "groups"), groupMarks(dryGroup));
+    assert.equal(result.updatedSteps, 0, damaged);
+    assert.equal(result.acceptedMarks, 0, damaged);
+    assert.equal(result.droppedMarks, 2, damaged);
+  }
+});

@@ -302,6 +302,20 @@ export function generateBackfillSql(
         droppedMarks += refs.length - grouped.length;
         acceptedMarks -= refs.length - grouped.length;
         const existing = parseStepRefs(step.existingRefs ?? null);
+        // The decoder is lossy on purpose — a screen reads junk as "no
+        // references" — but this job writes the column back. A stored value
+        // that does not survive decoding and encoding unchanged holds
+        // something the decoder would drop, so it is left for a person to
+        // inspect rather than quietly rewritten.
+        if (
+          step.existingRefs !== null &&
+          step.existingRefs !== undefined &&
+          serializeStepRefs(existing) !== step.existingRefs
+        ) {
+          droppedMarks += grouped.length;
+          acceptedMarks -= grouped.length;
+          continue;
+        }
         const added = grouped.filter((ref) =>
           !existing.some((old) =>
             old.ingredientId === ref.ingredientId &&

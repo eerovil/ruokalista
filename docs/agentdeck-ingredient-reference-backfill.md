@@ -153,7 +153,9 @@ files:
 On top of the checks above, it drops any mark whose wording is not shared by
 at least two distinct ingredients in that step, drops a group the step already
 holds, and drops a step's new marks if they would take it past
-`MAX_REFS_PER_STEP`. Each statement writes the existing references followed by
+`MAX_REFS_PER_STEP`. A step whose stored value would not survive decoding
+unchanged (malformed JSON, or a reference the decoder drops) is skipped, never
+rewritten, so the job cannot lose a link it did not understand. Each statement writes the existing references followed by
 the new ones, and is guarded on the column still holding exactly what the
 snapshot had, so an edit since the snapshot, or a second run, is a no-op. Apply
 it with the same `wrangler d1 execute` command, with the same caution about open
