@@ -73,6 +73,76 @@ export const DUPLICATE_AMOUNT_DRAFT = {
 };
 
 /**
+ * A step that names a group of ingredients with one phrase (#376). "kuivat
+ * aineet" is three references on the same words, one per line it covers, and
+ * "maito" is an ordinary mention beside it. The öljy line has no amount, so the
+ * list shows its name alone.
+ */
+export const GROUP_PHRASE_DRAFT = {
+  title: "Juustoleipä",
+  yield_portions: 4,
+  source_text:
+    "Juustoleipä\n2 dl juustoa\n1 tl sitruunaruohoa\nöljyä\n1 dl maitoa\nYhdistä kuivat aineet kulhossa ja lisää maito.",
+  steps: [
+    {
+      text: "Yhdistä kuivat aineet kulhossa ja lisää maito.",
+      section: null,
+      phase: null,
+      ingredient_refs: [
+        { line: 0, matched_text: "kuivat aineet", approx_position: 8 },
+        { line: 1, matched_text: "kuivat aineet", approx_position: 8 },
+        { line: 2, matched_text: "kuivat aineet", approx_position: 8 },
+        { line: 3, matched_text: "maito", approx_position: 40 },
+      ],
+    },
+  ],
+  lines: [
+    {
+      quantity: 2, quantity_max: null, unit: "dl",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 8, ingredient_name: "juusto", source_line: "2 dl juustoa",
+      section: null, phase: null, note: null,
+    },
+    {
+      quantity: 1, quantity_max: null, unit: "tl",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 4, ingredient_name: "sitruunaruoho",
+      source_line: "1 tl sitruunaruohoa",
+      section: null, phase: null, note: null,
+    },
+    {
+      quantity: null, quantity_max: null, unit: null,
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 1, ingredient_name: "öljy", source_line: "öljyä",
+      section: null, phase: null, note: null,
+    },
+    {
+      quantity: 1, quantity_max: null, unit: "dl",
+      alt_quantity: null, alt_unit: null,
+      ingredient_id: 9, ingredient_name: "maito", source_line: "1 dl maitoa",
+      section: null, phase: null, note: null,
+    },
+  ],
+};
+
+/**
+ * The same dish with nothing linked but the group phrase (#376): a recipe with
+ * no amount to tap open has no use for **Näytä määrät**.
+ */
+export const GROUP_ONLY_DRAFT = {
+  ...GROUP_PHRASE_DRAFT,
+  title: "Juustoseos",
+  steps: [
+    {
+      text: "Yhdistä kuivat aineet kulhossa.",
+      section: null,
+      phase: null,
+      ingredient_refs: GROUP_PHRASE_DRAFT.steps[0]!.ingredient_refs.slice(0, 3),
+    },
+  ],
+};
+
+/**
  * A model that wrote amounts the save would refuse (#233): a flat zero, a
  * pinch written in the wrong unit so that it rounds away, and a range whose
  * upper end is a zero. Every line points at a seeded ingredient, so the review

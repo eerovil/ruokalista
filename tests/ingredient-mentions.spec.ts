@@ -4,6 +4,8 @@ import { closeEditBlock, openEditBlock } from "./support/blocks";
 import {
   ANCHOR_REPOINT_DRAFT,
   DUPLICATE_AMOUNT_DRAFT,
+  GROUP_ONLY_DRAFT,
+  GROUP_PHRASE_DRAFT,
   REMOVED_LINE_DRAFT,
   stubStructuring,
 } from "./support/draft";
@@ -369,6 +371,69 @@ test("duplicate ingredient lines reveal all useful amounts before and after an e
   await expect(page).toHaveURL(/\/recipes\/\d+$/);
 
   expect(await bothAmounts()).toEqual(["2 rkl / 1 dl", "2 rkl / 1 dl"]);
+});
+
+test("a group phrase lists what it stands for, scaled, and keeps it through an edit", async ({
+  page,
+}) => {
+  // #376: "kuivat aineet" names no ingredient itself, so the list follows it
+  // in parentheses without a tap, in the order of the ingredient list.
+  await stubStructuring(page, GROUP_PHRASE_DRAFT);
+  await page.goto("/intake");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Juustoleipä\n2 dl juustoa");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  const recipe = page.url();
+
+  const group = page.locator(".steps .mention-group");
+  await expect(group).toHaveCount(1);
+  await expect(group).toHaveText(
+    "kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy)",
+  );
+  await expect(group.locator(".mention-group-list")).toBeVisible();
+  // The single mention beside it still waits for a tap.
+  await expect(mention(page, "maito").locator(".mention-amount")).toBeHidden();
+  await expect(page.locator(".steps li").nth(0)).toContainText(
+    "Yhdistä kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy) kulhossa",
+  );
+
+  await page.goto(`${recipe}?multiplier=2`);
+  await expect(group).toHaveText(
+    "kuivat aineet (4 dl juusto, 2 tl sitruunaruoho, öljy)",
+  );
+
+  // The editor rebuilds every reference from scratch; the group survives it.
+  await page.goto(`${recipe}/edit`);
+  await page.getByRole("button", { name: "Tallenna muutokset" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+  await expect(group).toHaveText(
+    "kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy)",
+  );
+});
+
+test("a recipe whose only link is a group shows the list and no reveal control", async ({
+  page,
+}) => {
+  await stubStructuring(page, GROUP_ONLY_DRAFT);
+  await page.goto("/intake");
+  await page.getByLabel("Reseptin nimi, linkki tai koko teksti").fill("Juustoseos\n2 dl juustoa");
+  await page.getByRole("button", { name: "Muodosta resepti" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Tarkista resepti" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Tallenna resepti" }).click();
+  await expect(page).toHaveURL(/\/recipes\/\d+$/);
+
+  await expect(page.locator(".steps li").nth(0)).toHaveText(
+    "Yhdistä kuivat aineet (2 dl juusto, 1 tl sitruunaruoho, öljy) kulhossa.",
+  );
+  await expect(page.locator(".steps .mention-group-list")).toBeVisible();
+  await expect(page.locator(".steps .mention")).toHaveCount(0);
+  await expect(page.locator(".reveal-all-label")).toHaveCount(0);
 });
 
 /** Import a stubbed draft and save it as it stands. Returns the recipe's URL. */

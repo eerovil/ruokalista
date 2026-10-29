@@ -612,8 +612,14 @@ export const DRAFT_RULES = `Säännöt, joista ei poiketa:
   - älä koskaan kirjoita määrää tai yksikköä matched_text-kenttään; määrä
     luetaan aina ainesriviltä;
   - älä muuta vaiheen tekstiä millään tavalla;
-  - yleisiä ilmauksia kuten "lisää loput ainekset" ei tarvitse yhdistää
-    mihinkään. Jos vaihe ei nimeä yhtään ainesta, ingredient_refs on [];
+  - kun vaihe nimeää ryhmän aineksia yhdellä ilmauksella, kuten "kuivat
+    aineet", "märät aineet" tai "kastikkeen ainekset", tee jokaisesta ryhmään
+    kuuluvasta ainesrivistä oma viittaus, ja anna niille kaikille sama
+    matched_text (koko ilmaus, esim. "kuivat aineet") ja sama approx_position.
+    Jos et ole varma, mitkä rivit ryhmään kuuluvat, jätä ilmaus yhdistämättä;
+  - "lisää loput ainekset" ja muut ilmaukset, joiden sisältö riippuu aiempien
+    vaiheiden käytöstä, jätetään yhdistämättä. Jos vaihe ei nimeä yhtään
+    ainesta, ingredient_refs on [];
   - yhdessä vaiheessa on enintään ${MAX_REFS_PER_STEP} viittausta.`;
 
 /** The standing rules, from docs/spec.md's intake flow. */

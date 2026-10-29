@@ -26,8 +26,16 @@
  * `saveRecipe` is where the second becomes the first.
  */
 
-/** How many mentions one step may link. A sentence with more is not a sentence. */
-export const MAX_REFS_PER_STEP = 12;
+import { formatMeasurement, type Measurement } from "./quantities.ts";
+import { scaleMeasurement } from "./scaling.ts";
+
+/**
+ * How many references one step may carry. Twelve was "a sentence with more is
+ * not a sentence" while a reference meant one word; since #376 a group phrase
+ * ("kuivat aineet") is one reference per line it covers, so "yhdistä kuivat
+ * aineet ja lisää märät aineet" can need ten on its own.
+ */
+export const MAX_REFS_PER_STEP = 24;
 
 /** A saved reference: this step mentions that ingredient, in these words. */
 export interface StepIngredientRef {
@@ -62,12 +70,23 @@ export interface DraftIngredientRef {
   expectedIngredientId: number | null;
 }
 
+/** What revealing an amount needs of a recipe's ingredient line. */
+export interface MentionedLine extends Measurement {
+  ingredientId: number;
+  /** The ingredient's own name, uninflected: "vehnäjauho". */
+  ingredient: string;
+}
+
 // -------------------------------------------------------------- resolving
 
-/** One piece of a step's text: plain wording, or a linked mention. */
+/**
+ * One piece of a step's text: plain wording, a linked mention, or a group
+ * phrase (issue #376) — "kuivat aineet" — that several references share.
+ */
 export type StepSegment =
   | { kind: "text"; text: string }
-  | { kind: "mention"; text: string; ingredientId: number };
+  | { kind: "mention"; text: string; ingredientId: number }
+  | { kind: "group"; text: string; ingredientIds: number[] };
 
 /**
  * Split a step's text into plain runs and linked mentions.
@@ -82,6 +101,12 @@ export type StepSegment =
  * wording has been edited away, an empty one, and one that would overlap a
  * mention already placed all fall back to plain text, because linking the wrong
  * word is worse than linking no word.
+ *
+ * The one overlap that is not a clash is an exact one (issue #376). A group
+ * phrase like "kuivat aineet" is written as one reference per line it covers,
+ * all on the same words, and references landing on precisely the same span
+ * join into one `group` segment. Two or more distinct ingredients make a group;
+ * a span that ends up with one is an ordinary mention.
  */
 export function resolveMentions(
   text: string,
@@ -90,7 +115,7 @@ export function resolveMentions(
   interface Placed {
     start: number;
     length: number;
-    ingredientId: number;
+    ingredientIds: number[];
   }
 
   const placed: Placed[] = [];
@@ -114,14 +139,26 @@ export function resolveMentions(
       }
     }
 
+    // The same words exactly: another member of a group phrase.
+    const same = placed.find(
+      (other) => other.start === best && other.length === needle.length,
+    );
+    if (same !== undefined) {
+      if (!same.ingredientIds.includes(ref.ingredientId)) {
+        same.ingredientIds.push(ref.ingredientId);
+      }
+      continue;
+    }
+
     const candidate = {
       start: best,
       length: needle.length,
-      ingredientId: ref.ingredientId,
+      ingredientIds: [ref.ingredientId],
     };
 
-    // Two references landing on the same words means at least one of them is
-    // stale. Keep the first and leave the other as plain text.
+    // Two references overlapping without covering the same words means at
+    // least one of them is stale. Keep the first and leave the other as plain
+    // text.
     const clashes = placed.some(
       (other) =>
         candidate.start < other.start + other.length &&
@@ -141,11 +178,13 @@ export function resolveMentions(
     if (mention.start > cursor) {
       segments.push({ kind: "text", text: text.slice(cursor, mention.start) });
     }
-    segments.push({
-      kind: "mention",
-      text: text.slice(mention.start, mention.start + mention.length),
-      ingredientId: mention.ingredientId,
-    });
+    const words = text.slice(mention.start, mention.start + mention.length);
+    const [only] = mention.ingredientIds;
+    segments.push(
+      mention.ingredientIds.length === 1 && only !== undefined
+        ? { kind: "mention", text: words, ingredientId: only }
+        : { kind: "group", text: words, ingredientIds: mention.ingredientIds },
+    );
     cursor = mention.start + mention.length;
   }
 
@@ -154,6 +193,63 @@ export function resolveMentions(
   }
 
   return segments;
+}
+
+// --------------------------------------------------------------- amounts
+
+/**
+ * Every distinct stated amount this recipe can reveal, keyed by ingredient.
+ *
+ * A mention names an ingredient, not a line, and nothing stops a recipe
+ * listing one ingredient twice — so every amount is shown: "2 rkl / 1 dl".
+ */
+export function amountsByIngredient(
+  lines: readonly MentionedLine[],
+  multiplier: number,
+): Map<number, string> {
+  const collected = new Map<number, Set<string>>();
+
+  for (const line of lines) {
+    const amount = formatMeasurement(scaleMeasurement(line, multiplier));
+    if (amount === "") continue;
+    const values = collected.get(line.ingredientId) ?? new Set<string>();
+    values.add(amount);
+    collected.set(line.ingredientId, values);
+  }
+
+  return new Map(
+    [...collected].map(([ingredientId, values]) => [
+      ingredientId,
+      [...values].join(" / "),
+    ]),
+  );
+}
+
+/**
+ * What a group phrase stands for, as the list that follows it (issue #376):
+ * "3 dl vehnäjauho, 2 tl leivinjauhe, ½ tl suola".
+ *
+ * In the order of the ingredient list, not of the references, because that is
+ * the order the cook reads the ingredients in. An ingredient with no stated
+ * amount is its name alone; one that is no longer a line here is left out.
+ * The recipe screen and the cast both use this, so they cannot say different
+ * things.
+ */
+export function groupListText(
+  ingredientIds: readonly number[],
+  lines: readonly MentionedLine[],
+  amounts: ReadonlyMap<number, string>,
+): string {
+  const wanted = new Set(ingredientIds);
+  const items: string[] = [];
+
+  for (const line of lines) {
+    if (!wanted.delete(line.ingredientId)) continue;
+    const amount = amounts.get(line.ingredientId) ?? "";
+    items.push(amount === "" ? line.ingredient : `${amount} ${line.ingredient}`);
+  }
+
+  return items.join(", ");
 }
 
 /**

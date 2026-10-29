@@ -4,6 +4,11 @@ import {
   sharedSource,
 } from "./alternatives.ts";
 import { html, raw, type Raw } from "./html.ts";
+import {
+  amountsByIngredient,
+  groupListText,
+  resolveMentions,
+} from "./ingredient-refs.ts";
 import { formatMeasurement } from "./quantities.ts";
 import type { Recipe, RecipeLine, RecipeStep } from "./recipes.ts";
 import type { RecipePhase } from "./recipe-phase.ts";
@@ -40,7 +45,7 @@ export function castRecipe(recipe: Recipe, multiplier: number): CastRecipe {
       title: recipe.title,
       multiplier: formatMultiplier(multiplier),
       ingredients: ingredientGroup(recipe.lines, multiplier, ""),
-      instructions: instructionGroup(recipe.steps, ""),
+      instructions: instructionGroup(recipe.steps, recipe.lines, multiplier, ""),
     };
   }
 
@@ -59,11 +64,11 @@ export function castRecipe(recipe: Recipe, multiplier: number): CastRecipe {
       ...ingredientGroup(linesIn(recipe, after), multiplier, "Lopuksi"),
     ],
     instructions: [
-      ...instructionGroup(stepsIn(recipe, before), "Ennen osia"),
+      ...instructionGroup(stepsIn(recipe, before), recipe.lines, multiplier, "Ennen osia"),
       ...recipe.parts.flatMap((part) =>
-        instructionGroup(part.steps, part.title)
+        instructionGroup(part.steps, part.lines, multiplier, part.title)
       ),
-      ...instructionGroup(stepsIn(recipe, after), "Lopuksi"),
+      ...instructionGroup(stepsIn(recipe, after), recipe.lines, multiplier, "Lopuksi"),
     ],
   };
 }
@@ -143,10 +148,30 @@ function castLine(line: RecipeLine, multiplier: number): string {
 
 function instructionGroup(
   steps: readonly RecipeStep[],
+  lines: readonly RecipeLine[],
+  multiplier: number,
   title: string,
 ): CastGroup[] {
   if (steps.length === 0) return [];
-  return [{ title, items: steps.map((step) => step.text) }];
+  const amounts = amountsByIngredient(lines, multiplier);
+  return [{ title, items: steps.map((step) => castStepText(step, lines, amounts)) }];
+}
+
+/**
+ * A step as the receiver draws it: plain text, with a group phrase followed by
+ * what it stands for (#376) — "Yhdistä kuivat aineet (3 dl vehnäjauho, …)".
+ * A single mention stays plain, as the cast has nothing to tap.
+ */
+function castStepText(
+  step: RecipeStep,
+  lines: readonly RecipeLine[],
+  amounts: Map<number, string>,
+): string {
+  return resolveMentions(step.text, step.refs).map((segment) => {
+    if (segment.kind !== "group") return segment.text;
+    const list = groupListText(segment.ingredientIds, lines, amounts);
+    return list === "" ? segment.text : `${segment.text} (${list})`;
+  }).join("");
 }
 
 /** Cast launcher and sender island for an authenticated recipe screen. */
