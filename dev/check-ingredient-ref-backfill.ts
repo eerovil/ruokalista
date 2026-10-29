@@ -269,3 +269,194 @@ test("the private export parser refuses shape drift", () => {
     /unexpected fields/,
   );
 });
+
+// ------------------------------------------------------------ groups (#376)
+
+const maitoRef = '[{"ingredientId":3,"matchedText":"maito","approxPosition":31}]';
+
+function groupSnapshot(): BackfillSnapshot {
+  return {
+    sha256: digest,
+    captured_at: "2026-10-29T06:00:00.000Z",
+    tables: {
+      recipe: [{ id: 20 }],
+      ingredient: [
+        { id: 1, name: "vehnäjauho" },
+        { id: 2, name: "leivinjauhe" },
+        { id: 3, name: "maito" },
+      ],
+      ingredient_line: [
+        { recipe_id: 20, position: 1, ingredient_id: 1 },
+        { recipe_id: 20, position: 2, ingredient_id: 2 },
+        { recipe_id: 20, position: 3, ingredient_id: 3 },
+      ],
+      recipe_step: [
+        {
+          recipe_id: 20,
+          position: 1,
+          text: "Yhdistä kuivat aineet ja lisää maito.",
+          ingredient_refs: maitoRef,
+        },
+        { recipe_id: 20, position: 2, text: "Paista.", ingredient_refs: null },
+      ],
+    },
+  };
+}
+
+function groupMarks(refs: unknown[]): unknown {
+  return {
+    formatVersion: 2,
+    snapshotSha256: digest,
+    recipes: [{ recipeId: 20, steps: [{ position: 1, ingredientRefs: refs }] }],
+  };
+}
+
+const dryGroup = [
+  { ingredientId: 1, matchedText: "kuivat aineet", approxPosition: 8 },
+  { ingredientId: 2, matchedText: "kuivat aineet", approxPosition: 8 },
+];
+
+test("the group export offers marked steps too, with what they hold", () => {
+  const unmarked = buildBackfillExport(groupSnapshot());
+  assert.deepEqual(unmarked.recipes[0]?.steps.map((step) => step.position), [2]);
+
+  const exported = buildBackfillExport(groupSnapshot(), "groups");
+  assert.equal(exported.formatVersion, 2);
+  assert.deepEqual(exported.recipes[0]?.steps, [
+    { position: 1, text: "Yhdistä kuivat aineet ja lisää maito.", existingRefs: maitoRef },
+    { position: 2, text: "Paista.", existingRefs: null },
+  ]);
+  assert.deepEqual(parseBackfillExport(JSON.parse(JSON.stringify(exported))), exported);
+});
+
+test("a group is added after the step's own refs, guarded on them, once", () => {
+  const exported = buildBackfillExport(groupSnapshot(), "groups");
+  const result = generateBackfillSql(exported, groupMarks([
+    ...dryGroup,
+    // A lone mark is the #120 job's, not this one's.
+    { ingredientId: 3, matchedText: "maito", approxPosition: 31 },
+  ]));
+
+  assert.equal(result.acceptedMarks, 2);
+  assert.equal(result.droppedMarks, 1);
+  assert.equal(result.updatedSteps, 1);
+  assert.match(result.sql, /AND ingredient_refs = '\[\{"ingredientId":3/);
+  assert.doesNotMatch(result.sql, /ingredient_refs IS NULL/);
+
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE recipe_step (
+      recipe_id INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      ingredient_refs TEXT,
+      PRIMARY KEY (recipe_id, position)
+    );
+    CREATE TABLE ingredient_line (recipe_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL);
+    INSERT INTO ingredient_line VALUES (20, 1), (20, 2), (20, 3);
+  `);
+  db.prepare("INSERT INTO recipe_step VALUES (20, 1, ?, ?)").run(
+    "Yhdistä kuivat aineet ja lisää maito.",
+    maitoRef,
+  );
+  db.exec(result.sql);
+  const afterFirst = db.prepare("SELECT ingredient_refs FROM recipe_step").get() as {
+    ingredient_refs: string;
+  };
+  db.exec(result.sql);
+  const afterSecond = db.prepare("SELECT ingredient_refs FROM recipe_step").get();
+
+  assert.deepEqual(
+    JSON.parse(afterFirst.ingredient_refs).map((ref: { ingredientId: number }) => ref.ingredientId),
+    [3, 1, 2],
+  );
+  assert.deepEqual(afterSecond, afterFirst);
+  db.close();
+});
+
+test("a group the step already holds, or a step edited since, changes nothing", () => {
+  const snap = groupSnapshot();
+  const already = JSON.stringify(dryGroup);
+  (snap.tables.recipe_step[0] as Record<string, unknown>).ingredient_refs = already;
+  const exported = buildBackfillExport(snap, "groups");
+  assert.equal(generateBackfillSql(exported, groupMarks(dryGroup)).updatedSteps, 0);
+
+  const fresh = buildBackfillExport(groupSnapshot(), "groups");
+  const sql = generateBackfillSql(fresh, groupMarks(dryGroup)).sql;
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE recipe_step (
+      recipe_id INTEGER NOT NULL, position INTEGER NOT NULL,
+      text TEXT NOT NULL, ingredient_refs TEXT
+    );
+    CREATE TABLE ingredient_line (recipe_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL);
+    INSERT INTO ingredient_line VALUES (20, 1), (20, 2), (20, 3);
+    INSERT INTO recipe_step VALUES (20, 1, 'Yhdistä kuivat aineet ja lisää maito.', NULL);
+  `);
+  db.exec(sql);
+  // The column moved since the snapshot (here: emptied), so the guard refuses.
+  const row = db.prepare("SELECT ingredient_refs FROM recipe_step").get() as {
+    ingredient_refs: string | null;
+  };
+  assert.equal(row.ingredient_refs, null);
+  db.close();
+});
+
+test("marks must be made for the same job as the export", () => {
+  const exported = buildBackfillExport(groupSnapshot(), "groups");
+  assert.throws(
+    () => generateBackfillSql(exported, { ...(groupMarks(dryGroup) as object), formatVersion: 1 }),
+    /formatVersion does not match/,
+  );
+});
+
+test("a stored value the decoder would not keep whole is never rewritten", () => {
+  for (const damaged of [
+    "{not json",
+    // One good reference and one the decoder would drop.
+    '[{"ingredientId":3,"matchedText":"maito","approxPosition":31},{"ingredientId":0,"matchedText":"x","approxPosition":0}]',
+    "[]",
+  ]) {
+    const snap = groupSnapshot();
+    (snap.tables.recipe_step[0] as Record<string, unknown>).ingredient_refs = damaged;
+    const result = generateBackfillSql(buildBackfillExport(snap, "groups"), groupMarks(dryGroup));
+    assert.equal(result.updatedSteps, 0, damaged);
+    assert.equal(result.acceptedMarks, 0, damaged);
+    assert.equal(result.droppedMarks, 2, damaged);
+  }
+});
+
+test("a group phrase written twice in one step is two groups", () => {
+  const text = "Yhdistä kuivat aineet. Paista ja lisää sitten taas kuivat aineet.";
+  const second = text.lastIndexOf("kuivat aineet");
+  const snap = groupSnapshot();
+  const step = snap.tables.recipe_step[0] as Record<string, unknown>;
+  step.text = text;
+  step.ingredient_refs = null;
+  const exported = buildBackfillExport(snap, "groups");
+  const result = generateBackfillSql(exported, groupMarks([
+    ...dryGroup,
+    { ingredientId: 1, matchedText: "kuivat aineet", approxPosition: second },
+    { ingredientId: 2, matchedText: "kuivat aineet", approxPosition: second },
+  ]));
+  assert.equal(result.acceptedMarks, 4);
+  assert.equal(result.droppedMarks, 0);
+
+  // And the second occurrence is still added when the step already holds the
+  // first, with the existing group recorded at a slightly different position.
+  const held = groupSnapshot();
+  const heldStep = held.tables.recipe_step[0] as Record<string, unknown>;
+  heldStep.text = text;
+  heldStep.ingredient_refs = JSON.stringify(
+    dryGroup.map((ref) => ({ ...ref, approxPosition: 7 })),
+  );
+  const again = generateBackfillSql(buildBackfillExport(held, "groups"), groupMarks([
+    ...dryGroup,
+    { ingredientId: 1, matchedText: "kuivat aineet", approxPosition: second },
+    { ingredientId: 2, matchedText: "kuivat aineet", approxPosition: second },
+  ]));
+  assert.equal(again.acceptedMarks, 2);
+  assert.equal(again.droppedMarks, 2);
+  assert.equal(again.updatedSteps, 1);
+  assert.match(again.sql, new RegExp(`"approxPosition":${second}`));
+});

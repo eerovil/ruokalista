@@ -19,22 +19,24 @@ const options = parseArgs(process.argv.slice(2));
 assertGeneratedPath(options.snapshot, "--snapshot", true);
 assertGeneratedPath(options.output, "--output", false);
 const snapshot = await parseSignedBackfillSnapshot(readFileSync(options.snapshot, "utf8"));
-const exported = buildBackfillExport(snapshot);
+const exported = buildBackfillExport(snapshot, options.groups ? "groups" : "unmarked");
 writePrivateFile(options.output, `${JSON.stringify(exported, null, 2)}\n`);
 console.error(`exported ${exported.recipes.length} recipe(s) to ${options.output}`);
 
-function parseArgs(args: string[]): { snapshot: string; output: string } {
+function parseArgs(args: string[]): { snapshot: string; output: string; groups: boolean } {
   let snapshot = "";
   let output = "";
+  let groups = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--snapshot") snapshot = valueAfter(args, ++index, arg);
     else if (arg === "--output") output = valueAfter(args, ++index, arg);
+    else if (arg === "--groups") groups = true;
     else throw new Error(`unknown export argument: ${arg}`);
   }
   if (!snapshot) throw new Error("--snapshot is required");
   if (!output) throw new Error("--output is required");
-  return { snapshot, output };
+  return { snapshot, output, groups };
 }
 
 function valueAfter(args: string[], index: number, flag: string): string {
