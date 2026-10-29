@@ -425,3 +425,38 @@ test("a stored value the decoder would not keep whole is never rewritten", () =>
     assert.equal(result.droppedMarks, 2, damaged);
   }
 });
+
+test("a group phrase written twice in one step is two groups", () => {
+  const text = "Yhdistä kuivat aineet. Paista ja lisää sitten taas kuivat aineet.";
+  const second = text.lastIndexOf("kuivat aineet");
+  const snap = groupSnapshot();
+  const step = snap.tables.recipe_step[0] as Record<string, unknown>;
+  step.text = text;
+  step.ingredient_refs = null;
+  const exported = buildBackfillExport(snap, "groups");
+  const result = generateBackfillSql(exported, groupMarks([
+    ...dryGroup,
+    { ingredientId: 1, matchedText: "kuivat aineet", approxPosition: second },
+    { ingredientId: 2, matchedText: "kuivat aineet", approxPosition: second },
+  ]));
+  assert.equal(result.acceptedMarks, 4);
+  assert.equal(result.droppedMarks, 0);
+
+  // And the second occurrence is still added when the step already holds the
+  // first, with the existing group recorded at a slightly different position.
+  const held = groupSnapshot();
+  const heldStep = held.tables.recipe_step[0] as Record<string, unknown>;
+  heldStep.text = text;
+  heldStep.ingredient_refs = JSON.stringify(
+    dryGroup.map((ref) => ({ ...ref, approxPosition: 7 })),
+  );
+  const again = generateBackfillSql(buildBackfillExport(held, "groups"), groupMarks([
+    ...dryGroup,
+    { ingredientId: 1, matchedText: "kuivat aineet", approxPosition: second },
+    { ingredientId: 2, matchedText: "kuivat aineet", approxPosition: second },
+  ]));
+  assert.equal(again.acceptedMarks, 2);
+  assert.equal(again.droppedMarks, 2);
+  assert.equal(again.updatedSteps, 1);
+  assert.match(again.sql, new RegExp(`"approxPosition":${second}`));
+});

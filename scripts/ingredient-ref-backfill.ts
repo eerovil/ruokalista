@@ -2,6 +2,7 @@ import {
   MAX_REFS_PER_STEP,
   mentionResolves,
   parseStepRefs,
+  resolveMentions,
   serializeStepRefs,
   type StepIngredientRef,
 } from "../src/ingredient-refs.ts";
@@ -298,7 +299,7 @@ export function generateBackfillSql(
       if (groups) {
         // Only a group is this job's to add: a wording that, in this step,
         // stands for two or more ingredients. A lone mark is the #120 job's.
-        const grouped = groupMembers(refs);
+        const grouped = groupMembers(step.text, refs);
         droppedMarks += refs.length - grouped.length;
         acceptedMarks -= refs.length - grouped.length;
         const existing = parseStepRefs(step.existingRefs ?? null);
@@ -316,13 +317,16 @@ export function generateBackfillSql(
           acceptedMarks -= grouped.length;
           continue;
         }
+        // Already there means the same ingredient on the same occurrence of
+        // the same words: a phrase written twice in one step is two groups.
         const added = grouped.filter((ref) =>
           !existing.some((old) =>
             old.ingredientId === ref.ingredientId &&
-            old.matchedText.toLocaleLowerCase("fi") ===
-              ref.matchedText.toLocaleLowerCase("fi")
+            occurrenceKey(step.text, old) === occurrenceKey(step.text, ref)
           )
         );
+        droppedMarks += grouped.length - added.length;
+        acceptedMarks -= grouped.length - added.length;
         if (added.length === 0) continue;
         written = [...existing, ...added];
         if (written.length > MAX_REFS_PER_STEP) {
@@ -420,27 +424,50 @@ export function parseBackfillExport(value: unknown): BackfillExport {
 }
 
 /**
- * The marks that form a group: those whose wording, case folded, is shared by
- * two or more distinct ingredients in the same step. The resolver places each
- * at its own nearest occurrence, so the shared wording is what counts here.
+ * The marks that form a group: those whose occurrence — the same words at the
+ * same place in the step, found as the screen's resolver finds them — is
+ * shared by two or more distinct ingredients. A phrase written twice in one
+ * step is two occurrences, so two groups.
  */
-function groupMembers(refs: readonly StepIngredientRef[]): StepIngredientRef[] {
+function groupMembers(
+  text: string,
+  refs: readonly StepIngredientRef[],
+): StepIngredientRef[] {
   const ingredients = new Map<string, Set<number>>();
   for (const ref of refs) {
-    const key = ref.matchedText.toLocaleLowerCase("fi");
+    const key = occurrenceKey(text, ref);
     const ids = ingredients.get(key) ?? new Set<number>();
     ids.add(ref.ingredientId);
     ingredients.set(key, ids);
   }
   const seen = new Set<string>();
   return refs.filter((ref) => {
-    const key = ref.matchedText.toLocaleLowerCase("fi");
+    const key = occurrenceKey(text, ref);
     if ((ingredients.get(key)?.size ?? 0) < 2) return false;
     const pair = `${key}\u0000${ref.ingredientId}`;
     if (seen.has(pair)) return false;
     seen.add(pair);
     return true;
   });
+}
+
+/**
+ * Which occurrence of its words a reference lands on: the start index
+ * `resolveMentions` would place it at, plus the folded wording. Approximate
+ * positions differ between producers, so they are compared through this
+ * rather than directly.
+ */
+function occurrenceKey(text: string, ref: StepIngredientRef): string {
+  let start = -1;
+  let cursor = 0;
+  for (const segment of resolveMentions(text, [ref])) {
+    if (segment.kind !== "text") {
+      start = cursor;
+      break;
+    }
+    cursor += segment.text.length;
+  }
+  return `${start}\u0000${ref.matchedText.toLocaleLowerCase("fi")}`;
 }
 
 function parseMarksRoot(
