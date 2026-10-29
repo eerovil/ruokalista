@@ -43,7 +43,11 @@ import {
   type Raw,
   saveBar,
 } from "./html.ts";
-import { resolveMentions } from "./ingredient-refs.ts";
+import {
+  amountsByIngredient,
+  groupListText,
+  resolveMentions,
+} from "./ingredient-refs.ts";
 import { keepAwake } from "./keep-awake.ts";
 import type { Member } from "./members.ts";
 import {
@@ -108,6 +112,7 @@ export type {
 // Where a picture and the browse state are drawn moved out of this module; the
 // names stay importable from here, which is where every screen already looks.
 export { recipeImage, type Pictured } from "./recipe-picture.ts";
+export { amountsByIngredient } from "./ingredient-refs.ts";
 export {
   askedCategory,
   browseStateFrom,
@@ -551,6 +556,7 @@ export async function renderRecipe(
 
 function stepText(
   step: RecipeStep,
+  lines: readonly RecipeLine[],
   amounts: Map<number, string>,
   idPrefix: string,
 ): Raw {
@@ -561,6 +567,16 @@ function stepText(
 
   return html`${segments.map((segment, index) => {
     if (segment.kind === "text") return html`${segment.text}`;
+
+    // A group phrase names no ingredient itself, so its list is the point
+    // and stays visible rather than waiting for a tap (#376).
+    if (segment.kind === "group") {
+      const list = groupListText(segment.ingredientIds, lines, amounts);
+      if (list === "") return html`${segment.text}`;
+      return html`<span class="mention-group"
+        >${segment.text} <span class="mention-group-list">(${list})</span></span
+      >`;
+    }
 
     const amount = amounts.get(segment.ingredientId) ?? "";
     if (amount === "") return html`${segment.text}`;
@@ -574,29 +590,6 @@ function stepText(
       ></span
     >`;
   })}`;
-}
-
-/** Every distinct stated amount this recipe can reveal, keyed by ingredient. */
-export function amountsByIngredient(
-  lines: readonly RecipeLine[],
-  multiplier: number,
-): Map<number, string> {
-  const collected = new Map<number, Set<string>>();
-
-  for (const line of lines) {
-    const amount = formatMeasurement(scaleMeasurement(line, multiplier));
-    if (amount === "") continue;
-    const values = collected.get(line.ingredientId) ?? new Set<string>();
-    values.add(amount);
-    collected.set(line.ingredientId, values);
-  }
-
-  return new Map(
-    [...collected].map(([ingredientId, values]) => [
-      ingredientId,
-      [...values].join(" / "),
-    ]),
-  );
 }
 
 /**
@@ -759,7 +752,7 @@ function stepList(
   return html`<ol class="steps recipe-method">
             ${steps.map(
               (step, index) => html`<li>
-                ${stepText(step, amounts, `m${recipe.id}${bucket}${index}`)}
+                ${stepText(step, recipe.lines, amounts, `m${recipe.id}${bucket}${index}`)}
               </li>`,
             )}
           </ol>`;
@@ -1715,6 +1708,7 @@ const MENTION_STYLE = html`<style>
     display: inline;
   }
   .mention-toggle:checked + label { text-decoration: none; }
+  .mention-group-list { color: var(--muted); }
   .mention-toggle:focus-visible + label {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: .2rem;
   }

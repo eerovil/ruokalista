@@ -642,7 +642,9 @@ lines and the steps, mark which words in each step name which of the draft's own
 ingredient lines. It is a marking task and the prompt says so — no new
 ingredient, no amount copied into a step, no rewording of the step text. A step
 that names nothing gets `[]`, and a generic phrase like "lisää loput ainekset"
-is left alone.
+is left alone. A phrase that names a group ("kuivat aineet") is one reference
+per line in the group, all with the same wording and position (#376; see
+[recipes](recipes.md#a-step-that-names-a-group-issue-376)).
 
 `ingredient_refs` on a draft step is `{line, matched_text, approx_position}`,
 where `line` is the *index* of the ingredient line in the same draft. An

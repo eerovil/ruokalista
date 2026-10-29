@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  amountsByIngredient as amountsFromRefs,
   decodeDraftRefs,
+  groupListText,
+  MAX_REFS_PER_STEP,
   encodeDraftRefs,
   mentionResolves,
   parseStepRefs,
@@ -141,6 +144,62 @@ test("two references landing on the same words keep only one", () => {
   assert.equal(segments.map((segment) => segment.text).join(""), text);
 });
 
+test("references on exactly the same words join into one group", () => {
+  // #376: "kuivat aineet" is one reference per line it covers.
+  const text = "Yhdistä kuivat aineet ja lisää maito.";
+  const segments = resolveMentions(text, [
+    ref(1, "kuivat aineet", 8),
+    ref(2, "kuivat aineet", 8),
+    ref(2, "kuivat aineet", 8),
+    ref(3, "kuivat aineet", 8),
+    ref(4, "maito", 31),
+  ]);
+
+  assert.equal(segments.map((segment) => segment.text).join(""), text);
+  assert.deepEqual(
+    segments.filter((segment) => segment.kind !== "text"),
+    [
+      { kind: "group", text: "kuivat aineet", ingredientIds: [1, 2, 3] },
+      { kind: "mention", text: "maito", ingredientId: 4 },
+    ],
+  );
+});
+
+test("one reference on a group phrase is an ordinary mention", () => {
+  assert.deepEqual(
+    mentions("Yhdistä kuivat aineet.", [ref(1, "kuivat aineet", 8)]),
+    ["1:kuivat aineet"],
+  );
+});
+
+test("a partial overlap is still a clash, not a group", () => {
+  const text = "Yhdistä kuivat aineet.";
+  const segments = resolveMentions(text, [
+    ref(1, "kuivat aineet", 8),
+    ref(2, "kuivat", 8),
+  ]);
+  assert.deepEqual(
+    segments.filter((segment) => segment.kind !== "text"),
+    [{ kind: "mention", text: "kuivat aineet", ingredientId: 1 }],
+  );
+});
+
+test("a group's list follows the ingredient list, amounts and all", () => {
+  const lines = [
+    { ...line(1, 5, 1, "dl"), ingredient: "maito" },
+    { ...line(2, 1, 3, "dl"), ingredient: "vehnäjauho" },
+    { ...line(3, 2, 2, "tl"), ingredient: "leivinjauhe" },
+    { ...line(4, 3, null, null), ingredient: "suola" },
+  ];
+  const amounts = amountsFromRefs(lines, 2);
+  // Reference order does not matter, and an id with no line is left out.
+  assert.equal(
+    groupListText([3, 2, 1, 99], lines, amounts),
+    "6 dl vehnäjauho, 4 tl leivinjauhe, suola",
+  );
+  assert.equal(groupListText([99], lines, amounts), "");
+});
+
 test("an empty or blank matched text never links anything", () => {
   assert.deepEqual(mentions("Lisää suola.", [ref(1, "", 0)]), []);
   assert.equal(mentionResolves("Lisää suola.", "   "), false);
@@ -246,9 +305,12 @@ test("the form field round-trips and refuses junk", () => {
 });
 
 test("a step may not carry an unbounded number of mentions", () => {
-  const many = Array.from({ length: 40 }, (_, index) =>
+  const many = Array.from({ length: MAX_REFS_PER_STEP + 16 }, (_, index) =>
     ref(index + 1, "suola", index),
   );
   assert.ok((serializeStepRefs(many) ?? "").length > 0);
-  assert.equal(parseStepRefs(serializeStepRefs(many)).length, 12);
+  assert.equal(
+    parseStepRefs(serializeStepRefs(many)).length,
+    MAX_REFS_PER_STEP,
+  );
 });

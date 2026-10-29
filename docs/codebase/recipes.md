@@ -239,6 +239,36 @@ with `display: none` on it until it is tapped. Nobody reads it, nothing copies
 it and no screen reader announces it, but it *is* in `textContent`. See
 [testing](docs/codebase/testing.md).
 
+### A step that names a group (issue #376)
+
+"Yhdistä kuivat aineet" names no ingredient, but it means three or four of
+them, and the cook has to know which. The import now marks such a phrase as
+**one reference per line it covers, all on the same words** — no new field and
+no new shape, so the column, the import schema, the editor's hidden field and
+`ingredientForRef` all handle it already. Diagram:
+[step-ingredient-mentions](../diagrams/step-ingredient-mentions.md).
+
+`resolveMentions` is the one place that learned something: references landing on
+*exactly* the same span join into a `group` segment instead of the second being
+dropped as stale. A partial overlap is still a clash, and a span left with one
+ingredient is an ordinary mention.
+
+A group renders as the phrase followed by its list in parentheses —
+*kuivat aineet (3 dl vehnäjauho, 2 tl leivinjauhe, suola)* — **always visible**,
+because the phrase alone tells the cook nothing; a single mention already names
+its ingredient and only hides the amount. The list is in ingredient-list order,
+each item the scaled amount (every distinct one, as above) and the
+ingredient's own name. `src/ingredient-refs.ts::groupListText` builds it for both
+the recipe screen and the cast (`src/cast.ts`), which has nothing to tap and
+otherwise sends steps as plain text.
+
+What the prompt marks as a group is narrow on purpose: a phrase naming a
+property or a purpose ("kuivat aineet", "märät aineet", "kastikkeen ainekset").
+"Lisää loput ainekset" stays unlinked, because "the rest" depends on what
+earlier steps used and a wrong list is worse than none. `MAX_REFS_PER_STEP` went
+from 12 to 24 for the same reason groups exist: one phrase can now be several
+references. Recipes imported before this have no groups; nothing re-reads them.
+
 ## A line that offers a choice (issue #183)
 
 Proposed here: an ingredient line may be one of several options — *1
